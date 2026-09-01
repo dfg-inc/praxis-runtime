@@ -22,6 +22,9 @@
     "test": "vitest run",
     "start": "node dist/main.js"
   },
+  "dependencies": {
+    "@praxis/contracts": "*"
+  },
   "devDependencies": {
     "@types/node": "^22.20.0",
     "typescript": "~5.8.3",

@@ -298,4 +298,11 @@ export class QualityStore {
   close(): void {
     this.db.close();
   }
+
+  getReview(id: number): ReviewRow | null {
+    const row = this.db
+      .prepare(`SELECT * FROM reviews WHERE id = ?`)
+      .get(id) as ReviewRow | undefined;
+    return row ?? null;
+  }
 }

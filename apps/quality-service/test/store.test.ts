@@ -100,6 +100,14 @@ describe("review-path engine", () => {
     mkdirSync(join(dir, "test"), { recursive: true });
     writeFileSync(join(dir, "src", "a.js"), "export const x = 1;\n");
     writeFileSync(join(dir, "test", "a.test.js"), "export {};\n");
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "t",
+        type: "module",
+        scripts: { test: "node -e \"process.exit(1)\"" },
+      }),
+    );
     const r = reviewPath({
       path: dir,
       rerunTests: false,

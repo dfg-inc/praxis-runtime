@@ -1,5 +1,14 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+/**
+ * Local executable review engine for Quality (CLI + HTTP).
+ * Product-agnostic: discovery + npm test execution, no fixture hardcoding.
+ */
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+} from "node:fs";
+import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
 
 export type Finding = {
@@ -14,21 +23,21 @@ export type PathReviewResult = {
   findings: Finding[];
   mrRef: string;
   projectId: string;
+  workPackageId?: string;
+  testExecution?: {
+    exitCode: number;
+    executedCount: number | null;
+    passedCount: number | null;
+    failedCount: number | null;
+    outputSnippet: string;
+  };
 };
 
-function walkJs(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out;
-  for (const ent of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, ent.name);
-    if (ent.isDirectory()) {
-      if (ent.name === "node_modules" || ent.name === ".git") continue;
-      walkJs(p, out);
-    } else if (/\.(js|mjs|cjs|ts)$/.test(ent.name)) out.push(p);
-  }
-  return out;
-}
-
-export type AcceptanceCheck = { file: string; contains: string };
+export type AcceptanceCheck = {
+  type?: string;
+  file?: string;
+  contains?: string;
+};
 
 export type VerificationCheck = {
   status: "passed" | "failed" | "skipped";
@@ -37,6 +46,7 @@ export type VerificationCheck = {
 
 export type DevQualityHandoff = {
   contract: string;
+  version?: string;
   workPackageId?: string;
   mergeRequestRef: string;
   intention: string;
@@ -51,37 +61,187 @@ export type DevQualityHandoff = {
   acceptanceChecks?: AcceptanceCheck[];
 };
 
+const SKIP_DIRS = new Set([
+  "node_modules",
+  ".git",
+  "dist",
+  "build",
+  "coverage",
+  ".praxis-quality",
+]);
+
+/** Colocated / conventional test file names. */
+const TEST_FILE_RE = /\.(test|spec)\.(js|mjs|cjs|ts|tsx)$/i;
+
+export function isTestFileName(name: string): boolean {
+  return TEST_FILE_RE.test(name);
+}
+
+export function isUnderTestsDir(relPosix: string): boolean {
+  return (
+    /(^|\/)__tests__(\/|$)/.test(relPosix) ||
+    /(^|\/)tests?(\/|$)/.test(relPosix)
+  );
+}
+
+/**
+ * Discover automated test files under normal layouts:
+ * test/, tests/, __tests__/, src/**\/*.test|spec.*, colocated *.test|spec.*.
+ */
+export function discoverTestFiles(root: string): string[] {
+  const out: string[] = [];
+  walk(root, root, (abs, rel) => {
+    const base = abs.split(/[/\\]/).pop() ?? "";
+    if (!/\.(js|mjs|cjs|ts|tsx)$/i.test(base)) return;
+    if (isTestFileName(base)) {
+      out.push(abs);
+      return;
+    }
+    // Any JS/TS under __tests__/ (even without .test. suffix)
+    if (/(^|\/)__tests__\//.test(rel)) {
+      out.push(abs);
+    }
+  });
+  return [...new Set(out)].sort();
+}
+
+/** Source files excluding test files. */
+export function discoverSourceFiles(root: string): string[] {
+  const out: string[] = [];
+  for (const top of ["src", "lib"]) {
+    const dir = join(root, top);
+    if (!existsSync(dir)) continue;
+    walk(dir, root, (abs, rel) => {
+      const base = abs.split(/[/\\]/).pop() ?? "";
+      if (!/\.(js|mjs|cjs|ts|tsx)$/i.test(base)) return;
+      if (isTestFileName(base)) return;
+      if (isUnderTestsDir(rel)) return;
+      out.push(abs);
+    });
+  }
+  return out;
+}
+
+function walk(
+  dir: string,
+  root: string,
+  visit: (abs: string, relPosix: string) => void,
+): void {
+  if (!existsSync(dir)) return;
+  let st;
+  try {
+    st = statSync(dir);
+  } catch {
+    return;
+  }
+  if (!st.isDirectory()) return;
+  for (const ent of readdirSync(dir, { withFileTypes: true })) {
+    if (SKIP_DIRS.has(ent.name)) continue;
+    const abs = join(dir, ent.name);
+    if (ent.isDirectory()) {
+      walk(abs, root, visit);
+      continue;
+    }
+    if (!ent.isFile()) continue;
+    const rel = relative(root, abs).split("\\").join("/");
+    visit(abs, rel);
+  }
+}
+
+/**
+ * Parse Node.js built-in test runner / common reporters for executed test count.
+ * Returns null counts when the output cannot be interpreted.
+ */
+export function parseNodeTestCounts(output: string): {
+  executedCount: number | null;
+  passedCount: number | null;
+  failedCount: number | null;
+} {
+  // node --test default reporter: "ℹ tests 4" / "# tests 4"
+  const tests =
+    output.match(/(?:^|\n)\s*(?:ℹ\s*)?#?\s*tests\s+(\d+)\s*(?:\n|$)/i) ??
+    output.match(/(?:^|\n)\s*ℹ\s*tests\s+(\d+)/i);
+  const pass =
+    output.match(/(?:^|\n)\s*(?:ℹ\s*)?#?\s*pass\s+(\d+)\s*(?:\n|$)/i) ??
+    output.match(/(?:^|\n)\s*ℹ\s*pass\s+(\d+)/i);
+  const fail =
+    output.match(/(?:^|\n)\s*(?:ℹ\s*)?#?\s*fail\s+(\d+)\s*(?:\n|$)/i) ??
+    output.match(/(?:^|\n)\s*ℹ\s*fail\s+(\d+)/i);
+
+  const executedCount = tests ? Number(tests[1]) : null;
+  const passedCount = pass ? Number(pass[1]) : null;
+  const failedCount = fail ? Number(fail[1]) : null;
+  return { executedCount, passedCount, failedCount };
+}
+
+export function runNpmTest(cwd: string): {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  executedCount: number | null;
+  passedCount: number | null;
+  failedCount: number | null;
+} {
+  const r = spawnSync("npm run test", {
+    cwd,
+    encoding: "utf8",
+    shell: true,
+  });
+  const stdout = r.stdout ?? "";
+  const stderr = r.stderr ?? "";
+  const combined = `${stdout}\n${stderr}`;
+  const counts = parseNodeTestCounts(combined);
+  return {
+    exitCode: r.status ?? 1,
+    stdout,
+    stderr,
+    executedCount: counts.executedCount,
+    passedCount: counts.passedCount,
+    failedCount: counts.failedCount,
+  };
+}
+
 function normalizeVerificationCheck(
   raw: VerificationCheck | boolean | undefined,
   name: string,
-): { ok: boolean; detail: string; status: string } {
+): { ok: boolean; detail: string; status: string; required: boolean } {
   if (raw && typeof raw === "object" && "status" in raw) {
     const status = raw.status;
-    // skipped is not a failure for Quality intake; required+not-passed is
     const ok =
       status === "passed" ||
       (status === "skipped" && raw.required === false);
     return {
       ok,
       status,
+      required: !!raw.required,
       detail: `${status} (required=${raw.required})`,
     };
   }
   if (typeof raw === "boolean") {
-    // Legacy boolean: cannot distinguish skipped — treat as pass/fail only
     return {
       ok: raw,
       status: raw ? "passed" : "failed",
+      required: true,
       detail: `${raw} (legacy-boolean:${name})`,
     };
   }
-  return { ok: false, status: "missing", detail: "missing verification check" };
+  return {
+    ok: false,
+    status: "missing",
+    required: true,
+    detail: "missing verification check",
+  };
+}
+
+function testsRequired(handoff: DevQualityHandoff | undefined): boolean {
+  if (!handoff?.verification?.tests) return false;
+  const t = handoff.verification.tests;
+  if (typeof t === "boolean") return true;
+  return t.required === true || t.status === "passed";
 }
 
 /**
- * Local executable review: handoff verification + static path checks +
- * optional acceptanceChecks + optional re-run of product npm test.
- * Product-agnostic (no fixture-specific AC).
+ * Local executable review: handoff verification + discovery + acceptance + npm test.
  */
 export function reviewPath(input: {
   path: string;
@@ -94,10 +254,13 @@ export function reviewPath(input: {
   const findings: Finding[] = [];
   let handoff = input.handoff;
   if (!handoff && input.handoffPath) {
-    handoff = JSON.parse(readFileSync(input.handoffPath, "utf8")) as DevQualityHandoff;
+    handoff = JSON.parse(
+      readFileSync(input.handoffPath, "utf8"),
+    ) as DevQualityHandoff;
   }
 
   const mrRef = handoff?.mergeRequestRef ?? `path://${input.path}`;
+  const workPackageId = handoff?.workPackageId;
 
   if (!existsSync(input.path)) {
     findings.push({
@@ -106,7 +269,7 @@ export function reviewPath(input: {
       ok: false,
       detail: `path missing: ${input.path}`,
     });
-    return { verdict: "fail", findings, mrRef, projectId };
+    return { verdict: "fail", findings, mrRef, projectId, workPackageId };
   }
   findings.push({
     id: "path-exists",
@@ -133,7 +296,7 @@ export function reviewPath(input: {
     }
     const v = handoff.verification;
     for (const key of ["build", "tests", "lint", "packageCriteria"] as const) {
-      const norm = normalizeVerificationCheck(v[key], key);
+      const norm = normalizeVerificationCheck(v?.[key], key);
       findings.push({
         id: `verification.${key}`,
         severity: norm.ok ? "info" : "error",
@@ -180,24 +343,16 @@ export function reviewPath(input: {
     });
   }
 
-  const srcFiles = walkJs(join(input.path, "src")).concat(
-    walkJs(join(input.path, "lib")),
-  );
-  const testFiles = walkJs(join(input.path, "test")).concat(
-    walkJs(join(input.path, "tests")),
-  );
+  const srcFiles = discoverSourceFiles(input.path);
+  const testFiles = discoverTestFiles(input.path);
   const hasPkg = existsSync(join(input.path, "package.json"));
+  const required = testsRequired(handoff);
+
   findings.push({
     id: "has-sources",
     severity: srcFiles.length || hasPkg ? "info" : "error",
     ok: srcFiles.length > 0 || hasPkg,
     detail: `${srcFiles.length} src/lib file(s)`,
-  });
-  findings.push({
-    id: "has-tests",
-    severity: testFiles.length ? "info" : "error",
-    ok: testFiles.length > 0,
-    detail: `${testFiles.length} file(s)`,
   });
 
   let critical = false;
@@ -222,7 +377,9 @@ export function reviewPath(input: {
     });
   }
 
-  const checks = handoff?.acceptanceChecks ?? [];
+  const checks = (handoff?.acceptanceChecks ?? []).filter(
+    (c) => c && typeof c.file === "string" && typeof c.contains === "string",
+  ) as Array<{ file: string; contains: string }>;
   for (const [i, check] of checks.entries()) {
     const fp = join(input.path, check.file);
     if (!existsSync(fp)) {
@@ -246,22 +403,144 @@ export function reviewPath(input: {
     });
   }
 
-  if (input.rerunTests !== false && hasPkg) {
-    const r = spawnSync("npm", ["run", "test"], {
-      cwd: input.path,
-      encoding: "utf8",
-      shell: true,
-    });
+  let testExecution: PathReviewResult["testExecution"];
+
+  const shouldRerun =
+    input.rerunTests !== false &&
+    hasPkg &&
+    (required || input.rerunTests === true || !!handoff);
+
+  if (shouldRerun) {
+    const run = runNpmTest(input.path);
+    testExecution = {
+      exitCode: run.exitCode,
+      executedCount: run.executedCount,
+      passedCount: run.passedCount,
+      failedCount: run.failedCount,
+      outputSnippet: (run.stdout + run.stderr).slice(0, 400),
+    };
+
+    const claimedPassed =
+      handoff &&
+      normalizeVerificationCheck(handoff.verification?.tests, "tests")
+        .status === "passed";
+
+    if (run.exitCode !== 0) {
+      findings.push({
+        id: "rerun-tests",
+        severity: "error",
+        ok: false,
+        detail: claimedPassed
+          ? `Developer claimed tests passed but Quality rerun failed: ${(run.stderr || run.stdout || "FAIL").slice(0, 200)}`
+          : (run.stderr || run.stdout || "FAIL").slice(0, 200),
+      });
+    } else if (run.executedCount === 0) {
+      // Exit 0 but zero tests — fail when tests are required / claimed
+      if (required || claimedPassed) {
+        findings.push({
+          id: "rerun-tests",
+          severity: "error",
+          ok: false,
+          detail:
+            "npm test exited 0 but executed 0 test cases (required tests)",
+        });
+      } else {
+        findings.push({
+          id: "rerun-tests",
+          severity: "warn",
+          ok: true,
+          detail: "npm test exited 0 with 0 parsed test cases (not required)",
+        });
+      }
+    } else if (run.executedCount === null) {
+      // Could not parse count — do not treat exit 0 alone as proof when required
+      if (required || claimedPassed) {
+        if (testFiles.length > 0) {
+          findings.push({
+            id: "rerun-tests",
+            severity: "info",
+            ok: true,
+            detail: `npm test PASS (exit 0); execution count unavailable; ${testFiles.length} test file(s) discovered`,
+          });
+        } else {
+          findings.push({
+            id: "rerun-tests",
+            severity: "error",
+            ok: false,
+            detail:
+              "npm test exited 0 but could not prove any tests executed (no count, no discovered files)",
+          });
+        }
+      } else {
+        findings.push({
+          id: "rerun-tests",
+          severity: "info",
+          ok: true,
+          detail: "npm test PASS (exit 0); execution count unavailable",
+        });
+      }
+    } else {
+      findings.push({
+        id: "rerun-tests",
+        severity: "info",
+        ok: true,
+        detail: `npm test PASS — ${run.executedCount} test(s) executed` +
+          (run.passedCount != null ? ` (${run.passedCount} pass)` : ""),
+      });
+    }
+  }
+
+  // has-tests: static discovery OR proven execution — never fail solely on
+  // discovery miss when required execution proved tests ran.
+  const executed =
+    testExecution &&
+    testExecution.exitCode === 0 &&
+    ((testExecution.executedCount != null &&
+      testExecution.executedCount > 0) ||
+      (testExecution.executedCount === null && testFiles.length > 0));
+
+  if (testFiles.length > 0) {
     findings.push({
-      id: "rerun-tests",
-      severity: r.status === 0 ? "info" : "error",
-      ok: r.status === 0,
-      detail: r.status === 0 ? "npm test PASS" : (r.stderr || r.stdout || "FAIL").slice(0, 200),
+      id: "has-tests",
+      severity: "info",
+      ok: true,
+      detail: `${testFiles.length} file(s)`,
+    });
+  } else if (executed) {
+    findings.push({
+      id: "has-tests",
+      severity: "info",
+      ok: true,
+      detail:
+        testExecution?.executedCount != null
+          ? `0 static file(s); ${testExecution.executedCount} executed via npm test`
+          : "0 static file(s); npm test proved execution",
+    });
+  } else if (required) {
+    findings.push({
+      id: "has-tests",
+      severity: "error",
+      ok: false,
+      detail: "0 file(s); required tests not proven",
+    });
+  } else {
+    findings.push({
+      id: "has-tests",
+      severity: "info",
+      ok: true,
+      detail: "0 file(s) (tests not required)",
     });
   }
 
   const verdict = findings.some((f) => !f.ok && f.severity === "error")
     ? "fail"
     : "pass";
-  return { verdict, findings, mrRef, projectId };
+  return {
+    verdict,
+    findings,
+    mrRef,
+    projectId,
+    workPackageId,
+    testExecution,
+  };
 }

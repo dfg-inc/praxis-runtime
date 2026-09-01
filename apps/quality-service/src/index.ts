@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { QualityStore } from "./store.js";
-import { reviewPath, type DevQualityHandoff } from "./review-engine.js";
-import { groupFindingsByFingerprint } from "./fingerprint.js";
+import { type DevQualityHandoff } from "./review-engine.js";
+import { performPathReview } from "./review-orchestrator.js";
 
 export type CliArgs = {
   command: string;
@@ -48,37 +48,36 @@ export function runCli(
           readFileSync(flags.handoff, "utf8"),
         ) as DevQualityHandoff;
       }
-      const reviewed = reviewPath({
-        path,
-        projectId: flags.project ?? "default",
-        handoff,
-        handoffPath: flags.handoff,
-        rerunTests: flags["skip-tests"] === "true" ? false : true,
-      });
-      const groups = groupFindingsByFingerprint(reviewed.findings);
-      const row = store.addReview({
-        mrRef: reviewed.mrRef,
-        projectId: reviewed.projectId,
-        result: reviewed.verdict,
-        notes: JSON.stringify({ findings: reviewed.findings, groups }),
-      });
-      store.addAudit({
-        path,
-        projectId: reviewed.projectId,
-        findings: JSON.stringify(reviewed.findings),
-      });
-      if (reviewed.verdict === "pass" && handoff?.requirementIds?.[0]) {
-        for (const req of handoff.requirementIds) {
-          store.addTaskCompletion({
-            projectId: reviewed.projectId,
-            taskRef: req,
-          });
-        }
+      try {
+        const result = performPathReview(store, {
+          path,
+          projectId: flags.project ?? "default",
+          handoff,
+          requireValidHandoff: false,
+          rerunTests: flags["skip-tests"] === "true" ? false : true,
+        });
+        return {
+          ok: result.verdict === "pass",
+          output: {
+            reviewId: result.reviewId,
+            projectId: result.projectId,
+            workPackageId: result.workPackageId,
+            verdict: result.verdict,
+            findings: result.findings,
+            groups: result.groups,
+            testExecution: result.testExecution,
+            review: result.review,
+            mrRef: result.mrRef,
+          },
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          output: {
+            error: err instanceof Error ? err.message : String(err),
+          },
+        };
       }
-      return {
-        ok: reviewed.verdict === "pass",
-        output: { review: row, groups, ...reviewed },
-      };
     }
     case "audit": {
       const path = flags.path;
@@ -117,5 +116,8 @@ export function runCli(
 
 export { QualityStore } from "./store.js";
 export { createQualityApp, startServer } from "./server.js";
-export { reviewPath } from "./review-engine.js";
+export { reviewPath, discoverTestFiles, parseNodeTestCounts } from "./review-engine.js";
 export { groupFindingsByFingerprint } from "./fingerprint.js";
+export { performPathReview, reviewResponseFromRow } from "./review-orchestrator.js";
+export { validateDeveloperQualityHandoff } from "./handoff-validate.js";
+export { resolveAllowedPath } from "./path-security.js";
