@@ -1,6 +1,6 @@
 {
   "name": "@praxis/quality-service",
-  "version": "0.1.0-alpha.7",
+  "version": "0.1.0-alpha.8",
   "private": true,
   "type": "module",
   "description": "Praxis quality-service: reviews, audits, rollback/return metrics",
