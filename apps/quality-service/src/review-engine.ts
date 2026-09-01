@@ -30,20 +30,53 @@ function walkJs(dir: string, out: string[] = []): string[] {
 
 export type AcceptanceCheck = { file: string; contains: string };
 
+export type VerificationCheck = {
+  status: "passed" | "failed" | "skipped";
+  required: boolean;
+};
+
 export type DevQualityHandoff = {
   contract: string;
+  workPackageId?: string;
   mergeRequestRef: string;
   intention: string;
   requirementIds: string[];
   decisionIds: string[];
   verification: {
-    build: boolean;
-    tests: boolean;
-    lint: boolean;
-    packageCriteria: boolean;
+    build: VerificationCheck | boolean;
+    tests: VerificationCheck | boolean;
+    lint: VerificationCheck | boolean;
+    packageCriteria: VerificationCheck | boolean;
   };
   acceptanceChecks?: AcceptanceCheck[];
 };
+
+function normalizeVerificationCheck(
+  raw: VerificationCheck | boolean | undefined,
+  name: string,
+): { ok: boolean; detail: string; status: string } {
+  if (raw && typeof raw === "object" && "status" in raw) {
+    const status = raw.status;
+    // skipped is not a failure for Quality intake; required+not-passed is
+    const ok =
+      status === "passed" ||
+      (status === "skipped" && raw.required === false);
+    return {
+      ok,
+      status,
+      detail: `${status} (required=${raw.required})`,
+    };
+  }
+  if (typeof raw === "boolean") {
+    // Legacy boolean: cannot distinguish skipped — treat as pass/fail only
+    return {
+      ok: raw,
+      status: raw ? "passed" : "failed",
+      detail: `${raw} (legacy-boolean:${name})`,
+    };
+  }
+  return { ok: false, status: "missing", detail: "missing verification check" };
+}
 
 /**
  * Local executable review: handoff verification + static path checks +
@@ -100,11 +133,27 @@ export function reviewPath(input: {
     }
     const v = handoff.verification;
     for (const key of ["build", "tests", "lint", "packageCriteria"] as const) {
+      const norm = normalizeVerificationCheck(v[key], key);
       findings.push({
         id: `verification.${key}`,
-        severity: v[key] ? "info" : "error",
-        ok: !!v[key],
-        detail: String(v[key]),
+        severity: norm.ok ? "info" : "error",
+        ok: norm.ok,
+        detail: norm.detail,
+      });
+    }
+    if (handoff.workPackageId) {
+      findings.push({
+        id: "workPackageId",
+        severity: "info",
+        ok: true,
+        detail: handoff.workPackageId,
+      });
+    } else {
+      findings.push({
+        id: "workPackageId",
+        severity: "error",
+        ok: false,
+        detail: "missing workPackageId on developer.quality.handoff",
       });
     }
     if (!handoff.intention?.trim()) {

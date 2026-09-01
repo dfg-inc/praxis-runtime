@@ -105,15 +105,16 @@ describe("review-path engine", () => {
       rerunTests: false,
       handoff: {
         contract: "developer.quality.handoff",
+        workPackageId: "WP-TEST-001",
         mergeRequestRef: "local/x",
         intention: "fix",
         requirementIds: ["E1-FR1"],
         decisionIds: ["ADR-1"],
         verification: {
-          build: true,
-          tests: false,
-          lint: true,
-          packageCriteria: false,
+          build: { status: "passed", required: false },
+          tests: { status: "failed", required: true },
+          lint: { status: "passed", required: false },
+          packageCriteria: { status: "failed", required: true },
         },
       },
     });
