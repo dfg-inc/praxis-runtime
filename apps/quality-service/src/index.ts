@@ -12,6 +12,10 @@ import {
   recordRollbackEvent,
   resolveQualityReturn,
 } from "./quality-governance.js";
+import {
+  buildCiContextRequest,
+  qualityServiceUnavailableStep,
+} from "@praxis/contracts";
 
 export type CliArgs = {
   command: string;
@@ -88,6 +92,24 @@ export function runCli(
             review: result.review,
             mrRef: result.mrRef,
           },
+        };
+      }
+      case "review-mr-preview": {
+        const preview = buildCiContextRequest({
+          provider: (flags.provider ?? "gitlab") as "gitlab" | "github",
+          baseUrl: flags["base-url"] ?? "https://gitlab.example.com",
+          token: flags.token ?? process.env.PRAXIS_GIT_TOKEN,
+          projectPath: flags.project ?? "group/app",
+          mergeRequestIid: flags.mr,
+          sha: flags.sha,
+        });
+        const unavailable =
+          flags["quality-down"] === "true"
+            ? qualityServiceUnavailableStep()
+            : undefined;
+        return {
+          ok: true,
+          output: { preview, unavailable, wouldWrite: false },
         };
       }
       case "review-mr": {
@@ -232,6 +254,7 @@ export function runCli(
               "praxis-quality review --mr <ref> [--project <id>] [--result pass|fail]",
               "praxis-quality review-path --path <repo> [--handoff <json>] [--project <id>]",
               "praxis-quality review-mr --context <json> [--handoff <json>]",
+              "praxis-quality review-mr-preview --provider gitlab|github [--base-url u] [--project p] [--mr iid] [--sha s] [--quality-down]",
               "praxis-quality audit --path <repo> [--project <id>] [--out-dir <dir>]",
               "praxis-quality audit-report --id <n>",
               "praxis-quality report --project <id>",
