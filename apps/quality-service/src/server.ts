@@ -10,6 +10,16 @@ import {
 } from "./review-orchestrator.js";
 import { PathSecurityError } from "./path-security.js";
 import { HandoffValidationError } from "./handoff-validate.js";
+import {
+  analyzeRepeatedFindings,
+  createQualityReturn,
+  GovernanceError,
+  performCodebaseAudit,
+  performMrReview,
+  recordHotfixEvent,
+  recordRollbackEvent,
+  resolveQualityReturn,
+} from "./quality-governance.js";
 
 function readJsonBody(req: IncomingMessage): Promise<unknown> {
   return new Promise((resolve, reject) => {
@@ -49,7 +59,11 @@ function errorPayload(err: unknown): {
   status: number;
   body: Record<string, unknown>;
 } {
-  if (err instanceof PathSecurityError || err instanceof HandoffValidationError) {
+  if (
+    err instanceof PathSecurityError ||
+    err instanceof HandoffValidationError ||
+    err instanceof GovernanceError
+  ) {
     return {
       status: err.statusCode,
       body: {
@@ -165,6 +179,169 @@ export function createQualityApp(store: QualityStore) {
             findings: result.findings,
             testExecution: result.testExecution,
           });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/reviews/mr") {
+          const body = (await readJsonBody(req)) as {
+            context?: unknown;
+            handoff?: unknown;
+            skipTests?: boolean;
+          };
+          if (!body?.context) {
+            sendJson(res, 400, { error: "invalid_request", message: "context is required" });
+            return;
+          }
+          const result = performMrReview(store, {
+            context: body.context,
+            handoff: body.handoff as never,
+            rerunTests: body.skipTests === true ? false : true,
+          });
+          sendJson(res, 200, {
+            reviewId: result.reviewId,
+            projectId: result.projectId,
+            workPackageId: result.workPackageId,
+            verdict: result.verdict,
+            findings: result.findings,
+            mrRef: result.mrRef,
+            testExecution: result.testExecution,
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/audits") {
+          const body = (await readJsonBody(req)) as {
+            path?: string;
+            projectId?: string;
+          };
+          if (!body?.path) {
+            sendJson(res, 400, { error: "invalid_request", message: "path is required" });
+            return;
+          }
+          const result = performCodebaseAudit(store, {
+            path: body.path,
+            projectId: body.projectId ?? "default",
+          });
+          sendJson(res, 200, result);
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname.startsWith("/audits/")) {
+          const idRaw = url.pathname.slice("/audits/".length);
+          if (!/^\d+$/.test(idRaw)) {
+            sendJson(res, 400, { error: "invalid_audit_id", message: "audit id must be a positive integer" });
+            return;
+          }
+          const row = store.getAudit(Number(idRaw));
+          if (!row) {
+            sendJson(res, 404, { error: "not_found", message: `audit ${idRaw} not found` });
+            return;
+          }
+          sendJson(res, 200, {
+            audit: row,
+            report: row.report_json ? JSON.parse(row.report_json) : null,
+            reportMd: row.report_md,
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/rollbacks") {
+          const body = (await readJsonBody(req)) as { event?: unknown; repo?: string };
+          const row = recordRollbackEvent(store, body.event ?? body, { repo: body.repo });
+          sendJson(res, 200, row);
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/rollbacks") {
+          const project = url.searchParams.get("project");
+          if (!project) {
+            sendJson(res, 400, { error: "invalid_request", message: "project is required" });
+            return;
+          }
+          sendJson(res, 200, {
+            rollbacks: store.listRollbacks(project),
+            hotfixes: store.listHotfixes(project),
+          });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/hotfixes") {
+          const body = (await readJsonBody(req)) as { event?: unknown; repo?: string };
+          if (!body.repo) {
+            sendJson(res, 400, { error: "invalid_request", message: "repo is required" });
+            return;
+          }
+          const row = recordHotfixEvent(store, body.event ?? body, { repo: body.repo });
+          sendJson(res, 200, row);
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/returns") {
+          const body = (await readJsonBody(req)) as {
+            reviewId?: number;
+            source?: "qa" | "code-review";
+            blockingFindingIds?: string[];
+            reason?: string;
+          };
+          if (!body.reviewId || !body.source || !body.blockingFindingIds) {
+            sendJson(res, 400, {
+              error: "invalid_request",
+              message: "reviewId, source, blockingFindingIds required",
+            });
+            return;
+          }
+          const row = createQualityReturn(store, {
+            reviewId: body.reviewId,
+            source: body.source,
+            blockingFindingIds: body.blockingFindingIds,
+            reason: body.reason ?? "blocking findings",
+          });
+          sendJson(res, 200, row);
+          return;
+        }
+
+        if (req.method === "POST" && /^\/returns\/\d+\/resolve$/.test(url.pathname)) {
+          const id = Number(url.pathname.split("/")[2]);
+          const body = (await readJsonBody(req)) as { followUpReviewId?: number };
+          if (!body.followUpReviewId) {
+            sendJson(res, 400, { error: "invalid_request", message: "followUpReviewId required" });
+            return;
+          }
+          sendJson(res, 200, resolveQualityReturn(store, {
+            returnId: id,
+            followUpReviewId: body.followUpReviewId,
+          }));
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/returns") {
+          const project = url.searchParams.get("project");
+          if (!project) {
+            sendJson(res, 400, { error: "invalid_request", message: "project is required" });
+            return;
+          }
+          sendJson(res, 200, store.listReturns(project));
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/norms/analyze") {
+          const body = (await readJsonBody(req)) as {
+            projectId?: string;
+            knowledgeStorePath?: string;
+            threshold?: number;
+          };
+          if (!body.projectId || !body.knowledgeStorePath) {
+            sendJson(res, 400, {
+              error: "invalid_request",
+              message: "projectId and knowledgeStorePath required",
+            });
+            return;
+          }
+          sendJson(res, 200, analyzeRepeatedFindings(store, {
+            projectId: body.projectId,
+            knowledgeStorePath: body.knowledgeStorePath,
+            threshold: body.threshold,
+          }));
           return;
         }
 

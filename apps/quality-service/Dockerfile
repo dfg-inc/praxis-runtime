@@ -5,10 +5,12 @@ WORKDIR /workspace
 
 COPY package.json package-lock.json ./
 COPY packages/contracts ./packages/contracts
+COPY packages/knowledge ./packages/knowledge
 COPY apps/quality-service ./apps/quality-service
 
-RUN npm install -w @praxis/contracts -w @praxis/quality-service \
+RUN npm install -w @praxis/contracts -w @praxis/knowledge -w @praxis/quality-service \
   && npm run build -w @praxis/contracts \
+  && npm run build -w @praxis/knowledge \
   && npm run build -w @praxis/quality-service
 
 WORKDIR /workspace/apps/quality-service

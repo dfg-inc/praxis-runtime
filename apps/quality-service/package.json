@@ -23,7 +23,8 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@praxis/contracts": "*"
+    "@praxis/contracts": "*",
+    "@praxis/knowledge": "*"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",
