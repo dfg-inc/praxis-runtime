@@ -8,7 +8,7 @@ WP ?=
 REPO ?= .
 CONFIRM ?=
 
-.PHONY: setup verify release-local install-test demo-prepare jira-smoke jira-epic jira-status ba architect developer qa ba-preview ba-status ba-apply architect-preview architect-status developer-status qa-status quality-up quality-down quality-report demo-status demo-reset help
+.PHONY: setup verify release-local install-test demo-prepare jira-smoke jira-epic jira-status jira-discover ba architect developer qa ba-preview ba-status ba-apply architect-preview architect-status developer-status qa-status quality-up quality-down quality-report demo-status demo-reset help
 
 help:
 	@echo "Praxis make targets — see docs/commands.md"
@@ -32,6 +32,9 @@ demo-prepare: release-local install-test
 
 jira-smoke:
 	$(PRAXIS) jira-smoke
+
+jira-discover:
+	$(PRAXIS) jira-discover
 
 jira-epic:
 	$(PRAXIS) jira-epic --epic "$(EPIC)"
