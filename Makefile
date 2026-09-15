@@ -1,6 +1,4 @@
 # Praxis one-line commands (macOS / BSD Make compatible)
-# Load optional local secrets without printing them:
-#   make ba EPIC=PRX-1 REPO=.
 SHELL := /bin/sh
 PRAXIS := node tools/praxis.mjs
 VERSION ?=
@@ -10,15 +8,12 @@ WP ?=
 REPO ?= .
 CONFIRM ?=
 
-.PHONY: setup verify release-local install-test demo-prepare jira-smoke jira-epic ba architect developer quality-up quality-down qa quality-report jira-preview-write jira-workflow-preview jira-workflow-live demo-status demo-reset help
+.PHONY: setup verify release-local install-test demo-prepare jira-smoke jira-epic jira-status ba architect developer qa ba-preview ba-status ba-apply architect-preview architect-status developer-status qa-status quality-up quality-down quality-report demo-status demo-reset help
 
 help:
 	@echo "Praxis make targets — see docs/commands.md"
-	@echo "  make setup"
-	@echo "  make verify"
-	@echo "  make release-local VERSION=$(VERSION)"
-	@echo "  make jira-smoke"
-	@echo "  make ba EPIC=PRX-1 REPO=$(REPO)"
+	@echo "  make ba EPIC=PRX-1 REPO=$(REPO)          # Claude BA"
+	@echo "  make ba-preview EPIC=PRX-1 REPO=$(REPO)  # machine only"
 
 setup:
 	$(PRAXIS) setup
@@ -41,37 +36,47 @@ jira-smoke:
 jira-epic:
 	$(PRAXIS) jira-epic --epic "$(EPIC)"
 
-jira-workflow-preview:
-	$(PRAXIS) jira-workflow-preview --epic "$(EPIC)" --repo "$(REPO)"
-
-jira-preview-write: jira-workflow-preview
-
-jira-workflow-live:
-	$(PRAXIS) jira-workflow-live --epic "$(EPIC)" --confirm "$(CONFIRM)"
+jira-status:
+	$(PRAXIS) jira-status --epic "$(EPIC)"
 
 ba:
-	@echo "Start Claude Code in $(REPO) with praxis-ba enabled, then:"
-	@echo "  Analyze Jira Epic $(EPIC) using skill session-start then the BA Jira flow."
-	@echo "Machine dry-run:"
-	@$(PRAXIS) jira-workflow-preview --epic "$(EPIC)" --repo "$(REPO)"
+	$(PRAXIS) ba --epic "$(EPIC)" --repo "$(REPO)"
 
 architect:
-	@echo "Start Claude Code in $(REPO) with praxis-architect enabled for Epic $(EPIC)."
-	@$(PRAXIS) jira-workflow-preview --epic "$(EPIC)" --repo "$(REPO)"
+	$(PRAXIS) architect --epic "$(EPIC)" --repo "$(REPO)"
 
 developer:
-	@echo "Start Claude Code in $(REPO) with praxis-developer enabled for Work Package $(WP)."
-	@echo "Claim (needs live Jira env): node -e \"console.log('see docs/workflows/jira-developer.md')\""
+	$(PRAXIS) developer --wp "$(WP)" --repo "$(REPO)"
+
+qa:
+	$(PRAXIS) qa --wp "$(WP)" --repo "$(REPO)"
+
+ba-preview:
+	$(PRAXIS) ba-preview --epic "$(EPIC)" --repo "$(REPO)"
+
+ba-status:
+	$(PRAXIS) ba-status --epic "$(EPIC)"
+
+ba-apply:
+	$(PRAXIS) ba-apply --epic "$(EPIC)" --repo "$(REPO)" --confirm "$(CONFIRM)"
+
+architect-preview:
+	$(PRAXIS) architect-preview --epic "$(EPIC)" --repo "$(REPO)"
+
+architect-status:
+	$(PRAXIS) architect-status --epic "$(EPIC)"
+
+developer-status:
+	$(PRAXIS) developer-status --epic "$(EPIC)"
+
+qa-status:
+	$(PRAXIS) qa-status --epic "$(EPIC)"
 
 quality-up:
 	$(PRAXIS) quality-up
 
 quality-down:
 	$(PRAXIS) quality-down
-
-qa:
-	@echo "Start Claude Code in $(REPO) with praxis-quality enabled for WP $(WP)."
-	@echo "Or: node plugins/quality/tools/qa-verify.mjs --wp $(WP) --repo $(REPO)"
 
 quality-report:
 	@echo "cat $(REPO)/.praxis-jira/quality/$(WP).md"
