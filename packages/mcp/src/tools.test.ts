@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -9,9 +9,10 @@ import {
   type JiraConfig,
 } from "@praxis/jira";
 import { callTool, toolsForRole, TOOLS } from "./tools.js";
-import { handleRpc, parseRoleArgv, readMcpMessages, encodeMcpFrame } from "./server.js";
+import { parseRoleArgv, PraxisMcpRoleError } from "./server.js";
+import { PRAXIS_MCP_SDK } from "./protocol.js";
 
-const VERSION = "0.1.0-alpha.29";
+const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 function cfg(): JiraConfig {
   return {
@@ -102,34 +103,34 @@ describe("role tool catalogs", () => {
     }
   });
 
-  it("parseRoleArgv reads --role", () => {
+  it("parseRoleArgv reads --role and rejects invalid/missing", () => {
     expect(parseRoleArgv(["--role", "ba"])).toBe("ba");
-    expect(parseRoleArgv([])).toBe("architect");
+    expect(parseRoleArgv(["--role", "architect"])).toBe("architect");
+    expect(parseRoleArgv(["--role", "developer"])).toBe("developer");
+    expect(parseRoleArgv(["--role", "quality"])).toBe("quality");
+    expect(() => parseRoleArgv([])).toThrow(PraxisMcpRoleError);
+    expect(() => parseRoleArgv(["--role", "nope"])).toThrow(/PRAXIS_MCP_ROLE_INVALID/);
   });
 });
 
-describe("MCP handshake", () => {
-  it("initialize and tools/list", async () => {
-    const init = await handleRpc(
-      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05" } },
-      "architect",
-      VERSION,
-    );
-    expect(init?.result).toMatchObject({
-      serverInfo: { name: "praxis", version: VERSION },
-    });
-    const list = await handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, "architect", VERSION);
-    const tools = (list?.result as { tools: { name: string; inputSchema: unknown }[] }).tools;
-    expect(tools.some((t) => t.name === "praxis_architect_preview")).toBe(true);
-    expect(tools.some((t) => t.name === "praxis_developer_complete")).toBe(false);
-    expect(tools.every((t) => t.inputSchema && typeof t.inputSchema === "object")).toBe(true);
+describe("stdio protocol surface", () => {
+  it("uses official SDK serveStdio dual-era, not a custom parser", () => {
+    expect(PRAXIS_MCP_SDK.stdioApi).toBe("serveStdio");
+    expect(PRAXIS_MCP_SDK.modernRevision).toBe("2026-07-28");
+    expect(PRAXIS_MCP_SDK.legacyMode).toBe("serve");
+    const src = readFileSync(new URL("./server.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/serveStdio\(/);
+    expect(src).not.toMatch(/encodeMcpFrame/);
+    expect(src).not.toMatch(/Content-Length/);
   });
 
-  it("frames Content-Length messages", () => {
-    const frame = encodeMcpFrame({ jsonrpc: "2.0", id: 1, method: "ping" });
-    const { messages, rest } = readMcpMessages(frame);
-    expect(rest.length).toBe(0);
-    expect(messages[0]).toMatchObject({ method: "ping", id: 1 });
+  it("never writes diagnostics to stdout", () => {
+    const dir = new URL("./", import.meta.url);
+    const files = readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
+    for (const file of files) {
+      const text = readFileSync(new URL(file, dir), "utf8");
+      expect(text, file).not.toMatch(/console\.log\(/);
+    }
   });
 });
 

@@ -23,9 +23,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@modelcontextprotocol/server": "^2.0.0",
     "@praxis/cli": "*",
     "@praxis/jira": "*",
-    "@praxis/project-config": "*"
+    "@praxis/project-config": "*",
+    "zod": "^4.6.5"
   },
   "files": [
     "dist",
@@ -35,5 +37,8 @@
     "@types/node": "^22.20.0",
     "typescript": "~5.8.3",
     "vitest": "^3.2.4"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }
