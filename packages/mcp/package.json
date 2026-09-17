@@ -1,0 +1,39 @@
+{
+  "name": "@praxis/mcp",
+  "version": "0.1.0-alpha.28",
+  "private": true,
+  "type": "module",
+  "description": "Praxis MCP adapter for Claude UI / Cowork hosted plugins. Protocol adapter over @praxis/cli operations; not a second business-logic copy. Bundled into claude-plugins ZIPs; not independently published as tgz because hosted plugins cannot npm-install.",
+  "license": "UNLICENSED",
+  "main": "./dist/main.js",
+  "types": "./dist/main.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/main.d.ts",
+      "default": "./dist/main.js"
+    },
+    "./server": {
+      "types": "./dist/server.d.ts",
+      "default": "./dist/server.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@praxis/cli": "*",
+    "@praxis/jira": "*",
+    "@praxis/project-config": "*"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "devDependencies": {
+    "@types/node": "^22.20.0",
+    "typescript": "~5.8.3",
+    "vitest": "^3.2.4"
+  }
+}
