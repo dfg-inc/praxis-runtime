@@ -10,7 +10,7 @@ WP ?=
 REPO ?= .
 CONFIRM ?=
 
-.PHONY: setup verify release-local install-test demo-prepare jira-smoke jira-epic jira-status jira-discover ba architect developer qa ba-preview ba-status ba-apply architect-preview architect-apply architect-status developer-status qa-status quality-up quality-down quality-report quality-ensure demo-status demo-reset claude-plugins verify-claude-plugins help
+.PHONY: setup verify release-local install-test demo-prepare jira-smoke jira-epic jira-status jira-discover ba architect developer qa ba-preview ba-status ba-apply architect-preview architect-apply architect-status developer-status qa-status quality-up quality-down quality-report quality-ensure demo-status demo-reset claude-plugins verify-claude-plugins sync-claude-plugins help
 
 help:
 	@echo "Praxis make targets — convenience wrappers over public CLI (see docs/cli and docs/claude-ui)"
@@ -104,3 +104,6 @@ claude-plugins:
 
 verify-claude-plugins:
 	node tools/scripts/verify-claude-plugins.mjs --version "$(VERSION)"
+
+sync-claude-plugins:
+	node tools/scripts/sync-claude-plugins.mjs --version "$(VERSION)"
