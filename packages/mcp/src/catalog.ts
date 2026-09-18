@@ -191,7 +191,11 @@ export const TOOLS: ToolDef[] = [
       properties: {
         epic: epicProp,
         repo: repoProp,
-        workPackageId: { type: "string", description: "Optional local WP id hint" },
+        workPackageId: {
+          type: "string",
+          description:
+            "Explicit materialization scope: only this local WP may be CREATE/UPDATE/LINK. Not a hint. If omitted and multiple materializable WPs exist, preview returns WORK_PACKAGE_SCOPE_AMBIGUOUS.",
+        },
       },
       required: ["epic"],
       additionalProperties: false,
@@ -208,7 +212,11 @@ export const TOOLS: ToolDef[] = [
       properties: {
         epic: epicProp,
         repo: repoProp,
-        workPackageId: { type: "string" },
+        workPackageId: {
+          type: "string",
+          description:
+            "Must match the previewed WP scope. Apply uses this exact fingerprinted plan; it does not rediscover sibling WPs.",
+        },
         confirmation: confirmProp,
         previewFingerprint: fingerprintProp,
       },
