@@ -263,7 +263,8 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "praxis_developer_status",
-    description: "READ-ONLY Developer WP status (local id and Jira key). Role: Developer.",
+    description:
+      "READ-ONLY Developer WP status (local id, Jira key, current status, available transitions). Role: Developer.",
     inputSchema: {
       type: "object",
       properties: { workPackage: wpProp, repo: repoProp },

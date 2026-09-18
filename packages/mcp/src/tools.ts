@@ -94,6 +94,7 @@ export async function callTool(
         ? {
             ...(err.stage ? { stage: err.stage } : {}),
             ...(typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {}),
+            ...(err.details ? err.details : {}),
           }
         : {};
     return mcpEnvelope({
