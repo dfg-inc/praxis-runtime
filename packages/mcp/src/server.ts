@@ -45,10 +45,15 @@ export function createPraxisMcpServer(opts: { role: PraxisRole; version: string 
         description: tool.description,
         inputSchema: jsonSchemaToZod(tool.inputSchema),
       },
-      async (args) => {
+      async (args, extra) => {
+        const signal =
+          extra && typeof extra === "object" && "signal" in extra
+            ? (extra as { signal?: AbortSignal }).signal
+            : undefined;
         const envelope = await callTool(tool.name, args ?? {}, {
           role: opts.role,
           version: opts.version,
+          extra: { signal },
         });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(envelope) }],

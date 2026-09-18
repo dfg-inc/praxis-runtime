@@ -38,6 +38,8 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
     actor: str(args.actor),
     requirePreviewFingerprint: extra?.requirePreviewFingerprint,
     provider: extra?.provider,
+    signal: extra?.signal,
+    deadlineMs: extra?.deadlineMs,
   };
 }
 
@@ -87,12 +89,20 @@ export async function callTool(
   } catch (err) {
     const message = ops.redact(err instanceof Error ? err.message : String(err));
     const code = err instanceof ops.PraxisOpError ? err.code : "EXTERNAL_SERVICE_ERROR";
+    const details =
+      err instanceof ops.PraxisOpError
+        ? {
+            ...(err.stage ? { stage: err.stage } : {}),
+            ...(typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {}),
+          }
+        : {};
     return mcpEnvelope({
       ok: false,
       operation: name,
       version: opts.version,
       code,
       errors: [message],
+      data: details,
     });
   }
 }

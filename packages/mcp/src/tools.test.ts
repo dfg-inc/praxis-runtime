@@ -150,6 +150,13 @@ describe("stdio protocol surface", () => {
       expect(text, file).not.toMatch(/console\.log\(/);
     }
   });
+
+  it("does not advertise MCP roots capability", () => {
+    const src = readFileSync(new URL("./server.ts", import.meta.url), "utf8");
+    expect(src).toMatch(/capabilities: \{ tools: \{ listChanged: false \} \}/);
+    expect(src).not.toMatch(/roots:/);
+    expect(src).not.toMatch(/list_changed/);
+  });
 });
 
 describe("doctor and capability codes", () => {
