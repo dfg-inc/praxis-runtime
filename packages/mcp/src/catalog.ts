@@ -1,4 +1,4 @@
-export const PRAXIS_ROLES = ["ba", "architect", "developer", "quality"] as const;
+export const PRAXIS_ROLES = ["ba", "architect", "developer", "quality", "runtime"] as const;
 
 export type PraxisRole = (typeof PRAXIS_ROLES)[number];
 
@@ -367,18 +367,25 @@ export const TOOLS: ToolDef[] = [
 ];
 
 export function toolsForRole(role: PraxisRole): ToolDef[] {
+  if (role === "runtime") return TOOLS;
   return TOOLS.filter((t) => t.roles.includes(role));
 }
 
 export function isPraxisRole(raw: unknown): raw is PraxisRole {
-  return raw === "ba" || raw === "architect" || raw === "developer" || raw === "quality";
+  return (
+    raw === "ba" ||
+    raw === "architect" ||
+    raw === "developer" ||
+    raw === "quality" ||
+    raw === "runtime"
+  );
 }
 
 export class PraxisMcpRoleError extends Error {
   readonly code = "PRAXIS_MCP_ROLE_INVALID";
   constructor(raw: string | undefined) {
     super(
-      `PRAXIS_MCP_ROLE_INVALID: expected ba|architect|developer|quality, got ${JSON.stringify(raw ?? "")}`,
+      `PRAXIS_MCP_ROLE_INVALID: expected ba|architect|developer|quality|runtime, got ${JSON.stringify(raw ?? "")}`,
     );
     this.name = "PraxisMcpRoleError";
   }

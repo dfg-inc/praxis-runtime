@@ -14,6 +14,22 @@ import { PRAXIS_MCP_SDK } from "./protocol.js";
 
 const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
+function restoreEnv(previous: {
+  token?: string;
+  base?: string;
+  email?: string;
+  project?: string;
+}) {
+  if (previous.token) process.env.PRAXIS_JIRA_TOKEN = previous.token;
+  else delete process.env.PRAXIS_JIRA_TOKEN;
+  if (previous.base) process.env.PRAXIS_JIRA_BASE_URL = previous.base;
+  else delete process.env.PRAXIS_JIRA_BASE_URL;
+  if (previous.email) process.env.PRAXIS_JIRA_EMAIL = previous.email;
+  else delete process.env.PRAXIS_JIRA_EMAIL;
+  if (previous.project) process.env.PRAXIS_JIRA_PROJECT_KEY = previous.project;
+  else delete process.env.PRAXIS_JIRA_PROJECT_KEY;
+}
+
 function cfg(): JiraConfig {
   return {
     mode: "cloud",
@@ -97,6 +113,7 @@ describe("role tool catalogs", () => {
     expect(toolsForRole("ba").map((t) => t.name)).not.toContain("praxis_architect_apply");
     expect(toolsForRole("developer").map((t) => t.name)).toContain("praxis_developer_claim");
     expect(toolsForRole("quality").map((t) => t.name)).toContain("praxis_quality_review");
+    expect(toolsForRole("runtime").map((t) => t.name)).toEqual(TOOLS.map((t) => t.name));
     for (const t of TOOLS) {
       expect(t.inputSchema.type).toBe("object");
       expect(t.description.length).toBeGreaterThan(20);
@@ -108,6 +125,7 @@ describe("role tool catalogs", () => {
     expect(parseRoleArgv(["--role", "architect"])).toBe("architect");
     expect(parseRoleArgv(["--role", "developer"])).toBe("developer");
     expect(parseRoleArgv(["--role", "quality"])).toBe("quality");
+    expect(parseRoleArgv(["--role", "runtime"])).toBe("runtime");
     expect(() => parseRoleArgv([])).toThrow(PraxisMcpRoleError);
     expect(() => parseRoleArgv(["--role", "nope"])).toThrow(/PRAXIS_MCP_ROLE_INVALID/);
   });
@@ -137,23 +155,114 @@ describe("stdio protocol surface", () => {
 describe("doctor and capability codes", () => {
   it("does not expose secrets and reports missing repo/jira", async () => {
     const missing = join(tmpdir(), "praxis-missing-repo-xyz");
-    const env = process.env.PRAXIS_JIRA_TOKEN;
+    const env = {
+      token: process.env.PRAXIS_JIRA_TOKEN,
+      base: process.env.PRAXIS_JIRA_BASE_URL,
+      email: process.env.PRAXIS_JIRA_EMAIL,
+      project: process.env.PRAXIS_JIRA_PROJECT_KEY,
+    };
     delete process.env.PRAXIS_JIRA_TOKEN;
     delete process.env.PRAXIS_JIRA_BASE_URL;
+    delete process.env.PRAXIS_JIRA_EMAIL;
     delete process.env.PRAXIS_JIRA_PROJECT_KEY;
     try {
-      const result = await callTool("praxis_doctor", { repo: missing }, { role: "architect", version: VERSION });
+      const result = await callTool("praxis_doctor", { repo: missing }, { role: "runtime", version: VERSION });
       expect(result.ok).toBe(true);
       expect(result.contract).toBe("praxis.mcp.result");
       const text = JSON.stringify(result);
       expect(text).not.toMatch(/secret-jira-token-value/);
       expect(text).not.toMatch(/Authorization/);
-      expect((result.data as { codes: { repository?: string; jira?: string } }).codes.repository).toBe(
-        "REPOSITORY_UNAVAILABLE",
-      );
-      expect((result.data as { codes: { jira?: string } }).codes.jira).toBe("JIRA_CONFIG_UNAVAILABLE");
+      expect(text).not.toMatch(/SECRET_FIXTURE_VALUE/);
+      const data = result.data as {
+        jira: {
+          baseUrlConfigured: boolean;
+          emailConfigured: boolean;
+          projectKeyConfigured: boolean;
+          tokenConfigured: boolean;
+          missing: string[];
+        };
+        codes: { repository?: string; jira?: string };
+        capabilities: { praxisRuntime?: string };
+      };
+      expect(data.capabilities.praxisRuntime).toBe("ok");
+      expect(data.jira.baseUrlConfigured).toBe(false);
+      expect(data.jira.emailConfigured).toBe(false);
+      expect(data.jira.projectKeyConfigured).toBe(false);
+      expect(data.jira.tokenConfigured).toBe(false);
+      expect(data.jira.missing).toEqual([
+        "jira_base_url",
+        "jira_email",
+        "jira_project_key",
+        "jira_token",
+      ]);
+      expect(data.codes.repository).toBe("REPOSITORY_UNAVAILABLE");
+      expect(data.codes.jira).toBe("JIRA_CONFIG_UNAVAILABLE");
+      expect(data).not.toHaveProperty("connected");
     } finally {
-      if (env) process.env.PRAXIS_JIRA_TOKEN = env;
+      if (env.token) process.env.PRAXIS_JIRA_TOKEN = env.token;
+      if (env.base) process.env.PRAXIS_JIRA_BASE_URL = env.base;
+      if (env.email) process.env.PRAXIS_JIRA_EMAIL = env.email;
+      if (env.project) process.env.PRAXIS_JIRA_PROJECT_KEY = env.project;
+    }
+  });
+
+  it("reports configured flags from env without Jira network or token leak", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-doctor-cfg-"));
+    const previous = {
+      token: process.env.PRAXIS_JIRA_TOKEN,
+      base: process.env.PRAXIS_JIRA_BASE_URL,
+      email: process.env.PRAXIS_JIRA_EMAIL,
+      project: process.env.PRAXIS_JIRA_PROJECT_KEY,
+    };
+    process.env.PRAXIS_SKIP_DOTENV = "1";
+    process.env.PRAXIS_JIRA_BASE_URL = "https://example.invalid";
+    process.env.PRAXIS_JIRA_EMAIL = "test@example.com";
+    process.env.PRAXIS_JIRA_PROJECT_KEY = "PRX";
+    process.env.PRAXIS_JIRA_TOKEN = "SECRET_FIXTURE_VALUE";
+    try {
+      const started = Date.now();
+      const result = await callTool("praxis_doctor", { repo }, { role: "runtime", version: VERSION });
+      expect(Date.now() - started).toBeLessThan(2500);
+      expect(result.ok).toBe(true);
+      const jira = (result.data as { jira: Record<string, unknown> }).jira;
+      expect(jira.baseUrlConfigured).toBe(true);
+      expect(jira.emailConfigured).toBe(true);
+      expect(jira.projectKeyConfigured).toBe(true);
+      expect(jira.tokenConfigured).toBe(true);
+      expect(JSON.stringify(result)).not.toMatch(/SECRET_FIXTURE_VALUE/);
+      expect(JSON.stringify(result)).not.toMatch(/Authorization/);
+    } finally {
+      restoreEnv(previous);
+    }
+  });
+
+  it("identifies missing token without a Jira network request", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-partial-jira-"));
+    const previous = {
+      token: process.env.PRAXIS_JIRA_TOKEN,
+      base: process.env.PRAXIS_JIRA_BASE_URL,
+      email: process.env.PRAXIS_JIRA_EMAIL,
+      project: process.env.PRAXIS_JIRA_PROJECT_KEY,
+    };
+    process.env.PRAXIS_SKIP_DOTENV = "1";
+    process.env.PRAXIS_JIRA_BASE_URL = "https://example.invalid";
+    process.env.PRAXIS_JIRA_EMAIL = "test@example.com";
+    process.env.PRAXIS_JIRA_PROJECT_KEY = "PRX";
+    delete process.env.PRAXIS_JIRA_TOKEN;
+    try {
+      const started = Date.now();
+      const result = await callTool(
+        "praxis_jira_status",
+        { epic: "PRX-1", repo },
+        { role: "runtime", version: VERSION },
+      );
+      expect(Date.now() - started).toBeLessThan(2500);
+      expect(result.ok).toBe(false);
+      expect(result.code).toBe("JIRA_CONFIG_UNAVAILABLE");
+      expect(result.errors.join(" ")).toMatch(/jira_token/);
+      expect(JSON.stringify(result)).not.toMatch(/SECRET_FIXTURE_VALUE/);
+    } finally {
+      restoreEnv(previous);
     }
   });
 });
