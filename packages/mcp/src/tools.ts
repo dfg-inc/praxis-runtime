@@ -70,6 +70,8 @@ export async function callTool(
   }
   if (
     name === "praxis_developer_claim" ||
+    name === "praxis_developer_complete" ||
+    name === "praxis_developer_complete_recovery_apply" ||
     name === "praxis_quality_review" ||
     name === "praxis_quality_report"
   ) {
@@ -156,6 +158,10 @@ async function dispatchTool(
       return ops.developerReleaseOp(ctx);
     case "praxis_developer_complete":
       return ops.developerCompleteOp(ctx);
+    case "praxis_developer_complete_recovery_preview":
+      return ops.developerCompleteRecoveryPreviewOp(ctx);
+    case "praxis_developer_complete_recovery_apply":
+      return ops.developerCompleteRecoveryApplyOp(ctx);
     case "praxis_quality_status":
       return ops.qualityStatusOp(ctx);
     case "praxis_quality_ensure":

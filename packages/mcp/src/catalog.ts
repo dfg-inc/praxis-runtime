@@ -311,7 +311,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_developer_complete",
     description:
-      "WRITE Developer completion evidence. Requires confirmation=YES. Role: Developer. Does not start Quality.",
+      "WRITE Developer completion: run required verification, persist evidence, emit Developer→Quality handoff, keep Jira In Progress. Requires confirmation=YES. Does not start Quality and does not mark the issue Done.",
     inputSchema: {
       type: "object",
       properties: {
@@ -320,6 +320,37 @@ export const TOOLS: ToolDef[] = [
         confirmation: confirmProp,
       },
       required: ["workPackage", "confirmation"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_developer_complete_recovery_preview",
+    description:
+      "READ-ONLY preview to reconcile premature Jira Done / missing Developer evidence or Quality handoff. Does not write Jira or files. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: { workPackage: wpProp, repo: repoProp },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_developer_complete_recovery_apply",
+    description:
+      "WRITE human-gated recovery after premature Jira Done. Requires confirmation=YES and previewFingerprint. Restores development status, then reconciles Developer completion evidence and Quality handoff. Does not start Quality.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
+      },
+      required: ["workPackage", "confirmation", "previewFingerprint"],
       additionalProperties: false,
     },
     roles: ["developer"],

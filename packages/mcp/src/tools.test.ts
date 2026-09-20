@@ -451,12 +451,20 @@ describe("Developer MCP fixture", () => {
       { role: "developer", version: VERSION, extra },
     );
     expect(completeDenied.code).toBe("CONFIRMATION_REQUIRED");
+    writeFileSync(join(repo, "_praxis_verify.mjs"), "console.log('Tests 5 passed'); process.exit(0);\n");
+    writeFileSync(
+      join(repo, ".project"),
+      "stack: [node]\nquality:\n  test: node _praxis_verify.mjs\n",
+    );
     const complete = await callTool(
       "praxis_developer_complete",
       { workPackage: "WP-20260914-002", repo, confirmation: "YES" },
       { role: "developer", version: VERSION, extra },
     );
     expect(complete.ok).toBe(true);
+    expect((complete.data as { readyForQuality?: boolean }).readyForQuality).toBe(true);
+    expect((complete.data as { qualityStarted?: boolean }).qualityStarted).toBe(false);
+    expect((complete.data as { jiraStatusCategory?: string }).jiraStatusCategory).not.toBe("done");
     expect(JSON.stringify(complete)).not.toMatch(/praxis_quality/);
   });
 });
