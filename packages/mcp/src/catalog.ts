@@ -471,6 +471,250 @@ export const TOOLS: ToolDef[] = [
     roles: ["quality"],
     kind: "read",
   },
+  {
+    name: "praxis_developer_git_status",
+    description:
+      "READ-ONLY Git Delivery Assessment: branch, HEAD, working tree, remotes, provider, identity, safety. Does not guess a remote. Never prints credentials. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        provider: { type: "string", enum: ["github", "gitlab"] },
+      },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "read",
+  },
+  {
+    name: "praxis_developer_git_connect_preview",
+    description:
+      "PREVIEW adding or selecting a Git remote (GitHub MVP). Does not write. Does not create a GitHub repository. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        remoteUrl: { type: "string" },
+        provider: { type: "string", enum: ["github", "gitlab"] },
+      },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_developer_git_connect_apply",
+    description:
+      "WRITE git remote add after preview. Requires confirmation=YES and previewFingerprint. Does not push. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        remoteUrl: { type: "string" },
+        provider: { type: "string", enum: ["github", "gitlab"] },
+        confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
+      },
+      required: ["workPackage", "confirmation", "previewFingerprint"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_developer_git_identity_preview",
+    description:
+      "PREVIEW repo-local Git user.name/user.email. Does not invent an author or copy Jira email. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        gitUserName: { type: "string" },
+        gitUserEmail: { type: "string" },
+      },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_developer_git_identity_apply",
+    description:
+      "WRITE repo-local Git identity. Requires confirmation=YES and previewFingerprint. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        gitUserName: { type: "string" },
+        gitUserEmail: { type: "string" },
+        confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
+      },
+      required: ["workPackage", "confirmation", "previewFingerprint", "gitUserName", "gitUserEmail"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_developer_git_preview",
+    description:
+      "READ-ONLY Git Delivery preview: allowlist, hashes, Quality snapshot bind, commit message, fingerprint. Does not branch, stage, commit, push, or write Jira. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        branch: { type: "string" },
+        targetBranch: { type: "string" },
+        files: { type: "array", items: { type: "string" } },
+        commitMessage: { type: "string" },
+        provider: { type: "string", enum: ["github", "gitlab"] },
+      },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_developer_git_commit",
+    description:
+      "WRITE local feature branch, stage allowlist, commit. Requires confirmation=YES and previewFingerprint. No push, no PR, no Jira. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        branch: { type: "string" },
+        targetBranch: { type: "string" },
+        files: { type: "array", items: { type: "string" } },
+        commitMessage: { type: "string" },
+        confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
+      },
+      required: ["workPackage", "confirmation", "previewFingerprint"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_developer_git_publish_preview",
+    description:
+      "PREVIEW push of baseline (empty GitHub repo) or feature branch. Never force-push. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        mode: { type: "string", enum: ["baseline", "branch"] },
+        provider: { type: "string", enum: ["github", "gitlab"] },
+      },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_developer_git_publish",
+    description:
+      "WRITE git push (no --force). Requires confirmation=YES and publish previewFingerprint. Empty remotes need mode=baseline first. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        mode: { type: "string", enum: ["baseline", "branch"] },
+        confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
+      },
+      required: ["workPackage", "confirmation", "previewFingerprint"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_developer_git_merge_request",
+    description:
+      "WRITE GitHub Pull Request or GitLab Merge Request after push. Deduplicates existing PRs. Does not merge and does not claim CI PASS. Requires confirmation=YES. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        targetBranch: { type: "string" },
+        provider: { type: "string", enum: ["github", "gitlab"] },
+        confirmation: confirmProp,
+      },
+      required: ["workPackage", "confirmation"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_developer_git_delivery_status",
+    description:
+      "READ-ONLY Git Delivery journal: commit SHA, remote identity, PR/MR URL, CI status if known. Does not write. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: { workPackage: wpProp, repo: repoProp },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "read",
+  },
+  {
+    name: "praxis_developer_git_link_jira_preview",
+    description:
+      "PREVIEW a Jira comment linking the GitHub PR / GitLab MR. Does not transition PRX-* or re-run Quality Apply. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: { workPackage: wpProp, repo: repoProp },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_developer_git_link_jira_apply",
+    description:
+      "WRITE a Jira comment with the PR/MR URL. Requires confirmation=YES and previewFingerprint. Does not change status. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
+      },
+      required: ["workPackage", "confirmation", "previewFingerprint"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "apply",
+  },
 ];
 
 export function toolsForRole(role: PraxisRole): ToolDef[] {

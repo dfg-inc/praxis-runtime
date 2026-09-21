@@ -41,6 +41,16 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
       : typeof args.reviewId === "string" && /^\d+$/.test(args.reviewId)
         ? Number(args.reviewId)
         : undefined,
+    remoteName: str(args.remoteName),
+    remoteUrl: str(args.remoteUrl),
+    branch: str(args.branch),
+    targetBranch: str(args.targetBranch),
+    files: Array.isArray(args.files) ? args.files.filter((x): x is string => typeof x === "string") : undefined,
+    commitMessage: str(args.commitMessage),
+    gitUserName: str(args.gitUserName),
+    gitUserEmail: str(args.gitUserEmail),
+    gitPublishMode: args.mode === "baseline" ? "baseline" : args.mode === "branch" ? "branch" : undefined,
+    providerKind: args.provider === "gitlab" ? "gitlab" : args.provider === "github" ? "github" : undefined,
     requirePreviewFingerprint: extra?.requirePreviewFingerprint,
     provider: extra?.provider,
     signal: extra?.signal,
@@ -73,14 +83,20 @@ export async function callTool(
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
   }
-  if (name === "praxis_quality_apply") {
+  if (name === "praxis_quality_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_connect_apply") {
     ctx.requirePreviewFingerprint = true;
   }
   if (
     name === "praxis_developer_claim" ||
     name === "praxis_developer_complete" ||
     name === "praxis_developer_complete_recovery_apply" ||
-    name === "praxis_quality_apply"
+    name === "praxis_quality_apply" ||
+    name === "praxis_developer_git_connect_apply" ||
+    name === "praxis_developer_git_identity_apply" ||
+    name === "praxis_developer_git_commit" ||
+    name === "praxis_developer_git_publish" ||
+    name === "praxis_developer_git_merge_request" ||
+    name === "praxis_developer_git_link_jira_apply"
   ) {
     if (ctx.confirmation !== "YES") {
       return mcpEnvelope({
@@ -202,6 +218,32 @@ async function dispatchTool(
       return ops.qualityApplyStatusOp(ctx);
     case "praxis_quality_review_show":
       return ops.qualityReviewShowOp(ctx);
+    case "praxis_developer_git_status":
+      return ops.developerGitStatusOp(ctx);
+    case "praxis_developer_git_connect_preview":
+      return ops.developerGitConnectPreviewOp(ctx);
+    case "praxis_developer_git_connect_apply":
+      return ops.developerGitConnectApplyOp(ctx);
+    case "praxis_developer_git_identity_preview":
+      return ops.developerGitIdentityPreviewOp(ctx);
+    case "praxis_developer_git_identity_apply":
+      return ops.developerGitIdentityApplyOp(ctx);
+    case "praxis_developer_git_preview":
+      return ops.developerGitPreviewOp(ctx);
+    case "praxis_developer_git_commit":
+      return ops.developerGitCommitOp(ctx);
+    case "praxis_developer_git_publish_preview":
+      return ops.developerGitPublishPreviewOp(ctx);
+    case "praxis_developer_git_publish":
+      return ops.developerGitPublishOp(ctx);
+    case "praxis_developer_git_merge_request":
+      return ops.developerGitMergeRequestOp(ctx);
+    case "praxis_developer_git_delivery_status":
+      return ops.developerGitDeliveryStatusOp(ctx);
+    case "praxis_developer_git_link_jira_preview":
+      return ops.developerGitLinkJiraPreviewOp(ctx);
+    case "praxis_developer_git_link_jira_apply":
+      return ops.developerGitLinkJiraApplyOp(ctx);
     default:
       throw new ops.PraxisOpError("INVALID_INPUT", `unknown tool ${name}`);
   }
