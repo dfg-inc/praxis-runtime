@@ -462,6 +462,7 @@ export function startServer(opts: {
     process.exit(1);
   });
   server.listen(port, host, () => {
+    console.error(`[praxis-quality] ready host=${host} port=${port} pid=${process.pid}`);
     console.error(`[praxis-quality] listening host=${host} port=${port} pid=${process.pid}`);
   });
   return server;
