@@ -359,7 +359,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_quality_status",
     description:
-      "READ-ONLY Quality runtime health (not_started / healthy / unavailable / failed) and latest QA review status when workPackage is given. Does not start the service. Role: Quality.",
+      "READ-ONLY Quality runtime health (not_started / starting / healthy / failed / stopped / unknown / unavailable) and Work Package Quality lifecycle when workPackage is given. Does not start the service. Role: Quality.",
     inputSchema: {
       type: "object",
       properties: { repo: repoProp, workPackage: wpProp },
@@ -440,6 +440,36 @@ export const TOOLS: ToolDef[] = [
     },
     roles: ["quality"],
     kind: "apply",
+  },
+  {
+    name: "praxis_quality_apply_status",
+    description:
+      "READ-ONLY Quality Apply postconditions: Jira properties, managed comment lookup, local manifest, apply journal, and consistency. Does not write Jira. Role: Quality.",
+    inputSchema: {
+      type: "object",
+      properties: { workPackage: wpProp, repo: repoProp },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_quality_review_show",
+    description:
+      "READ-ONLY Quality Review by id from Quality storage (HTTP GET /reviews/:id). Does not start Quality and does not write Jira. Role: Quality.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        reviewId: { type: "number", description: "Quality Review id" },
+      },
+      required: ["workPackage", "reviewId"],
+      additionalProperties: false,
+    },
+    roles: ["quality"],
+    kind: "read",
   },
 ];
 

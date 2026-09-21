@@ -36,7 +36,11 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
     confirmation: str(args.confirmation),
     previewFingerprint: str(args.previewFingerprint),
     actor: str(args.actor),
-    reviewId: typeof args.reviewId === "number" ? args.reviewId : undefined,
+    reviewId: typeof args.reviewId === "number"
+      ? args.reviewId
+      : typeof args.reviewId === "string" && /^\d+$/.test(args.reviewId)
+        ? Number(args.reviewId)
+        : undefined,
     requirePreviewFingerprint: extra?.requirePreviewFingerprint,
     provider: extra?.provider,
     signal: extra?.signal,
@@ -194,6 +198,10 @@ async function dispatchTool(
       return ops.qualityApplyPreviewOp(ctx);
     case "praxis_quality_apply":
       return ops.qualityApplyOp(ctx);
+    case "praxis_quality_apply_status":
+      return ops.qualityApplyStatusOp(ctx);
+    case "praxis_quality_review_show":
+      return ops.qualityReviewShowOp(ctx);
     default:
       throw new ops.PraxisOpError("INVALID_INPUT", `unknown tool ${name}`);
   }
