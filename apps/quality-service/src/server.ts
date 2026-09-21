@@ -103,7 +103,14 @@ export function createQualityApp(store: QualityStore) {
         const url = new URL(req.url ?? "/", "http://localhost");
 
         if (req.method === "GET" && url.pathname === "/health") {
-          sendJson(res, 200, { ok: true, service: "quality-service" });
+          sendJson(res, 200, {
+            ok: true,
+            service: "quality-service",
+            allowedRoot: process.env.PRAXIS_QUALITY_ALLOWED_ROOT ?? null,
+            db: process.env.PRAXIS_QUALITY_DB ?? null,
+            pid: process.pid,
+            port: Number(process.env.PRAXIS_QUALITY_PORT ?? process.env.PORT ?? 8787),
+          });
           return;
         }
 
@@ -357,11 +364,19 @@ export function createQualityApp(store: QualityStore) {
 export function startServer(opts: {
   store: QualityStore;
   port?: number;
+  host?: string;
 }): ReturnType<typeof createServer> {
-  const port = opts.port ?? Number(process.env.PORT ?? 8787);
+  const port =
+    opts.port ??
+    Number(process.env.PRAXIS_QUALITY_PORT ?? process.env.PORT ?? 8787);
+  const host = opts.host ?? process.env.PRAXIS_QUALITY_HOST ?? "127.0.0.1";
   const server = createQualityApp(opts.store);
-  server.listen(port, () => {
-    console.log(`quality-service listening on ${port}`);
+  server.on("error", (err) => {
+    console.error(`[praxis-quality] listen failed: ${err instanceof Error ? err.message : String(err)}`);
+    process.exit(1);
+  });
+  server.listen(port, host, () => {
+    console.error(`[praxis-quality] listening host=${host} port=${port} pid=${process.pid}`);
   });
   return server;
 }

@@ -358,7 +358,8 @@ export const TOOLS: ToolDef[] = [
   },
   {
     name: "praxis_quality_status",
-    description: "READ-ONLY Quality runtime health. Role: Quality.",
+    description:
+      "READ-ONLY Quality runtime health (not_started / healthy / unavailable / failed). Does not start the service. Role: Quality.",
     inputSchema: {
       type: "object",
       properties: { repo: repoProp },
@@ -370,7 +371,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_quality_ensure",
     description:
-      "Ensure Quality service is reachable (may start local service). Role: Quality. Not a Jira write.",
+      "Start or reuse the local Quality HTTP service bundled in Praxis Runtime. Does not run Quality Review, does not write Jira, does not mark Done. Role: Quality.",
     inputSchema: {
       type: "object",
       properties: { repo: repoProp },
