@@ -353,7 +353,14 @@ export function createQualityApp(store: QualityStore) {
           return;
         }
 
-        sendJson(res, 404, { error: "not_found" });
+        if (req.method === "POST" && url.pathname === "/shutdown") {
+          sendJson(res, 200, { ok: true });
+          const srv = (req.socket as { server?: { close?: (cb?: () => void) => void } }).server;
+          const halt = () => process.exit(0);
+          if (srv?.close) srv.close(halt);
+          else halt();
+          return;
+        }
       } catch (err) {
         const { status, body } = errorPayload(err);
         sendJson(res, status, body);
