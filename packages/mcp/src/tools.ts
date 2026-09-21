@@ -83,7 +83,7 @@ export async function callTool(
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
   }
-  if (name === "praxis_quality_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_connect_apply") {
+  if (name === "praxis_quality_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_merge_request") {
     ctx.requirePreviewFingerprint = true;
   }
   if (
@@ -111,13 +111,20 @@ export async function callTool(
   try {
     const data = await dispatchTool(ops, name, ctx, opts.version);
     if (
-      (name === "praxis_quality_apply" || name === "praxis_developer_git_connect_apply") &&
+      (
+        name === "praxis_quality_apply" ||
+        name === "praxis_developer_git_connect_apply" ||
+        name === "praxis_developer_git_commit" ||
+        name === "praxis_developer_git_publish" ||
+        name === "praxis_developer_git_merge_request" ||
+        name === "praxis_developer_git_identity_apply"
+      ) &&
       data &&
       typeof data === "object" &&
       "ok" in data &&
       (data as { ok?: unknown }).ok === false
     ) {
-      const rec = data as { ok: false; errors?: string[]; code?: string; warnings?: string[] };
+      const rec = data as { ok: false; errors?: string[]; code?: string; warnings?: string[]; recoveryInstructions?: string };
       return mcpEnvelope({
         ok: false,
         operation: name,
@@ -126,10 +133,10 @@ export async function callTool(
         warnings: rec.warnings,
         errors: rec.errors?.length
           ? rec.errors
-          : [name === "praxis_quality_apply" ? "quality apply did not complete" : "git connect did not complete"],
-        code:
-          rec.code ??
-          (name === "praxis_quality_apply" ? "QUALITY_APPLY_INCOMPLETE" : "GIT_TRANSPORT_FAILED"),
+          : rec.recoveryInstructions
+            ? [rec.recoveryInstructions]
+            : [`${name} did not complete`],
+        code: rec.code ?? (name === "praxis_quality_apply" ? "QUALITY_APPLY_INCOMPLETE" : "GIT_TRANSPORT_FAILED"),
       });
     }
     return mcpEnvelope({ ok: true, operation: name, version: opts.version, data });
@@ -240,6 +247,8 @@ async function dispatchTool(
       return ops.developerGitPublishPreviewOp(ctx);
     case "praxis_developer_git_publish":
       return ops.developerGitPublishOp(ctx);
+    case "praxis_developer_git_merge_request_preview":
+      return ops.developerGitMergeRequestPreviewOp(ctx);
     case "praxis_developer_git_merge_request":
       return ops.developerGitMergeRequestOp(ctx);
     case "praxis_developer_git_delivery_status":

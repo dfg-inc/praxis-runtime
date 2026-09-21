@@ -615,7 +615,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_developer_git_publish_preview",
     description:
-      "PREVIEW push of baseline (empty GitHub repo) or feature branch. Never force-push. Role: Developer.",
+      "PREVIEW push of baseline (empty GitHub repo) or feature branch. Shows source SHA, target remote branch, exact refspec. Never force-push. Role: Developer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -652,9 +652,28 @@ export const TOOLS: ToolDef[] = [
     kind: "apply",
   },
   {
+    name: "praxis_developer_git_merge_request_preview",
+    description:
+      "PREVIEW a GitHub Pull Request or GitLab Merge Request. Base is the published remote default branch (main), never local master. Does not create a PR. Role: Developer.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        remoteName: { type: "string" },
+        targetBranch: { type: "string" },
+        provider: { type: "string", enum: ["github", "gitlab"] },
+      },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["developer"],
+    kind: "preview",
+  },
+  {
     name: "praxis_developer_git_merge_request",
     description:
-      "WRITE GitHub Pull Request or GitLab Merge Request after push. Deduplicates existing PRs. Does not merge and does not claim CI PASS. Requires confirmation=YES. Role: Developer.",
+      "WRITE GitHub Pull Request or GitLab Merge Request after push. Deduplicates existing PRs. Does not merge and does not claim CI PASS. Requires confirmation=YES and previewFingerprint. Role: Developer.",
     inputSchema: {
       type: "object",
       properties: {
@@ -664,8 +683,9 @@ export const TOOLS: ToolDef[] = [
         targetBranch: { type: "string" },
         provider: { type: "string", enum: ["github", "gitlab"] },
         confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
       },
-      required: ["workPackage", "confirmation"],
+      required: ["workPackage", "confirmation", "previewFingerprint"],
       additionalProperties: false,
     },
     roles: ["developer"],
