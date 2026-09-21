@@ -90,6 +90,24 @@ export async function callTool(
   }
   try {
     const data = await dispatchTool(ops, name, ctx, opts.version);
+    if (
+      name === "praxis_quality_apply" &&
+      data &&
+      typeof data === "object" &&
+      "ok" in data &&
+      (data as { ok?: unknown }).ok === false
+    ) {
+      const rec = data as { ok: false; errors?: string[]; code?: string; warnings?: string[] };
+      return mcpEnvelope({
+        ok: false,
+        operation: name,
+        version: opts.version,
+        data,
+        warnings: rec.warnings,
+        errors: rec.errors?.length ? rec.errors : ["quality apply did not complete"],
+        code: rec.code ?? "QUALITY_APPLY_INCOMPLETE",
+      });
+    }
     return mcpEnvelope({ ok: true, operation: name, version: opts.version, data });
   } catch (err) {
     const message = ops.redact(err instanceof Error ? err.message : String(err));
