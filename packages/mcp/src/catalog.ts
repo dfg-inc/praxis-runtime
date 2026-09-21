@@ -511,7 +511,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_developer_git_connect_apply",
     description:
-      "WRITE git remote add after preview. Requires confirmation=YES and previewFingerprint. Does not push. Role: Developer.",
+      "WRITE git remote add or git remote set-url after preview (HTTPS↔SSH updates origin; does not add a second origin). Requires confirmation=YES and previewFingerprint. Does not push. Role: Developer.",
     inputSchema: {
       type: "object",
       properties: {

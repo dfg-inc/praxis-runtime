@@ -243,6 +243,33 @@ describe("doctor and capability codes", () => {
     }
   });
 
+  it("rejects a Git SSH remote in github_api_url without printing tokens", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-doctor-ghapi-"));
+    const previous = {
+      api: process.env.PRAXIS_GITHUB_API_URL,
+      token: process.env.PRAXIS_GITHUB_TOKEN,
+    };
+    process.env.PRAXIS_SKIP_DOTENV = "1";
+    process.env.PRAXIS_GITHUB_API_URL = "git@github.com:hisagedru/praxis-acceptance-test.git";
+    process.env.PRAXIS_GITHUB_TOKEN = "SECRET_GITHUB_TOKEN_FIXTURE";
+    try {
+      const result = await callTool("praxis_doctor", { repo }, { role: "runtime", version: VERSION });
+      expect(result.ok).toBe(true);
+      const data = result.data as { github: Record<string, unknown>; codes: { github?: string } };
+      expect(data.github.apiUrlValid).toBe(false);
+      expect(data.github.apiUrlIssue).toBe("git-ssh-remote");
+      expect(data.codes.github).toBe("GITHUB_API_URL_INVALID");
+      const dump = JSON.stringify(result);
+      expect(dump).not.toMatch(/SECRET_GITHUB_TOKEN_FIXTURE/);
+      expect(dump).not.toMatch(/github_pat_/);
+    } finally {
+      if (previous.api) process.env.PRAXIS_GITHUB_API_URL = previous.api;
+      else delete process.env.PRAXIS_GITHUB_API_URL;
+      if (previous.token) process.env.PRAXIS_GITHUB_TOKEN = previous.token;
+      else delete process.env.PRAXIS_GITHUB_TOKEN;
+    }
+  });
+
   it("identifies missing token without a Jira network request", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-partial-jira-"));
     const previous = {

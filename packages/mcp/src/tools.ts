@@ -111,7 +111,7 @@ export async function callTool(
   try {
     const data = await dispatchTool(ops, name, ctx, opts.version);
     if (
-      name === "praxis_quality_apply" &&
+      (name === "praxis_quality_apply" || name === "praxis_developer_git_connect_apply") &&
       data &&
       typeof data === "object" &&
       "ok" in data &&
@@ -124,8 +124,12 @@ export async function callTool(
         version: opts.version,
         data,
         warnings: rec.warnings,
-        errors: rec.errors?.length ? rec.errors : ["quality apply did not complete"],
-        code: rec.code ?? "QUALITY_APPLY_INCOMPLETE",
+        errors: rec.errors?.length
+          ? rec.errors
+          : [name === "praxis_quality_apply" ? "quality apply did not complete" : "git connect did not complete"],
+        code:
+          rec.code ??
+          (name === "praxis_quality_apply" ? "QUALITY_APPLY_INCOMPLETE" : "GIT_TRANSPORT_FAILED"),
       });
     }
     return mcpEnvelope({ ok: true, operation: name, version: opts.version, data });
