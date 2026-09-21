@@ -480,6 +480,10 @@ export class QualityStore {
     return this.db.prepare(`SELECT * FROM reviews ORDER BY id`).all() as ReviewRow[];
   }
 
+  updateReviewNotes(id: number, notes: string): void {
+    this.db.prepare(`UPDATE reviews SET notes = ? WHERE id = ?`).run(notes, id);
+  }
+
   getAudit(id: number): AuditRow | null {
     const row = this.db
       .prepare(`SELECT * FROM audits WHERE id = ?`)

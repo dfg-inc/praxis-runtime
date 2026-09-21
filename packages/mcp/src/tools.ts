@@ -36,6 +36,7 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
     confirmation: str(args.confirmation),
     previewFingerprint: str(args.previewFingerprint),
     actor: str(args.actor),
+    reviewId: typeof args.reviewId === "number" ? args.reviewId : undefined,
     requirePreviewFingerprint: extra?.requirePreviewFingerprint,
     provider: extra?.provider,
     signal: extra?.signal,
@@ -68,12 +69,14 @@ export async function callTool(
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
   }
+  if (name === "praxis_quality_apply") {
+    ctx.requirePreviewFingerprint = true;
+  }
   if (
     name === "praxis_developer_claim" ||
     name === "praxis_developer_complete" ||
     name === "praxis_developer_complete_recovery_apply" ||
-    name === "praxis_quality_review" ||
-    name === "praxis_quality_report"
+    name === "praxis_quality_apply"
   ) {
     if (ctx.confirmation !== "YES") {
       return mcpEnvelope({
@@ -169,6 +172,10 @@ async function dispatchTool(
     case "praxis_quality_review":
     case "praxis_quality_report":
       return ops.qualityReviewOp(ctx);
+    case "praxis_quality_apply_preview":
+      return ops.qualityApplyPreviewOp(ctx);
+    case "praxis_quality_apply":
+      return ops.qualityApplyOp(ctx);
     default:
       throw new ops.PraxisOpError("INVALID_INPUT", `unknown tool ${name}`);
   }

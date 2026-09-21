@@ -5,10 +5,12 @@ import {
 } from "node:http";
 import { QualityStore } from "./store.js";
 import {
+  persistWorkPackageReview,
   performPathReview,
   reviewResponseFromRow,
 } from "./review-orchestrator.js";
-import { PathSecurityError } from "./path-security.js";
+import { reviewWorkPackage, WorkPackageReviewError } from "./wp-review.js";
+import { PathSecurityError, allowedRootFromEnv, resolveAllowedPath } from "./path-security.js";
 import { HandoffValidationError } from "./handoff-validate.js";
 import {
   analyzeRepeatedFindings,
@@ -59,6 +61,12 @@ function errorPayload(err: unknown): {
   status: number;
   body: Record<string, unknown>;
 } {
+  if (err instanceof WorkPackageReviewError) {
+    return {
+      status: err.code === "QUALITY_CHANGE_SPEC_INVALID" || err.code === "QUALITY_MANIFEST_MISSING" ? 400 : 409,
+      body: { error: err.code, message: err.message, details: err.details },
+    };
+  }
   if (
     err instanceof PathSecurityError ||
     err instanceof HandoffValidationError ||
@@ -139,6 +147,71 @@ export function createQualityApp(store: QualityStore) {
             return;
           }
           sendJson(res, 200, reviewResponseFromRow(row));
+          return;
+        }
+
+        if (req.method === "GET" && url.pathname === "/reviews") {
+          const project = url.searchParams.get("project") ?? url.searchParams.get("projectId") ?? undefined;
+          const wp = url.searchParams.get("workPackageId") ?? undefined;
+          const rows = store.listReviews(project);
+          const mapped = rows
+            .map((row) => reviewResponseFromRow(row))
+            .filter((r) => (wp ? r["workPackageId"] === wp : true));
+          sendJson(res, 200, { reviews: mapped, latest: mapped[mapped.length - 1] ?? null });
+          return;
+        }
+
+        if (req.method === "POST" && url.pathname === "/reviews/work-package") {
+          const body = (await readJsonBody(req)) as {
+            projectId?: string;
+            workPackageId?: string;
+            path?: string;
+            runtimeVersion?: string;
+          };
+          if (!body?.path || typeof body.path !== "string") {
+            sendJson(res, 400, { error: "invalid_request", message: "path is required" });
+            return;
+          }
+          if (!body.workPackageId || typeof body.workPackageId !== "string") {
+            sendJson(res, 400, { error: "invalid_request", message: "workPackageId is required" });
+            return;
+          }
+          const resolvedPath = resolveAllowedPath(body.path, allowedRootFromEnv());
+          const reviewed = reviewWorkPackage({
+            repo: resolvedPath,
+            workPackageId: body.workPackageId,
+            runtimeVersion: body.runtimeVersion,
+          });
+          const persisted = persistWorkPackageReview(store, {
+            projectId: body.projectId ?? reviewed.workPackageId,
+            path: resolvedPath,
+            reviewed,
+            runtimeVersion: body.runtimeVersion,
+          });
+          sendJson(res, 200, persisted);
+          return;
+        }
+
+        if (req.method === "POST" && /^\/reviews\/\d+\/applied$/.test(url.pathname)) {
+          const id = Number(url.pathname.split("/")[2]);
+          const row = store.getReview(id);
+          if (!row) {
+            sendJson(res, 404, { error: "not_found", message: `review ${id} not found` });
+            return;
+          }
+          const body = (await readJsonBody(req)) as Record<string, unknown>;
+          let notes: Record<string, unknown> = {};
+          try {
+            notes = JSON.parse(row.notes || "{}") as Record<string, unknown>;
+          } catch {
+            notes = {};
+          }
+          notes.applied = {
+            at: new Date().toISOString(),
+            ...(body ?? {}),
+          };
+          store.updateReviewNotes(id, JSON.stringify(notes));
+          sendJson(res, 200, { ok: true, reviewId: id, applied: notes.applied });
           return;
         }
 
@@ -361,6 +434,11 @@ export function createQualityApp(store: QualityStore) {
           else halt();
           return;
         }
+
+        sendJson(res, 404, {
+          error: "not_found",
+          message: `${req.method} ${url.pathname}`,
+        });
       } catch (err) {
         const { status, body } = errorPayload(err);
         sendJson(res, status, body);

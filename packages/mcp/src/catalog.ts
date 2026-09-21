@@ -359,10 +359,10 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_quality_status",
     description:
-      "READ-ONLY Quality runtime health (not_started / healthy / unavailable / failed). Does not start the service. Role: Quality.",
+      "READ-ONLY Quality runtime health (not_started / healthy / unavailable / failed) and latest QA review status when workPackage is given. Does not start the service. Role: Quality.",
     inputSchema: {
       type: "object",
-      properties: { repo: repoProp },
+      properties: { repo: repoProp, workPackage: wpProp },
       additionalProperties: false,
     },
     roles: ["quality"],
@@ -383,23 +383,59 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_quality_review",
     description:
-      "WRITE QA verification result for a WP. Requires confirmation=YES. Role: Quality. Uses numeric bug type id, never display-name «Баг». Preview findings to the human first; do not auto-write.",
+      "READ/VERIFY Quality Review for a Work Package via the Quality HTTP Service. Executes acceptance checks, persists QA evidence and SQLite review. Does NOT mutate Jira. No confirmation required. Role: Quality.",
     inputSchema: {
       type: "object",
-      properties: { workPackage: wpProp, repo: repoProp, confirmation: confirmProp },
-      required: ["workPackage", "confirmation"],
+      properties: { workPackage: wpProp, repo: repoProp },
+      required: ["workPackage"],
       additionalProperties: false,
     },
     roles: ["quality"],
-    kind: "apply",
+    kind: "preview",
   },
   {
     name: "praxis_quality_report",
-    description: "WRITE alias of quality review. Requires confirmation=YES. Role: Quality.",
+    description:
+      "Safe alias of praxis_quality_review. Local Quality Review only — does not write Jira. Role: Quality.",
     inputSchema: {
       type: "object",
-      properties: { workPackage: wpProp, repo: repoProp, confirmation: confirmProp },
-      required: ["workPackage", "confirmation"],
+      properties: { workPackage: wpProp, repo: repoProp },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["quality"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_quality_apply_preview",
+    description:
+      "READ-ONLY preview of Jira writes for a persisted Quality Review. Resolves live transitions. Returns previewFingerprint. Does not write Jira. Role: Quality.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        reviewId: { type: "number", description: "Optional persisted Quality review id" },
+      },
+      required: ["workPackage"],
+      additionalProperties: false,
+    },
+    roles: ["quality"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_quality_apply",
+    description:
+      "WRITE the previously previewed Quality Apply plan. Requires confirmation=YES and matching previewFingerprint. Jira Done / Bugs only from this approved plan. Role: Quality.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        workPackage: wpProp,
+        repo: repoProp,
+        confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
+      },
+      required: ["workPackage", "confirmation", "previewFingerprint"],
       additionalProperties: false,
     },
     roles: ["quality"],

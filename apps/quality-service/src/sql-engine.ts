@@ -134,11 +134,10 @@ export async function openSqlJs(dbPath: string): Promise<SqlEngine> {
         run(...params: unknown[]) {
           if (params.length) db.run(sql, params);
           else db.run(sql);
+          const lastInsertRowid = sqlJsNumeric(db, "SELECT last_insert_rowid()");
+          const changes = sqlJsNumeric(db, "SELECT changes()");
           persist();
-          return {
-            lastInsertRowid: sqlJsNumeric(db, "SELECT last_insert_rowid()"),
-            changes: sqlJsNumeric(db, "SELECT changes()"),
-          };
+          return { lastInsertRowid, changes };
         },
         get(...params: unknown[]) {
           const stmt = db.prepare(sql);

@@ -17,6 +17,7 @@ import {
   allowedRootFromEnv,
   resolveAllowedPath,
 } from "./path-security.js";
+import { type WorkPackageReviewResult } from "./wp-review.js";
 
 export type PathReviewPersisted = {
   reviewId: number;
@@ -129,29 +130,79 @@ export function performPathReview(
   };
 }
 
+export function persistWorkPackageReview(
+  store: QualityStore,
+  input: {
+    projectId: string;
+    path: string;
+    reviewed: WorkPackageReviewResult;
+    runtimeVersion?: string;
+  },
+): Record<string, unknown> {
+  const notes = JSON.stringify({
+    kind: "work-package-review",
+    workPackageId: input.reviewed.workPackageId,
+    jiraWorkPackageKey: input.reviewed.jiraWorkPackageKey,
+    evidence: input.reviewed,
+    runtimeVersion: input.runtimeVersion ?? null,
+    applied: null,
+  });
+  const review = store.addReview({
+    mrRef: `wp://${input.reviewed.workPackageId}`,
+    projectId: input.projectId,
+    result: input.reviewed.verdict,
+    notes,
+  });
+  store.addAudit({
+    path: input.path,
+    projectId: input.projectId,
+    findings: JSON.stringify(input.reviewed.findings),
+    kind: "work-package-review",
+    verdict: input.reviewed.verdict,
+    scope: input.reviewed.workPackageId,
+    reportJson: notes,
+  });
+  if (input.reviewed.verdict === "PASSED" && input.reviewed.requirementIds.length) {
+    for (const req of input.reviewed.requirementIds) {
+      store.addTaskCompletion({ projectId: input.projectId, taskRef: req });
+    }
+  }
+  return {
+    reviewId: review.id,
+    projectId: input.projectId,
+    createdAt: review.created_at,
+    ...input.reviewed,
+  };
+}
+
 /** Shape returned by GET /reviews/:id */
-export function reviewResponseFromRow(row: ReviewRow): {
-  reviewId: number;
-  projectId: string;
-  workPackageId?: string;
-  verdict: string;
-  findings: Finding[];
-  mrRef: string;
-  createdAt: string;
-  notes?: unknown;
-} {
+export function reviewResponseFromRow(row: ReviewRow): Record<string, unknown> {
   let findings: Finding[] = [];
   let workPackageId: string | undefined;
   let notesParsed: unknown;
   try {
     notesParsed = JSON.parse(row.notes || "{}");
-    if (
-      notesParsed &&
-      typeof notesParsed === "object" &&
-      Array.isArray((notesParsed as { findings?: unknown }).findings)
-    ) {
-      findings = (notesParsed as { findings: Finding[] }).findings;
-      workPackageId = (notesParsed as { workPackageId?: string }).workPackageId;
+    if (notesParsed && typeof notesParsed === "object") {
+      const n = notesParsed as {
+        kind?: string;
+        findings?: Finding[];
+        workPackageId?: string;
+        evidence?: WorkPackageReviewResult & { findings?: Finding[] };
+        applied?: unknown;
+        runtimeVersion?: string | null;
+      };
+      workPackageId = n.workPackageId ?? n.evidence?.workPackageId;
+      if (n.kind === "work-package-review" && n.evidence) {
+        return {
+          reviewId: row.id,
+          projectId: row.project_id,
+          createdAt: row.created_at,
+          applied: n.applied ?? null,
+          runtimeVersion: n.runtimeVersion ?? null,
+          ...n.evidence,
+        };
+      }
+      if (Array.isArray(n.findings)) findings = n.findings;
     }
   } catch {
     notesParsed = row.notes;

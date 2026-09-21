@@ -186,6 +186,8 @@ export function runNpmTest(cwd: string): {
     cwd,
     encoding: "utf8",
     shell: true,
+    timeout: 20_000,
+    env: { ...process.env, CI: "1", npm_config_progress: "false" },
   });
   const stdout = r.stdout ?? "";
   const stderr = r.stderr ?? "";

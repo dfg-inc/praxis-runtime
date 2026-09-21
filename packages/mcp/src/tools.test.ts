@@ -470,7 +470,7 @@ describe("Developer MCP fixture", () => {
 });
 
 describe("Quality MCP fixture", () => {
-  it("review confirmation + localized numeric bug type", async () => {
+  it("review is not a Jira write; apply requires confirmation and fingerprint", async () => {
     const state = createMockJiraState({
       issueTypes: [
         { id: "10000", name: "Эпик", hierarchyLevel: 1, subtask: false },
@@ -481,60 +481,31 @@ describe("Quality MCP fixture", () => {
     });
     const { provider } = mockProvider(state);
     const extra = { provider };
-    const epic = await provider.createIssue({ summary: "E", issueType: "Epic" });
     const repo = mkdtempSync(join(tmpdir(), "praxis-mcp-qa-"));
-    seedProposal(repo, epic.key);
-    writeFileSync(
-      join(repo, ".project"),
-      "stack: [node]\nquality:\n  build: \"node -e process.exit(0)\"\n  test: \"node -e process.exit(0)\"\n",
-    );
-    const baPreview = await callTool(
-      "praxis_ba_preview",
-      { epic: epic.key, repo },
-      { role: "ba", version: VERSION, extra },
-    );
-    await callTool(
-      "praxis_ba_apply",
-      {
-        epic: epic.key,
-        repo,
-        confirmation: "YES",
-        previewFingerprint: (baPreview.data as { previewFingerprint: string }).previewFingerprint,
-      },
-      { role: "ba", version: VERSION, extra },
-    );
-    seedWp(repo);
-    const archPreview = await callTool(
-      "praxis_architect_preview",
-      { epic: epic.key, repo },
-      { role: "architect", version: VERSION, extra },
-    );
-    const applied = await callTool(
-      "praxis_architect_apply",
-      {
-        epic: epic.key,
-        repo,
-        confirmation: "YES",
-        previewFingerprint: (archPreview.data as { previewFingerprint: string }).previewFingerprint,
-      },
-      { role: "architect", version: VERSION, extra },
-    );
-    const wpKey = (applied.data as { workPackages: Array<{ jiraIssueKey: string }> }).workPackages[0]!
-      .jiraIssueKey;
-    const denied = await callTool(
-      "praxis_quality_review",
-      { workPackage: wpKey, repo },
+    const deniedApply = await callTool(
+      "praxis_quality_apply",
+      { workPackage: "WP-20260914-002", repo },
       { role: "quality", version: VERSION, extra },
     );
-    expect(denied.code).toBe("CONFIRMATION_REQUIRED");
+    expect(deniedApply.ok).toBe(false);
+    expect(deniedApply.code).toBe("CONFIRMATION_REQUIRED");
+    const deniedFp = await callTool(
+      "praxis_quality_apply",
+      { workPackage: "WP-20260914-002", repo, confirmation: "YES" },
+      { role: "quality", version: VERSION, extra },
+    );
+    expect(deniedFp.ok).toBe(false);
+    expect(deniedFp.code).toBe("CONFIRMATION_REQUIRED");
     const meta = await callTool("praxis_jira_discover", { repo }, { role: "quality", version: VERSION, extra });
     expect((meta.data as { bugTypeId: string }).bugTypeId).toBe("10012");
-    const review = await callTool(
-      "praxis_quality_review",
-      { workPackage: wpKey, repo, confirmation: "YES" },
-      { role: "quality", version: VERSION, extra },
+    expect(toolsForRole("quality").map((t) => t.name)).toEqual(
+      expect.arrayContaining([
+        "praxis_quality_review",
+        "praxis_quality_apply_preview",
+        "praxis_quality_apply",
+        "praxis_quality_status",
+      ]),
     );
-    expect(review.ok).toBe(true);
-    expect(JSON.stringify(review)).not.toMatch(/secret-jira-token-value/);
+    expect(JSON.stringify(deniedApply)).not.toMatch(/secret-jira-token-value/);
   });
 });

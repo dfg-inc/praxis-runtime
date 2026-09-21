@@ -287,4 +287,99 @@ test('scale', () => assert.equal(scale(5), 10));
       expect(res.status).toBe(404);
     });
   });
+
+  it("POST /reviews/work-package persists SQLite review without Jira", async () => {
+    const allowed = tmp();
+    dirs.push(allowed);
+    process.env.PRAXIS_QUALITY_ALLOWED_ROOT = allowed;
+    const product = join(allowed, "product");
+    mkdirSync(product, { recursive: true });
+    write(
+      product,
+      "package.json",
+      JSON.stringify({ name: "p", type: "module", scripts: { test: "node --test src/*.test.js" } }),
+    );
+    write(product, ".project", "stack: [node]\nquality:\n  test: npm test\n");
+    write(product, "src/widget.js", "export function scale(n){ return n*2; }\n");
+    write(
+      product,
+      "src/widget.test.js",
+      "import test from 'node:test'; import assert from 'node:assert/strict'; import { scale } from './widget.js'; test('scale', () => assert.equal(scale(5), 10));\n",
+    );
+    write(
+      product,
+      "work-packages/WP-HTTP-WP/manifest.json",
+      JSON.stringify({
+        id: "WP-HTTP-WP",
+        jiraIssueKey: "PRX-4",
+        storyKeys: ["PRX-3"],
+        readyForQuality: true,
+      }),
+    );
+    write(
+      product,
+      "design/WP-HTTP-WP/change-spec.json",
+      JSON.stringify({
+        workPackageId: "WP-HTTP-WP",
+        requirementIds: ["E2-FR1"],
+        acceptanceChecks: [
+          { type: "contains", file: "src/widget.js", expected: "export function scale" },
+          { type: "npm-test" },
+        ],
+      }),
+    );
+    write(
+      product,
+      "design/WP-HTTP-WP/architect-developer.handoff.json",
+      JSON.stringify({ workPackageId: "WP-HTTP-WP" }),
+    );
+    write(
+      product,
+      "design/WP-HTTP-WP/dev/completion-evidence.json",
+      JSON.stringify({
+        workPackageId: "WP-HTTP-WP",
+        jiraWorkPackageKey: "PRX-4",
+        canonicalStoryKeys: ["PRX-3"],
+        readyForQuality: true,
+      }),
+    );
+    write(
+      product,
+      "design/WP-HTTP-WP/dev/quality-handoff.json",
+      JSON.stringify({
+        workPackageId: "WP-HTTP-WP",
+        jiraWorkPackageKey: "PRX-4",
+        canonicalStoryKeys: ["PRX-3"],
+        requirementIds: ["E2-FR1"],
+      }),
+    );
+    const store = new QualityStore(":memory:");
+    stores.push(store);
+    await withServer(store, async (base) => {
+      const res = await fetch(`${base}/reviews/work-package`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: "WP-HTTP-WP",
+          workPackageId: "WP-HTTP-WP",
+          path: product,
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        reviewId: number;
+        verdict: string;
+        jiraMutated: boolean;
+        acceptanceChecks: Array<{ status: string }>;
+      };
+      expect(body.reviewId).toBeGreaterThan(0);
+      expect(body.verdict).toBe("PASSED");
+      expect(body.jiraMutated).toBe(false);
+      expect(body.acceptanceChecks.every((c) => c.status === "PASSED")).toBe(true);
+      const got = await fetch(`${base}/reviews/${body.reviewId}`);
+      const again = (await got.json()) as { workPackageId?: string; verdict: string };
+      expect(again.workPackageId).toBe("WP-HTTP-WP");
+      expect(again.verdict).toBe("PASSED");
+    });
+  });
 });

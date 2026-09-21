@@ -287,7 +287,8 @@ export {
 export { createQualityApp, startServer } from "./server.js";
 export { reviewPath, discoverTestFiles, parseNodeTestCounts } from "./review-engine.js";
 export { groupFindingsByFingerprint } from "./fingerprint.js";
-export { performPathReview, reviewResponseFromRow } from "./review-orchestrator.js";
+export { performPathReview, persistWorkPackageReview, reviewResponseFromRow } from "./review-orchestrator.js";
+export { reviewWorkPackage, WorkPackageReviewError } from "./wp-review.js";
 export { validateDeveloperQualityHandoff } from "./handoff-validate.js";
 export { resolveAllowedPath } from "./path-security.js";
 export {
