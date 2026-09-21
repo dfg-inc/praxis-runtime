@@ -24,7 +24,8 @@
   },
   "dependencies": {
     "@praxis/contracts": "*",
-    "@praxis/knowledge": "*"
+    "@praxis/knowledge": "*",
+    "sql.js": "^1.13.0"
   },
   "devDependencies": {
     "@types/node": "^22.20.0",

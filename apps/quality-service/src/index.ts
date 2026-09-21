@@ -277,6 +277,13 @@ export function runCli(
 }
 
 export { QualityStore } from "./store.js";
+export {
+  openSqliteEngine,
+  openSqlJs,
+  tryOpenNodeSqlite,
+  type SqlEngine,
+  type SqlEngineName,
+} from "./sql-engine.js";
 export { createQualityApp, startServer } from "./server.js";
 export { reviewPath, discoverTestFiles, parseNodeTestCounts } from "./review-engine.js";
 export { groupFindingsByFingerprint } from "./fingerprint.js";

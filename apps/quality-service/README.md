@@ -8,7 +8,7 @@ Quality service for MR reviews, codebase audits, and rollback/return metrics (WB
 
 ## Storage
 
-Uses Node.js `node:sqlite` (`DatabaseSync`) — portable on Node 22+, no native addon build.
+Uses Node.js `node:sqlite` (`DatabaseSync`) when the process provides it, and bundled **sql.js** WASM otherwise. Desktop users do not install SQLite or native addons.
 
 Tables: `reviews`, `audits`, `rollback_events`, `return_events`, `task_completions`.
 

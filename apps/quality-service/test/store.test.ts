@@ -1,4 +1,7 @@
 import { describe, expect, it, afterEach } from "vitest";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { QualityStore, runCli } from "../src/index.js";
 
 describe("QualityStore", () => {
@@ -132,5 +135,29 @@ describe("review-path engine", () => {
     );
     const groups = groupFindingsByFingerprint(r.findings);
     expect(groups.length).toBeGreaterThan(0);
+  });
+});
+
+describe("QualityStore sql.js fallback", () => {
+  it("persists through sql.js when node:sqlite is not selected", async () => {
+    const previous = process.env.PRAXIS_QUALITY_SQLITE;
+    process.env.PRAXIS_QUALITY_SQLITE = "sqljs";
+    const dir = mkdtempSync(join(tmpdir(), "praxis-sqljs-"));
+    const db = join(dir, "quality.sqlite");
+    try {
+      const store = await QualityStore.create(db);
+      store.addReview({ mrRef: "!sqljs", projectId: "p1", result: "pass" });
+      expect(store.engineName).toBe("sqljs");
+      store.close();
+      expect(existsSync(db)).toBe(true);
+      const store2 = await QualityStore.create(db);
+      expect(store2.engineName).toBe("sqljs");
+      expect(store2.report("p1").reviews).toHaveLength(1);
+      store2.close();
+    } finally {
+      if (previous === undefined) delete process.env.PRAXIS_QUALITY_SQLITE;
+      else process.env.PRAXIS_QUALITY_SQLITE = previous;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

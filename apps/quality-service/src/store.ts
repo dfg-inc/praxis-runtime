@@ -1,6 +1,11 @@
-import { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import {
+  openNodeSqliteSync,
+  openSqliteEngine,
+  type SqlEngine,
+  type SqlEngineName,
+} from "./sql-engine.js";
 
 export type ReviewRow = {
   id: number;
@@ -98,14 +103,24 @@ export type Metrics = {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export class QualityStore {
-  private readonly db: DatabaseSync;
+  private readonly db: SqlEngine;
+  readonly engineName: SqlEngineName;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, engine?: SqlEngine) {
     if (dbPath !== ":memory:") {
       mkdirSync(dirname(dbPath), { recursive: true });
     }
-    this.db = new DatabaseSync(dbPath);
+    this.db = engine ?? openNodeSqliteSync(dbPath);
+    this.engineName = this.db.name;
     this.migrate();
+  }
+
+  static async create(dbPath: string): Promise<QualityStore> {
+    if (dbPath !== ":memory:") {
+      mkdirSync(dirname(dbPath), { recursive: true });
+    }
+    const engine = await openSqliteEngine(dbPath);
+    return new QualityStore(dbPath, engine);
   }
 
   private migrate(): void {

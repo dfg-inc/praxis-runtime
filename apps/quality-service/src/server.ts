@@ -110,6 +110,7 @@ export function createQualityApp(store: QualityStore) {
             db: process.env.PRAXIS_QUALITY_DB ?? null,
             pid: process.pid,
             port: Number(process.env.PRAXIS_QUALITY_PORT ?? process.env.PORT ?? 8787),
+            sqliteEngine: store.engineName,
           });
           return;
         }
