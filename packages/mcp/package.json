@@ -1,6 +1,6 @@
 {
   "name": "@praxis/mcp",
-  "version": "0.1.0-alpha.42",
+  "version": "0.1.0-alpha.43",
   "private": true,
   "type": "module",
   "description": "Praxis MCP adapter for Claude UI / Cowork hosted plugins. Protocol adapter over @praxis/cli operations; not a second business-logic copy. Bundled into claude-plugins ZIPs; not independently published as tgz because hosted plugins cannot npm-install.",
