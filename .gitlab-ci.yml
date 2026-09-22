@@ -1,7 +1,9 @@
 # praxis-runtime — GitLab CI (Node 22, tracked vendor/*.tgz, no DinD)
+# Tag pipeline (v$package.json.version): pack MCPB → Generic Package Registry → GitLab Release.
 stages:
   - verify
   - package
+  - release
 
 default:
   image: node:22-bookworm
@@ -64,3 +66,19 @@ pack_mcpb:
       - dist/mcpb-checksums.json
     expire_in: 30 days
     name: "praxis-runtime-mcpb-$CI_COMMIT_SHORT_SHA"
+
+# Persistent install path: Generic Package Registry + GitLab Release (not job artifacts).
+publish_release:
+  stage: release
+  needs:
+    - job: pack_mcpb
+      artifacts: true
+  rules:
+    - if: $CI_COMMIT_TAG
+  variables:
+    PRAXIS_RELEASE_ARTIFACT_NAME: praxis-runtime.mcpb
+    PRAXIS_RELEASE_SEARCH_ROOT: dist/claude-extensions
+    PRAXIS_RELEASE_PACKAGE_NAME: praxis-runtime
+    PRAXIS_RELEASE_KIND: mcpb
+  script:
+    - node tools/scripts/publish-gitlab-release.mjs

@@ -6,10 +6,14 @@ GitLab: `engineering/ai-tooling/praxis-runtime`
 
 ## Installation (Desktop)
 
-1. Download `praxis-runtime.mcpb` from this project's CI artifacts / release assets.
-2. Install in Claude Desktop as a desktop extension.
-3. Configure Jira once in Runtime `user_config`.
-4. Install role ZIPs from their own repositories (BA / Architect / Developer / Quality).
+1. Open [praxis-runtime Releases](https://gl.jetru.by/engineering/ai-tooling/praxis-runtime/-/releases) while signed into GitLab.
+2. Download `praxis-runtime.mcpb` for the version you need (plus `release-meta.json` for SHA-256 / compatibility).
+3. Install in Claude Desktop as a desktop extension.
+4. Configure Jira once in Runtime `user_config`.
+5. Install role ZIPs from their own repository Releases (BA / Architect / Developer / Quality).
+
+Do not use ephemeral CI job artifacts for ordinary installation.
+
 
 ## Development
 
@@ -34,9 +38,12 @@ Pinned via tracked `vendor/*.tgz` (`@praxis/contracts`, `project-config`, `knowl
 
 - Artifact: `dist/claude-extensions/<version>/praxis-runtime.mcpb`
 - Version independently of Core / role ZIPs
-- CI publishes checksums in `dist/mcpb-checksums.json`
-- Retention: GitLab job artifacts 30 days (configure releases separately)
+- Tag `v$package.json.version` → CI uploads Generic Package Registry + creates GitLab Release
+- Metadata: `release-meta.json` (version, source SHA, SHA-256, Core vendor pins)
+- Job artifacts remain for CI handoff only (30 days); install from **Releases**
+
 
 ## GitLab CI
 
-Jobs: `build_test`, `git_delivery`, `quality_gates`, `pack_mcpb`. Image `node:22-bookworm`. No DinD.
+Jobs: `build_test`, `git_delivery`, `quality_gates`, `pack_mcpb`, and on tags `publish_release`. Image `node:22-bookworm`. No DinD.
+
