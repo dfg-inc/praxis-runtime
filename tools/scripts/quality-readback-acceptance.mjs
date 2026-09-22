@@ -24,7 +24,7 @@ function fail(msg) {
 }
 
 const built = spawnSync(
-  "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/quality-service -w @praxis/cli",
+  "npm run build --workspaces --if-present",
   { cwd: root, shell: true, encoding: "utf8" },
 );
 if ((built.status ?? 1) !== 0) fail(`build failed\n${built.stderr || built.stdout}`);

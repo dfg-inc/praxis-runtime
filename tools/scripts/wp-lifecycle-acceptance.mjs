@@ -13,7 +13,7 @@ function fail(msg) {
   process.exit(1);
 }
 
-const built = spawnSync("npm run build -w @praxis/contracts -w @praxis/jira", {
+const built = spawnSync("npm run build --workspaces --if-present", {
   cwd: root,
   shell: true,
   encoding: "utf8",

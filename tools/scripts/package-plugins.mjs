@@ -507,7 +507,7 @@ export function collectPackagePathRefs(pkg) {
 export function buildAllPluginArtifacts(outRoot = join(root, "dist/release-mirror")) {
   // Ensure runtime builds exist
   const build = run(
-  "npm run build -w @praxis/knowledge -w @praxis/project-config -w @praxis/plugin-sdk -w @praxis/ba-canon-graph -w @praxis/jira",
+  "npm run build --workspaces --if-present",
   );
   if (!build.ok) {
     throw new Error(`prerequisite build failed:\n${build.stderr || build.stdout}`);

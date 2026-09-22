@@ -75,7 +75,7 @@ function git(repo, args) {
 
 if (rebuild) {
   const b = run(
-    "npm run build -w @praxis/contracts -w @praxis/knowledge -w @praxis/quality-service",
+    "npm run build --workspaces --if-present",
     root,
   );
   if (!b.ok) fail(`build failed:\n${b.stderr}\n${b.stdout}`);

@@ -29,7 +29,7 @@ function sha(p) {
 }
 
 const built = spawnSync(
-  "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/cli -w @praxis/mcp",
+  "npm run build --workspaces --if-present",
   { cwd: root, shell: true, encoding: "utf8" },
 );
 if ((built.status ?? 1) !== 0) fail(`build failed\n${built.stderr || built.stdout}`);

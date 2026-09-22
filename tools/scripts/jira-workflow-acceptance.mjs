@@ -26,7 +26,7 @@ function run(cmd) {
   return r;
 }
 
-run("npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira");
+run("npm run build --workspaces --if-present");
 run("npm test -w @praxis/jira");
 run("make -n verify");
 run("make help");

@@ -94,7 +94,7 @@ function seedQa(repo, counter = "export function reset(){return 0}\n", test = "o
 }
 
 const built = spawnSync(
-  "npm run build -w @praxis/vcs -w @praxis/jira -w @praxis/cli",
+  "npm run build --workspaces --if-present",
   { cwd: root, shell: true, encoding: "utf8" },
 );
 if ((built.status ?? 1) !== 0) fail(`build failed\n${built.stderr || built.stdout}`);
@@ -551,7 +551,7 @@ void applyMergeRequest;
     "./official-mcp-client.mjs"
   );
   const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
-  spawnSync("npm run build -w @praxis/mcp", { cwd: root, shell: true, encoding: "utf8" });
+  spawnSync("npm run build --workspaces --if-present", { cwd: root, shell: true, encoding: "utf8" });
   const dist = await packClaudeExtension(version);
   const mcpbPath = dist.mcpbPath ?? join(root, "dist", "claude-extensions", version, "praxis-runtime.mcpb");
   const dest = mkdtempSync(join(tmpdir(), "praxis-gd-mcpb-"));

@@ -22,7 +22,7 @@ export async function bundlePraxisMcp(outfile, version) {
   const entry = join(root, "packages/mcp/dist/main.js");
   if (!existsSync(entry)) {
     run(
-      "npm run build -w @praxis/contracts -w @praxis/project-config -w @praxis/jira -w @praxis/cli -w @praxis/mcp",
+      "npm run build --workspaces --if-present",
     );
   }
   if (!existsSync(entry)) fail(`missing MCP build ${entry}`);
@@ -53,7 +53,7 @@ export async function bundlePraxisMcp(outfile, version) {
 export async function bundlePraxisQuality(outfile, version) {
   const entry = join(root, "apps/quality-service/dist/main.js");
   if (!existsSync(entry)) {
-    run("npm run build -w @praxis/contracts -w @praxis/knowledge -w @praxis/quality-service");
+    run("npm run build --workspaces --if-present");
   }
   if (!existsSync(entry)) fail(`missing Quality service build ${entry}`);
   mkdirSync(dirname(outfile), { recursive: true });

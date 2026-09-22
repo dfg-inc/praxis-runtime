@@ -277,7 +277,7 @@ function rewriteBaPackage(dest, version) {
   pkg.version = version;
   pkg.workspaces = ["canon-graph"];
   pkg.scripts = {
-    build: "npm run build -w @praxis/ba-canon-graph",
+    build: "npm run build --workspaces --if-present",
     test: "npm run test -w @praxis/ba-canon-graph",
     typecheck: "npm run typecheck -w @praxis/ba-canon-graph",
     "session-bootstrap": "node ./tools/session-bootstrap.mjs",
@@ -352,7 +352,7 @@ export function exportStandalone(component, outDir) {
   mkdirSync(dest, { recursive: true });
 
   const build = run(
-    "npm run build -w @praxis/contracts -w @praxis/knowledge -w @praxis/project-config -w @praxis/plugin-sdk -w @praxis/ba-canon-graph",
+    "npm run build --workspaces --if-present",
   );
   if (!build.ok) {
     throw new Error(`prerequisite build failed:\n${build.stderr || build.stdout}`);

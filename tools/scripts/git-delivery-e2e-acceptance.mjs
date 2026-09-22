@@ -539,7 +539,7 @@ const consumerBefore = consumerSnapshot();
     "./official-mcp-client.mjs"
   );
   const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
-  spawnSync("npm run build -w @praxis/mcp -w @praxis/cli -w @praxis/vcs", { cwd: root, shell: true, encoding: "utf8" });
+  spawnSync("npm run build --workspaces --if-present", { cwd: root, shell: true, encoding: "utf8" });
   const dist = await packClaudeExtension(version);
   const mcpbPath = dist.mcpbPath ?? join(root, "dist", "claude-extensions", version, "praxis-runtime.mcpb");
   const dest = mkdtempSync(join(tmpdir(), "praxis-e2e-mcpb-"));

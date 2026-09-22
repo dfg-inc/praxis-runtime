@@ -81,7 +81,7 @@ function writeRule(dir, id, roles, stages, title = id) {
 
 if (!existsSync(knowledgeDist)) {
   console.log("building @praxis/knowledge…");
-  const b = run("npm run build -w @praxis/knowledge", root);
+  const b = run("npm run build --workspaces --if-present", root);
   if (!b.ok) fail(`knowledge build failed:\n${b.stderr}`);
 }
 

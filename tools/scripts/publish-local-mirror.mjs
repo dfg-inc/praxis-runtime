@@ -30,7 +30,7 @@ function run(cmd) {
   if (r.status !== 0) process.exit(r.status ?? 1);
 }
 
-run("npm run build -w @praxis/catalog -w @praxis/marketplace-site");
+run("npm run build --workspaces --if-present");
 
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
