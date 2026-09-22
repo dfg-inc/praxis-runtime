@@ -74,13 +74,21 @@ function resolveSqlWasm(): string {
     /* bundled CJS may still resolve argv[1] */
   }
   try {
-    const pkg = requireFromHere("sql.js/package.json") as { name?: string };
-    if (pkg) {
-      const req = createRequire(import.meta.url);
-      candidates.push(join(dirname(req.resolve("sql.js/package.json")), "dist", "sql-wasm.wasm"));
+    const req = createRequire(import.meta.url);
+    candidates.push(join(dirname(req.resolve("sql.js")), "..", "dist", "sql-wasm.wasm"));
+  } catch {
+    /* sql.js package.json exports may block package.json subpath */
+  }
+  try {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 8; i += 1) {
+      candidates.push(join(dir, "node_modules", "sql.js", "dist", "sql-wasm.wasm"));
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
     }
   } catch {
-    /* packaged MCPB does not ship sql.js as a separate package */
+    /* bundled CJS */
   }
 
   for (const candidate of candidates) {
