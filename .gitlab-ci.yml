@@ -1,0 +1,66 @@
+# praxis-runtime — GitLab CI (Node 22, tracked vendor/*.tgz, no DinD)
+stages:
+  - verify
+  - package
+
+default:
+  image: node:22-bookworm
+  interruptible: true
+  cache:
+    key:
+      files: [package-lock.json]
+    paths: [.npm/]
+  before_script:
+    - node -v && npm -v
+    - test -f vendor/manifest.json
+    - npm ci --cache .npm --prefer-offline
+
+variables:
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+build_test:
+  stage: verify
+  script:
+    - npm run build
+    - npm run typecheck
+    - npm run test
+
+git_delivery:
+  stage: verify
+  script:
+    - npm run build
+    - npm run accept:git-delivery
+    - npm run accept:git-delivery-e2e
+
+quality_gates:
+  stage: verify
+  script:
+    - npm run build
+    - npm run accept:quality-startup
+    - npm run accept:quality-review
+    - npm run accept:quality-apply
+    - npm run accept:quality-state-consistency
+    - npm run accept:quality-readback
+
+pack_mcpb:
+  stage: package
+  needs: [build_test, git_delivery, quality_gates]
+  script:
+    - npm run build
+    - npm run pack:mcpb
+    - npm run accept:mcpb-runtime
+    - |
+      python3 - <<'PY'
+      import hashlib, json, pathlib
+      paths = list(pathlib.Path("dist/claude-extensions").rglob("praxis-runtime.mcpb"))
+      assert paths, "MCPB missing"
+      rows = [{"file": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest(), "bytes": p.stat().st_size} for p in paths]
+      pathlib.Path("dist/mcpb-checksums.json").write_text(json.dumps(rows, indent=2) + "\n")
+      for r in rows: print(r["sha256"], r["file"])
+      PY
+  artifacts:
+    paths:
+      - dist/claude-extensions/
+      - dist/mcpb-checksums.json
+    expire_in: 30 days
+    name: "praxis-runtime-mcpb-$CI_COMMIT_SHORT_SHA"
