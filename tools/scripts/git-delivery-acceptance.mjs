@@ -460,8 +460,13 @@ proven.push("V partial retry same commit");
 }
 
 {
-  const src = readFileSync(join(root, "plugins/vcs/src/git-local.ts"), "utf8");
-  if (src.includes("push --force") || src.includes('"--force"') && src.includes("args.push")) {
+  const vcsLocal = [
+    join(root, "plugins/vcs/src/git-local.ts"),
+    join(root, "node_modules/@praxis/vcs/dist/git-local.js"),
+  ].find((p) => existsSync(p));
+  if (!vcsLocal) fail("W missing git-local source");
+  const src = readFileSync(vcsLocal, "utf8");
+  if (src.includes("push --force") || (src.includes('"--force"') && src.includes("args.push"))) {
     if (/args\.push\([^)]*--force/.test(src)) fail("W force push in git-local");
   }
   if (!src.includes("GIT_FORCE_PUSH_FORBIDDEN")) fail("W missing force forbid");

@@ -315,7 +315,7 @@ const proven = [];
   if (!qa.developerEvidence?.hasQualityHandoff) fail("L: Quality cannot discover handoff");
   if (!qa.qualityInputs?.hasHandoff) fail("L: qualityInputs missing handoff");
   if (qa.jiraMutated !== false) fail("L: Quality review mutated Jira");
-  const { stopQuality } = await import("../../packages/cli/dist/quality-ensure.js");
+  const { stopQuality } = await import("../../node_modules/@praxis/cli/dist/quality-ensure.js");
   stopQuality(repo);
   proven.push("L alpha.34 inconsistent-state recovery + Quality consumption");
 }

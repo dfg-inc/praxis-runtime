@@ -429,7 +429,12 @@ const consumerBefore = consumerSnapshot();
   prove("22. Retry completed operations");
   prove("23. Verify no duplicate commits/PRs");
 
-  const gitLocal = readFileSync(join(root, "plugins/vcs/src/git-local.ts"), "utf8");
+  const gitLocalPath = [
+    join(root, "plugins/vcs/src/git-local.ts"),
+    join(root, "node_modules/@praxis/vcs/dist/git-local.js"),
+  ].find((p) => existsSync(p));
+  if (!gitLocalPath) fail("24 missing git-local");
+  const gitLocal = readFileSync(gitLocalPath, "utf8");
   if (/args\.push\([^)]*--force/.test(gitLocal) || /"push",[\s\S]*"--force"/.test(gitLocal)) fail("24 force push helper");
   if (!gitLocal.includes("GIT_FORCE_PUSH_FORBIDDEN")) fail("24 missing force forbid");
   prove("24. Verify no force push");

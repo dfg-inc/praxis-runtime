@@ -55,7 +55,7 @@ const {
   resolveQualityChildRuntime,
   waitForChildStart,
   isElectronHelperExecutable,
-} = await import("../../packages/cli/dist/quality-ensure.js");
+} = await import("../../node_modules/@praxis/cli/dist/quality-ensure.js");
 const { discoverQualityInputs } = await import("@praxis/jira/workflow");
 const { doctorOp, qualityEnsureOp, PraxisOpError } =
   await import("@praxis/cli/operations");
@@ -638,6 +638,7 @@ try {
   const conflictRepo = consumerRepo("praxis-q-port-");
   const conflictPort = await freePort();
   process.env.PRAXIS_QUALITY_PORT = String(conflictPort);
+  process.env.PRAXIS_QUALITY_ENTRY = join(root, "apps/quality-service/dist/main.js");
   const release = await occupyPort(conflictPort);
   try {
     await qualityEnsureOp({ repo: conflictRepo });
@@ -649,6 +650,7 @@ try {
   } finally {
     await release();
     process.env.PRAXIS_QUALITY_PORT = String(port);
+    delete process.env.PRAXIS_QUALITY_ENTRY;
     rmSync(conflictRepo, { recursive: true, force: true });
   }
 

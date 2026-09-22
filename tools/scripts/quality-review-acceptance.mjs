@@ -41,7 +41,7 @@ const {
   MCP_STARTUP_BUDGET_MS,
   versionNegotiationModern,
 } = await import("./official-mcp-client.mjs");
-const { stopQuality } = await import("../../packages/cli/dist/quality-ensure.js");
+const { stopQuality } = await import("../../node_modules/@praxis/cli/dist/quality-ensure.js");
 
 function envelopeFromTool(result) {
   return parseDoctorEnvelope(result);
