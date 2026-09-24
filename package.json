@@ -1,7 +1,7 @@
 {
   "name": "praxis-runtime",
   "private": true,
-  "version": "0.1.0-alpha.44",
+  "version": "0.1.0-alpha.45",
   "description": "Praxis Runtime Desktop Extension (MCPB) and Quality HTTP worker",
   "workspaces": [
     "packages/*",
@@ -12,7 +12,7 @@
     "build": "npm run build -w @praxis/mcp -w @praxis/quality-service --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "pack:mcpb": "node tools/scripts/pack-claude-extension.mjs --version 0.1.0-alpha.44",
+    "pack:mcpb": "node tools/scripts/pack-claude-extension.mjs --version 0.1.0-alpha.45",
     "accept:git-delivery": "node tools/scripts/git-delivery-acceptance.mjs",
     "accept:git-delivery-e2e": "node tools/scripts/git-delivery-e2e-acceptance.mjs",
     "accept:quality-startup": "node tools/scripts/quality-startup-acceptance.mjs",
