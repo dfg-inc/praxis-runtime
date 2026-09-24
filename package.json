@@ -34,5 +34,13 @@
     "@praxis/jira": "file:vendor/praxis-jira-0.1.0-alpha.44.tgz",
     "@praxis/vcs": "file:vendor/praxis-vcs-0.1.0-alpha.44.tgz",
     "@praxis/cli": "file:vendor/praxis-cli-0.1.0-alpha.44.tgz"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dfg-inc/praxis-runtime.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dfg-inc/praxis-runtime/issues"
+  },
+  "homepage": "https://github.com/dfg-inc/praxis-runtime"
 }

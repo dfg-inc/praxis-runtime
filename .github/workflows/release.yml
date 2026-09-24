@@ -1,0 +1,35 @@
+name: Praxis Runtime Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run pack:mcpb
+      - run: npm run accept:mcpb-runtime
+      - name: Write release-meta.json
+        env:
+          PRAXIS_RELEASE_ARTIFACT_NAME: praxis-runtime.mcpb
+          PRAXIS_RELEASE_SEARCH_ROOT: dist/claude-extensions
+          PRAXIS_RELEASE_PACKAGE_NAME: praxis-runtime
+          PRAXIS_RELEASE_KIND: mcpb
+        run: node tools/scripts/write-release-meta.mjs
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/claude-extensions/**/praxis-runtime.mcpb
+            dist/release-meta.json
+          generate_release_notes: true

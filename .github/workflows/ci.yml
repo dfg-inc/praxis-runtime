@@ -1,12 +1,16 @@
-name: Praxis CI
+name: Praxis Runtime CI
 
 on:
   push:
     branches: [main, master]
   pull_request:
 
+concurrency:
+  group: runtime-ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  build_test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,5 +18,67 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-      - run: npm install
-      - run: npm run verify
+      - run: test -f vendor/manifest.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm run typecheck
+      - run: npm run test
+
+  git_delivery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run accept:git-delivery
+      - run: npm run accept:git-delivery-e2e
+
+  quality_gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run accept:quality-startup
+      - run: npm run accept:quality-review
+      - run: npm run accept:quality-apply
+      - run: npm run accept:quality-state-consistency
+      - run: npm run accept:quality-readback
+
+  pack_mcpb:
+    runs-on: ubuntu-latest
+    needs: [build_test, git_delivery, quality_gates]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run pack:mcpb
+      - run: npm run accept:mcpb-runtime
+      - name: Checksums
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, pathlib
+          paths = list(pathlib.Path("dist/claude-extensions").rglob("praxis-runtime.mcpb"))
+          assert paths, "MCPB missing"
+          rows = [{"file": str(p), "sha256": hashlib.sha256(p.read_bytes()).hexdigest(), "bytes": p.stat().st_size} for p in paths]
+          pathlib.Path("dist/mcpb-checksums.json").write_text(json.dumps(rows, indent=2) + "\n")
+          for r in rows: print(r["sha256"], r["file"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: praxis-runtime-mcpb
+          path: |
+            dist/claude-extensions/
+            dist/mcpb-checksums.json
