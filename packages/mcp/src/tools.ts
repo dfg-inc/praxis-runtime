@@ -214,12 +214,17 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? "")) as Record<string, unknown>;
   if (parsed.action === "verify-stories") {
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true);
-    if (name === "praxis_workflow_preview") return previewWorkflow(repo, recorded);
-    return applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "");
+    const meta = recorded.meta;
+    if (name === "praxis_workflow_preview") {
+      const preview = previewWorkflow(repo, recorded);
+      return { ...preview, result: { ...(preview.result as object), ...meta } };
+    }
+    const applied = applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "");
+    return { ...applied, result: { ...(applied.result as object), ...meta } };
   }
   if (parsed.action === "prepare-fix") {
     if (parsed.authorized !== true) throw new Error("AUTHORIZATION_REQUIRED");
-    const planned = planServiceFix(
+    const planned = await planServiceFix(
       repo,
       String(parsed.serviceId ?? ""),
       typeof parsed.existingBranch === "string" ? parsed.existingBranch : undefined,

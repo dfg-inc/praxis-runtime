@@ -4,7 +4,7 @@
  * Mutates disposable git repositories only.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
@@ -81,7 +81,11 @@ function service(id, extra) {
 }
 
 try {
-  mkdirSync(workflowRepo, { recursive: true });
+  mkdirSync(join(workflowRepo, ".praxis", "quality"), { recursive: true });
+  copyFileSync(
+    join(root, "tools/fixtures/bulk-user-import/adapter.mjs"),
+    join(workflowRepo, ".praxis", "quality", "adapter.mjs"),
+  );
   for (const repo of Object.values(repos)) mkdirSync(join(repo, "src"), { recursive: true });
   writeFileSync(join(repos.api, "src", "bulk-import-api.mjs"), `export function previewCsv(csv, actor) {
   if (!actor || actor.role !== "org-admin") return { ok: false, code: "ACCESS_DENIED" };
