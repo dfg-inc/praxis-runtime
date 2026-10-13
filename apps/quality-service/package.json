@@ -1,6 +1,6 @@
 {
   "name": "@praxis/quality-service",
-  "version": "0.1.0-alpha.45",
+  "version": "0.1.0-alpha.46",
   "private": true,
   "type": "module",
   "description": "Praxis quality-service: reviews, audits, rollback/return metrics",
@@ -23,8 +23,8 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@praxis/contracts": "file:../../vendor/praxis-contracts-0.1.0-alpha.44.tgz",
-    "@praxis/knowledge": "file:../../vendor/praxis-knowledge-0.1.0-alpha.44.tgz",
+    "@praxis/contracts": "file:../../vendor/praxis-contracts-0.1.0-alpha.45.tgz",
+    "@praxis/knowledge": "file:../../vendor/praxis-knowledge-0.1.0-alpha.45.tgz",
     "sql.js": "^1.13.0"
   },
   "devDependencies": {

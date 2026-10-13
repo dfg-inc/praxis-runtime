@@ -735,6 +735,69 @@ export const TOOLS: ToolDef[] = [
     roles: ["developer"],
     kind: "apply",
   },
+  {
+    name: "praxis_workflow_status",
+    description:
+      "READ-ONLY local workflow state. Does not require Jira. Returns requirement ids, stage, and the next role.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_workflow_preview",
+    description:
+      "PREVIEW a local workflow command (open, add-requirement, handoff, revise-requirement, set-service, quality-check). Does not write. Returns previewFingerprint. Jira is optional.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        command: { type: "string", description: "JSON WorkflowCommand" },
+      },
+      required: ["command"],
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "preview",
+  },
+  {
+    name: "praxis_workflow_apply",
+    description:
+      "WRITE a previously previewed local workflow command. Requires confirmation=YES and previewFingerprint. Does not call Jira.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        command: { type: "string", description: "JSON WorkflowCommand matching the preview" },
+        confirmation: confirmProp,
+        previewFingerprint: fingerprintProp,
+      },
+      required: ["command", "confirmation", "previewFingerprint"],
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_capabilities",
+    description:
+      "READ-ONLY contextual capability route. Returns guidance and suggestions. Does not execute tools or external mutations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        request: { type: "string", description: "Current user request" },
+        role: { type: "string", description: "ba, architect, developer, quality, or user" },
+      },
+      required: ["request"],
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
 ];
 
 export function toolsForRole(role: PraxisRole): ToolDef[] {

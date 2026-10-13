@@ -1,6 +1,8 @@
 import type { OpContext } from "@praxis/cli/operations";
+import type { WorkflowRole } from "@praxis/contracts";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
+import { applyWorkflow, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
 
 export {
   TOOLS,
@@ -96,7 +98,8 @@ export async function callTool(
     name === "praxis_developer_git_commit" ||
     name === "praxis_developer_git_publish" ||
     name === "praxis_developer_git_merge_request" ||
-    name === "praxis_developer_git_link_jira_apply"
+    name === "praxis_developer_git_link_jira_apply" ||
+    name === "praxis_workflow_apply"
   ) {
     if (ctx.confirmation !== "YES") {
       return mcpEnvelope({
@@ -109,6 +112,19 @@ export async function callTool(
     }
   }
   try {
+    if (
+      name === "praxis_workflow_status" ||
+      name === "praxis_workflow_preview" ||
+      name === "praxis_workflow_apply" ||
+      name === "praxis_capabilities"
+    ) {
+      return mcpEnvelope({
+        ok: true,
+        operation: name,
+        version: opts.version,
+        data: runWorkflowTool(name, args, ctx.repo),
+      });
+    }
     const data = await dispatchTool(ops, name, ctx, opts.version);
     if (
       (
@@ -142,7 +158,14 @@ export async function callTool(
     return mcpEnvelope({ ok: true, operation: name, version: opts.version, data });
   } catch (err) {
     const message = ops.redact(err instanceof Error ? err.message : String(err));
-    const code = err instanceof ops.PraxisOpError ? err.code : "EXTERNAL_SERVICE_ERROR";
+    const code =
+      err instanceof ops.PraxisOpError
+        ? err.code
+        : message.startsWith("FINGERPRINT_MISMATCH")
+          ? "FINGERPRINT_MISMATCH"
+          : name.startsWith("praxis_workflow")
+            ? "INVALID_INPUT"
+            : "EXTERNAL_SERVICE_ERROR";
     const details =
       err instanceof ops.PraxisOpError
         ? {
@@ -160,6 +183,19 @@ export async function callTool(
       data: details,
     });
   }
+}
+
+function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string): unknown {
+  if (name === "praxis_workflow_status") return workflowStatus(repo);
+  if (name === "praxis_capabilities") {
+    const role = str(args.role);
+    const allowed: WorkflowRole[] = ["user", "ba", "architect", "developer", "quality"];
+    const resolved = allowed.includes(role as WorkflowRole) ? (role as WorkflowRole) : "user";
+    return capabilityRoute({ request: str(args.request) ?? "", role: resolved });
+  }
+  const command = JSON.parse(str(args.command) ?? "");
+  if (name === "praxis_workflow_preview") return previewWorkflow(repo, command);
+  return applyWorkflow(repo, command, str(args.previewFingerprint) ?? "");
 }
 
 async function dispatchTool(

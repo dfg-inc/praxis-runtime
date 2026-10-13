@@ -1,33 +1,18 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio, type StdioServerHandle } from "@modelcontextprotocol/server/stdio";
-import { z } from "zod";
 import {
   parseRoleArgv,
   PraxisMcpRoleError,
   toolsForRole,
-  type JsonSchema,
   type PraxisRole,
 } from "./catalog.js";
 import { bundleVersion, PRAXIS_MCP_SDK } from "./protocol.js";
+import { jsonSchemaToZod } from "./schema.js";
 import { callTool } from "./tools.js";
 
 export { parseRoleArgv, PraxisMcpRoleError } from "./catalog.js";
 export { PRAXIS_MCP_SDK } from "./protocol.js";
-
-function jsonSchemaToZod(schema: JsonSchema) {
-  const shape: Record<string, z.ZodTypeAny> = {};
-  for (const [key, raw] of Object.entries(schema.properties)) {
-    const prop = (raw ?? {}) as { type?: string; description?: string; enum?: string[] };
-    let field: z.ZodTypeAny =
-      prop.enum && prop.enum.length > 0
-        ? z.enum(prop.enum as [string, ...string[]])
-        : z.string();
-    if (prop.description) field = field.describe(prop.description);
-    if (!schema.required?.includes(key)) field = field.optional();
-    shape[key] = field;
-  }
-  return z.object(shape);
-}
+export { jsonSchemaToZod } from "./schema.js";
 
 function logStderr(line: string): void {
   console.error(line);
