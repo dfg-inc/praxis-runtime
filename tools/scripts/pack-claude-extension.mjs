@@ -88,6 +88,10 @@ export async function packClaudeExtension(version) {
     manifest_version: manifest.manifest_version,
   };
   writeFileSync(join(outDir, "manifest.json"), `${JSON.stringify(report, null, 2)}\n`);
+  const trackedDir = join(root, "claude-extensions");
+  mkdirSync(trackedDir, { recursive: true });
+  writeFileSync(join(trackedDir, EXTENSION_FILE), buf);
+  writeFileSync(join(trackedDir, "manifest.json"), `${JSON.stringify(report, null, 2)}\n`);
   console.log(`claude-extension packed -> ${mcpbPath}`);
   return { outDir, mcpbPath, report, staging };
 }
