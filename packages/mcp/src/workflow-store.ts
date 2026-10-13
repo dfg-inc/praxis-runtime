@@ -153,6 +153,34 @@ export function previewWorkflow(repo: string, raw: unknown): {
   };
 }
 
+export function applyResolved(
+  repo: string,
+  fingerprint: string,
+  planned: unknown,
+  final: unknown,
+): {
+  path: string;
+  duplicate: boolean;
+  result: unknown;
+  workflowId: string;
+  workItemId: string;
+} {
+  const command = WorkflowCommandSchema.parse(planned);
+  const expected = commandFingerprint(command);
+  if (fingerprint !== expected) {
+    throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
+  }
+  const applied = applyWorkflowCommand(loadWorkflow(repo), final);
+  const path = saveWorkflow(repo, applied.state);
+  return {
+    path,
+    duplicate: applied.duplicate,
+    result: applied.result,
+    workflowId: applied.state.workflowId,
+    workItemId: applied.state.workItem.id,
+  };
+}
+
 export function applyWorkflow(repo: string, raw: unknown, fingerprint: string): {
   path: string;
   duplicate: boolean;

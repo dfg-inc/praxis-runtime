@@ -4,7 +4,8 @@ import type { OpContext } from "@praxis/cli/operations";
 import type { WorkflowRole } from "@praxis/contracts";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
-import { applyWorkflow, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
+import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
+import { applyResolved, applyWorkflow, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
 
 export {
   TOOLS,
@@ -124,7 +125,7 @@ export async function callTool(
         ok: true,
         operation: name,
         version: opts.version,
-        data: runWorkflowTool(name, args, ctx.repo),
+        data: await runWorkflowTool(name, args, ctx.repo),
       });
     }
     const data = await dispatchTool(ops, name, ctx, opts.version);
@@ -202,7 +203,7 @@ function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
   return command;
 }
 
-function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string): unknown {
+async function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string): Promise<unknown> {
   if (name === "praxis_workflow_status") return workflowStatus(repo);
   if (name === "praxis_capabilities") {
     const role = str(args.role);
@@ -210,9 +211,25 @@ function runWorkflowTool(name: string, args: Record<string, unknown>, repo: stri
     const resolved = allowed.includes(role as WorkflowRole) ? (role as WorkflowRole) : "user";
     return capabilityRoute({ request: str(args.request) ?? "", role: resolved });
   }
-  const command = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? ""));
-  if (name === "praxis_workflow_preview") return previewWorkflow(repo, command);
-  return applyWorkflow(repo, command, str(args.previewFingerprint) ?? "");
+  const parsed = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? "")) as Record<string, unknown>;
+  if (parsed.action === "verify-stories") {
+    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true);
+    if (name === "praxis_workflow_preview") return previewWorkflow(repo, recorded);
+    return applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "");
+  }
+  if (parsed.action === "prepare-fix") {
+    if (parsed.authorized !== true) throw new Error("AUTHORIZATION_REQUIRED");
+    const planned = planServiceFix(
+      repo,
+      String(parsed.serviceId ?? ""),
+      typeof parsed.existingBranch === "string" ? parsed.existingBranch : undefined,
+    );
+    if (name === "praxis_workflow_preview") return previewWorkflow(repo, planned);
+    const committed = commitServiceFix(repo, planned);
+    return applyResolved(repo, str(args.previewFingerprint) ?? "", planned, committed);
+  }
+  if (name === "praxis_workflow_preview") return previewWorkflow(repo, parsed);
+  return applyWorkflow(repo, parsed, str(args.previewFingerprint) ?? "");
 }
 
 async function dispatchTool(
