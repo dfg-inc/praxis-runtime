@@ -99,10 +99,19 @@ export function workflowStatus(repo: string): {
   requirementIds?: string[];
   nextRole?: string;
   jiraIssueKey?: string | null;
+  guidance?: Array<{ id: string; description: string }>;
+  suggested?: string[];
+  executed?: [];
 } {
   const state = loadWorkflow(repo);
   if (!state) return { present: false };
   const resume = resumeWorkflow(state);
+  const role = (resume.nextRole ?? "ba") as WorkflowRole;
+  const routed = capabilityRoute({
+    request: [state.workItem.title, ...state.requirements.map((item) => item.statement)].join(" "),
+    role,
+    stage: state.stage,
+  });
   return {
     present: true,
     workflowId: state.workflowId,
@@ -111,6 +120,9 @@ export function workflowStatus(repo: string): {
     requirementIds: resume.requirementIds,
     nextRole: resume.nextRole,
     jiraIssueKey: state.workItem.jiraIssueKey ?? null,
+    guidance: routed.guidance.map((item) => ({ id: item.id, description: item.description })),
+    suggested: routed.suggested.map((item) => item.id),
+    executed: routed.executed,
   };
 }
 

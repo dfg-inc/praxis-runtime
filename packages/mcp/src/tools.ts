@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
 import type { WorkflowRole } from "@praxis/contracts";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
@@ -185,6 +187,21 @@ export async function callTool(
   }
 }
 
+function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const command = { ...(raw as Record<string, unknown>) };
+  const relative = command.implementationPath;
+  if (typeof relative !== "string" || relative.length === 0) return command;
+  const root = resolve(repo);
+  const absolute = resolve(root, relative);
+  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
+    throw new Error("implementation path escapes the repository");
+  }
+  command.implementationSource = readFileSync(absolute, "utf8");
+  delete command.implementationPath;
+  return command;
+}
+
 function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string): unknown {
   if (name === "praxis_workflow_status") return workflowStatus(repo);
   if (name === "praxis_capabilities") {
@@ -193,7 +210,7 @@ function runWorkflowTool(name: string, args: Record<string, unknown>, repo: stri
     const resolved = allowed.includes(role as WorkflowRole) ? (role as WorkflowRole) : "user";
     return capabilityRoute({ request: str(args.request) ?? "", role: resolved });
   }
-  const command = JSON.parse(str(args.command) ?? "");
+  const command = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? ""));
   if (name === "praxis_workflow_preview") return previewWorkflow(repo, command);
   return applyWorkflow(repo, command, str(args.previewFingerprint) ?? "");
 }
