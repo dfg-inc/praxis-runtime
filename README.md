@@ -30,5 +30,6 @@ Pinned via tracked `vendor/*.tgz`. See `vendor/manifest.json` and [praxis-core D
 ## Release
 
 - Artifact: `dist/claude-extensions/<version>/praxis-runtime.mcpb`
-- Tag `v$package.json.version` → GitHub Actions uploads the MCPB + `release-meta.json` to a GitHub Release
-- Version independently of Core / role ZIPs
+- Tag `v$package.json.version` on GitLab first. After that tag pipeline passes, GitHub Actions uploads the MCPB + `release-meta.json`.
+- This repository versions independently of Core and the role ZIPs. `ecosystem.json` records Runtime's version (`policy: independent`).
+- A Core update is `node tools/scripts/set-ecosystem-version.mjs --vendor <core-version>` in this repo only, plus the new `vendor/*.tgz` files. It does not release BA, Architect, Developer, or Quality.
