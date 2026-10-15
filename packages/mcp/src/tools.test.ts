@@ -1,9 +1,10 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { installHostApproval, type ApprovalOperation } from "@praxis/contracts";
 import {
-  createJiraProvider,
+  createFixtureJiraProvider,
   createMockFetch,
   createMockJiraState,
   type JiraConfig,
@@ -51,11 +52,38 @@ function cfg(): JiraConfig {
 function mockProvider(state = createMockJiraState()) {
   return {
     state,
-    provider: createJiraProvider({
+    provider: createFixtureJiraProvider({
       config: cfg(),
       fetchImpl: createMockFetch(state, { flavor: "cloud", projectKey: "PRX" }),
     }),
   };
+}
+
+const JIRA_INSTANCE = "https://acme.atlassian.net";
+
+function approveMutation(repo: string, input: {
+  planId: string;
+  action: string;
+  operation: ApprovalOperation;
+  provider: "jira" | "local";
+  workItemId: string;
+  previewFingerprint?: string;
+}) {
+  process.env.PRAXIS_JIRA_BASE_URL = JIRA_INSTANCE;
+  installHostApproval(repo, {
+    planId: input.planId,
+    role: "developer",
+    provider: input.provider,
+    instanceId: input.provider === "jira" ? JIRA_INSTANCE : undefined,
+    workItemIds: [input.workItemId],
+    repositories: [resolve(repo)],
+    operations: [input.operation],
+    inScope: [input.action],
+    outOfScope: [],
+    assumptions: [],
+    risks: ["writes only the approved target"],
+    previewFingerprint: input.previewFingerprint,
+  });
 }
 
 function seedWp(repo: string, id = "WP-20260914-002") {
@@ -316,6 +344,14 @@ describe("Architect MCP fixture", () => {
     expect(baPreview.ok).toBe(true);
     const baFp = (baPreview.data as { previewFingerprint: string }).previewFingerprint;
     expect(baFp).toMatch(/^sha256:/);
+    approveMutation(repo, {
+      planId: `ba-${epic.key}`,
+      action: "praxis_ba_apply",
+      operation: "external_record_update",
+      provider: "jira",
+      workItemId: epic.key,
+      previewFingerprint: baFp,
+    });
     const baNoConfirm = await callTool(
       "praxis_ba_apply",
       { epic: epic.key, repo, previewFingerprint: baFp },
@@ -323,6 +359,14 @@ describe("Architect MCP fixture", () => {
     );
     expect(baNoConfirm.ok).toBe(false);
     expect(baNoConfirm.code).toBe("CONFIRMATION_REQUIRED");
+    approveMutation(repo, {
+      planId: `ba-${epic.key}`,
+      action: "praxis_ba_apply",
+      operation: "external_record_update",
+      provider: "jira",
+      workItemId: epic.key,
+      previewFingerprint: baFp,
+    });
     const baApply = await callTool(
       "praxis_ba_apply",
       { epic: epic.key, repo, confirmation: "YES", previewFingerprint: baFp },
@@ -355,18 +399,29 @@ describe("Architect MCP fixture", () => {
     );
     expect(blocked.ok).toBe(false);
     expect(blocked.code).toBe("CONFIRMATION_REQUIRED");
+    approveMutation(repo, {
+      planId: `arch-${epic.key}`,
+      action: "praxis_architect_apply",
+      operation: "external_record_update",
+      provider: "jira",
+      workItemId: epic.key,
+      previewFingerprint: data.previewFingerprint,
+    });
+    const createdBeforeStale = state.createIssueCount;
     const stale = await callTool(
       "praxis_architect_apply",
       {
         epic: epic.key,
         repo,
         confirmation: "YES",
+        planId: `arch-${epic.key}`,
         previewFingerprint: "sha256:deadbeef",
       },
       { role: "architect", version: VERSION, extra },
     );
     expect(stale.ok).toBe(false);
-    expect(stale.code).toBe("CONFLICT");
+    expect(stale.code).toBe("APPROVAL_FINGERPRINT_MISMATCH");
+    expect(state.createIssueCount).toBe(createdBeforeStale);
     const first = await callTool(
       "praxis_architect_apply",
       {
@@ -388,6 +443,14 @@ describe("Architect MCP fixture", () => {
       { role: "architect", version: VERSION, extra },
     );
     const fp2 = (preview2.data as { previewFingerprint: string }).previewFingerprint;
+    approveMutation(repo, {
+      planId: `arch2-${epic.key}`,
+      action: "praxis_architect_apply",
+      operation: "external_record_update",
+      provider: "jira",
+      workItemId: epic.key,
+      previewFingerprint: fp2,
+    });
     const second = await callTool(
       "praxis_architect_apply",
       { epic: epic.key, repo, confirmation: "YES", previewFingerprint: fp2 },
@@ -413,13 +476,22 @@ describe("Developer MCP fixture", () => {
       { epic: epic.key, repo },
       { role: "ba", version: VERSION, extra },
     );
+    const devBaFp = (baPreview.data as { previewFingerprint: string }).previewFingerprint;
+    approveMutation(repo, {
+      planId: `ba-${epic.key}`,
+      action: "praxis_ba_apply",
+      operation: "external_record_update",
+      provider: "jira",
+      workItemId: epic.key,
+      previewFingerprint: devBaFp,
+    });
     await callTool(
       "praxis_ba_apply",
       {
         epic: epic.key,
         repo,
         confirmation: "YES",
-        previewFingerprint: (baPreview.data as { previewFingerprint: string }).previewFingerprint,
+        previewFingerprint: devBaFp,
       },
       { role: "ba", version: VERSION, extra },
     );
@@ -429,13 +501,22 @@ describe("Developer MCP fixture", () => {
       { epic: epic.key, repo },
       { role: "architect", version: VERSION, extra },
     );
+    const devArchFp = (archPreview.data as { previewFingerprint: string }).previewFingerprint;
+    approveMutation(repo, {
+      planId: `arch-${epic.key}`,
+      action: "praxis_architect_apply",
+      operation: "external_record_update",
+      provider: "jira",
+      workItemId: epic.key,
+      previewFingerprint: devArchFp,
+    });
     const applied = await callTool(
       "praxis_architect_apply",
       {
         epic: epic.key,
         repo,
         confirmation: "YES",
-        previewFingerprint: (archPreview.data as { previewFingerprint: string }).previewFingerprint,
+        previewFingerprint: devArchFp,
       },
       { role: "architect", version: VERSION, extra },
     );
@@ -459,6 +540,13 @@ describe("Developer MCP fixture", () => {
       { role: "developer", version: VERSION, extra },
     );
     expect(denied.code).toBe("CONFIRMATION_REQUIRED");
+    approveMutation(repo, {
+      planId: "claim-wp",
+      action: "praxis_developer_claim",
+      operation: "external_state_change",
+      provider: "jira",
+      workItemId: "WP-20260914-002",
+    });
     const claimed = await callTool(
       "praxis_developer_claim",
       { workPackage: "WP-20260914-002", repo, confirmation: "YES" },
@@ -478,6 +566,13 @@ describe("Developer MCP fixture", () => {
       { role: "developer", version: VERSION, extra },
     );
     expect(completeDenied.code).toBe("CONFIRMATION_REQUIRED");
+    approveMutation(repo, {
+      planId: "complete-wp",
+      action: "praxis_developer_complete",
+      operation: "external_state_change",
+      provider: "jira",
+      workItemId: "WP-20260914-002",
+    });
     writeFileSync(join(repo, "_praxis_verify.mjs"), "console.log('Tests 5 passed'); process.exit(0);\n");
     writeFileSync(
       join(repo, ".project"),
@@ -522,7 +617,7 @@ describe("Quality MCP fixture", () => {
       { role: "quality", version: VERSION, extra },
     );
     expect(deniedFp.ok).toBe(false);
-    expect(deniedFp.code).toBe("CONFIRMATION_REQUIRED");
+    expect(deniedFp.code).toBe("APPROVAL_REQUIRED");
     const meta = await callTool("praxis_jira_discover", { repo }, { role: "quality", version: VERSION, extra });
     expect((meta.data as { bugTypeId: string }).bugTypeId).toBe("10012");
     expect(toolsForRole("quality").map((t) => t.name)).toEqual(

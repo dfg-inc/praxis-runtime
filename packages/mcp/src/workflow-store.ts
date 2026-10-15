@@ -1,11 +1,14 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   applyWorkflowCommand,
   commandFingerprint,
+  inspectMutation,
   redactPersistent,
+  requireMutationLease,
   resumeWorkflow,
   routeCapabilities,
+  runAuthorizedMutation,
   WorkflowCommandSchema,
   WorkflowStateSchema,
   type Capability,
@@ -127,6 +130,7 @@ export function workflowStatus(repo: string): {
 }
 
 export function saveWorkflow(repo: string, state: WorkflowState): string {
+  requireMutationLease();
   const path = statePath(repo);
   mkdirSync(join(repo, ".praxis", "workflow"), { recursive: true });
   const body = `${JSON.stringify(redactPersistent(state), null, 2)}\n`;
@@ -153,6 +157,18 @@ export function previewWorkflow(repo: string, raw: unknown): {
   };
 }
 
+function localWriteRequest(repo: string, fingerprint: string) {
+  const root = resolve(repo);
+  return {
+    repo: root,
+    operation: "repository_edit" as const,
+    provider: "local" as const,
+    repository: root,
+    previewFingerprint: fingerprint,
+    action: "praxis_workflow_apply",
+  };
+}
+
 export function applyResolved(
   repo: string,
   fingerprint: string,
@@ -170,15 +186,28 @@ export function applyResolved(
   if (fingerprint !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
-  const applied = applyWorkflowCommand(loadWorkflow(repo), final);
-  const path = saveWorkflow(repo, applied.state);
-  return {
-    path,
-    duplicate: applied.duplicate,
-    result: applied.result,
-    workflowId: applied.state.workflowId,
-    workItemId: applied.state.workItem.id,
-  };
+  const request = localWriteRequest(repo, fingerprint);
+  const inspection = inspectMutation(request);
+  if (inspection.kind === "replay") {
+    return { ...(inspection.result as {
+      path: string;
+      duplicate: boolean;
+      result: unknown;
+      workflowId: string;
+      workItemId: string;
+    }), replayed: true };
+  }
+  return runAuthorizedMutation(request, () => {
+    const applied = applyWorkflowCommand(loadWorkflow(repo), final);
+    const path = saveWorkflow(repo, applied.state);
+    return {
+      path,
+      duplicate: applied.duplicate,
+      result: applied.result,
+      workflowId: applied.state.workflowId,
+      workItemId: applied.state.workItem.id,
+    };
+  });
 }
 
 export function applyWorkflow(repo: string, raw: unknown, fingerprint: string): {
@@ -193,16 +222,29 @@ export function applyWorkflow(repo: string, raw: unknown, fingerprint: string): 
   if (fingerprint !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
-  const current = loadWorkflow(repo);
-  const applied = applyWorkflowCommand(current, command);
-  const path = saveWorkflow(repo, applied.state);
-  return {
-    path,
-    duplicate: applied.duplicate,
-    result: applied.result,
-    workflowId: applied.state.workflowId,
-    workItemId: applied.state.workItem.id,
-  };
+  const request = localWriteRequest(repo, fingerprint);
+  const inspection = inspectMutation(request);
+  if (inspection.kind === "replay") {
+    return { ...(inspection.result as {
+      path: string;
+      duplicate: boolean;
+      result: unknown;
+      workflowId: string;
+      workItemId: string;
+    }), replayed: true };
+  }
+  return runAuthorizedMutation(request, () => {
+    const current = loadWorkflow(repo);
+    const applied = applyWorkflowCommand(current, command);
+    const path = saveWorkflow(repo, applied.state);
+    return {
+      path,
+      duplicate: applied.duplicate,
+      result: applied.result,
+      workflowId: applied.state.workflowId,
+      workItemId: applied.state.workItem.id,
+    };
+  });
 }
 
 export function capabilityRoute(input: {

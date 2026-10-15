@@ -1,7 +1,16 @@
 import { readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
-import type { WorkflowRole } from "@praxis/contracts";
+import {
+  abortConsumption,
+  approvalSummary,
+  beginConsumption,
+  completeConsumption,
+  inspectMutation,
+  readApproval,
+  type ApprovalOperation,
+  type WorkflowRole,
+} from "@praxis/contracts";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
@@ -63,6 +72,113 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
   };
 }
 
+const YES_BEFORE_APPROVAL = new Set([
+  "praxis_project_init_apply",
+  "praxis_ba_apply",
+  "praxis_architect_apply",
+  "praxis_developer_claim",
+  "praxis_developer_release",
+  "praxis_developer_complete",
+  "praxis_developer_complete_recovery_apply",
+  "praxis_quality_apply",
+  "praxis_developer_git_connect_apply",
+  "praxis_developer_git_identity_apply",
+  "praxis_developer_git_commit",
+  "praxis_developer_git_publish",
+  "praxis_developer_git_merge_request",
+  "praxis_developer_git_link_jira_apply",
+  "praxis_workflow_apply",
+]);
+
+const MCP_MUTATIONS: Record<string, { operation: ApprovalOperation; provider: "jira" | "local"; workItem: "epic" | "wp" | "none" }> = {
+  praxis_project_init_apply: { operation: "repository_edit", provider: "local", workItem: "none" },
+  praxis_ba_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
+  praxis_architect_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
+  praxis_developer_claim: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_developer_release: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_developer_complete: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_developer_complete_recovery_apply: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_quality_apply: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_developer_git_connect_apply: { operation: "repository_edit", provider: "local", workItem: "wp" },
+  praxis_developer_git_identity_apply: { operation: "repository_edit", provider: "local", workItem: "wp" },
+  praxis_developer_git_commit: { operation: "git_commit", provider: "local", workItem: "wp" },
+  praxis_developer_git_publish: { operation: "git_push", provider: "local", workItem: "wp" },
+  praxis_developer_git_merge_request: { operation: "merge_request", provider: "local", workItem: "wp" },
+  praxis_developer_git_link_jira_apply: { operation: "external_record_update", provider: "jira", workItem: "wp" },
+};
+
+function openMcpGate(
+  name: string,
+  args: Record<string, unknown>,
+  ctx: OpContext & { planId?: string; planFingerprint?: string; instanceId?: string; approvalConsumed?: boolean },
+  version: string,
+): { envelope?: McpEnvelope; finish?: (data: unknown) => void; abort?: () => void } {
+  if (YES_BEFORE_APPROVAL.has(name) && ctx.confirmation !== "YES") {
+    return {
+      envelope: mcpEnvelope({
+        ok: false,
+        operation: name,
+        version,
+        code: "CONFIRMATION_REQUIRED",
+        errors: [`${name} requires confirmation=YES`],
+      }),
+    };
+  }
+  const spec = MCP_MUTATIONS[name];
+  if (!spec) return {};
+  const repo = resolve(ctx.repo);
+  const workItemId = spec.workItem === "epic"
+    ? str(args.epic)
+    : spec.workItem === "wp"
+      ? (str(args.workPackage) ?? str(args.wp) ?? str(args.workPackageId))
+      : undefined;
+  try {
+    const inspection = inspectMutation({
+      repo,
+      planId: ctx.planId,
+      planFingerprint: ctx.planFingerprint,
+      operation: spec.operation,
+      provider: spec.provider,
+      instanceId: spec.provider === "local" ? undefined : ctx.instanceId,
+      workItemId,
+      repository: repo,
+      previewFingerprint: ctx.previewFingerprint,
+      action: name,
+    });
+    if (inspection.kind === "replay") {
+      const result = inspection.result && typeof inspection.result === "object"
+        ? { ...(inspection.result as object), replayed: true }
+        : { replayed: true, result: inspection.result };
+      return { envelope: mcpEnvelope({ ok: true, operation: name, version, data: result }) };
+    }
+    if (inspection.kind === "ready") beginConsumption(repo, inspection.planId, inspection.key, name);
+    ctx.approvalConsumed = true;
+    return {
+      finish: (data) => completeConsumption(repo, inspection.planId, inspection.key, name, data),
+      abort: () => {
+        try {
+          abortConsumption(repo, inspection.planId, inspection.key, name);
+        } catch {
+          /* keep the tool error */
+        }
+      },
+    };
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string"
+      ? (error as { code: string }).code
+      : "APPROVAL_REQUIRED";
+    return {
+      envelope: mcpEnvelope({
+        ok: false,
+        operation: name,
+        version,
+        code,
+        errors: [error instanceof Error ? error.message : String(error)],
+      }),
+    };
+  }
+}
+
 export async function callTool(
   name: string,
   rawArgs: unknown,
@@ -84,6 +200,15 @@ export async function callTool(
   const ctx = ctxFromArgs(args, {
     ...opts.extra,
   });
+  const bound = ctx as OpContext & {
+    planId?: string;
+    planFingerprint?: string;
+    instanceId?: string;
+    approvalConsumed?: boolean;
+  };
+  bound.planId = str(args.planId);
+  bound.planFingerprint = str(args.planFingerprint);
+  bound.instanceId = str(args.instanceId) ?? process.env.PRAXIS_JIRA_BASE_URL;
   ops.loadPraxisDotenv(ctx.repo);
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
@@ -91,30 +216,32 @@ export async function callTool(
   if (name === "praxis_quality_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_merge_request") {
     ctx.requirePreviewFingerprint = true;
   }
-  if (
-    name === "praxis_developer_claim" ||
-    name === "praxis_developer_complete" ||
-    name === "praxis_developer_complete_recovery_apply" ||
-    name === "praxis_quality_apply" ||
-    name === "praxis_developer_git_connect_apply" ||
-    name === "praxis_developer_git_identity_apply" ||
-    name === "praxis_developer_git_commit" ||
-    name === "praxis_developer_git_publish" ||
-    name === "praxis_developer_git_merge_request" ||
-    name === "praxis_developer_git_link_jira_apply" ||
-    name === "praxis_workflow_apply"
-  ) {
-    if (ctx.confirmation !== "YES") {
+  const gate = openMcpGate(name, args, bound, opts.version);
+  if (gate.envelope) return gate.envelope;
+  try {
+    if (name === "praxis_approval_confirm") {
+      const planId = str(args.planId);
+      if (!planId) {
+        return mcpEnvelope({
+          ok: false,
+          operation: name,
+          version: opts.version,
+          code: "INVALID_INPUT",
+          errors: ["praxis_approval_confirm requires planId"],
+        });
+      }
+      const record = readApproval(ctx.repo, planId);
       return mcpEnvelope({
-        ok: false,
+        ok: true,
         operation: name,
         version: opts.version,
-        code: "CONFIRMATION_REQUIRED",
-        errors: [`${name} requires confirmation=YES`],
+        data: {
+          approved: false,
+          state: record.plan.state,
+          summary: approvalSummary(record.plan),
+        },
       });
     }
-  }
-  try {
     if (
       name === "praxis_workflow_status" ||
       name === "praxis_workflow_preview" ||
@@ -144,6 +271,7 @@ export async function callTool(
       (data as { ok?: unknown }).ok === false
     ) {
       const rec = data as { ok: false; errors?: string[]; code?: string; warnings?: string[]; recoveryInstructions?: string };
+      if (gate.abort) gate.abort();
       return mcpEnvelope({
         ok: false,
         operation: name,
@@ -158,17 +286,22 @@ export async function callTool(
         code: rec.code ?? (name === "praxis_quality_apply" ? "QUALITY_APPLY_INCOMPLETE" : "GIT_TRANSPORT_FAILED"),
       });
     }
+    if (gate.finish) gate.finish(data);
     return mcpEnvelope({ ok: true, operation: name, version: opts.version, data });
   } catch (err) {
+    if (gate.abort) gate.abort();
     const message = ops.redact(err instanceof Error ? err.message : String(err));
+    const coded = err as { code?: unknown };
     const code =
       err instanceof ops.PraxisOpError
         ? err.code
-        : message.startsWith("FINGERPRINT_MISMATCH")
-          ? "FINGERPRINT_MISMATCH"
-          : name.startsWith("praxis_workflow")
-            ? "INVALID_INPUT"
-            : "EXTERNAL_SERVICE_ERROR";
+        : typeof coded.code === "string" && coded.code.startsWith("APPROVAL_")
+          ? coded.code
+          : message.startsWith("FINGERPRINT_MISMATCH")
+            ? "FINGERPRINT_MISMATCH"
+            : name.startsWith("praxis_workflow")
+              ? "INVALID_INPUT"
+              : "EXTERNAL_SERVICE_ERROR";
     const details =
       err instanceof ops.PraxisOpError
         ? {

@@ -1,0 +1,9 @@
+{
+  "name": "praxis-runtime",
+  "version": "0.1.0-alpha.47",
+  "description": "Praxis Runtime MCP for Claude Code. Exposes praxis_* tools over stdio. Classic Claude Desktop continues to use claude-extensions/praxis-runtime.mcpb.",
+  "author": {
+    "name": "Praxis"
+  },
+  "license": "UNLICENSED"
+}

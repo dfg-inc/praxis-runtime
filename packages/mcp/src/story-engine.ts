@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { rollupStoryVerdict } from "@praxis/contracts";
+import { inspectMutation, rollupStoryVerdict, runAuthorizedMutation } from "@praxis/contracts";
 import { inspectionPlan, runProjectChecks, type Finding, type Scenario } from "./generic-verification.js";
 import { inspectService, type ProjectProfile, type ServiceLocation } from "./project-profile.js";
 import { loadWorkflow } from "./workflow-store.js";
@@ -291,6 +291,33 @@ export function commitServiceFix(
   const service = state?.services.find((item) => item.id === change.serviceId);
   const root = service?.localPath;
   if (!root) throw new Error("REPOSITORY_LOCATION_MISSING");
+  const repository = resolve(root);
+  const workItemId = change.storyIds[0] ?? change.serviceId;
+  if (change.remote) {
+    inspectMutation({
+      repo: repository,
+      operation: "git_push",
+      provider: "local",
+      repository,
+      workItemId,
+      action: "praxis_developer_git_publish",
+    });
+  }
+  return runAuthorizedMutation({
+    repo: repository,
+    operation: "git_commit",
+    provider: "local",
+    repository,
+    workItemId,
+    action: "praxis_quality_service_fix",
+  }, () => commitServiceFixBody(root, planned));
+}
+
+function commitServiceFixBody(
+  root: string,
+  planned: Awaited<ReturnType<typeof planServiceFix>>,
+): Awaited<ReturnType<typeof planServiceFix>> {
+  const change = planned.change;
   applyProposal(root, planned.proposal);
   const current = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (current !== change.branch) {
