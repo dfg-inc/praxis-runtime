@@ -4262,6 +4262,8 @@ var init_story = __esm({
     });
     CoverageEntrySchema = external_exports2.object({
       storyId: StoryIdSchema,
+      /** Story revision this scenario verified. Older revisions are not evidence for the current one. */
+      storyRevision: external_exports2.number().int().positive().optional(),
       requirementId: RequirementIdSchema,
       acceptanceCriterionId: external_exports2.string().min(1),
       scenarioId: external_exports2.string().min(1),
@@ -4595,6 +4597,37 @@ function evaluateRequirementBehavior(input2) {
   }
   return { verdict: "PASS" };
 }
+function requirementEvidence(state, requirementId) {
+  const current = new Map(state.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]));
+  const executed = state.coverage.filter((entry) => {
+    if (entry.requirementId !== requirementId)
+      return false;
+    const story = current.get(entry.storyId);
+    if (!story || entry.scenarioId === `${entry.storyId}-CONFIRMATION`)
+      return false;
+    return (entry.storyRevision ?? 1) === story.revision;
+  });
+  if (executed.length === 0)
+    return { status: "missing", reasons: ["missing independent evidence"] };
+  const rolled = rollupStoryVerdict(executed);
+  let verdict = rolled.verdict;
+  const reasons = [...rolled.reasons];
+  const verified = new Set(executed.map((entry) => entry.storyId));
+  const linked = [...current.values()].filter((story) => story.requirementIds.includes(requirementId));
+  for (const story of linked) {
+    if (!verified.has(story.id))
+      reasons.push(`story-not-verified:${story.id}@${story.revision}`);
+    else if (!story.confirmedBehavior)
+      reasons.push(`story-unconfirmed:${story.id}@${story.revision}`);
+  }
+  if (verdict === "PASS" && reasons.length > 0)
+    verdict = "PASS_WITH_RISKS";
+  const provenance = [
+    ...[...verified].map((id) => `story:${id}@${current.get(id).revision}`),
+    ...executed.map((entry) => `${entry.scenarioId}:${entry.status}`)
+  ];
+  return { status: "executed", verdict, reasons, provenance };
+}
 function recordVerdict(state, verdict) {
   return {
     ...state,
@@ -4817,11 +4850,16 @@ function applyWorkflowCommand(state, raw) {
     return { state, duplicate: false, result: { questions } };
   }
   if (command.action === "record-verification") {
-    const scenarios = command.scenarios.map((scenario) => scenario.critical || scenario.kind === "happy" ? { ...scenario, critical: true } : scenario);
+    const scenarios = command.scenarios.map((scenario) => {
+      const storyRevision = scenario.storyRevision ?? state.stories.find((story) => story.id === scenario.storyId)?.revision;
+      const stamped = storyRevision === void 0 ? scenario : { ...scenario, storyRevision };
+      return stamped.critical || stamped.kind === "happy" ? { ...stamped, critical: true } : stamped;
+    });
     const unconfirmed = state.stories.filter((story) => !story.confirmedBehavior && story.status !== "superseded");
     for (const story of unconfirmed) {
       scenarios.push({
         storyId: story.id,
+        storyRevision: story.revision,
         requirementId: story.requirementIds[0],
         acceptanceCriterionId: story.acceptanceCriteria[0]?.id ?? story.id,
         scenarioId: `${story.id}-CONFIRMATION`,
@@ -4864,6 +4902,23 @@ function applyWorkflowCommand(state, raw) {
         verdict: rolled.verdict,
         evidenceRefs: rolled.reasons.length ? rolled.reasons : [`${serviceId} scenarios passed`],
         requirementIds: [...new Set(entries.map((scenario) => scenario.requirementId))]
+      });
+    }
+    for (const requirementId of [...new Set(scenarios.map((scenario) => scenario.requirementId))]) {
+      const evidence2 = requirementEvidence(next2, requirementId);
+      if (evidence2.status !== "executed")
+        continue;
+      next2 = recordVerdict(next2, {
+        id: `V-${requirementId}-${next2.verdicts.length + 1}`,
+        scope: "requirement",
+        scopeId: requirementId,
+        verdict: evidence2.verdict,
+        evidenceRefs: [
+          ...command.independentRerun ? ["independentRerun:true"] : ["independentRerun:false"],
+          ...evidence2.reasons,
+          ...evidence2.provenance
+        ],
+        requirementIds: [requirementId]
       });
     }
     const verdictId2 = `V-STORY-${next2.verdicts.length + 1}`;
@@ -4955,20 +5010,35 @@ function applyWorkflowCommand(state, raw) {
     testsGreen: command.testsGreen,
     developerClaimsPass: command.developerClaimsPass
   });
-  const evidence = [
-    ...check2.finding?.evidence ?? [`observed:${observedBehavior}`]
-  ];
+  const executed = requirementEvidence(state, command.requirementId);
+  const implementationEvidence = [];
   if (command.implementationSource) {
-    evidence.push(`implementation:${fingerprintPayload(command.implementationSource)}`);
+    implementationEvidence.push(`implementation:${fingerprintPayload(command.implementationSource)}`);
     if (command.observedBehavior && command.observedBehavior !== observedBehavior) {
-      evidence.push(`unsupported-claim:${command.observedBehavior}`);
+      implementationEvidence.push(`unsupported-claim:${command.observedBehavior}`);
     }
   }
-  const finding = check2.finding ? {
-    ...check2.finding,
-    serviceIds: command.serviceId ? [command.serviceId] : check2.finding.serviceIds,
-    evidence
-  } : void 0;
+  const serviceIds = (fallback) => command.serviceId ? [command.serviceId] : fallback;
+  let verdict;
+  let evidence;
+  let finding;
+  if (check2.verdict === "FAIL" || executed.status === "missing") {
+    verdict = check2.verdict;
+    evidence = [...check2.finding?.evidence ?? [`observed:${observedBehavior}`], ...implementationEvidence];
+    finding = check2.finding ? { ...check2.finding, serviceIds: serviceIds(check2.finding.serviceIds), evidence } : void 0;
+  } else {
+    verdict = executed.verdict;
+    evidence = [...executed.reasons, ...executed.provenance, ...implementationEvidence];
+    finding = executed.verdict === "FAIL" ? {
+      id: `F-${command.requirementId}-coverage`,
+      requirementIds: [command.requirementId],
+      serviceIds: serviceIds([]),
+      owner: "developer",
+      summary: `${command.requirementId} failed executed verification: ${executed.reasons.join("; ")}`,
+      evidence,
+      status: "open"
+    } : void 0;
+  }
   let next = state;
   if (finding) {
     const returned = returnFinding(next, finding);
@@ -4979,14 +5049,19 @@ function applyWorkflowCommand(state, raw) {
     id: verdictId,
     scope: "requirement",
     scopeId: command.requirementId,
-    verdict: check2.verdict,
+    verdict,
     evidenceRefs: evidence,
     requirementIds: [command.requirementId]
   });
   return {
     state: next,
     duplicate: false,
-    result: { verdict: check2.verdict, observedBehavior, finding: finding ?? null }
+    result: {
+      verdict,
+      observedBehavior,
+      evidenceStatus: executed.status,
+      finding: finding ?? null
+    }
   };
 }
 function mergeFindings(current, incoming) {
