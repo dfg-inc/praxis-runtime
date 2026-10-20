@@ -4331,9 +4331,12 @@ function transition(state, to, note) {
     history: [...state.history, { revision, stage: to, note }]
   };
 }
+function workItemIdFor(title, sequence = 1) {
+  const slug = title.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
+  return `WI-${slug || "WORK"}-${String(sequence).padStart(3, "0")}`;
+}
 function openLocalWorkflow(input2) {
-  const slug = input2.title.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
-  const workItemId = `WI-${slug || "WORK"}-001`;
+  const workItemId = workItemIdFor(input2.title, input2.sequence ?? 1);
   const workflowId = `WF-${workItemId}`;
   return WorkflowStateSchema.parse({
     contract: "praxis.workflow.state",
@@ -4720,8 +4723,22 @@ function applyWorkflowCommand(state, raw) {
     const opened = openLocalWorkflow(command);
     return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id } };
   }
+  if (command.action === "select-work-item") {
+    throw new WorkflowError("EXECUTION_REQUIRED", "select-work-item is resolved by the workflow store");
+  }
   if (!state)
     throw new WorkflowError("WORKFLOW_MISSING", "open a workflow before applying commands");
+  if (command.action === "link-work-item") {
+    const same = (link) => link.repository === command.target.repository && link.workItemId === command.target.workItemId && link.relation === command.target.relation;
+    const current = state.workItem.links ?? [];
+    const links = command.remove ? current.filter((link) => !same(link)) : current.some(same) ? current : [...current, command.target];
+    const changed = links.length !== current.length;
+    return {
+      state: changed ? { ...state, workItem: { ...state.workItem, links, revision: state.workItem.revision + 1 } } : state,
+      duplicate: !changed,
+      result: { workItemId: state.workItem.id, links }
+    };
+  }
   if (command.action === "add-requirement") {
     const next2 = addRequirement(state, command);
     return { state: next2, duplicate: false, result: { requirementId: command.id } };
@@ -5122,7 +5139,7 @@ function evaluateFeature(state) {
   }
   return { verdict: gaps.length === 0 ? "PASS" : "FAIL", gaps };
 }
-var import_node_crypto, import_node_fs, WORKFLOW_CONTRACT_VERSION, WorkflowStageSchema, WorkflowRoleSchema, ClarificationClassSchema, SideEffectSchema, QualityVerdictSchema, RequirementIdSchema2, WorkItemSourceSchema, WorkTrackingProviderSchema, TRANSITIONS, WorkflowError, WorkItemSchema, AcceptanceCriterionSchema, RequirementSchema, ServiceSchema, ArtifactRefSchema, RoleHandoffSchema, FindingSchema, VerdictRecordSchema, CapabilitySchema, WorkflowStateSchema, SECRET_KEY, PARTIAL_SUCCESS, WorkflowCommandSchema;
+var import_node_crypto, import_node_fs, WORKFLOW_CONTRACT_VERSION, WorkflowStageSchema, WorkflowRoleSchema, ClarificationClassSchema, SideEffectSchema, QualityVerdictSchema, RequirementIdSchema2, WorkItemSourceSchema, WorkTrackingProviderSchema, TRANSITIONS, WorkflowError, WorkItemRelationSchema, WorkItemLinkSchema, WorkItemSchema, AcceptanceCriterionSchema, RequirementSchema, ServiceSchema, ArtifactRefSchema, RoleHandoffSchema, FindingSchema, VerdictRecordSchema, CapabilitySchema, WorkflowStateSchema, SECRET_KEY, PARTIAL_SUCCESS, WorkflowCommandSchema;
 var init_workflow = __esm({
   "node_modules/@praxis/contracts/dist/workflow.js"() {
     import_node_crypto = require("node:crypto");
@@ -5192,6 +5209,12 @@ var init_workflow = __esm({
         this.code = code;
       }
     };
+    WorkItemRelationSchema = external_exports2.enum(["depends-on", "blocks", "relates-to", "derived-from"]);
+    WorkItemLinkSchema = external_exports2.object({
+      repository: external_exports2.string().min(1),
+      workItemId: external_exports2.string().min(1),
+      relation: WorkItemRelationSchema
+    });
     WorkItemSchema = external_exports2.object({
       id: external_exports2.string().min(1),
       projectId: external_exports2.string().min(1),
@@ -5208,7 +5231,8 @@ var init_workflow = __esm({
       /** Instance base URL or tenant id. Distinguishes two trackers of the same kind. */
       instanceId: external_exports2.string().min(1).optional(),
       status: WorkflowStageSchema,
-      revision: external_exports2.number().int().nonnegative()
+      revision: external_exports2.number().int().nonnegative(),
+      links: external_exports2.array(WorkItemLinkSchema).optional()
     });
     AcceptanceCriterionSchema = external_exports2.object({
       id: external_exports2.string().min(1),
@@ -5389,7 +5413,18 @@ var init_workflow = __esm({
         title: external_exports2.string().min(1),
         request: external_exports2.string().min(1),
         source: WorkItemSourceSchema.optional(),
-        jiraIssueKey: external_exports2.string().min(1).optional()
+        jiraIssueKey: external_exports2.string().min(1).optional(),
+        sequence: external_exports2.number().int().positive().optional()
+      }),
+      external_exports2.object({
+        // Resolved by the workflow store, which owns the index of work items.
+        action: external_exports2.literal("select-work-item"),
+        workItemId: external_exports2.string().min(1)
+      }),
+      external_exports2.object({
+        action: external_exports2.literal("link-work-item"),
+        target: WorkItemLinkSchema,
+        remove: external_exports2.boolean().optional()
       }),
       external_exports2.object({
         action: external_exports2.literal("add-requirement"),
@@ -14089,7 +14124,7 @@ function loadProjectConfig(repoRoot) {
     suggestedPath: (0, import_node_path7.join)(repoRoot, ".project")
   };
 }
-function readJson2(path) {
+function readJson3(path) {
   if (!(0, import_node_fs8.existsSync)(path))
     return void 0;
   try {
@@ -14101,7 +14136,7 @@ function readJson2(path) {
 function inferProjectConfig(repoRoot) {
   const existing = loadProjectConfig(repoRoot);
   const notes = [];
-  const pkg = readJson2((0, import_node_path7.join)(repoRoot, "package.json"));
+  const pkg = readJson3((0, import_node_path7.join)(repoRoot, "package.json"));
   const scripts = pkg && typeof pkg.scripts === "object" && pkg.scripts ? pkg.scripts : {};
   const stack = [];
   if (pkg) {
@@ -15832,7 +15867,7 @@ function readText(path) {
     return void 0;
   return (0, import_node_fs11.readFileSync)(path, "utf8");
 }
-function readJson3(path) {
+function readJson4(path) {
   const raw = readText(path);
   if (!raw)
     return void 0;
@@ -15885,9 +15920,9 @@ function jiraWpSummary(id, title) {
 function readNormalizedWorkPackage(repo, local, opts) {
   const designIndex = local.designDir ? readText((0, import_node_path12.join)(local.designDir, "index.md")) : void 0;
   const canonIndex = local.canonWpDir ? readText((0, import_node_path12.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path12.join)(repo, "wp", local.id, "index.md"));
-  const manifest = readJson3((0, import_node_path12.join)(local.manifestDir, "manifest.json"));
+  const manifest = readJson4((0, import_node_path12.join)(local.manifestDir, "manifest.json"));
   const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path12.join)(local.designDir, "change-spec.json") : void 0);
-  const spec = readJson3(specPath);
+  const spec = readJson4(specPath);
   const fm = {
     ...parseSimpleFrontmatter(splitFrontmatter(designIndex ?? "").frontmatter),
     ...parseSimpleFrontmatter(splitFrontmatter(canonIndex ?? "").frontmatter)
@@ -16777,7 +16812,7 @@ var init_legacy_adopt = __esm({
 });
 
 // node_modules/@praxis/jira/dist/developer-complete.js
-function readJson4(path) {
+function readJson5(path) {
   if (!(0, import_node_fs13.existsSync)(path))
     return void 0;
   try {
@@ -16870,7 +16905,7 @@ function completionPaths(repo, workPackageId) {
 }
 function readChangeSpec(repo, id) {
   const p = completionPaths(repo, id).changeSpecPath;
-  return readJson4(p) ?? {};
+  return readJson5(p) ?? {};
 }
 function acceptanceFromSpec(spec) {
   const raw = spec.acceptanceChecks;
@@ -16880,8 +16915,8 @@ function acceptanceFromSpec(spec) {
 }
 function inspectDeveloperCompletion(repo, workPackageId) {
   const paths = completionPaths(repo, workPackageId);
-  const evidence = readJson4(paths.evidencePath);
-  const handoff4 = readJson4(paths.qualityHandoffPath);
+  const evidence = readJson5(paths.evidencePath);
+  const handoff4 = readJson5(paths.qualityHandoffPath);
   const local = readWpManifest(repo, workPackageId);
   return {
     evidencePath: paths.evidencePath,
@@ -16963,7 +16998,7 @@ async function developerCompleteWp(opts) {
     ...Array.isArray(spec.files) ? spec.files : [],
     ...Array.isArray(spec.changes) ? spec.changes.map((c) => c.file).filter((f) => Boolean(f)) : []
   ];
-  const arch = readJson4(paths.architectHandoffPath) ?? {};
+  const arch = readJson5(paths.architectHandoffPath) ?? {};
   const features = Array.isArray(spec.features) ? spec.features : Array.isArray(arch.features) ? arch.features : [];
   const acceptanceChecks = acceptanceFromSpec(spec);
   (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(paths.designDir, "dev"), { recursive: true });
@@ -17166,8 +17201,8 @@ async function applyDeveloperCompleteRecovery(opts) {
 }
 function discoverQualityInputs(repo, workPackageId) {
   const inspection = inspectDeveloperCompletion(repo, workPackageId);
-  const handoff4 = readJson4(inspection.qualityHandoffPath);
-  const evidence = readJson4(inspection.evidencePath);
+  const handoff4 = readJson5(inspection.qualityHandoffPath);
+  const evidence = readJson5(inspection.evidencePath);
   return {
     workPackageId,
     jiraWorkPackageKey: evidence?.jiraWorkPackageKey ?? handoff4?.jiraWorkPackageKey,
@@ -19169,7 +19204,7 @@ var init_gitignore_policy = __esm({
 });
 
 // node_modules/@praxis/vcs/dist/quality-snapshot.js
-function readJson5(path) {
+function readJson6(path) {
   if (!(0, import_node_fs18.existsSync)(path))
     return null;
   try {
@@ -19181,7 +19216,7 @@ function readJson5(path) {
 function readQualitySnapshot(repo, workPackageId) {
   const primary = (0, import_node_path19.join)(repo, "design", workPackageId, "qa", "quality-review.json");
   const sidecar = (0, import_node_path19.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
-  const raw = readJson5(primary) ?? readJson5(sidecar);
+  const raw = readJson6(primary) ?? readJson6(sidecar);
   const source = raw ? (0, import_node_fs18.existsSync)(primary) ? primary : sidecar : null;
   const snapshot = raw?.snapshot && typeof raw.snapshot === "object" ? raw.snapshot : {};
   const files = Array.isArray(snapshot.files) ? snapshot.files : [];
@@ -51971,10 +52006,13 @@ var TOOLS = [
   },
   {
     name: "praxis_workflow_status",
-    description: "READ-ONLY local workflow state. Does not require Jira. Returns requirement ids, stage, and the next role.",
+    description: "READ-ONLY local workflow state. Does not require Jira. Returns requirement ids, stage, the next role, and every work item in the repository with the current one marked.",
     inputSchema: {
       type: "object",
-      properties: { repo: repoProp },
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." }
+      },
       additionalProperties: false
     },
     roles: ["ba", "architect", "developer", "quality"],
@@ -51982,11 +52020,12 @@ var TOOLS = [
   },
   {
     name: "praxis_workflow_preview",
-    description: "PREVIEW a local workflow command (open, add-requirement, handoff, revise-requirement, set-service, quality-check). Does not write. Returns previewFingerprint. Jira is optional.",
+    description: "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional.",
     inputSchema: {
       type: "object",
       properties: {
         repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand" }
       },
       required: ["command"],
@@ -52002,6 +52041,7 @@ var TOOLS = [
       type: "object",
       properties: {
         repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand matching the preview" },
         confirmation: confirmProp,
         previewFingerprint: fingerprintProp
@@ -71872,8 +71912,9 @@ async function runSteps(root, modulePath, steps) {
   }
   return value;
 }
-function readChecks(workflowRepo) {
-  const file2 = (0, import_node_path3.join)(workflowRepo, ".praxis", "quality", "checks.json");
+function readChecks(workflowRepo, workItemId) {
+  const scoped = workItemId ? (0, import_node_path3.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
+  const file2 = scoped && (0, import_node_fs4.existsSync)(scoped) ? scoped : (0, import_node_path3.join)(workflowRepo, ".praxis", "quality", "checks.json");
   if (!(0, import_node_fs4.existsSync)(file2))
     return void 0;
   const parsed = JSON.parse((0, import_node_fs4.readFileSync)(file2, "utf8"));
@@ -71882,7 +71923,7 @@ function readChecks(workflowRepo) {
   return parsed.checks;
 }
 async function runProjectChecks(input2) {
-  const checks = readChecks(input2.workflowRepo);
+  const checks = readChecks(input2.workflowRepo, input2.workItemId);
   if (!checks)
     return void 0;
   const story = input2.stories.find((item) => item.status !== "superseded") ?? input2.stories[0];
@@ -72289,24 +72330,128 @@ var PRAXIS_CAPABILITIES = [
     installed: true
   }
 ];
-function statePath(repo) {
-  return (0, import_node_path5.join)(repo, ".praxis", "workflow", "state.json");
+var INDEX_CONTRACT = "praxis.workflow.index";
+var MIGRATED_CONTRACT = "praxis.workflow.migrated";
+var LOCK_STALE_MS = 3e4;
+var LOCK_WAIT_MS = 1e4;
+var WORK_ITEM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+var WorkItemError = class extends Error {
+  code;
+  constructor(code, message) {
+    super(`${code}: ${message}`);
+    this.name = "WorkItemError";
+    this.code = code;
+  }
+};
+function workflowDir(repo) {
+  return (0, import_node_path5.join)(repo, ".praxis", "workflow");
 }
-function loadWorkflow(repo) {
+var legacyPath = (repo) => (0, import_node_path5.join)(workflowDir(repo), "state.json");
+var indexPath = (repo) => (0, import_node_path5.join)(workflowDir(repo), "index.json");
+function assertWorkItemId(id) {
+  if (!WORK_ITEM_ID_RE.test(id) || id.includes("..")) {
+    throw new WorkItemError("WORK_ITEM_INVALID", "work item ids use letters, digits, '.', '_' and '-' only");
+  }
+  return id;
+}
+function itemPath(repo, id) {
+  return (0, import_node_path5.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
+}
+function readJson2(path) {
+  return JSON.parse((0, import_node_fs6.readFileSync)(path, "utf8"));
+}
+function summarize(state) {
+  return {
+    workItemId: state.workItem.id,
+    workflowId: state.workflowId,
+    projectId: state.projectId,
+    title: state.workItem.title,
+    ...state.workItem.jiraIssueKey ? { jiraIssueKey: state.workItem.jiraIssueKey } : {},
+    stage: state.stage,
+    revision: state.workItem.revision,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    links: state.workItem.links ?? []
+  };
+}
+function readLegacy(repo) {
   let raw;
   try {
-    raw = (0, import_node_fs6.readFileSync)(statePath(repo), "utf8");
+    raw = readJson2(legacyPath(repo));
   } catch (err) {
     if (err.code === "ENOENT")
       return null;
     throw err;
   }
-  return WorkflowStateSchema.parse(JSON.parse(raw));
+  if (raw?.contract === MIGRATED_CONTRACT)
+    return null;
+  return WorkflowStateSchema.parse(raw);
 }
-function workflowStatus(repo) {
-  const state = loadWorkflow(repo);
+function readLayout(repo) {
+  let raw;
+  try {
+    raw = readJson2(indexPath(repo));
+  } catch (err) {
+    if (err.code !== "ENOENT")
+      throw err;
+    const legacy = readLegacy(repo);
+    if (!legacy) {
+      if ((0, import_node_fs6.existsSync)(legacyPath(repo))) {
+        throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but index.json is missing");
+      }
+      return null;
+    }
+    return {
+      legacy: true,
+      index: { contract: INDEX_CONTRACT, version: 1, current: legacy.workItem.id, items: [summarize(legacy)] }
+    };
+  }
+  const index = raw;
+  if (index?.contract !== INDEX_CONTRACT || index.version !== 1 || !Array.isArray(index.items)) {
+    throw new WorkItemError("WORKFLOW_INDEX_INVALID", "index.json is not a praxis.workflow.index v1 file");
+  }
+  return { index, legacy: false };
+}
+function fingerprintFor(repo, command) {
+  if (command.action !== "open" && command.action !== "select-work-item")
+    return commandFingerprint(command);
+  const epoch = readLayout(repo)?.index.epoch ?? 0;
+  return commandFingerprint({ ...command, indexEpoch: epoch });
+}
+function resolveId(layout, explicit) {
+  if (explicit !== void 0) {
+    assertWorkItemId(explicit);
+    if (!layout.index.items.some((item) => item.workItemId === explicit)) {
+      throw new WorkItemError("WORK_ITEM_NOT_FOUND", `no work item ${explicit} in this repository`);
+    }
+    return explicit;
+  }
+  return layout.index.current;
+}
+function readItem(repo, layout, id) {
+  if (layout.legacy)
+    return readLegacy(repo);
+  return WorkflowStateSchema.parse(readJson2(itemPath(repo, id)));
+}
+function loadWorkflow(repo, workItemId) {
+  const layout = readLayout(repo);
+  if (!layout) {
+    if (workItemId !== void 0) {
+      throw new WorkItemError("WORK_ITEM_NOT_FOUND", `no work item ${workItemId} in this repository`);
+    }
+    return null;
+  }
+  const id = resolveId(layout, workItemId);
+  return id ? readItem(repo, layout, id) : null;
+}
+function listWorkItems(repo) {
+  const layout = readLayout(repo);
+  return layout ? { current: layout.index.current, items: layout.index.items } : { current: null, items: [] };
+}
+function workflowStatus(repo, workItemId) {
+  const state = loadWorkflow(repo, workItemId);
   if (!state)
     return { present: false };
+  const { current, items } = listWorkItems(repo);
   const resume = resumeWorkflow(state);
   const role = resume.nextRole ?? "ba";
   const routed = capabilityRoute({
@@ -72318,35 +72463,160 @@ function workflowStatus(repo) {
     present: true,
     workflowId: state.workflowId,
     workItemId: state.workItem.id,
+    currentWorkItemId: current,
+    workItems: items.map((item) => ({ ...item, current: item.workItemId === current })),
     stage: state.stage,
     requirementIds: resume.requirementIds,
     nextRole: resume.nextRole,
     jiraIssueKey: state.workItem.jiraIssueKey ?? null,
+    links: state.workItem.links ?? [],
     guidance: routed.guidance.map((item) => ({ id: item.id, description: item.description })),
     suggested: routed.suggested.map((item) => item.id),
     executed: routed.executed
   };
 }
-function saveWorkflow(repo, state) {
-  requireMutationLease();
-  const path = statePath(repo);
-  (0, import_node_fs6.mkdirSync)((0, import_node_path5.join)(repo, ".praxis", "workflow"), { recursive: true });
-  const body = `${JSON.stringify(redactPersistent(state), null, 2)}
-`;
-  const tmp = `${path}.tmp`;
-  (0, import_node_fs6.writeFileSync)(tmp, body);
+function pause(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function lockIsStale(dir) {
+  if (!(0, import_node_fs6.existsSync)(dir))
+    return false;
+  try {
+    const owner = readJson2((0, import_node_path5.join)(dir, "owner"));
+    if (typeof owner.at === "number" && Date.now() - owner.at > LOCK_STALE_MS)
+      return true;
+    if (typeof owner.pid === "number") {
+      try {
+        process.kill(owner.pid, 0);
+      } catch (err) {
+        return err.code === "ESRCH";
+      }
+    }
+    return false;
+  } catch {
+    try {
+      return Date.now() - (0, import_node_fs6.statSync)(dir).mtimeMs > LOCK_STALE_MS;
+    } catch {
+      return false;
+    }
+  }
+}
+function withWorkflowLock(repo, fn) {
+  (0, import_node_fs6.mkdirSync)(workflowDir(repo), { recursive: true });
+  const dir = (0, import_node_path5.join)(workflowDir(repo), ".lock");
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (; ; ) {
+    try {
+      (0, import_node_fs6.mkdirSync)(dir);
+      (0, import_node_fs6.writeFileSync)((0, import_node_path5.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
+      break;
+    } catch (err) {
+      if (err.code !== "EEXIST")
+        throw err;
+      if (lockIsStale(dir)) {
+        const claimed = `${dir}.stale-${process.pid}-${Date.now()}`;
+        try {
+          (0, import_node_fs6.renameSync)(dir, claimed);
+          (0, import_node_fs6.rmSync)(claimed, { recursive: true, force: true });
+        } catch {
+        }
+        continue;
+      }
+      if (Date.now() > deadline) {
+        throw new WorkItemError("WORKFLOW_LOCKED", "another process is writing this repository's workflow");
+      }
+      pause(25);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    (0, import_node_fs6.rmSync)(dir, { recursive: true, force: true });
+  }
+}
+function writeAtomic(path, value) {
+  (0, import_node_fs6.mkdirSync)((0, import_node_path5.dirname)(path), { recursive: true });
+  const tmp = `${path}.${process.pid}.tmp`;
+  (0, import_node_fs6.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+`);
   (0, import_node_fs6.renameSync)(tmp, path);
+}
+function writeIndex(repo, index) {
+  requireMutationLease();
+  writeAtomic(indexPath(repo), index);
+}
+function writeItem(repo, state) {
+  requireMutationLease();
+  const path = itemPath(repo, state.workItem.id);
+  writeAtomic(path, redactPersistent(state));
   return path;
 }
-function previewWorkflow(repo, raw) {
+function ensureMigrated(repo) {
+  const layout = readLayout(repo);
+  if (!layout || !layout.legacy)
+    return layout;
+  requireMutationLease();
+  const legacy = readLegacy(repo);
+  writeItem(repo, legacy);
+  writeIndex(repo, layout.index);
+  writeAtomic(legacyPath(repo), {
+    contract: MIGRATED_CONTRACT,
+    migratedAt: (/* @__PURE__ */ new Date()).toISOString(),
+    index: "index.json",
+    note: "Workflow state moved to .praxis/workflow/items/. Use a Praxis Runtime that supports multiple work items."
+  });
+  return { index: layout.index, legacy: false };
+}
+function resolveCommand(repo, command, workItemId) {
+  const layout = readLayout(repo);
+  if (command.action === "select-work-item") {
+    if (!layout)
+      throw new WorkItemError("WORK_ITEM_NOT_FOUND", `no work item ${command.workItemId} in this repository`);
+    const id = resolveId(layout, command.workItemId);
+    return { command, state: readItem(repo, layout, id), select: id };
+  }
+  if (command.action === "open") {
+    const items = layout?.index.items ?? [];
+    const same = items.find((item) => item.projectId === command.projectId && item.title === command.title && (item.jiraIssueKey ?? null) === (command.jiraIssueKey ?? null));
+    if (same && layout)
+      return { command, state: null, reopen: readItem(repo, layout, same.workItemId) };
+    let sequence = 1;
+    while (items.some((item) => item.workItemId === workItemIdFor(command.title, sequence)))
+      sequence += 1;
+    return { command: { ...command, sequence }, state: null };
+  }
+  return { command, state: loadWorkflow(repo, workItemId) };
+}
+function previewWorkflow(repo, raw, workItemId) {
   const command = WorkflowCommandSchema.parse(raw);
-  const current = loadWorkflow(repo);
-  const applied = applyWorkflowCommand(current, command);
+  const resolved = resolveCommand(repo, command, workItemId);
+  const fingerprint2 = fingerprintFor(repo, command);
+  const current = listWorkItems(repo).current;
+  if (resolved.select) {
+    return {
+      fingerprint: fingerprint2,
+      duplicate: resolved.select === current,
+      result: { workItemId: resolved.select, previousCurrent: current },
+      resume: resolved.state ? resumeWorkflow(resolved.state) : null,
+      currentWorkItemId: resolved.select
+    };
+  }
+  if (resolved.reopen) {
+    return {
+      fingerprint: fingerprint2,
+      duplicate: true,
+      result: { workflowId: resolved.reopen.workflowId, workItemId: resolved.reopen.workItem.id, previousCurrent: current },
+      resume: resumeWorkflow(resolved.reopen),
+      currentWorkItemId: resolved.reopen.workItem.id
+    };
+  }
+  const applied = applyWorkflowCommand(resolved.state, resolved.command);
   return {
-    fingerprint: commandFingerprint(command),
+    fingerprint: fingerprint2,
     duplicate: applied.duplicate,
     result: applied.result,
-    resume: applied.state ? resumeWorkflow(applied.state) : null
+    resume: applied.state ? resumeWorkflow(applied.state) : null,
+    currentWorkItemId: command.action === "open" ? applied.state.workItem.id : workItemId ?? current
   };
 }
 function localWriteRequest(repo, fingerprint2) {
@@ -72360,32 +72630,63 @@ function localWriteRequest(repo, fingerprint2) {
     action: "praxis_workflow_apply"
   };
 }
-function applyResolved(repo, fingerprint2, planned, final) {
-  const command = WorkflowCommandSchema.parse(planned);
-  const expected = commandFingerprint(command);
-  if (fingerprint2 !== expected) {
-    throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
-  }
-  const request = localWriteRequest(repo, fingerprint2);
-  const inspection = inspectMutation(request);
-  if (inspection.kind === "replay") {
-    return { ...inspection.result, replayed: true };
-  }
-  return runAuthorizedMutation(request, () => {
-    const applied = applyWorkflowCommand(loadWorkflow(repo), final);
-    const path = saveWorkflow(repo, applied.state);
+function writeCommand(repo, planned, final, workItemId) {
+  return withWorkflowLock(repo, () => {
+    ensureMigrated(repo);
+    const finalCommand = WorkflowCommandSchema.parse(final);
+    const resolved = resolveCommand(repo, finalCommand, workItemId);
+    const layout = readLayout(repo);
+    const previousCurrent = layout?.index.current ?? null;
+    const select = (id) => {
+      const index2 = readLayout(repo).index;
+      if (index2.current !== id)
+        writeIndex(repo, { ...index2, current: id, epoch: (index2.epoch ?? 0) + 1 });
+    };
+    if (resolved.select) {
+      select(resolved.select);
+      const state = resolved.state;
+      return {
+        path: itemPath(repo, state.workItem.id),
+        duplicate: resolved.select === previousCurrent,
+        result: { workItemId: resolved.select, previousCurrent },
+        workflowId: state.workflowId,
+        workItemId: state.workItem.id,
+        currentWorkItemId: resolved.select
+      };
+    }
+    if (resolved.reopen) {
+      select(resolved.reopen.workItem.id);
+      return {
+        path: itemPath(repo, resolved.reopen.workItem.id),
+        duplicate: true,
+        result: { workflowId: resolved.reopen.workflowId, workItemId: resolved.reopen.workItem.id, previousCurrent },
+        workflowId: resolved.reopen.workflowId,
+        workItemId: resolved.reopen.workItem.id,
+        currentWorkItemId: resolved.reopen.workItem.id
+      };
+    }
+    const applied = applyWorkflowCommand(resolved.state, resolved.command);
+    const path = writeItem(repo, applied.state);
+    const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1, current: null, items: [] };
+    const entry = summarize(applied.state);
+    const exists = index.items.some((item) => item.workItemId === entry.workItemId);
+    const items = exists ? index.items.map((item) => item.workItemId === entry.workItemId ? entry : item) : [...index.items, entry];
+    const current = planned.action === "open" ? entry.workItemId : index.current ?? entry.workItemId;
+    const selectionChanged = !exists || current !== index.current;
+    writeIndex(repo, { ...index, current, items, ...selectionChanged ? { epoch: (index.epoch ?? 0) + 1 } : {} });
     return {
       path,
       duplicate: applied.duplicate,
-      result: applied.result,
+      result: planned.action === "open" && previousCurrent && previousCurrent !== entry.workItemId ? { ...applied.result, previousCurrent } : applied.result,
       workflowId: applied.state.workflowId,
-      workItemId: applied.state.workItem.id
+      workItemId: applied.state.workItem.id,
+      currentWorkItemId: current
     };
   });
 }
-function applyWorkflow(repo, raw, fingerprint2) {
-  const command = WorkflowCommandSchema.parse(raw);
-  const expected = commandFingerprint(command);
+function guarded(repo, fingerprint2, planned, final, workItemId) {
+  const command = WorkflowCommandSchema.parse(planned);
+  const expected = fingerprintFor(repo, command);
   if (fingerprint2 !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
@@ -72394,18 +72695,13 @@ function applyWorkflow(repo, raw, fingerprint2) {
   if (inspection.kind === "replay") {
     return { ...inspection.result, replayed: true };
   }
-  return runAuthorizedMutation(request, () => {
-    const current = loadWorkflow(repo);
-    const applied = applyWorkflowCommand(current, command);
-    const path = saveWorkflow(repo, applied.state);
-    return {
-      path,
-      duplicate: applied.duplicate,
-      result: applied.result,
-      workflowId: applied.state.workflowId,
-      workItemId: applied.state.workItem.id
-    };
-  });
+  return runAuthorizedMutation(request, () => writeCommand(repo, command, final, workItemId));
+}
+function applyResolved(repo, fingerprint2, planned, final, workItemId) {
+  return guarded(repo, fingerprint2, planned, final, workItemId);
+}
+function applyWorkflow(repo, raw, fingerprint2, workItemId) {
+  return guarded(repo, fingerprint2, raw, raw, workItemId);
 }
 function capabilityRoute(input2) {
   return routeCapabilities({
@@ -72503,8 +72799,8 @@ function readHostProposal(workflowRepo, serviceId) {
     throw new Error("PROPOSAL_INVALID");
   return parsed;
 }
-async function buildStoryVerification(repo, independentRerun) {
-  const state = loadWorkflow(repo);
+async function buildStoryVerification(repo, independentRerun, workItemId) {
+  const state = loadWorkflow(repo, workItemId);
   if (!state)
     throw new Error("WORKFLOW_MISSING");
   const stories = state.stories.filter((item) => item.status !== "superseded");
@@ -72536,7 +72832,7 @@ async function buildStoryVerification(repo, independentRerun) {
       status: scenario.status
     }));
   } else {
-    const executed = await runProjectChecks({ workflowRepo: repo, stories, services, profiles });
+    const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state.workItem.id, stories, services, profiles });
     const selected = executed ?? inspectionPlan({ stories, services, profiles });
     scenarios = selected.scenarios;
     findings = selected.findings;
@@ -72580,8 +72876,8 @@ async function buildStoryVerification(repo, independentRerun) {
     meta: meta5
   };
 }
-async function planServiceFix(repo, serviceId, existingBranch) {
-  const state = loadWorkflow(repo);
+async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
+  const state = loadWorkflow(repo, workItemId);
   if (!state)
     throw new Error("WORKFLOW_MISSING");
   const service = state.services.find((item) => item.id === serviceId);
@@ -72634,11 +72930,11 @@ function applyProposal(root, proposal) {
     (0, import_node_fs7.writeFileSync)(absolute, file2.after);
   }
 }
-function commitServiceFix(workflowRepo, planned) {
+function commitServiceFix(workflowRepo, planned, workflowItemId) {
   const change = planned.change;
   if (change.commitSha !== "PLANNED")
     return planned;
-  const state = loadWorkflow(workflowRepo);
+  const state = loadWorkflow(workflowRepo, workflowItemId);
   const service = state?.services.find((item) => item.id === change.serviceId);
   const root = service?.localPath;
   if (!root)
@@ -72927,7 +73223,7 @@ async function callTool(name, rawArgs, opts) {
       gate.abort();
     const message = ops.redact(err instanceof Error ? err.message : String(err));
     const coded = err;
-    const code = err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && coded.code.startsWith("APPROVAL_") ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
+    const code = err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|WORKFLOW_(LOCKED|INDEX))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
     const details = err instanceof ops.PraxisOpError ? {
       ...err.stage ? { stage: err.stage } : {},
       ...typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {},
@@ -72960,8 +73256,9 @@ function hydrateWorkflowCommand(repo, raw) {
   return command;
 }
 async function runWorkflowTool(name, args, repo) {
+  const workItemId = str(args.workItemId);
   if (name === "praxis_workflow_status")
-    return workflowStatus(repo);
+    return workflowStatus(repo, workItemId);
   if (name === "praxis_capabilities") {
     const role = str(args.role);
     const allowed = ["user", "ba", "architect", "developer", "quality"];
@@ -72970,27 +73267,27 @@ async function runWorkflowTool(name, args, repo) {
   }
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? ""));
   if (parsed.action === "verify-stories") {
-    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true);
+    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
     const meta5 = recorded.meta;
     if (name === "praxis_workflow_preview") {
-      const preview = previewWorkflow(repo, recorded);
+      const preview = previewWorkflow(repo, recorded, workItemId);
       return { ...preview, result: { ...preview.result, ...meta5 } };
     }
-    const applied = applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "");
+    const applied = applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "", workItemId);
     return { ...applied, result: { ...applied.result, ...meta5 } };
   }
   if (parsed.action === "prepare-fix") {
     if (parsed.authorized !== true)
       throw new Error("AUTHORIZATION_REQUIRED");
-    const planned = await planServiceFix(repo, String(parsed.serviceId ?? ""), typeof parsed.existingBranch === "string" ? parsed.existingBranch : void 0);
+    const planned = await planServiceFix(repo, String(parsed.serviceId ?? ""), typeof parsed.existingBranch === "string" ? parsed.existingBranch : void 0, workItemId);
     if (name === "praxis_workflow_preview")
-      return previewWorkflow(repo, planned);
-    const committed = commitServiceFix(repo, planned);
-    return applyResolved(repo, str(args.previewFingerprint) ?? "", planned, committed);
+      return previewWorkflow(repo, planned, workItemId);
+    const committed = commitServiceFix(repo, planned, workItemId);
+    return applyResolved(repo, str(args.previewFingerprint) ?? "", planned, committed, workItemId);
   }
   if (name === "praxis_workflow_preview")
-    return previewWorkflow(repo, parsed);
-  return applyWorkflow(repo, parsed, str(args.previewFingerprint) ?? "");
+    return previewWorkflow(repo, parsed, workItemId);
+  return applyWorkflow(repo, parsed, str(args.previewFingerprint) ?? "", workItemId);
 }
 async function dispatchTool(ops, name, ctx, version4) {
   switch (name) {

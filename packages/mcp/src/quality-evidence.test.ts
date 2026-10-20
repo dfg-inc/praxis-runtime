@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { installHostApproval } from "@praxis/contracts";
 import { callTool } from "./tools.js";
+import { readPersistedState } from "./workflow-test-helpers.js";
 
 const VERSION = "test";
 
@@ -128,10 +129,10 @@ describe("Quality evidence through MCP workflow tools", () => {
     expect(result.finding).toBeNull();
     expect(result.verdict).toBe("PASS_WITH_RISKS");
 
-    const state = JSON.parse(readFileSync(join(repo, ".praxis", "workflow", "state.json"), "utf8")) as {
+    const state = readPersistedState<{
       verdicts: Array<{ scope: string; scopeId: string; verdict: string; evidenceRefs: string[] }>;
       coverage: Array<{ scenarioId: string; storyRevision?: number }>;
-    };
+    }>(repo);
     const requirementVerdict = state.verdicts.find((v) => v.scope === "requirement" && v.scopeId === "REQ-QEV-101");
     expect(requirementVerdict?.verdict).toBe("PASS_WITH_RISKS");
     expect(requirementVerdict?.evidenceRefs).toEqual(

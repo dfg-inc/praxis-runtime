@@ -127,8 +127,12 @@ function readHostProposal(workflowRepo: string, serviceId: string): Proposal | u
   return parsed;
 }
 
-export async function buildStoryVerification(repo: string, independentRerun: boolean): Promise<VerificationCommand> {
-  const state = loadWorkflow(repo);
+export async function buildStoryVerification(
+  repo: string,
+  independentRerun: boolean,
+  workItemId?: string,
+): Promise<VerificationCommand> {
+  const state = loadWorkflow(repo, workItemId);
   if (!state) throw new Error("WORKFLOW_MISSING");
   const stories = state.stories.filter((item) => item.status !== "superseded");
   if (!stories.length) throw new Error("STORY_MISSING");
@@ -158,7 +162,7 @@ export async function buildStoryVerification(repo: string, independentRerun: boo
       status: scenario.status,
     }));
   } else {
-    const executed = await runProjectChecks({ workflowRepo: repo, stories, services, profiles });
+    const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state.workItem.id, stories, services, profiles });
     const selected = executed ?? inspectionPlan({ stories, services, profiles });
     scenarios = selected.scenarios;
     findings = selected.findings;
@@ -208,7 +212,7 @@ export async function buildStoryVerification(repo: string, independentRerun: boo
   };
 }
 
-export async function planServiceFix(repo: string, serviceId: string, existingBranch?: string): Promise<{
+export async function planServiceFix(repo: string, serviceId: string, existingBranch?: string, workItemId?: string): Promise<{
   action: "record-change";
   proposal: Proposal;
   change: {
@@ -228,7 +232,7 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
     authorRole: "quality";
   };
 }> {
-  const state = loadWorkflow(repo);
+  const state = loadWorkflow(repo, workItemId);
   if (!state) throw new Error("WORKFLOW_MISSING");
   const service = state.services.find((item) => item.id === serviceId);
   if (!service?.localPath) throw new Error(`REPOSITORY_LOCATION_MISSING:${serviceId}`);
@@ -284,10 +288,11 @@ function applyProposal(root: string, proposal: Proposal): void {
 export function commitServiceFix(
   workflowRepo: string,
   planned: Awaited<ReturnType<typeof planServiceFix>>,
+  workflowItemId?: string,
 ): Awaited<ReturnType<typeof planServiceFix>> {
   const change = planned.change;
   if (change.commitSha !== "PLANNED") return planned;
-  const state = loadWorkflow(workflowRepo);
+  const state = loadWorkflow(workflowRepo, workflowItemId);
   const service = state?.services.find((item) => item.id === change.serviceId);
   const root = service?.localPath;
   if (!root) throw new Error("REPOSITORY_LOCATION_MISSING");

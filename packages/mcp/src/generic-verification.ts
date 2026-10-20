@@ -122,8 +122,10 @@ async function runSteps(root: string, modulePath: string, steps: CheckStep[]): P
   return value;
 }
 
-function readChecks(workflowRepo: string): Check[] | undefined {
-  const file = join(workflowRepo, ".praxis", "quality", "checks.json");
+/** Checks scoped to one work item win over the repository-wide checks. */
+function readChecks(workflowRepo: string, workItemId?: string): Check[] | undefined {
+  const scoped = workItemId ? join(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : undefined;
+  const file = scoped && existsSync(scoped) ? scoped : join(workflowRepo, ".praxis", "quality", "checks.json");
   if (!existsSync(file)) return undefined;
   const parsed = JSON.parse(readFileSync(file, "utf8")) as { checks?: Check[] };
   if (!Array.isArray(parsed.checks) || parsed.checks.length === 0) throw new Error("CHECKS_INVALID");
@@ -132,11 +134,12 @@ function readChecks(workflowRepo: string): Check[] | undefined {
 
 export async function runProjectChecks(input: {
   workflowRepo: string;
+  workItemId?: string;
   stories: Story[];
   services: ServiceLocation[];
   profiles: ProjectProfile[];
 }): Promise<VerificationRun | undefined> {
-  const checks = readChecks(input.workflowRepo);
+  const checks = readChecks(input.workflowRepo, input.workItemId);
   if (!checks) return undefined;
   const story = input.stories.find((item) => item.status !== "superseded") ?? input.stories[0];
   if (!story) throw new Error("STORY_MISSING");

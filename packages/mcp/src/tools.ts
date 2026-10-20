@@ -295,7 +295,7 @@ export async function callTool(
     const code =
       err instanceof ops.PraxisOpError
         ? err.code
-        : typeof coded.code === "string" && coded.code.startsWith("APPROVAL_")
+        : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|WORKFLOW_(LOCKED|INDEX))/.test(coded.code)
           ? coded.code
           : message.startsWith("FINGERPRINT_MISMATCH")
             ? "FINGERPRINT_MISMATCH"
@@ -337,7 +337,8 @@ function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
 }
 
 async function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string): Promise<unknown> {
-  if (name === "praxis_workflow_status") return workflowStatus(repo);
+  const workItemId = str(args.workItemId);
+  if (name === "praxis_workflow_status") return workflowStatus(repo, workItemId);
   if (name === "praxis_capabilities") {
     const role = str(args.role);
     const allowed: WorkflowRole[] = ["user", "ba", "architect", "developer", "quality"];
@@ -346,13 +347,13 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
   }
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? "")) as Record<string, unknown>;
   if (parsed.action === "verify-stories") {
-    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true);
+    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
     const meta = recorded.meta;
     if (name === "praxis_workflow_preview") {
-      const preview = previewWorkflow(repo, recorded);
+      const preview = previewWorkflow(repo, recorded, workItemId);
       return { ...preview, result: { ...(preview.result as object), ...meta } };
     }
-    const applied = applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "");
+    const applied = applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "", workItemId);
     return { ...applied, result: { ...(applied.result as object), ...meta } };
   }
   if (parsed.action === "prepare-fix") {
@@ -361,13 +362,14 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
       repo,
       String(parsed.serviceId ?? ""),
       typeof parsed.existingBranch === "string" ? parsed.existingBranch : undefined,
+      workItemId,
     );
-    if (name === "praxis_workflow_preview") return previewWorkflow(repo, planned);
-    const committed = commitServiceFix(repo, planned);
-    return applyResolved(repo, str(args.previewFingerprint) ?? "", planned, committed);
+    if (name === "praxis_workflow_preview") return previewWorkflow(repo, planned, workItemId);
+    const committed = commitServiceFix(repo, planned, workItemId);
+    return applyResolved(repo, str(args.previewFingerprint) ?? "", planned, committed, workItemId);
   }
-  if (name === "praxis_workflow_preview") return previewWorkflow(repo, parsed);
-  return applyWorkflow(repo, parsed, str(args.previewFingerprint) ?? "");
+  if (name === "praxis_workflow_preview") return previewWorkflow(repo, parsed, workItemId);
+  return applyWorkflow(repo, parsed, str(args.previewFingerprint) ?? "", workItemId);
 }
 
 async function dispatchTool(

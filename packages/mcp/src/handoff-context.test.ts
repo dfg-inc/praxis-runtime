@@ -1,9 +1,10 @@
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { installHostApproval } from "@praxis/contracts";
 import { callTool } from "./tools.js";
+import { readPersistedState } from "./workflow-test-helpers.js";
 
 const VERSION = "test";
 
@@ -57,7 +58,7 @@ type Persisted = {
 };
 
 function persisted(repo: string): Persisted {
-  return JSON.parse(readFileSync(join(repo, ".praxis", "workflow", "state.json"), "utf8")) as Persisted;
+  return readPersistedState<Persisted>(repo);
 }
 
 describe("handoff context across roles through MCP workflow tools", () => {

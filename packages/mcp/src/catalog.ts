@@ -738,10 +738,13 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_workflow_status",
     description:
-      "READ-ONLY local workflow state. Does not require Jira. Returns requirement ids, stage, and the next role.",
+      "READ-ONLY local workflow state. Does not require Jira. Returns requirement ids, stage, the next role, and every work item in the repository with the current one marked.",
     inputSchema: {
       type: "object",
-      properties: { repo: repoProp },
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+      },
       additionalProperties: false,
     },
     roles: ["ba", "architect", "developer", "quality"],
@@ -750,11 +753,12 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_workflow_preview",
     description:
-      "PREVIEW a local workflow command (open, add-requirement, handoff, revise-requirement, set-service, quality-check). Does not write. Returns previewFingerprint. Jira is optional.",
+      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional.",
     inputSchema: {
       type: "object",
       properties: {
         repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand" },
       },
       required: ["command"],
@@ -771,6 +775,7 @@ export const TOOLS: ToolDef[] = [
       type: "object",
       properties: {
         repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand matching the preview" },
         confirmation: confirmProp,
         previewFingerprint: fingerprintProp,
