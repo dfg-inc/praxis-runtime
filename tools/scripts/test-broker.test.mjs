@@ -1,7 +1,8 @@
 import { describe, expect, it, afterEach, beforeEach } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { decodeAuthorization, generateApprovalKeyPair, encodeAuthorization, signAuthorization } from "@praxis/contracts";
 
 const codeOf = (fn) => {
@@ -100,5 +101,32 @@ describe("acceptance test broker", () => {
     const good = broker.token(request, { consumptionId: "fixed-1" });
     expect(broker.authorized({ ...request, authorization: good, planId: "p1", planFingerprint: request.planFingerprint }, () => "first")).toBe("first");
     expect(codeOf(() => broker.authorized({ ...request, action: "other_write", authorization: good, planId: "p1", planFingerprint: request.planFingerprint }, () => "x"))).toMatch(/^APPROVAL_/);
+  });
+
+  it("signs every token with the machine channel, which a production build refuses", () => {
+    broker = installTestBroker({ acknowledgeUnisolated: true });
+    const token = broker.token({
+      repo: "/r", operation: "repository_edit", provider: "local", instanceId: "local", workItemId: "w", repository: "/r", action: "a", planId: "p", planFingerprint: "sha256:" + "ab".repeat(32),
+    });
+    expect(decodeAuthorization(token).body.channel).toBe("machine");
+    expect(decodeAuthorization(token).body.approver).toBe("acceptance-test-signer");
+  });
+
+  it("is imported by no product source and is absent from every shipped bundle in this repository", () => {
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+    const hits = [];
+    const walk = (dir) => {
+      for (const name of readdirSync(dir)) {
+        if (name === "node_modules" || name === "dist" || name.startsWith(".")) continue;
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.(ts|mjs|cjs|js)$/.test(name) && /test-broker/.test(readFileSync(path, "utf8"))) hits.push(path.replace(root, ""));
+      }
+    };
+    walk(join(root, "packages"));
+    walk(join(root, "apps"));
+    expect(hits).toEqual([]);
+    const bundle = readFileSync(join(root, "plugins/runtime/server/praxis-mcp.cjs"), "utf8");
+    expect(bundle).not.toMatch(/test-broker|acknowledgeUnisolated|acceptance-test-signer/);
   });
 });

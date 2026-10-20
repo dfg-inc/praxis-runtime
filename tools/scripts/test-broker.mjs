@@ -77,6 +77,8 @@ export function installTestBroker(options = {}) {
       repositories: [request.repository],
       action: request.action,
       approver: "acceptance-test-signer",
+      // Never a person's channel: a production build refuses a token that says "machine".
+      channel: "machine",
       issuedAt: new Date(now - 1000).toISOString(),
       expiresAt: new Date(now + 5 * 60_000).toISOString(),
       consumptionId: extra.consumptionId ?? `t-${randomUUID()}`,

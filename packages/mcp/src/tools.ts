@@ -8,10 +8,11 @@ import {
   completeConsumption,
   inspectMutation,
   readApproval,
+  securityMode,
   type ApprovalOperation,
   type WorkflowRole,
 } from "@praxis/contracts";
-import { runtimeBuildInfo } from "./build-info.js";
+import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
@@ -93,6 +94,14 @@ const YES_BEFORE_APPROVAL = new Set([
   "praxis_workflow_apply",
 ]);
 
+const BROKER_INBOX_TOOLS = new Set([
+  "praxis_developer_git_connect_apply",
+  "praxis_developer_git_identity_apply",
+  "praxis_developer_git_commit",
+  "praxis_developer_git_publish",
+  "praxis_developer_git_merge_request",
+]);
+
 const MCP_MUTATIONS: Record<string, { operation: ApprovalOperation; provider: "jira" | "local"; workItem: "epic" | "wp" | "none" }> = {
   praxis_project_init_apply: { operation: "repository_edit", provider: "local", workItem: "none" },
   praxis_ba_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
@@ -129,6 +138,9 @@ function openMcpGate(
   }
   const spec = MCP_MUTATIONS[name];
   if (!spec) return {};
+  // Protected Git tools in secure mode are authorized per request through the broker inbox inside the operation
+  // (core guardWrite). A stored approval file is agent-writable, so it is not consulted here.
+  if (BROKER_INBOX_TOOLS.has(name) && securityMode() === "secure") return {};
   const repo = resolve(ctx.repo);
   const workItemId = spec.workItem === "epic"
     ? str(args.epic)
@@ -277,7 +289,7 @@ export async function callTool(
         data: developerWorkItemStatus(ctx.repo, str(args.workItemId) as string),
       });
     }
-    const data = await dispatchTool(ops, name, ctx, opts.version);
+    const data = await dispatchTool(ops, name, ctx, opts.version, opts.role);
     if (
       (
         name === "praxis_quality_apply" ||
@@ -398,8 +410,8 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
   return applyWorkflow(repo, parsed, str(args.previewFingerprint) ?? "", workItemId);
 }
 
-function withBuild(result: unknown, version: string): unknown {
-  const build = runtimeBuildInfo(version);
+function withBuild(result: unknown, version: string, role: PraxisRole): unknown {
+  const build = { ...runtimeBuildInfo(version), tools: toolOrigin(role) };
   if (result && typeof result === "object" && !Array.isArray(result)) {
     const record = result as Record<string, unknown>;
     if (record.data && typeof record.data === "object") return { ...record, data: { ...(record.data as object), build } };
@@ -413,10 +425,11 @@ async function dispatchTool(
   name: string,
   ctx: OpContext,
   version: string,
+  role: PraxisRole,
 ): Promise<unknown> {
   switch (name) {
     case "praxis_doctor":
-      return withBuild(await ops.doctorOp(ctx, version), version);
+      return withBuild(await ops.doctorOp(ctx, version), version, role);
     case "praxis_project_status":
       return ops.projectStatusOp(ctx);
     case "praxis_project_init_preview":

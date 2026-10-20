@@ -19,7 +19,7 @@ function run(cmd, cwd = root) {
 }
 
 /** Bundle official serveStdio MCP into a single Node 20 CJS file. No node_modules. */
-export async function bundlePraxisMcp(outfile, version) {
+export async function bundlePraxisMcp(outfile, version, kind = "production") {
   const entry = join(root, "packages/mcp/dist/main.js");
   if (!existsSync(entry)) {
     run(
@@ -42,6 +42,9 @@ export async function bundlePraxisMcp(outfile, version) {
     logLevel: "silent",
     define: {
       "process.env.PRAXIS_BUNDLE_VERSION": JSON.stringify(version),
+      // "production" for every shipped artifact. A compile-time constant: the same-identity test override is
+      // ignored by a production bundle whatever the environment says (see contracts/deployment.ts).
+      "process.env.PRAXIS_BUNDLE_KIND": JSON.stringify(kind),
       // What this bundle was built from (see build-identity.mjs). A constant, not an environment lookup.
       "process.env.PRAXIS_BUILD_INFO": JSON.stringify(JSON.stringify(buildIdentity(root))),
     },

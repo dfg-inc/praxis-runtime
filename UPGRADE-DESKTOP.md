@@ -66,7 +66,7 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect b7f28716dfc4c3c17b8c3e8c481ac9a0aeb0e1c5cd40ee1fdb247d17628d61da
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect d5696ec1dba4fa679f4207e9784ba9c38b23c0ce78d5fcc4cc51d8de16a37df7
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -98,7 +98,7 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `b7f28716dfc4c3c17b8c3e8c481ac9a0aeb0e1c5cd40ee1fdb247d17628d61da`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
+(sha256 `d5696ec1dba4fa679f4207e9784ba9c38b23c0ce78d5fcc4cc51d8de16a37df7`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
 `PRAXIS_SECURITY_MODE` to `secure`.
 
 ## Verify the loaded build, not the version string
@@ -108,9 +108,9 @@ The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-
 | field | expect |
 | --- | --- |
 | `origin` | `bundle` |
-| `bundleSha256` | `b7f28716dfc4c3c17b8c3e8c481ac9a0aeb0e1c5cd40ee1fdb247d17628d61da` (the file Desktop is running) |
-| `coreBaseline` | `ad11cea1dcd498df9dcb38e5c8e06db2895ceed2` |
-| `sourceDigest` | `e6755d948d015a99d00ee7adac25b9a9e2ee2c0fe8f4491b54863a27bc950134` |
+| `bundleSha256` | `d5696ec1dba4fa679f4207e9784ba9c38b23c0ce78d5fcc4cc51d8de16a37df7` (the file Desktop is running) |
+| `coreBaseline` | `fd42b461c3fbc26a4e4210c8e24a4c7dfca4854d` |
+| `sourceDigest` | `a605b1de726e94c09e392e4044e19bbee418a704add7be601a7ad21e27a58f38` |
 
 Mismatching `bundleSha256` means an older extension is still loaded: fully quit Claude Desktop and reopen.
 
@@ -125,6 +125,24 @@ Expected after install (Desktop → ask Praxis Doctor, then list tools):
 - **52 MCP tools** (50 before): new read-only `praxis_workflow_inspect` (requirements, Stories, decisions, work, handoffs, open items, Quality evidence, links) and `praxis_session_start` (role initialisation without a local script).
 - `praxis_developer_status` takes `workItemId` for a local Work Item; `workPackage` accepts only a Work Package id or a Jira key and refuses a Work Item id.
 - Role plugins: install the four `praxis-<role>.zip` files from `desktop-install/` (skills: BA 23, Architect 25, Developer 30, Quality 7). Their `session-start` skills call `praxis_session_start`.
-- `.mcpb` sha256 `3b599523fb5d6438d35fc1167e2c85edd7f2ba6b8feafc4aff51d816482f232d`.
+- `.mcpb` sha256 `524dda1e89ebed751f640b393478f7d727eab72a7d16ea2a06213cfa5596644e`.
 
 Desktop acceptance is **not** claimed for this build until it has been installed and re-tested on the real Desktop host.
+
+## Chat and Code showed different tools: a stale session registry, not a different server
+
+A Claude session takes its tool list when it starts. After the extension is updated, a session opened earlier keeps
+the old list (50 tools) while its calls already reach the new server (the doctor reports the new bundle). Claude
+Desktop has one Praxis Runtime server (the MCPB extension); Chat and Code use the same one. `npm run report:tool-origins`
+starts every local build and prints bundle sha, build kind, tool count and a digest of the tool names; all of them
+offer the same 52 tools (digest `d744e798ae38f991abd03922566cd054aa6409b7bbe40abb62dd1ab22391b62a`). `praxis_doctor` now reports `build.tools` (count, digest, names) and
+`build.kind` (`production` for shipped bundles). If a session shows fewer tools than `build.tools.count`, start a
+new session; do not reinstall.
+
+## Secure Git writes
+
+Commit, push, merge request, remote connect and identity writes are approved per request through the broker inbox
+(`PRAXIS_BROKER_SHARED_DIR`); see `praxis-core/docs/git-authorization.md`. The shipped bundle accepts only approvals
+issued through a human channel (operator page with an authenticator, or the operator console) and ignores the
+same-identity test override. On a same-user host it still refuses: that is the intended result until a broker runs
+under a separate OS identity.

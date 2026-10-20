@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { toolsForRole, type PraxisRole } from "./catalog.js";
 
 export type BuildInfo = {
   version: string;
@@ -11,6 +12,8 @@ export type BuildInfo = {
   bundleSha256: string | null;
   bundlePath: string | null;
   origin: "bundle" | "source";
+  /** "production" for shipped bundles; anything else is a test variant that must never be installed. */
+  kind: string;
 };
 
 /** Identity of the running Runtime. A version string is not proof of which build is loaded. */
@@ -40,5 +43,16 @@ export function runtimeBuildInfo(version: string): BuildInfo {
     bundleSha256,
     bundlePath,
     origin: embedded ? "bundle" : "source",
+    kind: process.env.PRAXIS_BUNDLE_KIND || "source",
   };
+}
+
+/**
+ * Which tools this server offers, as a count and a digest of the sorted names. A host that shows a different count
+ * or digest than the server reports is running from a stale tool registry (a session that started before the
+ * extension was updated) or from another build: the fix is a new session or the right bundle, not a new version.
+ */
+export function toolOrigin(role: PraxisRole): { role: string; count: number; digest: string; names: string[] } {
+  const names = toolsForRole(role).map((tool) => tool.name).sort();
+  return { role, count: names.length, digest: createHash("sha256").update(names.join("\n")).digest("hex"), names };
 }

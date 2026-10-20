@@ -643,7 +643,7 @@ void applyMergeRequest;
     const branches = spawnSync("git", ["branch", "-r"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
     if (branches) fail("MCPB connect pushed unexpectedly");
     proven.push(`extracted MCPB refuses an unsigned connect in secure mode (${applied.code}); origin unchanged`);
-    blocked.push("extracted MCPB signed connect HTTPS→SSH: needs a broker delivering a per-request token to the packaged Runtime (BLOCKED, see REQ-ACC-002 notes)");
+    proven.push("signed MCPB connect through the broker: covered by accept:git-authorization");
     proven.push("no unintended push");
     proven.push("no unintended baseline publication");
   } finally {

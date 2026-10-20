@@ -42,20 +42,27 @@ function mcpbBin() {
   return mcpbCliPath(require);
 }
 
-export async function packClaudeExtension(version) {
+/**
+ * kind "production" (default) builds the shipped artifact and refreshes the tracked claude-extensions/ copy.
+ * Any other kind builds a TEST VARIANT under dist/acceptance-variant/: it never touches claude-extensions/, is
+ * never copied to desktop-install/ or a release, and exists only so acceptance can run the packaged runtime
+ * with the same-identity test override (which a production bundle ignores).
+ */
+export async function packClaudeExtension(version, { kind = "production" } = {}) {
   if (!version) fail("version required");
   const pkgVersion = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
   if (version !== pkgVersion) {
     fail(`VERSION ${version} must match package.json ${pkgVersion}`);
   }
-  const outDir = distClaudeExtensionsDir(root, version);
+  const variant = kind !== "production";
+  const outDir = variant ? join(root, "dist", "acceptance-variant", kind, version) : distClaudeExtensionsDir(root, version);
   rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
-  const staging = join(root, "dist", "claude-extension-staging", version);
+  const staging = variant ? join(root, "dist", "acceptance-variant-staging", kind, version) : join(root, "dist", "claude-extension-staging", version);
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(join(staging, "server"), { recursive: true });
   const runtime = join(staging, "server", "praxis-mcp.cjs");
-  await bundlePraxisMcp(runtime, version);
+  await bundlePraxisMcp(runtime, version, kind);
   chmodSync(runtime, 0o644);
   const quality = join(staging, "server", "praxis-quality.cjs");
   await bundlePraxisQuality(quality, version);
@@ -88,10 +95,12 @@ export async function packClaudeExtension(version) {
     manifest_version: manifest.manifest_version,
   };
   writeFileSync(join(outDir, "manifest.json"), `${JSON.stringify(report, null, 2)}\n`);
-  const trackedDir = join(root, "claude-extensions");
-  mkdirSync(trackedDir, { recursive: true });
-  writeFileSync(join(trackedDir, EXTENSION_FILE), buf);
-  writeFileSync(join(trackedDir, "manifest.json"), `${JSON.stringify(report, null, 2)}\n`);
+  if (!variant) {
+    const trackedDir = join(root, "claude-extensions");
+    mkdirSync(trackedDir, { recursive: true });
+    writeFileSync(join(trackedDir, EXTENSION_FILE), buf);
+    writeFileSync(join(trackedDir, "manifest.json"), `${JSON.stringify(report, null, 2)}\n`);
+  }
   console.log(`claude-extension packed -> ${mcpbPath}`);
   return { outDir, mcpbPath, report, staging };
 }

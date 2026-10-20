@@ -38,6 +38,20 @@ import {
   verifyCommittedReproducibility,
 } from "@praxis/vcs";
 import { installTestBroker } from "./test-broker.mjs";
+import {
+  attachSshLikeRemote,
+  BASELINE_COUNTER,
+  FEATURE_COUNTER,
+  FEATURE_TEST,
+  buildConsumerLikeFixture,
+  emptyBare,
+  git,
+  sha,
+  SSH,
+  startGithubHttpMock,
+  WP,
+  writeFile,
+} from "./git-fixtures.mjs";
 
 // Protected Git writes run under real signed authorizations from an in-process test signer (see test-broker.mjs).
 // The Runtime stays in secure mode; this script does not switch to compatibility mode.
@@ -51,8 +65,6 @@ const applyMergeRequest = guarded("applyMergeRequest", "merge_request", rawApply
 const applyPublish = guarded("applyPublish", "git_push", rawApplyPublish);
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const WP = "WP-20260914-002";
-const SSH = "git@github.com:hisagedru/praxis-acceptance-test.git";
 const CONSUMER = "/Users/serg/work/praxis-acceptance/praxis-test";
 const CONSUMER_HEAD = "b96e9d1e44b1ea7663c399fbe7f41fd3f4992e57";
 const steps = [];
@@ -68,81 +80,6 @@ function prove(name) {
   console.log(`  ok ${name}`);
 }
 
-function sha(text) {
-  return createHash("sha256").update(text).digest("hex");
-}
-
-function git(repo, args, extra = {}) {
-  const r = spawnSync("git", args, {
-    cwd: repo,
-    encoding: "utf8",
-    env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "false", ...extra.env },
-  });
-  if ((r.status ?? 1) !== 0 && extra.allowFail !== true) {
-    fail(`git ${args.join(" ")}: ${r.stderr || r.stdout}`);
-  }
-  return { status: r.status ?? 1, stdout: (r.stdout ?? "").trim(), stderr: r.stderr ?? "" };
-}
-
-const BASELINE_COUNTER = `export function increment(value) {
-  return value + 1;
-}
-
-export function decrement(value) {
-  return value - 1;
-}
-`;
-
-const FEATURE_COUNTER = `export function increment(value) {
-  return value + 1;
-}
-
-export function decrement(value) {
-  return value - 1;
-}
-
-export function reset() {
-  return 0;
-}
-`;
-
-const BASELINE_TEST = `import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import { increment, decrement } from './counter.js';
-
-test('decrement(5) returns 4', () => {
-  assert.strictEqual(decrement(5), 4);
-});
-
-test('decrement(0) returns -1 (no lower bound/clamp)', () => {
-  assert.strictEqual(decrement(0), -1);
-});
-
-test('increment(1) returns 2 (non-regression, nominal)', () => {
-  assert.strictEqual(increment(1), 2);
-});
-
-test('increment(-1) returns 0 (non-regression, boundary)', () => {
-  assert.strictEqual(increment(-1), 0);
-});
-`;
-
-const FEATURE_TEST = `${BASELINE_TEST}
-test('reset() returns 0', () => {
-  assert.strictEqual(reset(), 0);
-});
-`.replace("import { increment, decrement } from './counter.js';", "import { increment, decrement, reset } from './counter.js';");
-
-const PACKAGE_JSON = `{
-  "name": "praxis-test",
-  "version": "1.0.0",
-  "type": "module",
-  "scripts": {
-    "test": "node --test src/*.test.js"
-  }
-}
-`;
-
 function consumerSnapshot() {
   if (!existsSync(join(CONSUMER, ".git"))) return null;
   const head = git(CONSUMER, ["rev-parse", "HEAD"]).stdout;
@@ -157,119 +94,6 @@ function assertConsumerUntouched(before) {
   if (after.head !== before.head || after.branch !== before.branch || after.status !== before.status) {
     fail("LIVE consumer praxis-test was mutated");
   }
-}
-
-function emptyBare() {
-  const bare = mkdtempSync(join(tmpdir(), "praxis-e2e-bare-"));
-  git(bare, ["init", "--bare"]);
-  return bare;
-}
-
-function attachSshLikeRemote(repo, bare) {
-  git(repo, ["remote", "add", "origin", SSH]);
-  git(repo, ["config", `url.${bare}.insteadOf`, SSH]);
-  const probe = git(repo, ["ls-remote", "--heads", "origin"]);
-  if (probe.status !== 0) fail(`insteadOf ls-remote failed: ${probe.stderr}`);
-}
-
-function writeFile(repo, rel, body) {
-  const abs = join(repo, rel);
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, body);
-}
-
-function buildConsumerLikeFixture() {
-  const repo = mkdtempSync(join(tmpdir(), "praxis-e2e-cons-"));
-  git(repo, ["init", "-b", "master"]);
-  git(repo, ["config", "user.name", "Dev"]);
-  git(repo, ["config", "user.email", "dev@example.com"]);
-  writeFile(repo, "package.json", PACKAGE_JSON);
-  writeFile(repo, "README.md", "# praxis-test fixture\n");
-  writeFile(repo, "src/counter.js", BASELINE_COUNTER);
-  writeFile(repo, "src/counter.test.js", BASELINE_TEST);
-  writeFile(repo, ".gitignore", "node_modules/\n.praxis-quality/\n.praxis-git/\n");
-  git(repo, ["add", "package.json", "README.md", "src/counter.js", "src/counter.test.js", ".gitignore"]);
-  git(repo, ["commit", "-m", "chore: scaffold counter library"]);
-
-  for (let i = 1; i <= 20; i += 1) writeFile(repo, `lib/mod-${String(i).padStart(2, "0")}.js`, `export const n${i} = ${i};\n`);
-  git(repo, ["add", "lib"]);
-  git(repo, ["commit", "-m", "chore: add library modules"]);
-
-  for (let i = 21; i <= 40; i += 1) writeFile(repo, `lib/mod-${String(i).padStart(2, "0")}.js`, `export const n${i} = ${i};\n`);
-  git(repo, ["add", "lib"]);
-  git(repo, ["commit", "-m", "chore: expand library surface"]);
-
-  for (let i = 41; i <= 51; i += 1) writeFile(repo, `lib/mod-${String(i).padStart(2, "0")}.js`, `export const n${i} = ${i};\n`);
-  git(repo, ["add", "lib"]);
-  git(repo, ["commit", "-m", "chore: complete tracked tree"]);
-
-  const tracked = git(repo, ["ls-files"]).stdout.split("\n").filter(Boolean);
-  if (tracked.length !== 56) fail(`expected 56 committed files, got ${tracked.length}`);
-  const commits = Number(git(repo, ["rev-list", "--count", "HEAD"]).stdout);
-  if (commits !== 4) fail(`expected 4 commits, got ${commits}`);
-
-  writeFile(repo, "src/counter.js", FEATURE_COUNTER);
-  writeFile(repo, "src/counter.test.js", FEATURE_TEST);
-  writeFile(repo, "package.json", PACKAGE_JSON.replace('"version": "1.0.0"', '"version": "1.0.0-dirty"'));
-  writeFile(repo, "package-lock.json", `{ "name": "praxis-test", "lockfileVersion": 3, "packages": {} }\n`);
-  writeFile(repo, ".npmrc", "registry=https://registry.npmjs.org/\n");
-  writeFile(repo, ".project", "stack:\n  - node\nquality:\n  test: npm test\n");
-  writeFile(repo, ".praxis-jira/dummy.json", "{}\n");
-  writeFile(repo, ".praxis-quality/quality.sqlite", "not-a-db\n");
-  writeFile(repo, ".praxis-local-tgz/note.txt", "runtime artifact\n");
-  writeFile(repo, "design/notes.md", "do not commit\n");
-  writeFile(repo, "work-packages/WP-20260914-002.md", "ba artifact\n");
-  mkdirSync(join(repo, "design", WP, "qa"), { recursive: true });
-  writeFile(
-    repo,
-    `design/${WP}/qa/quality-review.json`,
-    `${JSON.stringify({
-      reviewId: 1,
-      workPackageId: WP,
-      jiraWorkPackageKey: "PRX-4",
-      verdict: "PASSED",
-      approvalApplied: true,
-      snapshot: {
-        digest: sha("qa-1"),
-        files: [
-          { path: "src/counter.js", sha256: sha(FEATURE_COUNTER) },
-          { path: "src/counter.test.js", sha256: sha(FEATURE_TEST) },
-        ],
-      },
-    }, null, 2)}\n`,
-  );
-
-  const baselineSha = git(repo, ["rev-parse", "HEAD"]).stdout;
-  return { repo, baselineSha, trackedCount: tracked.length };
-}
-
-function startGithubHttpMock(state) {
-  const fetchImpl = createMockGithubFetch(state);
-  const server = createServer(async (req, res) => {
-    const chunks = [];
-    for await (const c of req) chunks.push(c);
-    const body = Buffer.concat(chunks).toString();
-    const url = `http://127.0.0.1${req.url}`;
-    const response = await fetchImpl(url, {
-      method: req.method,
-      body: body || undefined,
-    });
-    const text = await response.text();
-    res.writeHead(response.status, { "content-type": response.headers.get("content-type") || "application/json" });
-    res.end(text);
-  });
-  return new Promise((resolvePromise) => {
-    server.listen(0, "127.0.0.1", () => {
-      const { port } = server.address();
-      resolvePromise({
-        server,
-        port,
-        apiUrl: `http://127.0.0.1:${port}/api/v3`,
-        fetchImpl,
-        close: () => server.close(),
-      });
-    });
-  });
 }
 
 const consumerBefore = consumerSnapshot();
@@ -625,7 +449,7 @@ const consumerBefore = consumerSnapshot();
     if (ds.data?.journal?.ciStatus === "success") fail("MCPB fake CI");
     const dump = JSON.stringify({ st, bp, ba, fp, fc, mrp, mr, ds });
     if (/github_pat_|ghp_[A-Za-z0-9]{10,}|ATATT3x/.test(dump)) fail("MCPB leaked token");
-    blocked.push("MCPB signed baseline publish, commit, push and PR: needs a broker delivering a per-request token to the packaged Runtime (BLOCKED)");
+    prove("P+. signed MCPB publish, commit, push and PR: covered by accept:git-authorization (real broker)");
     prove("P. Extracted MCPB: read-only Git tools work, every unsigned protected call is refused, remote and HEAD unchanged");
   } finally {
     await session.close();
