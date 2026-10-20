@@ -4501,6 +4501,8 @@ function createHandoff(state, input2) {
     risks: input2.risks,
     blockers: input2.blockers,
     ...input2.notes !== void 0 ? { notes: input2.notes } : {},
+    // Only hashed when present so handoffs persisted before `resolved` keep their fingerprints.
+    ...input2.resolved && input2.resolved.length > 0 ? { resolved: input2.resolved } : {},
     nextActions: input2.nextActions,
     readiness: input2.readiness,
     evidenceRefs: input2.evidenceRefs
@@ -4596,6 +4598,26 @@ function evaluateRequirementBehavior(input2) {
     };
   }
   return { verdict: "PASS" };
+}
+function carryForwardContext(state, command) {
+  const incoming = [...state.handoffs].reverse().find((h) => h.targetRole === command.sourceRole);
+  const resolved = new Set(command.resolved);
+  const merge4 = (carriedItems, own5) => [
+    .../* @__PURE__ */ new Set([...carriedItems.filter((item) => !resolved.has(item)), ...own5])
+  ];
+  const own4 = {
+    openQuestions: command.openQuestions.length > 0 ? command.openQuestions : state.openQuestions,
+    risks: command.risks ?? state.risks,
+    blockers: command.blockers.length > 0 ? command.blockers : state.blockers
+  };
+  const notes = command.notes ?? incoming?.notes ?? state.notes;
+  return {
+    assumptions: merge4(incoming?.assumptions ?? [], command.assumptions),
+    openQuestions: merge4(incoming?.openQuestions ?? [], own4.openQuestions),
+    risks: merge4(incoming?.risks ?? [], own4.risks),
+    blockers: merge4(incoming?.blockers ?? [], own4.blockers),
+    ...notes !== void 0 ? { notes } : {}
+  };
 }
 function requirementEvidence(state, requirementId) {
   const current = new Map(state.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]));
@@ -4969,6 +4991,7 @@ function applyWorkflowCommand(state, raw) {
     return { state: next2, duplicate: false, result: feature };
   }
   if (command.action === "handoff") {
+    const carried = carryForwardContext(state, command);
     const created = createHandoff(state, {
       sourceRole: command.sourceRole,
       targetRole: command.targetRole,
@@ -4984,11 +5007,12 @@ function applyWorkflowCommand(state, raw) {
       })),
       decisions: state.decisions.map((d) => d.id),
       decisionRecords: state.decisions.map((d) => ({ ...d })),
-      assumptions: command.assumptions,
-      openQuestions: command.openQuestions.length > 0 ? command.openQuestions : state.openQuestions,
-      risks: command.risks ?? state.risks,
-      blockers: command.blockers.length > 0 ? command.blockers : state.blockers,
-      ...command.notes !== void 0 || state.notes !== void 0 ? { notes: command.notes ?? state.notes } : {},
+      assumptions: carried.assumptions,
+      openQuestions: carried.openQuestions,
+      risks: carried.risks,
+      blockers: carried.blockers,
+      ...carried.notes !== void 0 ? { notes: carried.notes } : {},
+      resolved: command.resolved,
       nextActions: command.nextActions,
       readiness: command.readiness,
       evidenceRefs: state.implementationUnits.filter((unit) => !unit.stale).map((unit) => `${unit.serviceId}:${unit.path}`)
@@ -5257,6 +5281,8 @@ var init_workflow = __esm({
         notes: external_exports2.string().optional()
       })).default([]),
       notes: external_exports2.string().optional(),
+      /** Carried-forward items this handoff declares resolved (exact text). Audit only. */
+      resolved: external_exports2.array(external_exports2.string()).default([]),
       nextActions: external_exports2.array(external_exports2.string()),
       readiness: external_exports2.enum(["ready", "partial", "blocked"]),
       evidenceRefs: external_exports2.array(external_exports2.string()),
@@ -5384,6 +5410,7 @@ var init_workflow = __esm({
         blockers: external_exports2.array(external_exports2.string()).default([]),
         risks: external_exports2.array(external_exports2.string()).optional(),
         notes: external_exports2.string().optional(),
+        resolved: external_exports2.array(external_exports2.string()).default([]),
         readiness: external_exports2.enum(["ready", "partial", "blocked"])
       }),
       external_exports2.object({
