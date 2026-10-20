@@ -1,0 +1,166 @@
+{
+  "contract": "praxis.workflow.state",
+  "version": "1.0.0",
+  "workflowId": "WF-WI-WORKSPACE-NPM-TEST-CANNO-001",
+  "projectId": "praxis-runtime",
+  "workItem": {
+    "id": "WI-WORKSPACE-NPM-TEST-CANNO-001",
+    "projectId": "praxis-runtime",
+    "title": "Workspace npm test cannot load root vitest.setup.ts",
+    "source": "repository",
+    "status": "in_progress",
+    "revision": 2
+  },
+  "requirements": [
+    {
+      "id": "REQ-TST-001",
+      "statement": "Running 'npm test' at the repository root of praxis-core and praxis-runtime must execute every workspace's tests with the shared vitest.setup.ts applied.",
+      "revision": 1,
+      "status": "proposed",
+      "acceptanceCriteria": [
+        {
+          "id": "REQ-TST-001-AC-01",
+          "requirementId": "REQ-TST-001",
+          "statement": "npm test in praxis-core reports no 'Cannot find module .../vitest.setup.ts' error in any workspace.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-TST-001-AC-02",
+          "requirementId": "REQ-TST-001",
+          "statement": "npm test in praxis-runtime reports no such error in any workspace.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-TST-001-AC-03",
+          "requirementId": "REQ-TST-001",
+          "statement": "Tests that relied on the setup (PRAXIS_SECURITY_MODE default for tests) still see it.",
+          "revision": 1
+        },
+        {
+          "id": "REQ-TST-001-AC-04",
+          "requirementId": "REQ-TST-001",
+          "statement": "Running npx vitest run from the root keeps working.",
+          "revision": 1
+        }
+      ],
+      "serviceIds": [
+        "praxis-core-tests",
+        "praxis-runtime-tests"
+      ],
+      "assumptionIds": []
+    }
+  ],
+  "services": [],
+  "handoffs": [
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-WORKSPACE-NPM-TEST-CANNO-001",
+      "workItemId": "WI-WORKSPACE-NPM-TEST-CANNO-001",
+      "handoffId": "HO-1",
+      "sourceRole": "ba",
+      "targetRole": "architect",
+      "serviceIds": [
+        "praxis-core-tests",
+        "praxis-runtime-tests"
+      ],
+      "requirementIds": [
+        "REQ-TST-001"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-TST-001-AC-01",
+        "REQ-TST-001-AC-02",
+        "REQ-TST-001-AC-03",
+        "REQ-TST-001-AC-04"
+      ],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [],
+      "assumptions": [],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Resolve setup path relative to the config file"
+      ],
+      "readiness": "ready",
+      "evidenceRefs": [],
+      "revision": 1,
+      "fingerprint": "sha256:bf7b988f60ada0b41e57c660dc39df3cfc69a19a1ba1971bcc94c2a87d358bf4"
+    },
+    {
+      "contract": "praxis.role.handoff",
+      "version": "1.0.0",
+      "workflowId": "WF-WI-WORKSPACE-NPM-TEST-CANNO-001",
+      "workItemId": "WI-WORKSPACE-NPM-TEST-CANNO-001",
+      "handoffId": "HO-2",
+      "sourceRole": "architect",
+      "targetRole": "developer",
+      "serviceIds": [
+        "praxis-core-tests",
+        "praxis-runtime-tests"
+      ],
+      "requirementIds": [
+        "REQ-TST-001"
+      ],
+      "acceptanceCriterionIds": [
+        "REQ-TST-001-AC-01",
+        "REQ-TST-001-AC-02",
+        "REQ-TST-001-AC-03",
+        "REQ-TST-001-AC-04"
+      ],
+      "storyIds": [],
+      "artifactRefs": [],
+      "decisions": [
+        "DEC-TST-001"
+      ],
+      "assumptions": [],
+      "openQuestions": [],
+      "risks": [],
+      "blockers": [],
+      "decisionRecords": [],
+      "resolved": [],
+      "nextActions": [
+        "Edit both vitest.config.ts",
+        "Run npm test in both repos"
+      ],
+      "readiness": "ready",
+      "evidenceRefs": [],
+      "revision": 2,
+      "fingerprint": "sha256:e3f4b7142a7a063a9d396dbccfbac90b857d4b255f3d28573ac4100b8234670b"
+    }
+  ],
+  "findings": [],
+  "verdicts": [],
+  "decisions": [
+    {
+      "id": "DEC-TST-001",
+      "statement": "In both root vitest.config.ts files, resolve setupFiles to an absolute path with fileURLToPath(new URL('./vitest.setup.ts', import.meta.url)). No per-workspace config files and no change to vitest.setup.ts content.",
+      "confirmed": true,
+      "revision": 2
+    }
+  ],
+  "openQuestions": [],
+  "risks": [],
+  "blockers": [],
+  "assumptions": [],
+  "implementationUnits": [],
+  "stories": [],
+  "coverage": [],
+  "changes": [],
+  "stage": "in_progress",
+  "history": [
+    {
+      "revision": 1,
+      "stage": "draft",
+      "note": "In praxis-core (since 2049bf6) and praxis-runtime (since 393634b) the root vitest.config.ts declares setupFiles ['./vitest.setup.ts']. Vitest resolves it against the workspace cwd, so every 'npm test' workspace run fails with 'Cannot find module packages/<ws>/vitest.setup.ts' before any test executes. .project quality.test is 'npm test', so Quality cannot obtain a passing test signal. Reproduced 2026-10-20."
+    },
+    {
+      "revision": 2,
+      "stage": "in_progress",
+      "note": "ba → architect"
+    }
+  ]
+}
