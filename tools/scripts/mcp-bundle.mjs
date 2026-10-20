@@ -1,3 +1,4 @@
+import { buildIdentity } from "./build-identity.mjs";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +42,8 @@ export async function bundlePraxisMcp(outfile, version) {
     logLevel: "silent",
     define: {
       "process.env.PRAXIS_BUNDLE_VERSION": JSON.stringify(version),
+      // What this bundle was built from (see build-identity.mjs). A constant, not an environment lookup.
+      "process.env.PRAXIS_BUILD_INFO": JSON.stringify(JSON.stringify(buildIdentity(root))),
     },
     // Quality HTTP service is a sibling CJS file, not inlined (must outlive MCP requests).
     external: [],

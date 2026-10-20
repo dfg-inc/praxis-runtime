@@ -13,7 +13,20 @@ function repo() {
 }
 
 describe("direct MCP mutations fail closed", () => {
-  it("does not apply a local workflow from confirmation=YES alone", async () => {
+  it("under the strict record policy, does not apply a local workflow from confirmation=YES alone", async () => {
+    // PRAXIS_WORKFLOW_RECORDS=approval restores "every record write needs an approved mutation". The default
+    // lets agent-authored records through and protects human acts with grants (see human-approval.test.ts).
+    const previous = process.env.PRAXIS_WORKFLOW_RECORDS;
+    process.env.PRAXIS_WORKFLOW_RECORDS = "approval";
+    try {
+      await strictBody();
+    } finally {
+      if (previous === undefined) delete process.env.PRAXIS_WORKFLOW_RECORDS;
+      else process.env.PRAXIS_WORKFLOW_RECORDS = previous;
+    }
+  });
+
+  async function strictBody() {
     const root = repo();
     const command = {
       action: "open",
@@ -36,7 +49,8 @@ describe("direct MCP mutations fail closed", () => {
     expect(applied.ok).toBe(false);
     expect(applied.code).toBe("APPROVAL_REQUIRED");
     expect(existsSync(join(root, ".praxis", "workflow", "state.json"))).toBe(false);
-  });
+    expect(existsSync(join(root, ".praxis", "workflow", "index.json"))).toBe(false);
+  }
 
   it("does not let a confirm tool or a model grant mutate Jira", async () => {
     const root = repo();

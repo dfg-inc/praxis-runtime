@@ -40,6 +40,31 @@ export const JIRA_USER_CONFIG = {
       "Leave blank for 'secure' (recommended): every write needs a stored, fingerprint-bound approval and a bare confirmation is refused. 'compatibility' lets this single-user local setup proceed without a signed approval; it is NOT a security boundary against the agent. Praxis Doctor always reports the mode in force.",
     required: false,
   },
+  broker_shared_dir: {
+    type: "string",
+    title: "Approval broker shared folder",
+    description:
+      "Optional. Folder shared with a separately-run Praxis approval broker (pending/, authorizations/, approved/, rejected/). Human approvals (confirm a Story, confirm a decision, approve a service) are looked up here. The broker must run under a different OS identity for secure operation; Praxis Doctor reports whether it does.",
+    required: false,
+  },
+  approval_public_key_path: {
+    type: "string",
+    title: "Approval trust anchor (public key file)",
+    description: "Optional. Path to the broker's public key. Must not be writable by the user running Claude Desktop.",
+    required: false,
+  },
+  approval_ledger: {
+    type: "string",
+    title: "Approval ledger path",
+    description: "Optional. Path to the broker-owned consumption ledger. Must not be writable by the user running Claude Desktop.",
+    required: false,
+  },
+  operator_url: {
+    type: "string",
+    title: "Operator approval page URL",
+    description: "Optional. Where the operator approves with a security key or Touch ID, for example http://localhost:8780. Shown in the plan the agent presents.",
+    required: false,
+  },
   github_token: {
     type: "string",
     title: "GitHub Token",
@@ -74,6 +99,10 @@ export const JIRA_ENV_MAP = {
   PRAXIS_JIRA_PROJECT_KEY: "${user_config.jira_project_key}",
   PRAXIS_JIRA_TOKEN: "${user_config.jira_token}",
   PRAXIS_SECURITY_MODE: "${user_config.security_mode}",
+  PRAXIS_BROKER_SHARED_DIR: "${user_config.broker_shared_dir}",
+  PRAXIS_APPROVAL_PUBLIC_KEY_PATH: "${user_config.approval_public_key_path}",
+  PRAXIS_APPROVAL_LEDGER: "${user_config.approval_ledger}",
+  PRAXIS_OPERATOR_URL: "${user_config.operator_url}",
   PRAXIS_GITHUB_TOKEN: "${user_config.github_token}",
   PRAXIS_GITHUB_API_URL: "${user_config.github_api_url}",
   PRAXIS_GITLAB_TOKEN: "${user_config.gitlab_token}",

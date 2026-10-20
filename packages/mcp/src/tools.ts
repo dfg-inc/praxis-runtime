@@ -11,6 +11,7 @@ import {
   type ApprovalOperation,
   type WorkflowRole,
 } from "@praxis/contracts";
+import { runtimeBuildInfo } from "./build-info.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
@@ -372,6 +373,16 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
   return applyWorkflow(repo, parsed, str(args.previewFingerprint) ?? "", workItemId);
 }
 
+function withBuild(result: unknown, version: string): unknown {
+  const build = runtimeBuildInfo(version);
+  if (result && typeof result === "object" && !Array.isArray(result)) {
+    const record = result as Record<string, unknown>;
+    if (record.data && typeof record.data === "object") return { ...record, data: { ...(record.data as object), build } };
+    return { ...record, build };
+  }
+  return result;
+}
+
 async function dispatchTool(
   ops: Operations,
   name: string,
@@ -380,7 +391,7 @@ async function dispatchTool(
 ): Promise<unknown> {
   switch (name) {
     case "praxis_doctor":
-      return ops.doctorOp(ctx, version);
+      return withBuild(await ops.doctorOp(ctx, version), version);
     case "praxis_project_status":
       return ops.projectStatusOp(ctx);
     case "praxis_project_init_preview":

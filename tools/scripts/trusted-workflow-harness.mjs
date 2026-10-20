@@ -14,11 +14,15 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import {
+  approvedContentDigest,
+  decisionContentFingerprint,
   encodeAuthorization,
   generateApprovalKeyPair,
+  HUMAN_GRANT_KIND,
+  humanGrantContent,
   installHostApproval,
+  serviceGrantSubject,
   signAuthorization,
-  storyConfirmationDigest,
   storyContentFingerprint,
 } from "@praxis/contracts";
 
@@ -119,34 +123,64 @@ export function createWorkflowHarness({ callTool, repo, version, role = "runtime
     };
   }
 
-  /** Confirms a Story's exact revision with a token signed by the harness's ephemeral key. */
+  /** A grant shaped like a broker's: one action, one target, exact content, the right kind. Ephemeral key. */
+  function grant(action, targetId, content) {
+    const body = {
+      contract: "praxis.approval.authorization",
+      version: 1,
+      planFingerprint: `sha256:${"ee".repeat(32)}`,
+      provider: "local",
+      instanceId: "local",
+      operations: ["repository_edit"],
+      workItemIds: [state().workItem.id],
+      repositories: [],
+      action,
+      approver: "acceptance-harness",
+      issuedAt: new Date(Date.now() - 1000).toISOString(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      consumptionId: `harness-${action}-${targetId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      planId: `harness-${action}-${targetId}`,
+      targets: [targetId],
+      content,
+      contentDigest: approvedContentDigest(content),
+      decisionKind: HUMAN_GRANT_KIND[action],
+    };
+    return encodeAuthorization(signAuthorization(body, keys.privateKeyPem));
+  }
+
+  /** Confirms a Story's exact revision with a grant signed by the harness's ephemeral key. */
   async function confirmStory(storyId) {
     const story = state().stories.find((item) => item.id === storyId && item.status !== "superseded");
     if (!story) throw new Error(`story ${storyId} not found`);
     const contentFingerprint = storyContentFingerprint(story);
-    const body = {
-      contract: "praxis.approval.authorization",
-      version: 1,
-      planFingerprint: storyConfirmationDigest({ storyId: story.id, revision: story.revision, contentFingerprint }),
-      provider: "local",
-      instanceId: "local",
-      operations: ["external_record_update"],
-      workItemIds: [story.id],
-      repositories: [],
-      action: "confirm-story",
-      approver: "acceptance-harness",
-      issuedAt: new Date().toISOString(),
-      expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      consumptionId: `harness-confirm-${story.id}-${story.revision}-${Date.now()}`,
-    };
     return apply({
       action: "confirm-story",
       id: story.id,
       revision: story.revision,
       contentFingerprint,
-      authorization: encodeAuthorization(signAuthorization(body, keys.privateKeyPem)),
+      authorization: grant("confirm-story", story.id, humanGrantContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint })),
     });
   }
 
-  return { approve, approveServiceFix, preview, applyWith, apply, state, confirmStory };
+  /** Confirms a recorded decision's exact revision. A decision cannot be recorded as confirmed. */
+  async function confirmDecision(decisionId) {
+    const decision = state().decisions.find((item) => item.id === decisionId);
+    if (!decision) throw new Error(`decision ${decisionId} not found`);
+    const contentFingerprint = decisionContentFingerprint(decision);
+    return apply({
+      action: "confirm-decision",
+      id: decision.id,
+      revision: decision.revision,
+      contentFingerprint,
+      authorization: grant("confirm-decision", decision.id, humanGrantContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint })),
+    });
+  }
+
+  /** Marks a service approved/completed with a grant bound to the service as recorded and its implementation. */
+  async function approveService(service) {
+    const authorization = grant("approve-service", service.id, humanGrantContent("approve-service", serviceGrantSubject(state(), service)));
+    return apply({ action: "set-service", service, authorization });
+  }
+
+  return { approve, approveServiceFix, preview, applyWith, apply, state, confirmStory, confirmDecision, approveService };
 }

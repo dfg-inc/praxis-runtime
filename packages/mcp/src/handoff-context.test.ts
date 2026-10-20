@@ -75,7 +75,6 @@ describe("handoff context across roles through MCP workflow tools", () => {
       action: "record-decision",
       id: "DEC-HOF-101",
       statement: "Carry forward",
-      confirmed: true,
       rationale: "history",
     });
     const common = { requirementIds: ["REQ-HOF-101"], readiness: "ready" };

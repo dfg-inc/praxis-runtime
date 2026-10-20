@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
+import { humanApprovalView, recordPolicy, requireGrantToken } from "./human-approval.js";
 import {
   applyWorkflowCommand,
   commandFingerprint,
@@ -10,6 +11,7 @@ import {
   resumeWorkflow,
   routeCapabilities,
   runAuthorizedMutation,
+  runWorkflowRecordWrite,
   WorkflowCommandSchema,
   WorkflowStateSchema,
   workItemIdFor,
@@ -567,6 +569,8 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
   result: unknown;
   resume: ReturnType<typeof resumeWorkflow> | null;
   currentWorkItemId?: string | null;
+  /** Present when the command is a human act: what the owner must approve, and where. */
+  humanApproval?: ReturnType<typeof humanApprovalView>;
 } {
   const command = WorkflowCommandSchema.parse(raw);
   const resolved = resolveCommand(repo, command, workItemId);
@@ -588,6 +592,19 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
       result: { workflowId: resolved.reopen.workflowId, workItemId: resolved.reopen.workItem.id, previousCurrent: current },
       resume: resumeWorkflow(resolved.reopen),
       currentWorkItemId: resolved.reopen.workItem.id,
+    };
+  }
+  // A confirmation or approval cannot be simulated without the owner's grant, and previewing must not write.
+  // Show what the owner will be asked, built from the same state the apply will use.
+  const humanApproval = humanApprovalView(repo, resolved.state, resolved.command);
+  if (humanApproval && resolved.state) {
+    return {
+      fingerprint,
+      duplicate: false,
+      result: { awaitingHumanApproval: humanApproval.planId },
+      resume: resumeWorkflow(resolved.state),
+      currentWorkItemId: workItemId ?? current,
+      humanApproval,
     };
   }
   const applied = applyWorkflowCommand(resolved.state, resolved.command);
@@ -621,6 +638,13 @@ export type WorkflowApplyResult = {
   currentWorkItemId?: string | null;
   replayed?: boolean;
 };
+
+function withGrant(repo: string, state: WorkflowState, command: WorkflowCommand): WorkflowCommand {
+  // humanGrantRequest is null for every command that is not a human act (and for a set-service that approves
+  // nothing), so ordinary records pass straight through.
+  const token = requireGrantToken(repo, state, command);
+  return token ? ({ ...command, authorization: token } as WorkflowCommand) : command;
+}
 
 /** One locked read-modify-write of a single work item (or the index, for select/reopen). */
 function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string): WorkflowApplyResult {
@@ -657,7 +681,13 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
         currentWorkItemId: resolved.reopen.workItem.id,
       };
     }
-    const applied = applyWorkflowCommand(resolved.state, resolved.command);
+    // A human act carries the owner's signed grant, found in the broker's approval inbox; the contract then
+    // verifies it against the exact content again. Without one this proposes the plan and refuses.
+    const command =
+      resolved.state && !(resolved.command as { authorization?: string }).authorization
+        ? withGrant(repo, resolved.state, resolved.command)
+        : resolved.command;
+    const applied = applyWorkflowCommand(resolved.state, command);
     const path = writeItem(repo, applied.state);
     const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1 as const, current: null, items: [] };
     const entry = summarize(applied.state);
@@ -687,6 +717,10 @@ function guarded(repo: string, fingerprint: string, planned: unknown, final: unk
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
+  }
+  if (recordPolicy() === "unsigned") {
+    // Agent-authored records need no approval. Human acts are protected by their own grant inside the write.
+    return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId));
   }
   const request = localWriteRequest(repo, fingerprint);
   const inspection = inspectMutation(request);

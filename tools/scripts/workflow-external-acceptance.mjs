@@ -80,23 +80,12 @@ function service(id, kind, dependsOn, status) {
   };
 }
 
-const { preview, applyWith, apply, state } = createWorkflowHarness({ callTool, repo, version });
+const harness = createWorkflowHarness({ callTool, repo, version });
+const { preview, applyWith, apply, state } = harness;
 
 try {
   mkdirSync(join(repo, "src"), { recursive: true });
   writeFileSync(join(repo, "src", "import-rows.js"), DEFECTIVE);
-
-  {
-    // Authorization is enforced, not disabled: a write without a matching approval is refused.
-    const probe = { action: "open", projectId: "bulk-user-import", title: "Bulk User Import", request: "probe", source: "local" };
-    const fingerprint = await preview(probe);
-    const refused = await applyWith(probe, fingerprint);
-    record(
-      "authorization-enforced",
-      refused.ok === false && refused.code === "APPROVAL_REQUIRED" && !existsSync(join(repo, ".praxis", "workflow", "index.json")),
-      `${refused.code}`,
-    );
-  }
 
   const opened = await apply({
     action: "open",
@@ -107,6 +96,13 @@ try {
   });
   const workflowId = opened.workflowId;
   record("open-without-jira", state().workItem.jiraIssueKey == null, workflowId);
+  {
+    // Agent-authored records need no approval; human acts are refused without the owner's grant, not merely unapproved.
+    const decision = { action: "record-decision", id: "D-PROBE", statement: "probe", confirmed: true };
+    const probe = await callTool("praxis_workflow_preview", { repo, command: JSON.stringify(decision) }, { role: "runtime", version });
+    record("agent-cannot-confirm-a-decision", probe.ok === false && /cannot confirm it/.test(probe.errors?.join(" ") ?? ""), String(probe.errors?.[0]).slice(0, 80));
+  }
+
 
   const clarified = await apply({
     action: "clarify",
@@ -151,8 +147,8 @@ try {
     action: "record-decision",
     id: "D-ROLES",
     statement: "The role column accepts organization admin and member.",
-    confirmed: true,
   });
+  await harness.confirmDecision("D-ROLES");
   await apply({
     action: "add-requirement",
     id: "REQ-BUI-061",
@@ -195,8 +191,8 @@ try {
     action: "record-decision",
     id: "ADR-BUI-061",
     statement: "Each service records a row outcome. The worker must not wrap the file in one transaction.",
-    confirmed: true,
   });
+  await harness.confirmDecision("ADR-BUI-061");
   await apply({
     action: "handoff",
     sourceRole: "architect",
@@ -215,8 +211,8 @@ try {
     action: "record-decision",
     id: "D-INVALID-ROLE",
     statement: "An invalid role is rejected at validation and does not abort valid rows.",
-    confirmed: true,
   });
+  await harness.confirmDecision("D-INVALID-ROLE");
   await apply({
     action: "handoff",
     sourceRole: "ba",
@@ -349,13 +345,25 @@ try {
     implementationPath: "src/import-rows.js",
     serviceId: "worker",
   });
+  {
+    // An agent cannot approve a service: preview shows what the owner would be asked, and apply is refused.
+    const candidate = { action: "set-service", service: service("api", "api", [], "approved") };
+    const fingerprint = await preview(candidate);
+    const shown = await callTool("praxis_workflow_preview", { repo, command: JSON.stringify(candidate) }, { role: "runtime", version });
+    const refused = await applyWith(candidate, fingerprint);
+    record(
+      "agent-cannot-approve-a-service",
+      shown.data?.humanApproval?.kind === "quality_verdict" && refused.ok === false && refused.code === "APPROVAL_REQUIRED" && state().services.find((item) => item.id === "api")?.status !== "approved",
+      `${shown.data?.humanApproval?.status}/${refused.code}`,
+    );
+  }
   for (const item of [
     service("api", "api", [], "approved"),
     service("identity", "external", [], "approved"),
     service("worker", "worker", ["api", "identity"], "approved"),
     service("frontend", "frontend", ["api"], "approved"),
   ]) {
-    await apply({ action: "set-service", service: item });
+    await harness.approveService(item);
   }
   const feature = await apply({ action: "feature-verdict" });
   record("feature-pass-preserves-services", feature.result.verdict === "PASS", feature.result.gaps?.join(" | "));

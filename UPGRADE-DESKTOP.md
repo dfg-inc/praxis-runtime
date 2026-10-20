@@ -66,7 +66,7 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect e113ddfa3d6f9080d7423bd32da53a7834321dffd84494d4351e49e58045edf9
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 8c23327c60c199f8f285c5eeb65f9ae1e4f07d34d45f31eb4c850d888ad8868f
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -98,5 +98,22 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `e113ddfa3d6f9080d7423bd32da53a7834321dffd84494d4351e49e58045edf9`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
+(sha256 `8c23327c60c199f8f285c5eeb65f9ae1e4f07d34d45f31eb4c850d888ad8868f`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
 `PRAXIS_SECURITY_MODE` to `secure`.
+
+## Verify the loaded build, not the version string
+
+`0.1.0-alpha.47` names several different runtimes. After installing, call `praxis_doctor` in Desktop and read `build`:
+
+| field | expect |
+| --- | --- |
+| `origin` | `bundle` |
+| `bundleSha256` | `8c23327c60c199f8f285c5eeb65f9ae1e4f07d34d45f31eb4c850d888ad8868f` (the file Desktop is running) |
+| `coreBaseline` | `acb513a38281af702ff77d15360cf4310141fd80` |
+| `sourceDigest` | digest of the inputs; `node -e` with `tools/scripts/build-identity.mjs` in this checkout prints the same value |
+
+Mismatching `bundleSha256` means an older extension is still loaded: fully quit Claude Desktop and reopen.
+
+## Human approvals (secure mode)
+
+Optional extension settings: *Approval broker shared folder*, *Approval trust anchor*, *Approval ledger path*, *Operator approval page URL*. They are only meaningful when a broker runs under a **different OS identity** than the one running Claude Desktop. `praxis_doctor` → `security` reports whether that holds. On a same-user host, or one where the agent can drive Docker, it reports the approval path as not isolated and Praxis writes stay refused. That is the intended outcome, not a fault to work around.
