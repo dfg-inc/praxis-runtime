@@ -21,7 +21,8 @@ const repoProp = { type: "string", description: "Product repository path. Defaul
 const epicProp = { type: "string", description: "Jira epic key, e.g. PRX-1" };
 const wpProp = {
   type: "string",
-  description: "Local WP id (WP-20260914-002) or Jira work-package key",
+  description:
+    "Local Work Package id (WP-20260914-002) or Jira issue key (PRX-12). Not a Work Item id: those go in workItemId.",
 };
 const confirmProp = {
   type: "string",
@@ -264,11 +265,14 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_developer_status",
     description:
-      "READ-ONLY Developer WP status (local id, Jira key, current status, available transitions). Role: Developer.",
+      "READ-ONLY Developer status. Pass workPackage (local Work Package id or Jira issue key) for WP/Jira status, or workItemId for a local Work Item (stage, services, implementation, no Jira needed). The identities are never converted: jiraIssueKey is null unless one is recorded. Role: Developer.",
     inputSchema: {
       type: "object",
-      properties: { workPackage: wpProp, repo: repoProp },
-      required: ["workPackage"],
+      properties: {
+        workPackage: wpProp,
+        workItemId: { type: "string", description: "Local Work Item id (WI-...). Mutually exclusive with workPackage." },
+        repo: repoProp,
+      },
       additionalProperties: false,
     },
     roles: ["developer"],
@@ -745,6 +749,44 @@ export const TOOLS: ToolDef[] = [
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
       },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_workflow_inspect",
+    description:
+      "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria, User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA→Architect→Developer→Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | all. id narrows requirements/stories/decisions/work/handoffs to one record.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        view: {
+          type: "string",
+          enum: ["overview", "requirements", "stories", "decisions", "work", "handoffs", "open-items", "quality", "links", "all"],
+          description: "Which part of the stored workflow to return. Default overview.",
+        },
+        id: { type: "string", description: "Optional record id (REQ-..., US-..., decision id, service id, handoff id) to return only that record." },
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_session_start",
+    description:
+      "READ-ONLY role initialisation for hosts that cannot run the plugin's bootstrap script: `.project` status, knowledge rules for the role, Work Items, the role's tools and next steps. Same information as the CLI session-bootstrap. Starts nothing, writes nothing.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        role: { type: "string", enum: ["ba", "architect", "developer", "quality"], description: "The role being initialised." },
+        stage: { type: "string", description: "Optional stage override (not for quality)." },
+      },
+      required: ["role"],
       additionalProperties: false,
     },
     roles: ["ba", "architect", "developer", "quality"],

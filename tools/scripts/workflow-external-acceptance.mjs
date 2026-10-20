@@ -496,6 +496,37 @@ try {
           envelope.data?.workflowId === workflowId,
         `tools=${names.filter((name) => name.startsWith("praxis_workflow") || name === "praxis_capabilities").join(",")}`,
       );
+      // Read-only inspection over the real MCP protocol, against the packaged runtime.
+      const inspect = parseDoctorEnvelope(
+        await session.client.callTool({ name: "praxis_workflow_inspect", arguments: { repo, view: "all" } }),
+      );
+      record(
+        "packaged-mcpb-inspects-stored-workflow",
+        names.includes("praxis_workflow_inspect") &&
+          inspect?.ok === true &&
+          inspect.data?.readOnly === true &&
+          inspect.data?.requirements?.some((item) => item.id === "REQ-BUI-061" && item.statement && item.acceptanceCriteria?.length > 0) &&
+          Array.isArray(inspect.data?.handoffs?.items) &&
+          inspect.data.handoffs.items.length > 0 &&
+          !JSON.stringify(inspect.data).includes(repo),
+        `requirements=${inspect?.data?.requirements?.length} handoffs=${inspect?.data?.handoffs?.items?.length}`,
+      );
+      const started = parseDoctorEnvelope(
+        await session.client.callTool({ name: "praxis_session_start", arguments: { repo, role: "quality" } }),
+      );
+      record(
+        "packaged-mcpb-session-start",
+        started?.ok === true && started.data?.stage === "quality" && started.data?.workflow?.present === true,
+        `stage=${started?.data?.stage}`,
+      );
+      const doctor = parseDoctorEnvelope(await session.client.callTool({ name: "praxis_doctor", arguments: { repo } }));
+      record(
+        "packaged-mcpb-build-fingerprint",
+        doctor?.data?.build?.origin === "bundle" &&
+          /^[0-9a-f]{64}$/.test(doctor.data.build.bundleSha256 ?? "") &&
+          /^[0-9a-f]{64}$/.test(doctor.data.build.sourceDigest ?? ""),
+        `bundle=${doctor?.data?.build?.bundleSha256?.slice(0, 12)} tools=${names.length}`,
+      );
     } finally {
       await session.close();
     }

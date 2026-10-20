@@ -15,6 +15,8 @@ import { runtimeBuildInfo } from "./build-info.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
+import { developerWorkItemStatus, inspectWorkflow } from "./workflow-inspect.js";
+import { sessionStart } from "./session-start.js";
 import { applyResolved, applyWorkflow, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
 
 export {
@@ -245,6 +247,8 @@ export async function callTool(
     }
     if (
       name === "praxis_workflow_status" ||
+      name === "praxis_workflow_inspect" ||
+      name === "praxis_session_start" ||
       name === "praxis_workflow_preview" ||
       name === "praxis_workflow_apply" ||
       name === "praxis_capabilities"
@@ -253,7 +257,24 @@ export async function callTool(
         ok: true,
         operation: name,
         version: opts.version,
-        data: await runWorkflowTool(name, args, ctx.repo),
+        data: await runWorkflowTool(name, args, ctx.repo, opts.version),
+      });
+    }
+    if (name === "praxis_developer_status" && str(args.workItemId)) {
+      if (str(args.workPackage) ?? str(args.wp) ?? str(args.workPackageId)) {
+        return mcpEnvelope({
+          ok: false,
+          operation: name,
+          version: opts.version,
+          code: "IDENTITY_AMBIGUOUS",
+          errors: ["pass either workItemId (a Work Item) or workPackage (a Work Package or Jira key), not both"],
+        });
+      }
+      return mcpEnvelope({
+        ok: true,
+        operation: name,
+        version: opts.version,
+        data: developerWorkItemStatus(ctx.repo, str(args.workItemId) as string),
       });
     }
     const data = await dispatchTool(ops, name, ctx, opts.version);
@@ -296,7 +317,7 @@ export async function callTool(
     const code =
       err instanceof ops.PraxisOpError
         ? err.code
-        : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code)
+        : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code)
           ? coded.code
           : message.startsWith("FINGERPRINT_MISMATCH")
             ? "FINGERPRINT_MISMATCH"
@@ -337,8 +358,12 @@ function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
   return command;
 }
 
-async function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string): Promise<unknown> {
+async function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string, version: string): Promise<unknown> {
   const workItemId = str(args.workItemId);
+  if (name === "praxis_workflow_inspect") {
+    return inspectWorkflow(repo, { view: str(args.view), workItemId, id: str(args.id) });
+  }
+  if (name === "praxis_session_start") return sessionStart(repo, { role: str(args.role), stage: str(args.stage) }, version);
   if (name === "praxis_workflow_status") return workflowStatus(repo, workItemId);
   if (name === "praxis_capabilities") {
     const role = str(args.role);

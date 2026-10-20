@@ -66,7 +66,7 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 8c23327c60c199f8f285c5eeb65f9ae1e4f07d34d45f31eb4c850d888ad8868f
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 8af00e41cdea45887394f1291ffc75d504b498efec31412ba63c7e8315651f32
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -98,7 +98,7 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `8c23327c60c199f8f285c5eeb65f9ae1e4f07d34d45f31eb4c850d888ad8868f`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
+(sha256 `8af00e41cdea45887394f1291ffc75d504b498efec31412ba63c7e8315651f32`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
 `PRAXIS_SECURITY_MODE` to `secure`.
 
 ## Verify the loaded build, not the version string
@@ -108,12 +108,23 @@ The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-
 | field | expect |
 | --- | --- |
 | `origin` | `bundle` |
-| `bundleSha256` | `8c23327c60c199f8f285c5eeb65f9ae1e4f07d34d45f31eb4c850d888ad8868f` (the file Desktop is running) |
-| `coreBaseline` | `acb513a38281af702ff77d15360cf4310141fd80` |
-| `sourceDigest` | digest of the inputs; `node -e` with `tools/scripts/build-identity.mjs` in this checkout prints the same value |
+| `bundleSha256` | `8af00e41cdea45887394f1291ffc75d504b498efec31412ba63c7e8315651f32` (the file Desktop is running) |
+| `coreBaseline` | `b19fb012a69b73ee5d2456159f72ad575e8fdea2` |
+| `sourceDigest` | `5c28693964872892e072b8632793a89e20991df8a5d902cdb94fe54a216d5c34` |
 
 Mismatching `bundleSha256` means an older extension is still loaded: fully quit Claude Desktop and reopen.
 
 ## Human approvals (secure mode)
 
 Optional extension settings: *Approval broker shared folder*, *Approval trust anchor*, *Approval ledger path*, *Operator approval page URL*. They are only meaningful when a broker runs under a **different OS identity** than the one running Claude Desktop. `praxis_doctor` → `security` reports whether that holds. On a same-user host, or one where the agent can drive Docker, it reports the approval path as not isolated and Praxis writes stay refused. That is the intended outcome, not a fault to work around.
+
+## This build: 52 tools, inspection, role initialisation
+
+Expected after install (Desktop → ask Praxis Doctor, then list tools):
+
+- **52 MCP tools** (50 before): new read-only `praxis_workflow_inspect` (requirements, Stories, decisions, work, handoffs, open items, Quality evidence, links) and `praxis_session_start` (role initialisation without a local script).
+- `praxis_developer_status` takes `workItemId` for a local Work Item; `workPackage` accepts only a Work Package id or a Jira key and refuses a Work Item id.
+- Role plugins: install the four `praxis-<role>.zip` files from `desktop-install/` (skills: BA 23, Architect 25, Developer 30, Quality 7). Their `session-start` skills call `praxis_session_start`.
+- `.mcpb` sha256 `653b27c456932713782629fc49831f05fc122eab67cdf91b75eaa201733ba52a`.
+
+Desktop acceptance is **not** claimed for this build until it has been installed and re-tested on the real Desktop host.
