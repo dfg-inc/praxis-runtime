@@ -5,11 +5,12 @@
  * second process. Does not write to Jira.
  */
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { packClaudeExtension } from "./pack-claude-extension.mjs";
+import { createWorkflowHarness, HARNESS_NOTICE } from "./trusted-workflow-harness.mjs";
 import { extractMcpbRuntime } from "./mcpb-runtime.mjs";
 import {
   connectOfficialMcp,
@@ -25,6 +26,7 @@ const repo = mkdtempSync(join(tmpdir(), "praxis-workflow-accept-"));
 const report = {
   repo,
   version,
+  ...HARNESS_NOTICE,
   checks: [],
   blocked: [],
   notExecuted: [],
@@ -78,36 +80,23 @@ function service(id, kind, dependsOn, status) {
   };
 }
 
-async function apply(command) {
-  const preview = await callTool(
-    "praxis_workflow_preview",
-    { repo, command: JSON.stringify(command) },
-    { role: "runtime", version },
-  );
-  if (!preview.ok) throw new Error(`preview failed ${JSON.stringify(preview)}`);
-  const fingerprint = preview.data?.fingerprint;
-  if (!fingerprint) throw new Error(`preview missing fingerprint ${JSON.stringify(preview)}`);
-  const applied = await callTool(
-    "praxis_workflow_apply",
-    {
-      repo,
-      command: JSON.stringify(command),
-      previewFingerprint: fingerprint,
-      confirmation: "YES",
-    },
-    { role: "runtime", version },
-  );
-  if (!applied.ok) throw new Error(`apply failed ${JSON.stringify(applied)}`);
-  return applied.data;
-}
-
-function state() {
-  return JSON.parse(readFileSync(join(repo, ".praxis", "workflow", "state.json"), "utf8"));
-}
+const { preview, applyWith, apply, state } = createWorkflowHarness({ callTool, repo, version });
 
 try {
   mkdirSync(join(repo, "src"), { recursive: true });
   writeFileSync(join(repo, "src", "import-rows.js"), DEFECTIVE);
+
+  {
+    // Authorization is enforced, not disabled: a write without a matching approval is refused.
+    const probe = { action: "open", projectId: "bulk-user-import", title: "Bulk User Import", request: "probe", source: "local" };
+    const fingerprint = await preview(probe);
+    const refused = await applyWith(probe, fingerprint);
+    record(
+      "authorization-enforced",
+      refused.ok === false && refused.code === "APPROVAL_REQUIRED" && !existsSync(join(repo, ".praxis", "workflow", "index.json")),
+      `${refused.code}`,
+    );
+  }
 
   const opened = await apply({
     action: "open",
@@ -200,7 +189,7 @@ try {
   };
   await apply(baHandoff);
   const duplicate = await apply(baHandoff);
-  record("duplicate-handoff", duplicate.result.duplicate === true && state().handoffs.length === 1, String(state().handoffs.length));
+  record("duplicate-handoff", duplicate.duplicate === true && state().handoffs.length === 1, String(state().handoffs.length));
 
   await apply({
     action: "record-decision",

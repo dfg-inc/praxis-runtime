@@ -16455,7 +16455,7 @@ var init_artifact_id = __esm({
 
 // node_modules/@praxis/jira/dist/ba-write.js
 function contentFingerprint(spec) {
-  return (0, import_node_crypto5.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto6.createHash)("sha256").update(JSON.stringify({
     summary: spec.summary,
     userStory: spec.userStory,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -16684,10 +16684,10 @@ async function planAndApplyBaStories(opts) {
     flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey)
   };
 }
-var import_node_crypto5;
+var import_node_crypto6;
 var init_ba_write = __esm({
   "node_modules/@praxis/jira/dist/ba-write.js"() {
-    import_node_crypto5 = require("node:crypto");
+    import_node_crypto6 = require("node:crypto");
     init_artifact_id();
     init_managed_scope();
     init_write_journal();
@@ -17117,7 +17117,7 @@ ${paths.qualityHandoffPath}`
   };
 }
 function fingerprint(value) {
-  return `sha256:${(0, import_node_crypto6.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto7.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 async function previewDeveloperCompleteRecovery(opts) {
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
@@ -17218,10 +17218,10 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto6, import_node_fs13, import_node_path14, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto7, import_node_fs13, import_node_path14, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
-    import_node_crypto6 = require("node:crypto");
+    import_node_crypto7 = require("node:crypto");
     import_node_fs13 = require("node:fs");
     import_node_path14 = require("node:path");
     import_node_child_process3 = require("node:child_process");
@@ -17248,10 +17248,10 @@ var init_developer_complete = __esm({
 
 // node_modules/@praxis/jira/dist/quality-apply.js
 function digest(value) {
-  return (0, import_node_crypto7.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
+  return (0, import_node_crypto8.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sha256Text(text) {
-  return (0, import_node_crypto7.createHash)("sha256").update(text).digest("hex");
+  return (0, import_node_crypto8.createHash)("sha256").update(text).digest("hex");
 }
 function qualityApplyFingerprint(plan) {
   return `sha256:${digest({
@@ -17925,10 +17925,10 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto7, import_node_fs14, import_node_path15, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto8, import_node_fs14, import_node_path15, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
-    import_node_crypto7 = require("node:crypto");
+    import_node_crypto8 = require("node:crypto");
     import_node_fs14 = require("node:fs");
     import_node_path15 = require("node:path");
     init_mutation_auth();
@@ -18451,7 +18451,7 @@ async function claimWorkPackage(opts) {
       workItemId: opts.wpKey
     }), () => claimWorkPackage(opts));
   }
-  const token = (0, import_node_crypto8.randomUUID)();
+  const token = (0, import_node_crypto9.randomUUID)();
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
     ...manifest?.storyKeys ?? [],
@@ -18594,10 +18594,10 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto8, import_node_fs15, import_node_path16, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto9, import_node_fs15, import_node_path16, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
-    import_node_crypto8 = require("node:crypto");
+    import_node_crypto9 = require("node:crypto");
     import_node_fs15 = require("node:fs");
     import_node_path16 = require("node:path");
     init_dist();
@@ -19072,13 +19072,13 @@ function fileSha256(repo, rel) {
   const abs = (0, import_node_path17.join)(repo, rel);
   if (!(0, import_node_fs16.existsSync)(abs) || !(0, import_node_fs16.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto9.createHash)("sha256").update((0, import_node_fs16.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto10.createHash)("sha256").update((0, import_node_fs16.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel) {
   const r = runGit(repo, ["show", `${rev}:${rel}`]);
   if (r.status !== 0)
     return null;
-  return (0, import_node_crypto9.createHash)("sha256").update(r.stdout).digest("hex");
+  return (0, import_node_crypto10.createHash)("sha256").update(r.stdout).digest("hex");
 }
 function listCommitFiles(repo, rev) {
   const r = runGit(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]);
@@ -19239,10 +19239,10 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto9, import_node_fs16, import_node_path17, import_node_child_process4;
+var import_node_crypto10, import_node_fs16, import_node_path17, import_node_child_process4;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
-    import_node_crypto9 = require("node:crypto");
+    import_node_crypto10 = require("node:crypto");
     import_node_fs16 = require("node:fs");
     import_node_path17 = require("node:path");
     import_node_child_process4 = require("node:child_process");
@@ -19393,7 +19393,7 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
       consistency = "mismatch";
     return { path, liveSha256, snapshotSha256, consistency };
   });
-  const liveDigest = (0, import_node_crypto10.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
+  const liveDigest = (0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
     const live = liveFileHash(repo, path);
     return live ? { path, sha256: live } : { path, missing: true };
   }))).digest("hex");
@@ -19403,12 +19403,12 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
     liveDigest
   };
 }
-var import_node_fs18, import_node_path19, import_node_crypto10;
+var import_node_fs18, import_node_path19, import_node_crypto11;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
     import_node_fs18 = require("node:fs");
     import_node_path19 = require("node:path");
-    import_node_crypto10 = require("node:crypto");
+    import_node_crypto11 = require("node:crypto");
     init_git_local();
   }
 });
@@ -19823,12 +19823,12 @@ var init_journal = __esm({
 
 // node_modules/@praxis/vcs/dist/fingerprint.js
 function deliveryFingerprint(value) {
-  return `sha256:${(0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
 }
-var import_node_crypto11;
+var import_node_crypto12;
 var init_fingerprint = __esm({
   "node_modules/@praxis/vcs/dist/fingerprint.js"() {
-    import_node_crypto11 = require("node:crypto");
+    import_node_crypto12 = require("node:crypto");
   }
 });
 
@@ -22287,7 +22287,7 @@ __export(operations_exports, {
   workPackageShowOp: () => workPackageShowOp
 });
 function previewFingerprint(plan) {
-  return `sha256:${(0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 function redact(text) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
@@ -23543,10 +23543,10 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto12, import_node_child_process6, import_node_fs21, import_node_path24, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected;
+var import_node_crypto13, import_node_child_process6, import_node_fs21, import_node_path24, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
-    import_node_crypto12 = require("node:crypto");
+    import_node_crypto13 = require("node:crypto");
     import_node_child_process6 = require("node:child_process");
     import_node_fs21 = require("node:fs");
     import_node_path24 = require("node:path");
@@ -72455,6 +72455,7 @@ function inspectService(service) {
 // packages/mcp/dist/workflow-store.js
 var import_node_fs6 = require("node:fs");
 var import_node_path5 = require("node:path");
+var import_node_crypto5 = require("node:crypto");
 init_dist();
 var PRAXIS_CAPABILITIES = [
   {
@@ -72599,11 +72600,24 @@ function readLayout(repo) {
   }
   return { index, legacy: false };
 }
-function fingerprintFor(repo, command) {
-  if (command.action !== "open" && command.action !== "select-work-item")
-    return commandFingerprint(command);
-  const epoch = readLayout(repo)?.index.epoch ?? 0;
-  return commandFingerprint({ ...command, indexEpoch: epoch });
+function canonicalJson(value) {
+  if (Array.isArray(value))
+    return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+function fingerprintFor(repo, command, workItemId) {
+  let token;
+  if (command.action === "open" || command.action === "select-work-item") {
+    token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
+  } else {
+    const state2 = loadWorkflow(repo, workItemId);
+    token = state2 ? `state:${(0, import_node_crypto5.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
+  }
+  return commandFingerprint({ ...command, previewedAgainst: token });
 }
 function resolveId(layout, explicit) {
   if (explicit !== void 0) {
@@ -72778,7 +72792,7 @@ function resolveCommand(repo, command, workItemId) {
 function previewWorkflow(repo, raw, workItemId) {
   const command = WorkflowCommandSchema.parse(raw);
   const resolved = resolveCommand(repo, command, workItemId);
-  const fingerprint2 = fingerprintFor(repo, command);
+  const fingerprint2 = fingerprintFor(repo, command, workItemId);
   const current = listWorkItems(repo).current;
   if (resolved.select) {
     return {
@@ -72874,7 +72888,7 @@ function writeCommand(repo, planned, final, workItemId) {
 }
 function guarded(repo, fingerprint2, planned, final, workItemId) {
   const command = WorkflowCommandSchema.parse(planned);
-  const expected = fingerprintFor(repo, command);
+  const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint2 !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }

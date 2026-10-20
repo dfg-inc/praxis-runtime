@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import {
   applyWorkflowCommand,
   commandFingerprint,
@@ -206,11 +207,34 @@ function readLayout(repo: string): Layout | null {
   return { index, legacy: false };
 }
 
-/** open and select-work-item depend on the index, so their fingerprint carries its epoch. */
-function fingerprintFor(repo: string, command: WorkflowCommand): string {
-  if (command.action !== "open" && command.action !== "select-work-item") return commandFingerprint(command);
-  const epoch = readLayout(repo)?.index.epoch ?? 0;
-  return commandFingerprint({ ...command, indexEpoch: epoch } as unknown as WorkflowCommand);
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, v]) => v !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonicalJson(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+/**
+ * An approval authorizes a command against the state it was previewed against. The fingerprint
+ * therefore carries a digest of that state (or the index epoch for open/select-work-item):
+ * - the same command on unchanged state is a true replay of the completed write;
+ * - the same command after the state moved on (select A, B, A; re-record an implementation after a
+ *   revision) is a new operation that needs its own approval and really runs;
+ * - a preview made against state that has since changed is rejected as stale.
+ */
+function fingerprintFor(repo: string, command: WorkflowCommand, workItemId?: string): string {
+  let token: string;
+  if (command.action === "open" || command.action === "select-work-item") {
+    token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
+  } else {
+    const state = loadWorkflow(repo, workItemId);
+    token = state ? `state:${createHash("sha256").update(canonicalJson(state)).digest("hex")}` : "state:none";
+  }
+  return commandFingerprint({ ...command, previewedAgainst: token } as unknown as WorkflowCommand);
 }
 
 function resolveId(layout: Layout, explicit?: string): string | null {
@@ -458,7 +482,7 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
 } {
   const command = WorkflowCommandSchema.parse(raw);
   const resolved = resolveCommand(repo, command, workItemId);
-  const fingerprint = fingerprintFor(repo, command);
+  const fingerprint = fingerprintFor(repo, command, workItemId);
   const current = listWorkItems(repo).current;
   if (resolved.select) {
     return {
@@ -572,7 +596,7 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
 
 function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string): WorkflowApplyResult {
   const command = WorkflowCommandSchema.parse(planned);
-  const expected = fingerprintFor(repo, command);
+  const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }

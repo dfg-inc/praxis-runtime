@@ -163,21 +163,11 @@ describe("several work items in one repository (through MCP tools)", () => {
     const status = await call("praxis_workflow_status", repo, "ba", {});
     expect(status.data.links).toEqual([target]);
     expect(status.data.workItems[0].links).toEqual([target]);
-    // The identical command again, with the same approval, is a replay of the completed write.
-    const fingerprint = (
-      await call("praxis_workflow_preview", repo, "architect", {
-        command: JSON.stringify({ action: "link-work-item", target }),
-        workItemId: a,
-      })
-    ).data.fingerprint as string;
-    const again = await call("praxis_workflow_apply", repo, "architect", {
-      command: JSON.stringify({ action: "link-work-item", target }),
-      confirmation: "YES",
-      previewFingerprint: fingerprint,
-      workItemId: a,
-    });
-    expect(again.ok, JSON.stringify(again.errors)).toBe(true);
-    expect(again.data.replayed).toBe(true);
+    // The identical command again, after the state changed, is a new approved operation that runs and
+    // changes nothing (deduplicated by the command itself), not a replay of the first approval.
+    const again = await step(repo, "architect", { action: "link-work-item", target }, a);
+    expect(again.data.duplicate).toBe(true);
+    expect(again.data.replayed).toBeUndefined();
     expect(((await call("praxis_workflow_status", repo, "ba", {})).data.links as unknown[]).length).toBe(1);
   });
 
@@ -237,6 +227,45 @@ describe("several work items in one repository (through MCP tools)", () => {
     });
     const verified = await step(repo, "quality", { action: "verify-stories", independentRerun: true });
     expect((verified.data.result as { verdict: string }).verdict).toBe("FAIL");
+  });
+});
+
+describe("approvals are bound to the state they were previewed against", () => {
+  it("regression: an identical command after a state change runs again instead of replaying", async () => {
+    const repo = repoDir();
+    await step(repo, "ba", open("Identical commands"));
+    await step(repo, "ba", requirement("REQ-MWI-930", "Original statement."));
+    const record = {
+      action: "record-implementation",
+      id: "IMPL-930",
+      serviceId: "svc",
+      requirementIds: ["REQ-MWI-930"],
+      path: "src/a.js",
+      summary: "first",
+    };
+    await step(repo, "developer", record);
+    // A revision makes the recorded implementation stale ...
+    await step(repo, "ba", { action: "revise-requirement", id: "REQ-MWI-930", statement: "Revised statement." });
+    expect(readPersistedState<{ implementationUnits: Array<{ stale: boolean }> }>(repo).implementationUnits[0]?.stale).toBe(true);
+    // ... so re-recording the byte-identical command must run, not replay the first approval.
+    const again = await step(repo, "developer", record);
+    expect(again.data.replayed).toBeUndefined();
+    expect(readPersistedState<{ implementationUnits: Array<{ stale: boolean }> }>(repo).implementationUnits[0]?.stale).toBe(false);
+  });
+
+  it("rejects an apply whose preview was made against state that has since changed", async () => {
+    const repo = repoDir();
+    await step(repo, "ba", open("Stale preview"));
+    const command = requirement("REQ-MWI-931", "x");
+    const previewed = await call("praxis_workflow_preview", repo, "ba", { command: JSON.stringify(command) });
+    await step(repo, "ba", requirement("REQ-MWI-932", "interleaved write"));
+    const applied = await call("praxis_workflow_apply", repo, "ba", {
+      command: JSON.stringify(command),
+      confirmation: "YES",
+      previewFingerprint: previewed.data.fingerprint,
+    });
+    expect(applied.ok).toBe(false);
+    expect(applied.code).toBe("FINGERPRINT_MISMATCH");
   });
 });
 

@@ -8,6 +8,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { createWorkflowHarness, HARNESS_NOTICE } from "./trusted-workflow-harness.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -15,7 +16,7 @@ const home = mkdtempSync(join(tmpdir(), "praxis-generic-accept-"));
 const workflowRepo = join(home, "workflow");
 const bookingRepo = join(home, "booking");
 const auditRepo = join(home, "audit");
-const report = { checks: [], blocked: [], notExecuted: [] };
+const report = { ...HARNESS_NOTICE, checks: [], blocked: [], notExecuted: [] };
 
 const buggy = `def book(request):
     return {"status": "confirmed", "desk": request["desk"], "guest": request["guest"], "day": request["day"]}
@@ -61,26 +62,8 @@ function git(repo, args) {
 
 const { callTool } = await import(pathToFileURL(join(root, "packages/mcp/dist/tools.js")).href);
 
-async function apply(command) {
-  const preview = await callTool(
-    "praxis_workflow_preview",
-    { repo: workflowRepo, command: JSON.stringify(command) },
-    { role: "runtime", version },
-  );
-  if (!preview.ok) throw new Error(`preview ${command.action} ${JSON.stringify(preview)}`);
-  const applied = await callTool(
-    "praxis_workflow_apply",
-    {
-      repo: workflowRepo,
-      command: JSON.stringify(command),
-      previewFingerprint: preview.data.fingerprint,
-      confirmation: "YES",
-    },
-    { role: "runtime", version },
-  );
-  if (!applied.ok) throw new Error(`apply ${command.action} ${JSON.stringify(applied)}`);
-  return applied.data;
-}
+const harness = createWorkflowHarness({ callTool, repo: workflowRepo, version });
+const { apply, confirmStory } = harness;
 
 function service(id, extra) {
   return {
@@ -222,8 +205,9 @@ try {
     assumptionIds: [],
     unresolvedDecisionIds: [],
     serviceIds: ["booking", "audit"],
-    confirmedBehavior: true,
+    confirmedBehavior: false,
   });
+  await confirmStory("US-DSK-001");
   await apply({ action: "set-service", service: service("booking", { repository: "desk-booking", localPath: bookingRepo }) });
   await apply({ action: "set-service", service: service("audit", { repository: "desk-audit" }) });
   const missing = await apply({ action: "locate-repositories" });
@@ -242,7 +226,7 @@ try {
   record("missing-service-blocks-feature", byId["US-DSK-001-CONTRACT-AUDIT"] === "BLOCKED" && first.result.verdict === "FAIL", byId["US-DSK-001-CONTRACT-AUDIT"]);
   record("evidence-is-not-deployed", first.result.deployedEndToEnd === false && first.result.evidenceLevel === "unit", first.result.evidenceLevel);
   const bookingVerdict = first.result.serviceVerdicts.find((item) => item.serviceId === "booking");
-  const featureState = JSON.parse(readFileSync(join(workflowRepo, ".praxis", "workflow", "state.json"), "utf8"));
+  const featureState = harness.state();
   record(
     "service-and-feature-results",
     bookingVerdict?.verdict === "FAIL" && featureState.verdicts.some((item) => item.scope === "service" && item.scopeId === "booking") && featureState.verdicts.some((item) => item.scope === "feature"),
@@ -280,6 +264,7 @@ try {
     join(workflowRepo, ".praxis", "quality", "proposals", "booking.json"),
     JSON.stringify({ files: [{ path: "app/desk_booking.py", after: fixed }] }),
   );
+  harness.approveServiceFix(harness.state().services.find((item) => item.id === "booking"));
   const committed = await apply({ action: "prepare-fix", serviceId: "booking", authorized: true });
   const notes = readFileSync(join(bookingRepo, "NOTES.txt"), "utf8");
   record(

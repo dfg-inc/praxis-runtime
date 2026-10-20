@@ -8,6 +8,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
+import { createWorkflowHarness, HARNESS_NOTICE } from "./trusted-workflow-harness.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -20,7 +21,7 @@ const repos = {
   frontend: join(home, "frontend"),
 };
 const bare = join(home, "frontend.git");
-const report = { checks: [], blocked: [], notExecuted: [] };
+const report = { ...HARNESS_NOTICE, checks: [], blocked: [], notExecuted: [] };
 
 function record(name, ok, detail) {
   report.checks.push({ name, result: ok ? "PASS" : "FAIL", detail });
@@ -42,30 +43,9 @@ function commitAll(repo, message) {
 
 const { callTool } = await import(pathToFileURL(join(root, "packages/mcp/dist/tools.js")).href);
 
-async function apply(command) {
-  const preview = await callTool(
-    "praxis_workflow_preview",
-    { repo: workflowRepo, command: JSON.stringify(command) },
-    { role: "runtime", version },
-  );
-  if (!preview.ok) throw new Error(`preview ${command.action} ${JSON.stringify(preview)}`);
-  const applied = await callTool(
-    "praxis_workflow_apply",
-    {
-      repo: workflowRepo,
-      command: JSON.stringify(command),
-      previewFingerprint: preview.data.fingerprint,
-      confirmation: "YES",
-    },
-    { role: "runtime", version },
-  );
-  if (!applied.ok) throw new Error(`apply ${command.action} ${JSON.stringify(applied)}`);
-  return applied.data;
-}
-
-function state() {
-  return JSON.parse(readFileSync(join(workflowRepo, ".praxis", "workflow", "state.json"), "utf8"));
-}
+const harness = createWorkflowHarness({ callTool, repo: workflowRepo, version });
+const { apply, confirmStory } = harness;
+const state = harness.state;
 
 function service(id, extra) {
   return {
@@ -186,8 +166,10 @@ test("existing suite is green", () => { assert.equal(1 + 1, 2); });
     assumptionIds: [],
     unresolvedDecisionIds: [],
     serviceIds: ["api", "worker", "identity", "frontend"],
-    confirmedBehavior: true,
+    confirmedBehavior: false,
   });
+  // Creating a story can never confirm it; confirm the exact revision with the harness's ephemeral grant.
+  await confirmStory("US-BUI-001");
   record("A-story-created", story.result.storyId === "US-BUI-001" && state().stories[0].happyPath.length >= 8, story.result.storyId);
 
   await apply({ action: "set-service", service: service("api", { repository: "bulk-import-api", localPath: repos.api, remoteUrl: "file:///tmp/unused-api" }) });
@@ -260,6 +242,7 @@ test("existing suite is green", () => { assert.equal(1 + 1, 2); });
   );
   record("refuses-unauthorized-fix", refused.ok === false, refused.code ?? refused.errors?.[0]);
 
+  harness.approveServiceFix(state().services.find((item) => item.id === "worker"));
   const workerFix = await apply({ action: "prepare-fix", serviceId: "worker", authorized: true, existingBranch: "feature/import" });
   const workerLog = git(repos.worker, ["log", "--oneline"]);
   const notes = readFileSync(join(repos.worker, "notes.txt"), "utf8");
@@ -270,6 +253,7 @@ test("existing suite is green", () => { assert.equal(1 + 1, 2); });
   );
   record("L-keeps-unrelated-work", git(repos.worker, ["rev-parse", "--abbrev-ref", "HEAD"]) === "feature/import" && notes.includes("unrelated"), workerLog);
 
+  harness.approveServiceFix(state().services.find((item) => item.id === "frontend"), { push: true });
   const frontendFix = await apply({ action: "prepare-fix", serviceId: "frontend", authorized: true });
   const pushed = spawnSync("git", ["ls-remote", "--heads", bare], { encoding: "utf8" });
   record(

@@ -55,8 +55,15 @@ describe("local workflow store", () => {
     const handPreview = previewWorkflow(repo, handoff);
     allowWorkflow(repo, handPreview.fingerprint);
     applyWorkflow(repo, handoff, handPreview.fingerprint);
-    const again = applyWorkflow(repo, handoff, previewWorkflow(repo, handoff).fingerprint);
-    expect((again as { replayed?: boolean }).replayed).toBe(true);
+    // The state moved on, so the same command needs its own approval and is deduplicated by the
+    // handoff itself rather than by replaying the first approval.
+    const againPreview = previewWorkflow(repo, handoff);
+    expect(againPreview.fingerprint).not.toBe(handPreview.fingerprint);
+    expect(againPreview.duplicate).toBe(true);
+    allowWorkflow(repo, againPreview.fingerprint);
+    const again = applyWorkflow(repo, handoff, againPreview.fingerprint);
+    expect(again.duplicate).toBe(true);
+    expect(workflowStatus(repo).requirementIds).toEqual(["REQ-BUI-001"]);
     expect(workflowStatus(repo).requirementIds).toEqual(["REQ-BUI-001"]);
     expect(workflowStatus(repo).nextRole).toBe("architect");
   });
