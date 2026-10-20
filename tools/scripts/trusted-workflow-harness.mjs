@@ -12,7 +12,7 @@
  * behaviour. Scripts must say so in their report (see HARNESS_NOTICE).
  */
 import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import {
   encodeAuthorization,
   generateApprovalKeyPair,
@@ -102,11 +102,21 @@ export function createWorkflowHarness({ callTool, repo, version, role = "runtime
     }
   }
 
-  /** Persisted state of a work item (default: current), read from disk, not through the store. */
+  /**
+   * Persisted state of a work item (default: current), read from disk, not through the store.
+   * services[].localPath is persisted relative to the workflow repository (so committed state carries no
+   * machine path); it is resolved here exactly as the store resolves it on load.
+   */
   function state(workItemId) {
     const dir = join(repo, ".praxis", "workflow");
     const index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8"));
-    return JSON.parse(readFileSync(join(dir, "items", `${workItemId ?? index.current}.json`), "utf8"));
+    const persisted = JSON.parse(readFileSync(join(dir, "items", `${workItemId ?? index.current}.json`), "utf8"));
+    return {
+      ...persisted,
+      services: persisted.services.map((service) =>
+        service.localPath && !isAbsolute(service.localPath) ? { ...service, localPath: resolve(repo, service.localPath) } : service,
+      ),
+    };
   }
 
   /** Confirms a Story's exact revision with a token signed by the harness's ephemeral key. */

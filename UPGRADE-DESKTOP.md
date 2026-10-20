@@ -66,7 +66,7 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 18c764baf1a0efbd36b33e72193e212d86913e1c7a03cb9c28ba755e3bb41580
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect e113ddfa3d6f9080d7423bd32da53a7834321dffd84494d4351e49e58045edf9
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -98,5 +98,5 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `18c764baf1a0efbd36b33e72193e212d86913e1c7a03cb9c28ba755e3bb41580`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
+(sha256 `e113ddfa3d6f9080d7423bd32da53a7834321dffd84494d4351e49e58045edf9`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
 `PRAXIS_SECURITY_MODE` to `secure`.
