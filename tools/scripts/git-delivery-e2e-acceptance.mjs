@@ -21,9 +21,9 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  applyCommit,
-  applyMergeRequest,
-  applyPublish,
+  applyCommit as rawApplyCommit,
+  applyMergeRequest as rawApplyMergeRequest,
+  applyPublish as rawApplyPublish,
   createMockGithubFetch,
   createMockGithubState,
   inspectDeliveryStatus,
@@ -37,6 +37,18 @@ import {
   VCS_CODES,
   verifyCommittedReproducibility,
 } from "@praxis/vcs";
+import { installTestBroker } from "./test-broker.mjs";
+
+// Protected Git writes run under real signed authorizations from an in-process test signer (see test-broker.mjs).
+// The Runtime stays in secure mode; this script does not switch to compatibility mode.
+const testBroker = installTestBroker({ acknowledgeUnisolated: true });
+process.on("exit", () => testBroker.close());
+const guarded = (action, operation, fn) => (input, ...rest) =>
+  testBroker.authorized({ repo: input.repo, action, operation, workItemId: input.workPackageId ?? "acceptance" }, () => fn(input, ...rest));
+
+const applyCommit = guarded("applyCommit", "git_commit", rawApplyCommit);
+const applyMergeRequest = guarded("applyMergeRequest", "merge_request", rawApplyMergeRequest);
+const applyPublish = guarded("applyPublish", "git_push", rawApplyPublish);
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WP = "WP-20260914-002";
@@ -44,6 +56,7 @@ const SSH = "git@github.com:hisagedru/praxis-acceptance-test.git";
 const CONSUMER = "/Users/serg/work/praxis-acceptance/praxis-test";
 const CONSUMER_HEAD = "b96e9d1e44b1ea7663c399fbe7f41fd3f4992e57";
 const steps = [];
+const blocked = [];
 
 function fail(msg) {
   console.error(`FAIL git-delivery-e2e: ${msg}`);
@@ -585,62 +598,35 @@ const consumerBefore = consumerSnapshot();
     });
     if (!bp?.ok || bp.data?.targetRemoteBranch !== "main") fail(`MCPB baseline preview ${JSON.stringify(bp)}`);
     if (bp.data?.refspec !== `${fixture.baselineSha}:refs/heads/main`) fail("MCPB refspec");
-    const ba = await call("praxis_developer_git_publish", {
-      workPackage: WP,
-      repo: fixture.repo,
-      mode: "baseline",
-      confirmation: "YES",
-      previewFingerprint: bp.data.previewFingerprint,
-    });
-    if (!ba?.ok || ba.data?.ok === false) fail(`MCPB baseline apply ${JSON.stringify(ba)}`);
-    if (git(bare, ["rev-parse", "refs/heads/main"]).stdout !== fixture.baselineSha) fail("MCPB remote main");
-    if (git(bare, ["show-ref", "--heads"]).stdout.includes("refs/heads/master")) fail("MCPB created master");
-    const fp = await call("praxis_developer_git_preview", {
-      workPackage: WP,
-      repo: fixture.repo,
-    });
+    // Secure mode, no broker: every protected call must be refused and nothing may reach the remote.
+    const refused = async (name, args, label) => {
+      const result = await call(name, args);
+      if (result?.ok !== false || !/^APPROVAL_/.test(result.code ?? "")) fail(`MCPB ${label} was not refused: ${JSON.stringify(result)}`);
+      return result;
+    };
+    const headBefore = git(fixture.repo, ["rev-parse", "HEAD"]).stdout;
+    const ba = await refused("praxis_developer_git_publish", {
+      workPackage: WP, repo: fixture.repo, mode: "baseline", confirmation: "YES", previewFingerprint: bp.data.previewFingerprint,
+    }, "baseline publish");
+    if (git(bare, ["for-each-ref"]).stdout.trim() !== "") fail("MCPB refused publish still reached the remote");
+    const fp = await call("praxis_developer_git_preview", { workPackage: WP, repo: fixture.repo });
     if (!fp?.ok || !fp.data?.previewFingerprint) fail("MCPB feature preview");
-    const fc = await call("praxis_developer_git_commit", {
-      workPackage: WP,
-      repo: fixture.repo,
-      confirmation: "YES",
-      previewFingerprint: fp.data.previewFingerprint,
-    });
-    if (!fc?.ok || fc.data?.ok === false) fail(`MCPB commit ${JSON.stringify(fc)}`);
-    const pp = await call("praxis_developer_git_publish_preview", {
-      workPackage: WP,
-      repo: fixture.repo,
-      mode: "branch",
-      provider: "github",
-    });
-    const pb = await call("praxis_developer_git_publish", {
-      workPackage: WP,
-      repo: fixture.repo,
-      mode: "branch",
-      confirmation: "YES",
-      previewFingerprint: pp.data.previewFingerprint,
-    });
-    if (!pb?.ok || pb.data?.ok === false) fail(`MCPB feature push ${JSON.stringify(pb)}`);
-    const mrp = await call("praxis_developer_git_merge_request_preview", {
-      workPackage: WP,
-      repo: fixture.repo,
-      provider: "github",
-    });
-    if (mrp.data?.targetBranch !== "main") fail("MCPB PR base");
-    const mr = await call("praxis_developer_git_merge_request", {
-      workPackage: WP,
-      repo: fixture.repo,
-      confirmation: "YES",
-      previewFingerprint: mrp.data.previewFingerprint,
-      provider: "github",
-    });
-    if (!mr?.ok || mr.data?.ok === false) fail(`MCPB PR ${JSON.stringify(mr)}`);
-    if (mr.data?.pullRequestBase !== "main") fail("MCPB PR base field");
+    const fc = await refused("praxis_developer_git_commit", {
+      workPackage: WP, repo: fixture.repo, confirmation: "YES", previewFingerprint: fp.data.previewFingerprint,
+    }, "commit");
+    if (git(fixture.repo, ["rev-parse", "HEAD"]).stdout !== headBefore) fail("MCPB refused commit still moved HEAD");
+    const mrp = await call("praxis_developer_git_merge_request_preview", { workPackage: WP, repo: fixture.repo, provider: "github" });
+    // Nothing was pushed, so there is nothing to open a pull request from: the preview must say so.
+    if (mrp?.ok !== false || mrp.code !== "GIT_PUSH_BLOCKED") fail(`MCPB merge request preview ${JSON.stringify(mrp)}`);
+    const mr = await refused("praxis_developer_git_merge_request", {
+      workPackage: WP, repo: fixture.repo, confirmation: "YES", previewFingerprint: `sha256:${"0".repeat(64)}`, provider: "github",
+    }, "merge request");
     const ds = await call("praxis_developer_git_delivery_status", { workPackage: WP, repo: fixture.repo });
     if (ds.data?.journal?.ciStatus === "success") fail("MCPB fake CI");
-    const dump = JSON.stringify({ st, bp, ba, fp, fc, pp, pb, mrp, mr, ds });
+    const dump = JSON.stringify({ st, bp, ba, fp, fc, mrp, mr, ds });
     if (/github_pat_|ghp_[A-Za-z0-9]{10,}|ATATT3x/.test(dump)) fail("MCPB leaked token");
-    prove("P. Extracted MCPB full Git Delivery");
+    blocked.push("MCPB signed baseline publish, commit, push and PR: needs a broker delivering a per-request token to the packaged Runtime (BLOCKED)");
+    prove("P. Extracted MCPB: read-only Git tools work, every unsigned protected call is refused, remote and HEAD unchanged");
   } finally {
     await session.close();
     mock.close();
@@ -654,3 +640,4 @@ assertConsumerUntouched(consumerBefore);
 prove("25. consumer repository unchanged");
 
 console.log(`PASS git-delivery-e2e ${steps.join("; ")}`);
+for (const item of blocked) console.log(`BLOCKED ${item}`);

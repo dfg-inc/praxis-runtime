@@ -4922,12 +4922,15 @@ function featureReadiness(state2) {
   for (const service of state2.services)
     serviceStatus[service.id] = service.status;
   const done = (status) => status === "approved" || status === "completed";
+  const unknownDependencies = [
+    ...new Set(state2.services.flatMap((service) => service.dependsOn.filter((dep) => !state2.services.some((item) => item.id === dep))))
+  ];
   const missingIntegration = state2.services.filter((service) => service.dependsOn.some((dep) => {
     const upstream = state2.services.find((item) => item.id === dep);
     return !upstream || !done(upstream.status);
   })).map((service) => service.id);
-  const ready = state2.services.length > 0 && state2.services.every((service) => done(service.status));
-  return { ready, serviceStatus, missingIntegration };
+  const ready = state2.services.length > 0 && state2.services.every((service) => done(service.status)) && missingIntegration.length === 0;
+  return { ready, serviceStatus, missingIntegration, unknownDependencies };
 }
 function inspectImportImplementation(source) {
   const code = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
@@ -5569,10 +5572,13 @@ function evaluateFeature(state2) {
   if (!readiness.ready) {
     for (const id of readiness.missingIntegration)
       gaps.push(`dependency not done: ${id}`);
+    for (const dep of readiness.unknownDependencies)
+      gaps.push(`unknown dependency: ${dep}`);
     if (state2.services.length === 0)
       gaps.push("no services");
-    else
+    else if (!state2.services.every((service) => service.status === "approved" || service.status === "completed")) {
       gaps.push("services are not approved");
+    }
   }
   return { verdict: gaps.length === 0 ? "PASS" : "FAIL", gaps };
 }
@@ -18549,7 +18555,10 @@ function resolveCanonicalQualityState(input2) {
   } else if (qualityState) {
     push("qualityState", "localManifest", null, expectedApproved, "missing", "QUALITY_STATE_LOCAL_MISSING");
   }
-  push("qualityState", "praxis.workPackageManifest", staleManifestQs ?? (typeof input2.workPackageManifest?.status === "string" ? input2.workPackageManifest.status : null), qualityState, "ignored", "STALE_WORK_PACKAGE_MANIFEST_NOT_CANONICAL");
+  const manifestQs = staleManifestQs ?? (typeof input2.workPackageManifest?.status === "string" ? input2.workPackageManifest.status : null);
+  if (manifestQs !== null) {
+    push("qualityState", "praxis.workPackageManifest", manifestQs, qualityState, "ignored", "STALE_WORK_PACKAGE_MANIFEST_NOT_CANONICAL");
+  }
   if (applyPartial) {
     push("apply", "quality-apply.json", { ok: apply?.ok, partial: apply?.partial, lifecycle: apply?.lifecycle }, { ok: true, partial: false, lifecycle: "committed" }, "mismatch", "QUALITY_APPLY_PARTIAL");
   } else if (applyCommitted) {
@@ -76205,7 +76214,7 @@ var import_node_fs5 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"5c28693964872892e072b8632793a89e20991df8a5d902cdb94fe54a216d5c34","coreBaseline":"b19fb012a69b73ee5d2456159f72ad575e8fdea2","inputs":23}';
+    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"2a806d9660b46b85e4e6f73e80dcf44ab3dcddbdcec1c0a72f691a7662fc1420","coreBaseline":"ad11cea1dcd498df9dcb38e5c8e06db2895ceed2","inputs":23}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

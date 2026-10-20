@@ -8,11 +8,18 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import {
-  createJiraProvider,
+  createJiraProvider as rawCreateJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
 } from "@praxis/jira";
+import { installTestBroker } from "./test-broker.mjs";
+
+// Protected writes (including the mock tracker this script seeds) run under real signed authorizations from an
+// in-process test signer; the Runtime stays in secure mode. See test-broker.mjs for its limits.
+const testBroker = installTestBroker({ acknowledgeUnisolated: true });
+process.on("exit", () => testBroker.close());
+const createJiraProvider = (options) => testBroker.leasedProvider(rawCreateJiraProvider(options));
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WP = "WP-20260914-002";
@@ -30,7 +37,12 @@ const built = spawnSync(
 if ((built.status ?? 1) !== 0) fail(`build failed\n${built.stderr || built.stdout}`);
 
 const { developerStatusOp, qualityApplyStatusOp } = await import("@praxis/cli/operations");
-const { writeQualityEvidence, applyQualityReview } = await import("@praxis/jira/workflow");
+const { writeQualityEvidence, applyQualityReview: rawApplyQualityReview } = await import("@praxis/jira/workflow");
+const applyQualityReview = (options, ...rest) =>
+  testBroker.authorized(
+    { repo: options.repo, action: "applyQualityReview", operation: "external_state_change", provider: "jira", instanceId: "mock-jira", workItemId: options.wpKey ?? options.workPackageId ?? "acceptance" },
+    () => rawApplyQualityReview(options, ...rest),
+  );
 const { JIRA_CFG } = await import("./preview-fixture.mjs");
 
 function write(repo, rel, body) {

@@ -15,11 +15,18 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import {
-  createJiraProvider,
+  createJiraProvider as rawCreateJiraProvider,
   createMockFetch,
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
 } from "@praxis/jira";
+import { installTestBroker } from "./test-broker.mjs";
+
+// Protected writes (including the mock tracker this script seeds) run under real signed authorizations from an
+// in-process test signer; the Runtime stays in secure mode. See test-broker.mjs for its limits.
+const testBroker = installTestBroker({ acknowledgeUnisolated: true });
+process.on("exit", () => testBroker.close());
+const createJiraProvider = (options) => testBroker.leasedProvider(rawCreateJiraProvider(options));
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -42,7 +49,7 @@ const {
   qualityApplyOp,
   PraxisOpError,
 } = await import("@praxis/cli/operations");
-const { writeQualityEvidence, applyQualityReview } = await import("@praxis/jira/workflow");
+const { writeQualityEvidence, applyQualityReview: rawApplyQualityReview } = await import("@praxis/jira/workflow");
 const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
 const { ensurePackedExtension, extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
 const {
@@ -52,6 +59,11 @@ const {
   MCP_STARTUP_BUDGET_MS,
   versionNegotiationModern,
 } = await import("./official-mcp-client.mjs");
+const applyQualityReview = (options, ...rest) =>
+  testBroker.authorized(
+    { repo: options.repo, action: "applyQualityReview", operation: "external_state_change", provider: "jira", instanceId: "mock-jira", workItemId: options.wpKey ?? options.workPackageId ?? "acceptance" },
+    () => rawApplyQualityReview(options, ...rest),
+  );
 const { JIRA_CFG, startMockJiraHttp } = await import("./preview-fixture.mjs");
 
 function write(repo, rel, body) {
@@ -533,15 +545,32 @@ proven.push("O-P failed review bugs / no Done / dedupe");
   });
   const nPreview = await qualityApplyPreviewOp({ repo: nRepo, wp: WP, provider: nProvider });
   nState.transitionPostStatus = 400;
-  const nEnv = await callTool(
+  // Without an approval the same call is refused, whatever confirmation says, and Jira is not touched.
+  const unsigned = await callTool(
     "praxis_quality_apply",
+    { workPackage: WP, repo: nRepo, confirmation: "YES", previewFingerprint: nPreview.previewFingerprint },
+    { role: "runtime", version, extra: { provider: nProvider } },
+  );
+  if (unsigned.ok !== false || !/^APPROVAL_/.test(unsigned.code ?? "")) fail(`N: unsigned apply was not refused ${JSON.stringify(unsigned)}`);
+  proven.push("N unsigned MCP apply refused with an APPROVAL_* code");
+  // The MCP gate wants the stored host approval AND, in secure mode, a signed broker authorization.
+  const nEnv = await testBroker.approvedToolCall(
     {
-      workPackage: WP,
       repo: nRepo,
-      confirmation: "YES",
+      role: "quality",
+      action: "praxis_quality_apply",
+      operation: "external_state_change",
+      provider: "jira",
+      instanceId: "mock-jira",
+      workItemId: WP,
       previewFingerprint: nPreview.previewFingerprint,
     },
-    { role: "runtime", version, extra: { provider: nProvider } },
+    (approval) =>
+      callTool(
+        "praxis_quality_apply",
+        { workPackage: WP, repo: nRepo, confirmation: "YES", previewFingerprint: nPreview.previewFingerprint, ...approval },
+        { role: "runtime", version, extra: { provider: nProvider } },
+      ),
   );
   if (nEnv.ok !== false) fail(`N: MCP envelope ok=${nEnv.ok} ${JSON.stringify(nEnv)}`);
   if (nEnv.data?.ok !== false) fail(`N: data.ok not false ${JSON.stringify(nEnv)}`);

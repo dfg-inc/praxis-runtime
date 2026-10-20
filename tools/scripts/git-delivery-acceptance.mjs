@@ -16,10 +16,10 @@ import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
-  applyCommit,
-  applyConnect,
-  applyMergeRequest,
-  applyPublish,
+  applyCommit as rawApplyCommit,
+  applyConnect as rawApplyConnect,
+  applyMergeRequest as rawApplyMergeRequest,
+  applyPublish as rawApplyPublish,
   createGithubProvider,
   createGitlabProvider,
   createMockGithubFetch,
@@ -36,10 +36,28 @@ import {
   validateGithubApiUrl,
   VCS_CODES,
 } from "@praxis/vcs";
+import { installTestBroker } from "./test-broker.mjs";
+
+// Protected Git writes run under real signed authorizations from an in-process test signer (see test-broker.mjs).
+// The Runtime stays in secure mode; this script does not switch to compatibility mode.
+const testBroker = installTestBroker({ acknowledgeUnisolated: true });
+process.on("exit", () => testBroker.close());
+// Calls straight into a mock hosting provider (no product gate of its own beyond the write lease).
+const fixtureScratch = mkdtempSync(join(tmpdir(), "praxis-gd-fixture-"));
+const fixtureCall = (write) =>
+  testBroker.authorized({ repo: fixtureScratch, action: "acceptance_fixture_provider_write", operation: "merge_request" }, write);
+const guarded = (action, operation, fn) => (input, ...rest) =>
+  testBroker.authorized({ repo: input.repo, action, operation, workItemId: input.workPackageId ?? "acceptance" }, () => fn(input, ...rest));
+
+const applyCommit = guarded("applyCommit", "git_commit", rawApplyCommit);
+const applyConnect = guarded("applyConnect", "repository_edit", rawApplyConnect);
+const applyMergeRequest = guarded("applyMergeRequest", "merge_request", rawApplyMergeRequest);
+const applyPublish = guarded("applyPublish", "git_push", rawApplyPublish);
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WP = "WP-20260914-002";
 const proven = [];
+const blocked = [];
 
 function fail(msg) {
   console.error(`FAIL: ${msg}`);
@@ -479,22 +497,22 @@ proven.push("V partial retry same commit");
     config: { token: "test-token", apiUrl: "https://api.github.com" },
     fetchImpl: createMockGithubFetch(gh),
   });
-  const first = await provider.createMergeRequest({
+  const first = await fixtureCall(() => provider.createMergeRequest({
     owner: "hisagedru",
     repo: "praxis-acceptance-test",
     sourceBranch: "feature/PRX-4-counter-reset",
     targetBranch: "master",
     title: "PRX-4",
     body: "body",
-  });
-  const second = await provider.createMergeRequest({
+  }));
+  const second = await fixtureCall(() => provider.createMergeRequest({
     owner: "hisagedru",
     repo: "praxis-acceptance-test",
     sourceBranch: "feature/PRX-4-counter-reset",
     targetBranch: "master",
     title: "PRX-4",
     body: "body",
-  });
+  }));
   if (first.id !== second.id) fail("U github dedup");
   if (first.merged) fail("X github merged");
   const ci = await provider.pipelineStatus({
@@ -508,13 +526,13 @@ proven.push("V partial retry same commit");
     config: { token: "glpat-test", baseUrl: "https://gitlab.example.com" },
     fetchImpl: createMockGitlabFetch(gl),
   });
-  const mr = await glp.createMergeRequest({
+  const mr = await fixtureCall(() => glp.createMergeRequest({
     projectPath: "group/project",
     sourceBranch: "feature/x",
     targetBranch: "main",
     title: "t",
     body: "b",
-  });
+  }));
   if (mr.kind !== "merge-request" || mr.merged) fail("T gitlab");
   proven.push("T GitHub PR + GitLab MR mocked API");
   proven.push("U existing MR deduplication");
@@ -601,6 +619,7 @@ void applyMergeRequest;
     );
     if (!preview?.ok || !preview.data?.previewFingerprint) fail("MCPB connect preview");
     const approved = preview.data.previewFingerprint;
+    // The packaged Runtime is in secure mode with no broker: confirmation=YES must not write anything.
     const applied = parseDoctorEnvelope(
       await session.client.callTool({
         name: "praxis_developer_git_connect_apply",
@@ -614,15 +633,17 @@ void applyMergeRequest;
         },
       }),
     );
-    const origin = spawnSync("git", ["remote", "get-url", "origin"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
-    if (origin !== "git@github.com:hisagedru/praxis-acceptance-test.git") {
-      fail(`MCPB connect apply did not set SSH origin (${origin}) envelope=${JSON.stringify(applied)}`);
+    if (applied?.ok !== false || !/^APPROVAL_/.test(applied.code ?? "")) {
+      fail(`MCPB connect apply was not refused in secure mode: ${JSON.stringify(applied)}`);
     }
-    if (applied?.data?.previewFingerprint !== approved) fail("MCPB connect fingerprint drifted");
-    if (applied?.data?.wrote !== true) fail("MCPB connect wrote flag");
+    const origin = spawnSync("git", ["remote", "get-url", "origin"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
+    if (origin !== "https://github.com/hisagedru/praxis-acceptance-test") {
+      fail(`refused MCPB connect still changed origin (${origin})`);
+    }
     const branches = spawnSync("git", ["branch", "-r"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
     if (branches) fail("MCPB connect pushed unexpectedly");
-    proven.push("extracted MCPB connect HTTPS→SSH in consumer fixture");
+    proven.push(`extracted MCPB refuses an unsigned connect in secure mode (${applied.code}); origin unchanged`);
+    blocked.push("extracted MCPB signed connect HTTPS→SSH: needs a broker delivering a per-request token to the packaged Runtime (BLOCKED, see REQ-ACC-002 notes)");
     proven.push("no unintended push");
     proven.push("no unintended baseline publication");
   } finally {
@@ -636,6 +657,7 @@ console.log(
       ok: true,
       version: JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version,
       proven,
+      blocked,
       liveJiraMutated: false,
       liveGithubPush: false,
       consumerRepoMutated: false,
