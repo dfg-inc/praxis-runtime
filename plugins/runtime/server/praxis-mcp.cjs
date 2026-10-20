@@ -4319,16 +4319,16 @@ function assertTransition(from, to) {
     throw new WorkflowError("INVALID_TRANSITION", `cannot transition ${from} \u2192 ${to}`);
   }
 }
-function transition(state, to, note) {
-  assertTransition(state.stage, to);
-  if (state.stage === to)
-    return state;
-  const revision = state.workItem.revision + 1;
+function transition(state2, to, note) {
+  assertTransition(state2.stage, to);
+  if (state2.stage === to)
+    return state2;
+  const revision = state2.workItem.revision + 1;
   return {
-    ...state,
+    ...state2,
     stage: to,
-    workItem: { ...state.workItem, status: to, revision },
-    history: [...state.history, { revision, stage: to, note }]
+    workItem: { ...state2.workItem, status: to, revision },
+    history: [...state2.history, { revision, stage: to, note }]
   };
 }
 function workItemIdFor(title, sequence = 1) {
@@ -4369,9 +4369,9 @@ function openLocalWorkflow(input2) {
     ]
   });
 }
-function addRequirement(state, input2) {
+function addRequirement(state2, input2) {
   const id = RequirementIdSchema2.parse(input2.id);
-  if (state.requirements.some((r) => r.id === id && r.status !== "superseded")) {
+  if (state2.requirements.some((r) => r.id === id && r.status !== "superseded")) {
     throw new WorkflowError("DUPLICATE_REQUIREMENT", `requirement ${id} already exists`);
   }
   const requirement = {
@@ -4388,10 +4388,10 @@ function addRequirement(state, input2) {
       revision: 1
     }))
   };
-  return { ...state, requirements: [...state.requirements, requirement] };
+  return { ...state2, requirements: [...state2.requirements, requirement] };
 }
-function reviseRequirement(state, id, statement) {
-  const current = state.requirements.find((r) => r.id === id && r.status !== "superseded");
+function reviseRequirement(state2, id, statement) {
+  const current = state2.requirements.find((r) => r.id === id && r.status !== "superseded");
   if (!current)
     throw new WorkflowError("MISSING_REQUIREMENT", `requirement ${id} not found`);
   const revised = {
@@ -4400,24 +4400,24 @@ function reviseRequirement(state, id, statement) {
     revision: current.revision + 1,
     status: "proposed"
   };
-  const verdicts = state.verdicts.map((v) => v.requirementIds.includes(id) ? { ...v, stale: true, invalidatedBy: id } : v);
-  const implementationUnits = state.implementationUnits.map((unit) => unit.requirementIds.includes(id) ? { ...unit, stale: true } : unit);
-  const stories = state.stories.map((story) => story.requirementIds.includes(id) ? { ...story, stale: true, revision: story.revision + 1 } : story);
+  const verdicts = state2.verdicts.map((v) => v.requirementIds.includes(id) ? { ...v, stale: true, invalidatedBy: id } : v);
+  const implementationUnits = state2.implementationUnits.map((unit) => unit.requirementIds.includes(id) ? { ...unit, stale: true } : unit);
+  const stories = state2.stories.map((story) => story.requirementIds.includes(id) ? { ...story, stale: true, revision: story.revision + 1 } : story);
   return {
-    ...state,
-    requirements: state.requirements.map((r) => r.id === id ? revised : r),
+    ...state2,
+    requirements: state2.requirements.map((r) => r.id === id ? revised : r),
     verdicts,
     implementationUnits,
     stories,
     history: [
-      ...state.history,
+      ...state2.history,
       {
-        revision: state.workItem.revision + 1,
-        stage: state.stage,
+        revision: state2.workItem.revision + 1,
+        stage: state2.stage,
         note: `requirement ${id} revised to r${revised.revision}; downstream verdicts stale`
       }
     ],
-    workItem: { ...state.workItem, revision: state.workItem.revision + 1 }
+    workItem: { ...state2.workItem, revision: state2.workItem.revision + 1 }
   };
 }
 function fingerprintPayload(payload) {
@@ -4486,10 +4486,10 @@ function storyContentFingerprint(story) {
     assumptionIds: story.assumptionIds
   });
 }
-function createHandoff(state, input2) {
+function createHandoff(state2, input2) {
   const body = {
-    workflowId: state.workflowId,
-    workItemId: state.workItem.id,
+    workflowId: state2.workflowId,
+    workItemId: state2.workItem.id,
     sourceRole: input2.sourceRole,
     targetRole: input2.targetRole,
     serviceIds: input2.serviceIds,
@@ -4511,45 +4511,45 @@ function createHandoff(state, input2) {
     evidenceRefs: input2.evidenceRefs
   };
   const fingerprint2 = fingerprintPayload(body);
-  const existing = state.handoffs.find((h) => h.fingerprint === fingerprint2);
+  const existing = state2.handoffs.find((h) => h.fingerprint === fingerprint2);
   if (existing)
-    return { state, handoff: existing, duplicate: true };
+    return { state: state2, handoff: existing, duplicate: true };
   const handoff4 = RoleHandoffSchema.parse({
     contract: "praxis.role.handoff",
     version: WORKFLOW_CONTRACT_VERSION,
     ...body,
-    handoffId: `HO-${state.handoffs.length + 1}`,
-    revision: state.handoffs.length + 1,
+    handoffId: `HO-${state2.handoffs.length + 1}`,
+    revision: state2.handoffs.length + 1,
     fingerprint: fingerprint2,
     ...input2.supersedes ? { supersedes: input2.supersedes } : {}
   });
   const nextStage = input2.readiness === "blocked" ? "blocked" : "in_progress";
-  const transitioned = state.stage === "draft" || state.stage === "ready" || state.stage === "clarification_required" ? transition({ ...state, stage: state.stage === "draft" ? "ready" : state.stage }, nextStage === "blocked" ? "blocked" : "in_progress", `${input2.sourceRole} \u2192 ${input2.targetRole}`) : state;
+  const transitioned = state2.stage === "draft" || state2.stage === "ready" || state2.stage === "clarification_required" ? transition({ ...state2, stage: state2.stage === "draft" ? "ready" : state2.stage }, nextStage === "blocked" ? "blocked" : "in_progress", `${input2.sourceRole} \u2192 ${input2.targetRole}`) : state2;
   return {
     state: { ...transitioned, handoffs: [...transitioned.handoffs, handoff4] },
     handoff: handoff4,
     duplicate: false
   };
 }
-function resumeWorkflow(state) {
-  const last = state.handoffs[state.handoffs.length - 1];
+function resumeWorkflow(state2) {
+  const last = state2.handoffs[state2.handoffs.length - 1];
   return {
-    state,
+    state: state2,
     nextRole: last?.targetRole ?? "ba",
-    requirementIds: state.requirements.filter((r) => r.status !== "superseded").map((r) => r.id),
+    requirementIds: state2.requirements.filter((r) => r.status !== "superseded").map((r) => r.id),
     duplicateHandoff: false
   };
 }
-function featureReadiness(state) {
+function featureReadiness(state2) {
   const serviceStatus = {};
-  for (const service of state.services)
+  for (const service of state2.services)
     serviceStatus[service.id] = service.status;
   const done = (status) => status === "approved" || status === "completed";
-  const missingIntegration = state.services.filter((service) => service.dependsOn.some((dep) => {
-    const upstream = state.services.find((item) => item.id === dep);
+  const missingIntegration = state2.services.filter((service) => service.dependsOn.some((dep) => {
+    const upstream = state2.services.find((item) => item.id === dep);
     return !upstream || !done(upstream.status);
   })).map((service) => service.id);
-  const ready = state.services.length > 0 && state.services.every((service) => done(service.status));
+  const ready = state2.services.length > 0 && state2.services.every((service) => done(service.status));
   return { ready, serviceStatus, missingIntegration };
 }
 function inspectImportImplementation(source) {
@@ -4602,18 +4602,18 @@ function evaluateRequirementBehavior(input2) {
   }
   return { verdict: "PASS" };
 }
-function carryForwardContext(state, command) {
-  const incoming = [...state.handoffs].reverse().find((h) => h.targetRole === command.sourceRole);
+function carryForwardContext(state2, command) {
+  const incoming = [...state2.handoffs].reverse().find((h) => h.targetRole === command.sourceRole);
   const resolved = new Set(command.resolved);
   const merge4 = (carriedItems, own5) => [
     .../* @__PURE__ */ new Set([...carriedItems.filter((item) => !resolved.has(item)), ...own5])
   ];
   const own4 = {
-    openQuestions: command.openQuestions.length > 0 ? command.openQuestions : state.openQuestions,
-    risks: command.risks ?? state.risks,
-    blockers: command.blockers.length > 0 ? command.blockers : state.blockers
+    openQuestions: command.openQuestions.length > 0 ? command.openQuestions : state2.openQuestions,
+    risks: command.risks ?? state2.risks,
+    blockers: command.blockers.length > 0 ? command.blockers : state2.blockers
   };
-  const notes = command.notes ?? incoming?.notes ?? state.notes;
+  const notes = command.notes ?? incoming?.notes ?? state2.notes;
   return {
     assumptions: merge4(incoming?.assumptions ?? [], command.assumptions),
     openQuestions: merge4(incoming?.openQuestions ?? [], own4.openQuestions),
@@ -4622,9 +4622,9 @@ function carryForwardContext(state, command) {
     ...notes !== void 0 ? { notes } : {}
   };
 }
-function requirementEvidence(state, requirementId) {
-  const current = new Map(state.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]));
-  const executed = state.coverage.filter((entry) => {
+function requirementEvidence(state2, requirementId) {
+  const current = new Map(state2.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]));
+  const executed = state2.coverage.filter((entry) => {
     if (entry.requirementId !== requirementId)
       return false;
     const story = current.get(entry.storyId);
@@ -4653,17 +4653,17 @@ function requirementEvidence(state, requirementId) {
   ];
   return { status: "executed", verdict, reasons, provenance };
 }
-function recordVerdict(state, verdict) {
+function recordVerdict(state2, verdict) {
   return {
-    ...state,
-    verdicts: [...state.verdicts, { ...verdict, stale: false }],
-    findings: verdict.verdict === "FAIL" ? state.findings : state.findings
+    ...state2,
+    verdicts: [...state2.verdicts, { ...verdict, stale: false }],
+    findings: verdict.verdict === "FAIL" ? state2.findings : state2.findings
   };
 }
-function returnFinding(state, finding) {
+function returnFinding(state2, finding) {
   const withFinding = {
-    ...transition(state.stage === "review_required" || state.stage === "approved" || state.stage === "completed" ? state : { ...state, stage: "review_required" }, "changes_requested", `finding ${finding.id} returned to ${finding.owner}`),
-    findings: [...state.findings.filter((f) => f.id !== finding.id), finding]
+    ...transition(state2.stage === "review_required" || state2.stage === "approved" || state2.stage === "completed" ? state2 : { ...state2, stage: "review_required" }, "changes_requested", `finding ${finding.id} returned to ${finding.owner}`),
+    findings: [...state2.findings.filter((f) => f.id !== finding.id), finding]
   };
   const created = createHandoff(withFinding, {
     sourceRole: "quality",
@@ -4715,48 +4715,48 @@ function routeCapabilities(input2) {
 function commandFingerprint(command) {
   return fingerprintPayload(command);
 }
-function applyWorkflowCommand(state, raw) {
+function applyWorkflowCommand(state2, raw) {
   const command = WorkflowCommandSchema.parse(raw);
   if (command.action === "open") {
-    if (state)
-      return { state, duplicate: true, result: { workflowId: state.workflowId } };
+    if (state2)
+      return { state: state2, duplicate: true, result: { workflowId: state2.workflowId } };
     const opened = openLocalWorkflow(command);
     return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id } };
   }
   if (command.action === "select-work-item") {
     throw new WorkflowError("EXECUTION_REQUIRED", "select-work-item is resolved by the workflow store");
   }
-  if (!state)
+  if (!state2)
     throw new WorkflowError("WORKFLOW_MISSING", "open a workflow before applying commands");
   if (command.action === "link-work-item") {
     const same = (link) => link.repository === command.target.repository && link.workItemId === command.target.workItemId && link.relation === command.target.relation;
-    const current = state.workItem.links ?? [];
+    const current = state2.workItem.links ?? [];
     const links = command.remove ? current.filter((link) => !same(link)) : current.some(same) ? current : [...current, command.target];
     const changed = links.length !== current.length;
     return {
-      state: changed ? { ...state, workItem: { ...state.workItem, links, revision: state.workItem.revision + 1 } } : state,
+      state: changed ? { ...state2, workItem: { ...state2.workItem, links, revision: state2.workItem.revision + 1 } } : state2,
       duplicate: !changed,
-      result: { workItemId: state.workItem.id, links }
+      result: { workItemId: state2.workItem.id, links }
     };
   }
   if (command.action === "add-requirement") {
-    const next2 = addRequirement(state, command);
+    const next2 = addRequirement(state2, command);
     return { state: next2, duplicate: false, result: { requirementId: command.id } };
   }
   if (command.action === "revise-requirement") {
-    const next2 = reviseRequirement(state, command.id, command.statement);
+    const next2 = reviseRequirement(state2, command.id, command.statement);
     return { state: next2, duplicate: false, result: { requirementId: command.id } };
   }
   if (command.action === "set-service") {
     const services = [
-      ...state.services.filter((service) => service.id !== command.service.id),
+      ...state2.services.filter((service) => service.id !== command.service.id),
       command.service
     ];
-    return { state: { ...state, services }, duplicate: false, result: featureReadiness({ ...state, services }) };
+    return { state: { ...state2, services }, duplicate: false, result: featureReadiness({ ...state2, services }) };
   }
   if (command.action === "clarify") {
     const asked = questionsToAsk(command.questions);
-    const assumptions = [...state.assumptions];
+    const assumptions = [...state2.assumptions];
     for (const question of command.questions) {
       if (asked.some((item) => item.id === question.id))
         continue;
@@ -4770,26 +4770,26 @@ function applyWorkflowCommand(state, raw) {
         requirementIds: []
       });
     }
-    const next2 = asked.length > 0 && TRANSITIONS[state.stage].includes("clarification_required") ? transition(state, "clarification_required", `clarification requested by ${command.role}`) : state;
+    const next2 = asked.length > 0 && TRANSITIONS[state2.stage].includes("clarification_required") ? transition(state2, "clarification_required", `clarification requested by ${command.role}`) : state2;
     return {
       state: { ...next2, assumptions },
       duplicate: false,
-      result: { questions: asked, continued: state.requirements.map((item) => item.id) }
+      result: { questions: asked, continued: state2.requirements.map((item) => item.id) }
     };
   }
   if (command.action === "record-decision") {
     const decisions = [
-      ...state.decisions.filter((item) => item.id !== command.id),
+      ...state2.decisions.filter((item) => item.id !== command.id),
       {
         id: command.id,
         statement: command.statement,
         confirmed: command.confirmed,
-        revision: state.workItem.revision,
+        revision: state2.workItem.revision,
         ...command.rationale !== void 0 ? { rationale: command.rationale } : {},
         ...command.notes !== void 0 ? { notes: command.notes } : {}
       }
     ];
-    let next2 = { ...state, decisions };
+    let next2 = { ...state2, decisions };
     if (command.confirmed && next2.stage === "clarification_required" && TRANSITIONS[next2.stage].includes("ready")) {
       next2 = transition(next2, "ready", `decision ${command.id} confirmed`);
       next2 = { ...next2, decisions };
@@ -4798,7 +4798,7 @@ function applyWorkflowCommand(state, raw) {
   }
   if (command.action === "record-implementation") {
     const implementationUnits = [
-      ...state.implementationUnits.filter((unit) => unit.id !== command.id),
+      ...state2.implementationUnits.filter((unit) => unit.id !== command.id),
       {
         id: command.id,
         serviceId: command.serviceId,
@@ -4810,7 +4810,7 @@ function applyWorkflowCommand(state, raw) {
       }
     ];
     return {
-      state: { ...state, implementationUnits },
+      state: { ...state2, implementationUnits },
       duplicate: false,
       result: { implementationId: command.id, serviceId: command.serviceId }
     };
@@ -4824,7 +4824,7 @@ function applyWorkflowCommand(state, raw) {
     if (command.confirmedBehavior) {
       throw new WorkflowError("STORY_CONFIRMATION_REQUIRED", "creating a story cannot confirm its behavior; confirm the exact revision after review");
     }
-    if (state.stories.some((story2) => story2.id === command.id && story2.status !== "superseded")) {
+    if (state2.stories.some((story2) => story2.id === command.id && story2.status !== "superseded")) {
       throw new WorkflowError("DUPLICATE_STORY", `story ${command.id} already exists`);
     }
     const story = UserStorySchema.parse({
@@ -4835,7 +4835,7 @@ function applyWorkflowCommand(state, raw) {
       stale: false
     });
     return {
-      state: { ...state, stories: [...state.stories, story] },
+      state: { ...state2, stories: [...state2.stories, story] },
       duplicate: false,
       result: { storyId: story.id, confirmedBehavior: story.confirmedBehavior }
     };
@@ -4843,18 +4843,18 @@ function applyWorkflowCommand(state, raw) {
   if (command.action === "record-context") {
     return {
       state: {
-        ...state,
-        openQuestions: command.openQuestions ?? state.openQuestions,
-        risks: command.risks ?? state.risks,
-        blockers: command.blockers ?? state.blockers,
+        ...state2,
+        openQuestions: command.openQuestions ?? state2.openQuestions,
+        risks: command.risks ?? state2.risks,
+        blockers: command.blockers ?? state2.blockers,
         ...command.notes !== void 0 ? { notes: command.notes } : {}
       },
       duplicate: false,
-      result: { notes: command.notes ?? state.notes }
+      result: { notes: command.notes ?? state2.notes }
     };
   }
   if (command.action === "confirm-story") {
-    const story = state.stories.find((item) => item.id === command.id && item.status !== "superseded");
+    const story = state2.stories.find((item) => item.id === command.id && item.status !== "superseded");
     if (!story)
       throw new WorkflowError("STORY_NOT_FOUND", `story ${command.id} is not in this workflow`);
     if (story.revision !== command.revision) {
@@ -4872,8 +4872,8 @@ function applyWorkflowCommand(state, raw) {
       revision: story.revision,
       contentFingerprint: contentFingerprint2
     }), story.id);
-    const stories = state.stories.map((item) => item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" } : item);
-    return { state: { ...state, stories }, duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
+    const stories = state2.stories.map((item) => item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" } : item);
+    return { state: { ...state2, stories }, duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
   }
   if (command.action === "verify-stories" || command.action === "prepare-fix") {
     throw new WorkflowError("EXECUTION_REQUIRED", `${command.action} must run in Praxis Runtime so Quality executes the implementation`);
@@ -4881,20 +4881,20 @@ function applyWorkflowCommand(state, raw) {
   if (command.action === "locate-repositories") {
     const required4 = [
       .../* @__PURE__ */ new Set([
-        ...state.stories.flatMap((story) => story.serviceIds),
-        ...state.services.map((service) => service.id)
+        ...state2.stories.flatMap((story) => story.serviceIds),
+        ...state2.services.map((service) => service.id)
       ])
     ];
-    const questions = missingRepositoryPrompts({ services: state.services, requiredServiceIds: required4 });
-    return { state, duplicate: false, result: { questions } };
+    const questions = missingRepositoryPrompts({ services: state2.services, requiredServiceIds: required4 });
+    return { state: state2, duplicate: false, result: { questions } };
   }
   if (command.action === "record-verification") {
     const scenarios = command.scenarios.map((scenario) => {
-      const storyRevision = scenario.storyRevision ?? state.stories.find((story) => story.id === scenario.storyId)?.revision;
+      const storyRevision = scenario.storyRevision ?? state2.stories.find((story) => story.id === scenario.storyId)?.revision;
       const stamped = storyRevision === void 0 ? scenario : { ...scenario, storyRevision };
       return stamped.critical || stamped.kind === "happy" ? { ...stamped, critical: true } : stamped;
     });
-    const unconfirmed = state.stories.filter((story) => !story.confirmedBehavior && story.status !== "superseded");
+    const unconfirmed = state2.stories.filter((story) => !story.confirmedBehavior && story.status !== "superseded");
     for (const story of unconfirmed) {
       scenarios.push({
         storyId: story.id,
@@ -4914,9 +4914,9 @@ function applyWorkflowCommand(state, raw) {
     }
     const feature = rollupStoryVerdict(scenarios);
     let next2 = {
-      ...state,
+      ...state2,
       coverage: scenarios,
-      findings: mergeFindings(state.findings, command.findings)
+      findings: mergeFindings(state2.findings, command.findings)
     };
     if (!command.independentRerun) {
       for (const finding2 of command.findings.filter((item) => item.status === "open")) {
@@ -4964,7 +4964,7 @@ function applyWorkflowCommand(state, raw) {
     next2 = recordVerdict(next2, {
       id: verdictId2,
       scope: "feature",
-      scopeId: state.workItem.id,
+      scopeId: state2.workItem.id,
       verdict: feature.verdict,
       evidenceRefs: [
         ...command.testsGreen ? ["testsGreen:true", "green tests are not story evidence"] : [],
@@ -4981,9 +4981,9 @@ function applyWorkflowCommand(state, raw) {
     };
   }
   if (command.action === "record-change") {
-    const changes = [...state.changes.filter((item) => item.id !== command.change.id), command.change];
+    const changes = [...state2.changes.filter((item) => item.id !== command.change.id), command.change];
     return {
-      state: { ...state, changes },
+      state: { ...state2, changes },
       duplicate: false,
       result: {
         changeId: command.change.id,
@@ -4995,35 +4995,35 @@ function applyWorkflowCommand(state, raw) {
     };
   }
   if (command.action === "feature-verdict") {
-    const feature = evaluateFeature(state);
-    const verdictId2 = `V-FEATURE-${state.verdicts.length + 1}`;
-    const next2 = recordVerdict(state, {
+    const feature = evaluateFeature(state2);
+    const verdictId2 = `V-FEATURE-${state2.verdicts.length + 1}`;
+    const next2 = recordVerdict(state2, {
       id: verdictId2,
       scope: "feature",
-      scopeId: state.workItem.id,
+      scopeId: state2.workItem.id,
       verdict: feature.verdict,
       evidenceRefs: feature.gaps.length ? feature.gaps : ["feature trace complete"],
-      requirementIds: state.requirements.map((item) => item.id)
+      requirementIds: state2.requirements.map((item) => item.id)
     });
     return { state: next2, duplicate: false, result: feature };
   }
   if (command.action === "handoff") {
-    const carried = carryForwardContext(state, command);
-    const created = createHandoff(state, {
+    const carried = carryForwardContext(state2, command);
+    const created = createHandoff(state2, {
       sourceRole: command.sourceRole,
       targetRole: command.targetRole,
       serviceIds: command.serviceIds,
       requirementIds: command.requirementIds,
-      acceptanceCriterionIds: state.requirements.filter((item) => command.requirementIds.includes(item.id)).flatMap((item) => item.acceptanceCriteria.map((criterion) => criterion.id)),
-      storyIds: state.stories.filter((story) => story.status !== "superseded" && story.requirementIds.some((id) => command.requirementIds.includes(id))).map((story) => story.id),
-      artifactRefs: state.implementationUnits.filter((unit) => !unit.stale && command.serviceIds.includes(unit.serviceId)).map((unit) => ({
+      acceptanceCriterionIds: state2.requirements.filter((item) => command.requirementIds.includes(item.id)).flatMap((item) => item.acceptanceCriteria.map((criterion) => criterion.id)),
+      storyIds: state2.stories.filter((story) => story.status !== "superseded" && story.requirementIds.some((id) => command.requirementIds.includes(id))).map((story) => story.id),
+      artifactRefs: state2.implementationUnits.filter((unit) => !unit.stale && command.serviceIds.includes(unit.serviceId)).map((unit) => ({
         id: unit.id,
         path: unit.path,
-        revision: unit.requirementIds.reduce((max, id) => Math.max(max, state.requirements.find((item) => item.id === id)?.revision ?? 1), 1),
+        revision: unit.requirementIds.reduce((max, id) => Math.max(max, state2.requirements.find((item) => item.id === id)?.revision ?? 1), 1),
         role: command.sourceRole
       })),
-      decisions: state.decisions.map((d) => d.id),
-      decisionRecords: state.decisions.map((d) => ({ ...d })),
+      decisions: state2.decisions.map((d) => d.id),
+      decisionRecords: state2.decisions.map((d) => ({ ...d })),
       assumptions: carried.assumptions,
       openQuestions: carried.openQuestions,
       risks: carried.risks,
@@ -5032,7 +5032,7 @@ function applyWorkflowCommand(state, raw) {
       resolved: command.resolved,
       nextActions: command.nextActions,
       readiness: command.readiness,
-      evidenceRefs: state.implementationUnits.filter((unit) => !unit.stale).map((unit) => `${unit.serviceId}:${unit.path}`)
+      evidenceRefs: state2.implementationUnits.filter((unit) => !unit.stale).map((unit) => `${unit.serviceId}:${unit.path}`)
     });
     return {
       state: created.state,
@@ -5046,12 +5046,12 @@ function applyWorkflowCommand(state, raw) {
   const observedBehavior = command.implementationSource ? inspectImportImplementation(command.implementationSource) : command.observedBehavior ?? "unspecified";
   const check2 = evaluateRequirementBehavior({
     requirementId: command.requirementId,
-    statement: state.requirements.find((r) => r.id === command.requirementId)?.statement ?? "",
+    statement: state2.requirements.find((r) => r.id === command.requirementId)?.statement ?? "",
     observedBehavior,
     testsGreen: command.testsGreen,
     developerClaimsPass: command.developerClaimsPass
   });
-  const executed = requirementEvidence(state, command.requirementId);
+  const executed = requirementEvidence(state2, command.requirementId);
   const implementationEvidence = [];
   if (command.implementationSource) {
     implementationEvidence.push(`implementation:${fingerprintPayload(command.implementationSource)}`);
@@ -5080,7 +5080,7 @@ function applyWorkflowCommand(state, raw) {
       status: "open"
     } : void 0;
   }
-  let next = state;
+  let next = state2;
   if (finding) {
     const returned = returnFinding(next, finding);
     next = returned.state;
@@ -5111,28 +5111,28 @@ function mergeFindings(current, incoming) {
     merged.set(finding.id, finding);
   return [...merged.values()];
 }
-function evaluateFeature(state) {
+function evaluateFeature(state2) {
   const gaps = [];
-  const active = state.requirements.filter((item) => item.status !== "superseded");
+  const active = state2.requirements.filter((item) => item.status !== "superseded");
   if (active.length === 0)
     gaps.push("no requirements");
   for (const requirement of active) {
-    const latest = [...state.verdicts].reverse().find((verdict) => verdict.scope === "requirement" && verdict.scopeId === requirement.id && !verdict.stale);
+    const latest = [...state2.verdicts].reverse().find((verdict) => verdict.scope === "requirement" && verdict.scopeId === requirement.id && !verdict.stale);
     if (!latest)
       gaps.push(`missing verdict for ${requirement.id}`);
     else if (latest.verdict !== "PASS")
       gaps.push(`${requirement.id} is ${latest.verdict}`);
   }
-  for (const service of state.services) {
-    const unit = state.implementationUnits.find((item) => item.serviceId === service.id && !item.stale);
+  for (const service of state2.services) {
+    const unit = state2.implementationUnits.find((item) => item.serviceId === service.id && !item.stale);
     if (!unit)
       gaps.push(`missing implementation for ${service.id}`);
   }
-  const readiness = featureReadiness(state);
+  const readiness = featureReadiness(state2);
   if (!readiness.ready) {
     for (const id of readiness.missingIntegration)
       gaps.push(`dependency not done: ${id}`);
-    if (state.services.length === 0)
+    if (state2.services.length === 0)
       gaps.push("no services");
     else
       gaps.push("services are not approved");
@@ -12552,11 +12552,11 @@ var require_lexer = __commonJS({
       hasChars(n) {
         return this.pos + n <= this.buffer.length;
       }
-      setNext(state) {
+      setNext(state2) {
         this.buffer = this.buffer.substring(this.pos);
         this.pos = 0;
         this.lineEndPos = null;
-        this.next = state;
+        this.next = state2;
         return null;
       }
       peek(n) {
@@ -15323,8 +15323,8 @@ var init_rest_provider = __esm({
           return void 0;
         }
       }
-      async writePraxisState(key, state) {
-        await this.setIssueProperty(key, "praxis.state", state);
+      async writePraxisState(key, state2) {
+        await this.setIssueProperty(key, "praxis.state", state2);
       }
       async readPraxisState(key) {
         return this.getIssueProperty(key, "praxis.state");
@@ -18638,6 +18638,152 @@ var init_workflows = __esm({
   }
 });
 
+// node_modules/@praxis/cli/dist/diagnostics.js
+function checkHttpUrl(raw) {
+  const value = (raw ?? "").trim();
+  if (!value)
+    return { ok: true };
+  if (/^git@/i.test(value) || /^ssh:\/\//i.test(value))
+    return { ok: false, issue: "git-ssh-remote" };
+  let url4;
+  try {
+    url4 = new URL(value);
+  } catch {
+    return { ok: false, issue: "not-a-url" };
+  }
+  if (url4.protocol !== "https:" && url4.protocol !== "http:")
+    return { ok: false, issue: "unsupported-scheme" };
+  if (url4.username || url4.password)
+    return { ok: false, issue: "embedded-credentials" };
+  return { ok: true };
+}
+function state(missing, invalid, anySet) {
+  if (invalid.length > 0)
+    return "invalid";
+  if (!anySet)
+    return "unconfigured";
+  return missing.length > 0 ? "partial" : "configured";
+}
+function providerDiagnostics(env, githubApiUrl) {
+  const jiraFields = [
+    ["jira_base_url", env.PRAXIS_JIRA_BASE_URL],
+    ["jira_email", env.PRAXIS_JIRA_EMAIL],
+    ["jira_project_key", env.PRAXIS_JIRA_PROJECT_KEY],
+    ["jira_token", env.PRAXIS_JIRA_TOKEN]
+  ];
+  const jiraMissing = jiraFields.filter(([, value]) => !present(value)).map(([key]) => key);
+  const jiraInvalid = [];
+  const jiraUrl = checkHttpUrl(env.PRAXIS_JIRA_BASE_URL);
+  if (!jiraUrl.ok)
+    jiraInvalid.push({ setting: "jira_base_url", issue: jiraUrl.issue });
+  const jira = {
+    state: state(jiraMissing, jiraInvalid, jiraFields.some(([, value]) => present(value))),
+    required: false,
+    missing: jiraMissing.length === jiraFields.length ? [] : jiraMissing,
+    invalid: jiraInvalid
+  };
+  const githubMissing = [];
+  const githubInvalid = [];
+  if (!githubApiUrl.valid)
+    githubInvalid.push({ setting: "github_api_url", issue: githubApiUrl.issue ?? "invalid" });
+  const githubToken = present(env.PRAXIS_GITHUB_TOKEN);
+  if (githubApiUrl.configured && !githubToken)
+    githubMissing.push("github_token");
+  const github = {
+    state: state(githubMissing, githubInvalid, githubToken || githubApiUrl.configured),
+    required: false,
+    missing: githubMissing,
+    invalid: githubInvalid
+  };
+  const gitlabMissing = [];
+  const gitlabInvalid = [];
+  const gitlabUrl = checkHttpUrl(env.PRAXIS_GITLAB_BASE_URL);
+  if (!gitlabUrl.ok)
+    gitlabInvalid.push({ setting: "gitlab_base_url", issue: gitlabUrl.issue });
+  const gitlabToken = present(env.PRAXIS_GITLAB_TOKEN);
+  if (present(env.PRAXIS_GITLAB_BASE_URL) && !gitlabToken)
+    gitlabMissing.push("gitlab_token");
+  const gitlab = {
+    state: state(gitlabMissing, gitlabInvalid, gitlabToken || present(env.PRAXIS_GITLAB_BASE_URL)),
+    required: false,
+    missing: gitlabMissing,
+    invalid: gitlabInvalid
+  };
+  return { jira, github, gitlab };
+}
+function securityDiagnostics(env) {
+  const raw = (env.PRAXIS_SECURITY_MODE ?? "").trim();
+  if (raw === "" || raw === "secure") {
+    return {
+      mode: "secure",
+      approvals: "Every mutation requires a stored, fingerprint-bound approval. confirmation=YES alone is rejected.",
+      isolation: "unverified"
+    };
+  }
+  if (raw === "compatibility") {
+    return {
+      mode: "compatibility",
+      approvals: "Approvals are NOT enforced: mutations proceed on confirmation=YES supplied by the agent. This is not a security boundary.",
+      isolation: "unverified"
+    };
+  }
+  return {
+    mode: "invalid",
+    approvals: "PRAXIS_SECURITY_MODE must be 'secure' or 'compatibility'; mutations fail closed until it is fixed.",
+    isolation: "unverified"
+  };
+}
+function doctorNextSteps(input2) {
+  const steps = [];
+  if (!input2.repoExists) {
+    steps.push("The repository path does not exist. Pass repo=<path to a checked-out product repository>.");
+    return steps;
+  }
+  if (!input2.gitRoot)
+    steps.push("The path is not inside a git repository. Run `git init` or pass the repository root.");
+  if (input2.project === "missing") {
+    steps.push("No .project file. Run praxis_project_init_preview, review the inferred YAML, then praxis_project_init_apply with confirmation=YES.");
+  } else if (input2.project === "invalid") {
+    steps.push("The .project file is invalid. Fix it, or review praxis_project_init_preview and re-apply.");
+  }
+  switch (input2.quality.status) {
+    case "healthy":
+      break;
+    case "not_started":
+    case "stopped":
+      steps.push("The Quality service is not running (this is normal until first use). Run praxis_quality_ensure to start it.");
+      break;
+    case "starting":
+      steps.push("The Quality service is starting. Call praxis_quality_status again in a few seconds.");
+      break;
+    default:
+      steps.push(`The Quality service is ${input2.quality.status}. Run praxis_quality_ensure; if it fails, read ${input2.quality.logPath ?? ".praxis-quality/quality.log"}.`);
+  }
+  for (const [name, report] of Object.entries(input2.providers)) {
+    for (const item of report.invalid) {
+      steps.push(`${name}: ${item.setting} is invalid (${item.issue}). Correct it in the extension settings or leave it blank.`);
+    }
+    if (report.state === "partial") {
+      steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
+    }
+  }
+  if (input2.security.mode === "invalid") {
+    steps.push("Set PRAXIS_SECURITY_MODE (extension setting security_mode) to 'secure' or 'compatibility', or leave it blank for secure.");
+  } else if (input2.security.mode === "compatibility") {
+    steps.push("Compatibility mode is on: approvals are not enforced. Use it only for local development you fully trust.");
+  }
+  if (input2.dotenvRejected?.length) {
+    steps.push(`A repository .env file tried to set ${input2.dotenvRejected.join(", ")}. Security and approval settings are only read from the real environment, so they were ignored. Remove them from the file.`);
+  }
+  return steps;
+}
+var present;
+var init_diagnostics = __esm({
+  "node_modules/@praxis/cli/dist/diagnostics.js"() {
+    present = (value) => Boolean(value && value.trim());
+  }
+});
+
 // node_modules/@praxis/vcs/dist/redact.js
 function redactSecrets(text) {
   return text.replace(TOKEN_RE, "<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/gi, "Bearer <redacted>").replace(/\/\/([^/@\s]+):([^@/\s]+)@/g, "//$1:<redacted>@").replace(/x-access-token:[^@\s]+@/gi, "x-access-token:<redacted>@");
@@ -21062,12 +21208,12 @@ function readState(repo) {
     return void 0;
   }
 }
-function writeState(repo, state) {
+function writeState(repo, state2) {
   (0, import_node_fs20.mkdirSync)(qualityDir(repo), { recursive: true });
-  (0, import_node_fs20.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state, null, 2)}
+  (0, import_node_fs20.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
 `);
-  if (state.pid)
-    (0, import_node_fs20.writeFileSync)(qualityPidPath(repo), `${state.pid}
+  if (state2.pid)
+    (0, import_node_fs20.writeFileSync)(qualityPidPath(repo), `${state2.pid}
 `);
 }
 function patchState(repo, patch) {
@@ -21126,10 +21272,10 @@ function killPid(pid) {
 }
 function stopQuality(repo) {
   const key = repoKey(repo);
-  const state = readState(repo);
+  const state2 = readState(repo);
   const worker = workers.get(key);
-  if (worker || state?.runtimeMode === "worker") {
-    const port = state?.port ?? configuredPort();
+  if (worker || state2?.runtimeMode === "worker") {
+    const port = state2?.port ?? configuredPort();
     const url4 = `http://127.0.0.1:${port}/shutdown`;
     void fetch(url4, { method: "POST", signal: AbortSignal.timeout(400) }).catch(() => void 0);
     const started2 = Date.now();
@@ -21146,7 +21292,7 @@ function stopQuality(repo) {
     }
     return;
   }
-  const pid = state?.pid;
+  const pid = state2?.pid;
   if (pid && isAlive(pid))
     killPid(pid);
   const started = Date.now();
@@ -21439,27 +21585,27 @@ function fail(code, message, stage, t0, details) {
 }
 async function probeQuality(opts) {
   const repo = repoKey(opts.repo);
-  const state = (0, import_node_fs20.existsSync)(opts.repo) ? readState(repo) : void 0;
-  const port = state?.port ?? configuredPort();
-  const url4 = state?.url ?? urlForPort(port);
-  const db = state?.db ?? ((0, import_node_fs20.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
+  const state2 = (0, import_node_fs20.existsSync)(opts.repo) ? readState(repo) : void 0;
+  const port = state2?.port ?? configuredPort();
+  const url4 = state2?.url ?? urlForPort(port);
+  const db = state2?.db ?? ((0, import_node_fs20.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
   const logPath = (0, import_node_fs20.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
   const extras = {
-    lastKnownPid: state?.lastKnownPid ?? state?.pid,
-    lastHealthyAt: state?.lastHealthyAt,
-    lastExitCode: state?.lastExitCode,
-    lastExitSignal: state?.lastExitSignal,
-    lastExitAt: state?.lastExitAt,
+    lastKnownPid: state2?.lastKnownPid ?? state2?.pid,
+    lastHealthyAt: state2?.lastHealthyAt,
+    lastExitCode: state2?.lastExitCode,
+    lastExitSignal: state2?.lastExitSignal,
+    lastExitAt: state2?.lastExitAt,
     logPath,
     port,
-    runtimeMode: state?.runtimeMode
+    runtimeMode: state2?.runtimeMode
   };
   const health = await fetchHealth(url4);
-  if (health && (rootsMatch(health.allowedRoot, repo) || state?.pid && health.pid === state.pid)) {
-    patchState(repo, { lastHealthyAt: (/* @__PURE__ */ new Date()).toISOString(), lastKnownPid: health.pid ?? state?.pid });
+  if (health && (rootsMatch(health.allowedRoot, repo) || state2?.pid && health.pid === state2.pid)) {
+    patchState(repo, { lastHealthyAt: (/* @__PURE__ */ new Date()).toISOString(), lastKnownPid: health.pid ?? state2?.pid });
     return {
       status: "healthy",
-      pid: health.pid ?? state?.pid,
+      pid: health.pid ?? state2?.pid,
       url: url4,
       db,
       reused: true,
@@ -21469,10 +21615,10 @@ async function probeQuality(opts) {
     };
   }
   const workerLive = Boolean(workers.get(repo));
-  if (state?.pid && !isAlive(state.pid)) {
+  if (state2?.pid && !isAlive(state2.pid)) {
     return {
       status: "stopped",
-      pid: state.pid,
+      pid: state2.pid,
       url: url4,
       db,
       reused: false,
@@ -21490,11 +21636,11 @@ async function probeQuality(opts) {
       ...extras
     };
   }
-  if (state?.runtimeMode === "worker" && !workerLive && !health) {
-    if (state.lastExitCode != null && state.lastExitCode !== 0) {
+  if (state2?.runtimeMode === "worker" && !workerLive && !health) {
+    if (state2.lastExitCode != null && state2.lastExitCode !== 0) {
       return {
         status: "failed",
-        pid: state.pid,
+        pid: state2.pid,
         url: url4,
         db,
         reused: false,
@@ -21503,21 +21649,21 @@ async function probeQuality(opts) {
       };
     }
     return {
-      status: state.lastExitAt ? "stopped" : "unknown",
-      pid: state.pid,
+      status: state2.lastExitAt ? "stopped" : "unknown",
+      pid: state2.pid,
       url: url4,
       db,
       reused: false,
-      diagnostic: state.lastExitAt ? "Quality worker is no longer in this Runtime process" : "Quality worker is not answering /health; cause is not recorded",
+      diagnostic: state2.lastExitAt ? "Quality worker is no longer in this Runtime process" : "Quality worker is not answering /health; cause is not recorded",
       ...extras
     };
   }
-  if (!state && !health) {
+  if (!state2 && !health) {
     return { status: "not_started", url: url4, db, reused: false, logPath, port };
   }
   return {
     status: "unavailable",
-    pid: state?.pid,
+    pid: state2?.pid,
     url: url4,
     db,
     reused: false,
@@ -22117,6 +22263,7 @@ __export(operations_exports, {
   developerReleaseOp: () => developerReleaseOp,
   developerStatusOp: () => developerStatusOp,
   doctorOp: () => doctorOp,
+  dotenvRejectedKeys: () => dotenvRejectedKeys,
   jiraConfigFlags: () => jiraConfigFlags,
   jiraDiscoverOp: () => jiraDiscoverOp,
   jiraEpicOp: () => jiraEpicOp,
@@ -22158,6 +22305,12 @@ function scrubUnexpandedPlaceholders(env = process.env) {
   }
   return removed;
 }
+function dotenvRejectedKeys() {
+  return dotenvRejected;
+}
+function dotenvKeyForbidden(key) {
+  return DOTENV_FORBIDDEN_PREFIXES.some((prefix2) => key.startsWith(prefix2));
+}
 function loadPraxisDotenv(repo) {
   const removed = scrubUnexpandedPlaceholders();
   if (removed.length) {
@@ -22174,7 +22327,14 @@ function loadPraxisDotenv(repo) {
       continue;
     for (const line of (0, import_node_fs21.readFileSync)(p, "utf8").split("\n")) {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
-      if (!m || process.env[m[1]])
+      if (!m)
+        continue;
+      if (dotenvKeyForbidden(m[1])) {
+        if (!dotenvRejected.includes(m[1]))
+          dotenvRejected = [...dotenvRejected, m[1]].sort();
+        continue;
+      }
+      if (process.env[m[1]])
         continue;
       process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
     }
@@ -22442,6 +22602,12 @@ async function doctorOp(ctx, version4) {
   };
   const github = githubTokenFlags();
   const gitlab = gitlabTokenFlags();
+  const providers = providerDiagnostics(process.env, {
+    configured: github.apiUrlConfigured,
+    valid: github.apiUrlValid !== false,
+    issue: github.apiUrlIssue
+  });
+  const security = securityDiagnostics(process.env);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? git2 ? "ok" : "no-git" : "unavailable",
@@ -22463,6 +22629,18 @@ async function doctorOp(ctx, version4) {
     quality,
     capabilities,
     hostPlaceholdersIgnored,
+    dotenvRejected,
+    providers,
+    security,
+    nextSteps: doctorNextSteps({
+      repoExists,
+      gitRoot: Boolean(git2),
+      project: project.status,
+      quality: { status: qualityProbe.status, logPath: qualityProbe.logPath },
+      providers,
+      security,
+      dotenvRejected
+    }),
     codes: {
       repository: capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : void 0,
       jira: capabilities.jiraConfig === "unavailable" ? OP_CODES.JIRA_CONFIG_UNAVAILABLE : void 0,
@@ -23365,7 +23543,7 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto12, import_node_child_process6, import_node_fs21, import_node_path24, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored;
+var import_node_crypto12, import_node_child_process6, import_node_fs21, import_node_path24, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
     import_node_crypto12 = require("node:crypto");
@@ -23375,6 +23553,7 @@ var init_operations = __esm({
     init_dist2();
     init_dist3();
     init_workflows();
+    init_diagnostics();
     init_dist4();
     init_dist();
     init_git_delivery_ops();
@@ -23485,6 +23664,15 @@ var init_operations = __esm({
     };
     HOST_PLACEHOLDER_RE = /^\$\{[^}]*\}$/;
     hostPlaceholdersIgnored = [];
+    DOTENV_FORBIDDEN_PREFIXES = [
+      "PRAXIS_SECURITY_",
+      "PRAXIS_APPROVAL_",
+      "PRAXIS_BROKER_",
+      "PRAXIS_DEPLOYMENT_",
+      "PRAXIS_ALLOW_",
+      "PRAXIS_FIXTURE_"
+    ];
+    dotenvRejected = [];
   }
 });
 
@@ -27061,11 +27249,11 @@ function settle(inst, answer) {
     recursive.set(inst, answer === PROVEN);
   return answer;
 }
-function bucketFor(state, inst) {
-  let bucket = state.buckets.get(inst);
+function bucketFor(state2, inst) {
+  let bucket = state2.buckets.get(inst);
   if (!bucket) {
     bucket = /* @__PURE__ */ new WeakMap();
-    state.buckets.set(inst, bucket);
+    state2.buckets.set(inst, bucket);
   }
   return bucket;
 }
@@ -27123,16 +27311,16 @@ var memo = {
         const input2 = payload.value;
         if (!isRef(input2))
           return base(payload, ctx);
-        let state = ctx[STATE];
-        if (!state) {
-          state = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
-          ctx[STATE] = state;
+        let state2 = ctx[STATE];
+        if (!state2) {
+          state2 = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
+          ctx[STATE] = state2;
         }
         let bucket;
         if (lastCtx === ctx) {
           bucket = lastBucket;
         } else {
-          bucket = bucketFor(state, inst);
+          bucket = bucketFor(state2, inst);
           lastCtx = ctx;
           lastBucket = bucket;
         }
@@ -27144,8 +27332,8 @@ var memo = {
               payload.issues.push(...cloneIssues(hit.issues));
           } else {
             payload.memo = true;
-            state.backEdges ?? (state.backEdges = /* @__PURE__ */ new WeakSet());
-            state.backEdges.add(hit.value);
+            state2.backEdges ?? (state2.backEdges = /* @__PURE__ */ new WeakSet());
+            state2.backEdges.add(hit.value);
           }
           return payload;
         }
@@ -34547,11 +34735,11 @@ function settle2(inst, answer) {
     recursive2.set(inst, answer === PROVEN2);
   return answer;
 }
-function bucketFor2(state, inst) {
-  let bucket = state.buckets.get(inst);
+function bucketFor2(state2, inst) {
+  let bucket = state2.buckets.get(inst);
   if (!bucket) {
     bucket = /* @__PURE__ */ new WeakMap();
-    state.buckets.set(inst, bucket);
+    state2.buckets.set(inst, bucket);
   }
   return bucket;
 }
@@ -34609,16 +34797,16 @@ var memo2 = {
         const input2 = payload.value;
         if (!isRef2(input2))
           return base(payload, ctx);
-        let state = ctx[STATE2];
-        if (!state) {
-          state = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
-          ctx[STATE2] = state;
+        let state2 = ctx[STATE2];
+        if (!state2) {
+          state2 = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
+          ctx[STATE2] = state2;
         }
         let bucket;
         if (lastCtx === ctx) {
           bucket = lastBucket;
         } else {
-          bucket = bucketFor2(state, inst);
+          bucket = bucketFor2(state2, inst);
           lastCtx = ctx;
           lastBucket = bucket;
         }
@@ -34630,8 +34818,8 @@ var memo2 = {
               payload.issues.push(...cloneIssues2(hit.issues));
           } else {
             payload.memo = true;
-            state.backEdges ?? (state.backEdges = /* @__PURE__ */ new WeakSet());
-            state.backEdges.add(hit.value);
+            state2.backEdges ?? (state2.backEdges = /* @__PURE__ */ new WeakSet());
+            state2.backEdges.add(hit.value);
           }
           return payload;
         }
@@ -49680,7 +49868,7 @@ var Server = class extends Protocol {
       maxRounds: this._inputRequiredServing.maxRounds,
       roundTimeoutMs: this._inputRequiredServing.roundTimeoutMs,
       resolvedClientCapabilities: (ctx) => this._inputRequestCapabilityView(ctx),
-      verifyRequestState: (state, ctx, method) => this._verifyRequestState(state, ctx, method),
+      verifyRequestState: (state2, ctx, method) => this._verifyRequestState(state2, ctx, method),
       sendElicitation: (params, options) => this._sendElicitationLeg(params, options, { validateAcceptedContent: false }),
       sendSampling: (params, options) => this.createMessage(params, options),
       listRoots: (params, options) => this.listRoots(params, options)
@@ -49894,10 +50082,10 @@ var Server = class extends Protocol {
   * nothing). Deny-on-error: any hook failure answers the frozen `-32602`;
   * the reason goes to `onerror` only.
   */
-  async _verifyRequestState(state, ctx, method) {
+  async _verifyRequestState(state2, ctx, method) {
     if (this._requestStateVerify === void 0) return;
     try {
-      return await this._requestStateVerify(state, ctx);
+      return await this._requestStateVerify(state2, ctx);
     } catch (error64) {
       this.onerror?.(/* @__PURE__ */ new Error(`requestState verification rejected ${method}: ${error64 instanceof Error ? error64.message : String(error64)}`));
       throw new ProtocolError(ProtocolErrorCode.InvalidParams, "Invalid or expired requestState", { reason: "invalid_request_state" });
@@ -51045,10 +51233,10 @@ function classifyOpeningMessage(message) {
 function serveStdio(factory, options = {}) {
   const legacyMode = options.legacy ?? "serve";
   const wire = options.transport ?? new StdioServerTransport();
-  let state = { phase: "opening" };
+  let state2 = { phase: "opening" };
   let discarding;
   let closing = false;
-  const isTornDown = () => closing || state.phase === "closed";
+  const isTornDown = () => closing || state2.phase === "closed";
   const reportError = (error64) => {
     try {
       options.onerror?.(error64);
@@ -51162,14 +51350,14 @@ function serveStdio(factory, options = {}) {
     }
   };
   const processMessage = async (message) => {
-    if (state.phase === "closed") return;
-    if (state.phase === "pinned") {
-      if (state.era === "modern" && isJSONRPCRequest(message) && message.method === "initialize" && !carriesValidModernEnvelopeClaim(message.params)) {
+    if (state2.phase === "closed") return;
+    if (state2.phase === "pinned") {
+      if (state2.era === "modern" && isJSONRPCRequest(message) && message.method === "initialize" && !carriesValidModernEnvelopeClaim(message.params)) {
         await answerLegacyRejection(message, "initialize", message.params !== null && typeof message.params === "object" && typeof message.params.protocolVersion === "string" ? message.params.protocolVersion : void 0);
         return;
       }
-      if (state.era === "modern" && await tryServeListen(message)) return;
-      state.instance.channel.deliver(message);
+      if (state2.era === "modern" && await tryServeListen(message)) return;
+      state2.instance.channel.deliver(message);
       return;
     }
     if (!isJSONRPCRequest(message) && !isJSONRPCNotification(message)) {
@@ -51196,8 +51384,8 @@ function serveStdio(factory, options = {}) {
         return;
       case "modern":
         if (isJSONRPCRequest(message) && message.method === "server/discover") {
-          if (state.phase === "probe") {
-            state.instance.channel.deliver(message, { classification: opening.classification });
+          if (state2.phase === "probe") {
+            state2.instance.channel.deliver(message, { classification: opening.classification });
             return;
           }
           const instance = await connectInstance("modern", opening.revision);
@@ -51205,22 +51393,22 @@ function serveStdio(factory, options = {}) {
             await disposeLateInstance(instance);
             return;
           }
-          state = {
+          state2 = {
             phase: "probe",
             instance
           };
           instance.channel.deliver(message, { classification: opening.classification });
           return;
         }
-        if (state.phase === "probe") {
+        if (state2.phase === "probe") {
           if (isJSONRPCNotification(message)) {
-            state.instance.channel.deliver(message, { classification: opening.classification });
+            state2.instance.channel.deliver(message, { classification: opening.classification });
             return;
           }
-          state = {
+          state2 = {
             phase: "pinned",
             era: "modern",
-            instance: state.instance
+            instance: state2.instance
           };
         } else {
           const instance = await connectInstance("modern", opening.revision);
@@ -51228,36 +51416,36 @@ function serveStdio(factory, options = {}) {
             await disposeLateInstance(instance);
             return;
           }
-          state = {
+          state2 = {
             phase: "pinned",
             era: "modern",
             instance
           };
         }
         if (await tryServeListen(message)) return;
-        state.instance.channel.deliver(message, { classification: opening.classification });
+        state2.instance.channel.deliver(message, { classification: opening.classification });
         return;
       case "legacy": {
         if (legacyMode === "reject") {
           if (isJSONRPCRequest(message)) await answerLegacyRejection(message, opening.reason, opening.requestedVersion);
           return;
         }
-        if (state.phase === "probe") {
-          await discardProbeInstance(state.instance);
+        if (state2.phase === "probe") {
+          await discardProbeInstance(state2.instance);
           if (isTornDown()) return;
-          state = { phase: "opening" };
+          state2 = { phase: "opening" };
         }
         const instance = await connectInstance("legacy");
         if (isTornDown()) {
           await disposeLateInstance(instance);
           return;
         }
-        state = {
+        state2 = {
           phase: "pinned",
           era: "legacy",
           instance
         };
-        state.instance.channel.deliver(message);
+        state2.instance.channel.deliver(message);
         return;
       }
     }
@@ -51282,10 +51470,10 @@ function serveStdio(factory, options = {}) {
     }
   };
   const closeAll = async () => {
-    if (closing || state.phase === "closed") return;
+    if (closing || state2.phase === "closed") return;
     closing = true;
-    const current = state;
-    state = { phase: "closed" };
+    const current = state2;
+    state2 = { phase: "closed" };
     for (const result of listenRouter.teardownAll()) await wire.send(result).catch((error64) => reportError(toError(error64)));
     if (current.phase === "probe" || current.phase === "pinned") await current.instance.product.close().catch((error64) => reportError(toError(error64)));
     await wire.close().catch((error64) => reportError(toError(error64)));
@@ -51296,13 +51484,13 @@ function serveStdio(factory, options = {}) {
   };
   wire.onerror = (error64) => {
     reportError(error64);
-    if (state.phase === "probe" || state.phase === "pinned") state.instance.channel.onerror?.(error64);
+    if (state2.phase === "probe" || state2.phase === "pinned") state2.instance.channel.onerror?.(error64);
   };
   wire.onclose = () => {
-    if (closing || state.phase === "closed") return;
+    if (closing || state2.phase === "closed") return;
     closing = true;
-    const current = state;
-    state = { phase: "closed" };
+    const current = state2;
+    state2 = { phase: "closed" };
     if (current.phase === "probe" || current.phase === "pinned") current.instance.product.close().catch((error64) => reportError(toError(error64)));
   };
   const started = wire.start().catch((error64) => {
@@ -57310,11 +57498,11 @@ function settle3(inst, answer) {
 function isRecursiveSchema(inst) {
   return isRecursive3(inst, /* @__PURE__ */ new Set(), true) !== NONE3;
 }
-function bucketFor3(state, inst) {
-  let bucket = state.buckets.get(inst);
+function bucketFor3(state2, inst) {
+  let bucket = state2.buckets.get(inst);
   if (!bucket) {
     bucket = /* @__PURE__ */ new WeakMap();
-    state.buckets.set(inst, bucket);
+    state2.buckets.set(inst, bucket);
   }
   return bucket;
 }
@@ -57372,16 +57560,16 @@ var memo4 = {
         const input2 = payload.value;
         if (!isRef3(input2))
           return base(payload, ctx);
-        let state = ctx[STATE3];
-        if (!state) {
-          state = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
-          ctx[STATE3] = state;
+        let state2 = ctx[STATE3];
+        if (!state2) {
+          state2 = { buckets: /* @__PURE__ */ new WeakMap(), backEdges: void 0 };
+          ctx[STATE3] = state2;
         }
         let bucket;
         if (lastCtx === ctx) {
           bucket = lastBucket;
         } else {
-          bucket = bucketFor3(state, inst);
+          bucket = bucketFor3(state2, inst);
           lastCtx = ctx;
           lastBucket = bucket;
         }
@@ -57393,8 +57581,8 @@ var memo4 = {
               payload.issues.push(...cloneIssues3(hit.issues));
           } else {
             payload.memo = true;
-            state.backEdges ?? (state.backEdges = /* @__PURE__ */ new WeakSet());
-            state.backEdges.add(hit.value);
+            state2.backEdges ?? (state2.backEdges = /* @__PURE__ */ new WeakSet());
+            state2.backEdges.add(hit.value);
           }
           return payload;
         }
@@ -72360,17 +72548,17 @@ function itemPath(repo, id) {
 function readJson2(path) {
   return JSON.parse((0, import_node_fs6.readFileSync)(path, "utf8"));
 }
-function summarize(state) {
+function summarize(state2) {
   return {
-    workItemId: state.workItem.id,
-    workflowId: state.workflowId,
-    projectId: state.projectId,
-    title: state.workItem.title,
-    ...state.workItem.jiraIssueKey ? { jiraIssueKey: state.workItem.jiraIssueKey } : {},
-    stage: state.stage,
-    revision: state.workItem.revision,
+    workItemId: state2.workItem.id,
+    workflowId: state2.workflowId,
+    projectId: state2.projectId,
+    title: state2.workItem.title,
+    ...state2.workItem.jiraIssueKey ? { jiraIssueKey: state2.workItem.jiraIssueKey } : {},
+    stage: state2.stage,
+    revision: state2.workItem.revision,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-    links: state.workItem.links ?? []
+    links: state2.workItem.links ?? []
   };
 }
 function readLegacy(repo) {
@@ -72448,28 +72636,28 @@ function listWorkItems(repo) {
   return layout ? { current: layout.index.current, items: layout.index.items } : { current: null, items: [] };
 }
 function workflowStatus(repo, workItemId) {
-  const state = loadWorkflow(repo, workItemId);
-  if (!state)
+  const state2 = loadWorkflow(repo, workItemId);
+  if (!state2)
     return { present: false };
   const { current, items } = listWorkItems(repo);
-  const resume = resumeWorkflow(state);
+  const resume = resumeWorkflow(state2);
   const role = resume.nextRole ?? "ba";
   const routed = capabilityRoute({
-    request: [state.workItem.title, ...state.requirements.map((item) => item.statement)].join(" "),
+    request: [state2.workItem.title, ...state2.requirements.map((item) => item.statement)].join(" "),
     role,
-    stage: state.stage
+    stage: state2.stage
   });
   return {
     present: true,
-    workflowId: state.workflowId,
-    workItemId: state.workItem.id,
+    workflowId: state2.workflowId,
+    workItemId: state2.workItem.id,
     currentWorkItemId: current,
     workItems: items.map((item) => ({ ...item, current: item.workItemId === current })),
-    stage: state.stage,
+    stage: state2.stage,
     requirementIds: resume.requirementIds,
     nextRole: resume.nextRole,
-    jiraIssueKey: state.workItem.jiraIssueKey ?? null,
-    links: state.workItem.links ?? [],
+    jiraIssueKey: state2.workItem.jiraIssueKey ?? null,
+    links: state2.workItem.links ?? [],
     guidance: routed.guidance.map((item) => ({ id: item.id, description: item.description })),
     suggested: routed.suggested.map((item) => item.id),
     executed: routed.executed
@@ -72545,10 +72733,10 @@ function writeIndex(repo, index) {
   requireMutationLease();
   writeAtomic(indexPath(repo), index);
 }
-function writeItem(repo, state) {
+function writeItem(repo, state2) {
   requireMutationLease();
-  const path = itemPath(repo, state.workItem.id);
-  writeAtomic(path, redactPersistent(state));
+  const path = itemPath(repo, state2.workItem.id);
+  writeAtomic(path, redactPersistent(state2));
   return path;
 }
 function ensureMigrated(repo) {
@@ -72644,13 +72832,13 @@ function writeCommand(repo, planned, final, workItemId) {
     };
     if (resolved.select) {
       select(resolved.select);
-      const state = resolved.state;
+      const state2 = resolved.state;
       return {
-        path: itemPath(repo, state.workItem.id),
+        path: itemPath(repo, state2.workItem.id),
         duplicate: resolved.select === previousCurrent,
         result: { workItemId: resolved.select, previousCurrent },
-        workflowId: state.workflowId,
-        workItemId: state.workItem.id,
+        workflowId: state2.workflowId,
+        workItemId: state2.workItem.id,
         currentWorkItemId: resolved.select
       };
     }
@@ -72800,13 +72988,13 @@ function readHostProposal(workflowRepo, serviceId) {
   return parsed;
 }
 async function buildStoryVerification(repo, independentRerun, workItemId) {
-  const state = loadWorkflow(repo, workItemId);
-  if (!state)
+  const state2 = loadWorkflow(repo, workItemId);
+  if (!state2)
     throw new Error("WORKFLOW_MISSING");
-  const stories = state.stories.filter((item) => item.status !== "superseded");
+  const stories = state2.stories.filter((item) => item.status !== "superseded");
   if (!stories.length)
     throw new Error("STORY_MISSING");
-  const services = state.services;
+  const services = state2.services;
   const profiles = services.map((service) => inspectService(service));
   const adapter = await loadAdapter(repo);
   let scenarios = [];
@@ -72816,7 +73004,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
   let limitations = [];
   let plan = [];
   if (adapter?.verify) {
-    const verified = await adapter.verify({ state, independentRerun, loadModule });
+    const verified = await adapter.verify({ state: state2, independentRerun, loadModule });
     scenarios = verified.scenarios;
     findings = verified.findings;
     strategy = "project-adapter";
@@ -72832,7 +73020,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
       status: scenario.status
     }));
   } else {
-    const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state.workItem.id, stories, services, profiles });
+    const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state2.workItem.id, stories, services, profiles });
     const selected = executed ?? inspectionPlan({ stories, services, profiles });
     scenarios = selected.scenarios;
     findings = selected.findings;
@@ -72843,7 +73031,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
   }
   if (independentRerun) {
     const failing = new Set(findings.filter((item) => item.status === "open").map((item) => item.id));
-    for (const previous of state.findings) {
+    for (const previous of state2.findings) {
       if (!failing.has(previous.id) && previous.status === "open") {
         findings.push({ ...previous, status: "resolved" });
       }
@@ -72877,10 +73065,10 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
   };
 }
 async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
-  const state = loadWorkflow(repo, workItemId);
-  if (!state)
+  const state2 = loadWorkflow(repo, workItemId);
+  if (!state2)
     throw new Error("WORKFLOW_MISSING");
-  const service = state.services.find((item) => item.id === serviceId);
+  const service = state2.services.find((item) => item.id === serviceId);
   if (!service?.localPath)
     throw new Error(`REPOSITORY_LOCATION_MISSING:${serviceId}`);
   const branch = existingBranch ?? `quality/${serviceId}-story-fix`;
@@ -72894,7 +73082,7 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
   }
   for (const file2 of proposal.files)
     safeFile2(service.localPath, file2.path);
-  const findings = state.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
+  const findings = state2.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
   const branchRef = (0, import_node_child_process2.spawnSync)("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
   const baseSha = (branchRef.status ?? 1) === 0 ? branchRef.stdout.trim() : git(service.localPath, ["rev-parse", "HEAD"]);
   return {
@@ -72934,8 +73122,8 @@ function commitServiceFix(workflowRepo, planned, workflowItemId) {
   const change = planned.change;
   if (change.commitSha !== "PLANNED")
     return planned;
-  const state = loadWorkflow(workflowRepo, workflowItemId);
-  const service = state?.services.find((item) => item.id === change.serviceId);
+  const state2 = loadWorkflow(workflowRepo, workflowItemId);
+  const service = state2?.services.find((item) => item.id === change.serviceId);
   const root = service?.localPath;
   if (!root)
     throw new Error("REPOSITORY_LOCATION_MISSING");

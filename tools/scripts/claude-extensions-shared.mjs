@@ -12,26 +12,33 @@ export const JIRA_USER_CONFIG = {
     type: "string",
     title: "Jira Base URL",
     description: "Jira Cloud or Data Center origin, for example https://your-domain.atlassian.net. No trailing slash.",
-    required: true,
+    required: false,
   },
   jira_email: {
     type: "string",
     title: "Jira Email",
     description: "Atlassian account email for Cloud (email + API token). For Data Center, the account email associated with the token.",
-    required: true,
+    required: false,
   },
   jira_project_key: {
     type: "string",
     title: "Jira Project Key",
     description: "Jira project key, for example PRX.",
-    required: true,
+    required: false,
   },
   jira_token: {
     type: "string",
     title: "Jira API Token",
     description: "Jira API token. Stored in the operating system secret vault (Keychain / Credential Manager). Never paste it into chat.",
-    required: true,
+    required: false,
     sensitive: true,
+  },
+  security_mode: {
+    type: "string",
+    title: "Security mode",
+    description:
+      "Leave blank for 'secure' (recommended): every write needs a stored, fingerprint-bound approval and a bare confirmation is refused. 'compatibility' lets this single-user local setup proceed without a signed approval; it is NOT a security boundary against the agent. Praxis Doctor always reports the mode in force.",
+    required: false,
   },
   github_token: {
     type: "string",
@@ -66,6 +73,7 @@ export const JIRA_ENV_MAP = {
   PRAXIS_JIRA_EMAIL: "${user_config.jira_email}",
   PRAXIS_JIRA_PROJECT_KEY: "${user_config.jira_project_key}",
   PRAXIS_JIRA_TOKEN: "${user_config.jira_token}",
+  PRAXIS_SECURITY_MODE: "${user_config.security_mode}",
   PRAXIS_GITHUB_TOKEN: "${user_config.github_token}",
   PRAXIS_GITHUB_API_URL: "${user_config.github_api_url}",
   PRAXIS_GITLAB_TOKEN: "${user_config.gitlab_token}",
@@ -80,9 +88,9 @@ export function praxisRuntimeManifest(version) {
     display_name: "Praxis Runtime",
     version,
     description:
-      "Shared Praxis MCP runtime for Claude Desktop. Configure Jira once; role plugins use these tools.",
+      "Shared Praxis MCP runtime for Claude Desktop. Local workflows need no tracker; Jira, GitHub and GitLab are optional. Role plugins use these tools.",
     long_description:
-      "Praxis Runtime is the single local MCP server for Praxis BA, Architect, Developer, and Quality.\n\nConfigure Jira in this extension's settings. Optionally configure a GitHub token (MVP Git Delivery) or GitLab token. Tokens are marked sensitive and stored in OS secure storage. Role plugins contain Skills only and do not launch duplicate MCP servers.\n\nCLI and CI continue to use `PRAXIS_JIRA_*` / `PRAXIS_GITHUB_*` / `PRAXIS_GITLAB_*`. Desktop injected env wins over repository `.env` files.",
+      "Praxis Runtime is the single local MCP server for Praxis BA, Architect, Developer, and Quality.\n\nEverything in this extension's settings is optional: local, no-Jira workflows work out of the box. Configure Jira only to sync with a Jira project, and optionally a GitHub token (MVP Git Delivery) or GitLab token. Run Praxis Doctor to see which providers are available and the security mode in force. Tokens are marked sensitive and stored in OS secure storage. Role plugins contain Skills only and do not launch duplicate MCP servers.\n\nCLI and CI continue to use `PRAXIS_JIRA_*` / `PRAXIS_GITHUB_*` / `PRAXIS_GITLAB_*`. Desktop injected env wins over repository `.env` files; security and approval settings are never read from repository files.",
     author: { name: "dfuture-co" },
     license: "Apache-2.0",
     keywords: ["praxis", "jira", "mcp", "runtime"],

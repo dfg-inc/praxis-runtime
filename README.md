@@ -9,7 +9,7 @@ Repository: [github.com/dfg-inc/praxis-runtime](https://github.com/dfg-inc/praxi
 1. Open [Releases](https://github.com/dfg-inc/praxis-runtime/releases).
 2. Download `praxis-runtime.mcpb` (and `release-meta.json` for SHA-256 / compatibility).
 3. Install in Claude Desktop as a desktop extension.
-4. Configure Jira once in Runtime `user_config`.
+4. Optionally configure Jira, GitHub or GitLab in Runtime `user_config` (every setting is optional; local no-Jira workflows work without them).
 5. Install role ZIPs from their own repository Releases (BA / Architect / Developer / Quality).
 
 ## Clone / develop
