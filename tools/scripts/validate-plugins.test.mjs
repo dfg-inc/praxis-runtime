@@ -87,6 +87,8 @@ describe("validatePluginsRoot against monorepo plugins/", () => {
     if (!existsSync(root)) return;
     const r = validatePluginsRoot(root);
     expect(r.ok, r.errors.join("\n")).toBe(true);
-    expect(r.checked).toBeGreaterThan(10);
+    // Split repos host few plugins (praxis-runtime: only `runtime`); require each one to be validated.
+    expect(r.plugins.length).toBeGreaterThan(0);
+    for (const p of r.plugins) expect(p.checked, p.id).toBeGreaterThan(0);
   });
 });
