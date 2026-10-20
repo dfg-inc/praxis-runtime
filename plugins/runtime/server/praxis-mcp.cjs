@@ -4418,6 +4418,69 @@ function reviseRequirement(state, id, statement) {
 function fingerprintPayload(payload) {
   return `sha256:${(0, import_node_crypto.createHash)("sha256").update(JSON.stringify(payload)).digest("hex")}`;
 }
+function canonicalValue(value) {
+  if (Array.isArray(value))
+    return value.map(canonicalValue);
+  if (value && typeof value === "object") {
+    const source = value;
+    const out = {};
+    for (const key of Object.keys(source).sort()) {
+      if (source[key] !== void 0)
+        out[key] = canonicalValue(source[key]);
+    }
+    return out;
+  }
+  return value;
+}
+function storyGrantDigest(input2) {
+  return `sha256:${(0, import_node_crypto.createHash)("sha256").update(JSON.stringify(canonicalValue(input2))).digest("hex")}`;
+}
+function verifyStoryGrant(token, expectedFingerprint, storyId) {
+  if (process.env.PRAXIS_APPROVAL_PRIVATE_KEY?.trim()) {
+    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
+  }
+  const keyPath = process.env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH?.trim();
+  if (keyPath) {
+    try {
+      (0, import_node_fs.accessSync)(keyPath, import_node_fs.constants.R_OK);
+      throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
+    } catch (error64) {
+      if (error64 instanceof WorkflowError)
+        throw error64;
+    }
+  }
+  const publicKey = process.env.PRAXIS_APPROVAL_PUBLIC_KEY?.trim();
+  if (!publicKey) {
+    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "story confirmation requires the approval public key");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+  } catch {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
+  }
+  if (!parsed?.body || typeof parsed.signature !== "string") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
+  }
+  const ok = (0, import_node_crypto.verify)(null, Buffer.from(JSON.stringify(canonicalValue(parsed.body))), (0, import_node_crypto.createPublicKey)(publicKey), Buffer.from(parsed.signature, "base64"));
+  if (!ok)
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization signature is not valid");
+  const body = parsed.body;
+  if (body.planFingerprint !== expectedFingerprint || !Array.isArray(body.workItemIds) || !body.workItemIds.includes(storyId) || body.action !== "confirm-story") {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "authorization is not for this story revision");
+  }
+}
+function storyContentFingerprint(story) {
+  return fingerprintPayload({
+    id: story.id,
+    revision: story.revision,
+    narrative: story.narrative,
+    objective: story.objective,
+    acceptanceCriteria: story.acceptanceCriteria,
+    expectedResults: story.expectedResults,
+    assumptionIds: story.assumptionIds
+  });
+}
 function createHandoff(state, input2) {
   const body = {
     workflowId: state.workflowId,
@@ -4430,10 +4493,12 @@ function createHandoff(state, input2) {
     storyIds: input2.storyIds ?? [],
     artifactRefs: input2.artifactRefs,
     decisions: input2.decisions,
+    decisionRecords: input2.decisionRecords ?? [],
     assumptions: input2.assumptions,
     openQuestions: input2.openQuestions,
     risks: input2.risks,
     blockers: input2.blockers,
+    ...input2.notes !== void 0 ? { notes: input2.notes } : {},
     nextActions: input2.nextActions,
     readiness: input2.readiness,
     evidenceRefs: input2.evidenceRefs
@@ -4647,7 +4712,9 @@ function applyWorkflowCommand(state, raw) {
         id: command.id,
         statement: command.statement,
         confirmed: command.confirmed,
-        revision: state.workItem.revision
+        revision: state.workItem.revision,
+        ...command.rationale !== void 0 ? { rationale: command.rationale } : {},
+        ...command.notes !== void 0 ? { notes: command.notes } : {}
       }
     ];
     let next2 = { ...state, decisions };
@@ -4682,13 +4749,17 @@ function applyWorkflowCommand(state, raw) {
     } catch (err) {
       throw new WorkflowError("STORY_NARRATIVE", err instanceof Error ? err.message : "story narrative is not in the required form");
     }
+    if (command.confirmedBehavior) {
+      throw new WorkflowError("STORY_CONFIRMATION_REQUIRED", "creating a story cannot confirm its behavior; confirm the exact revision after review");
+    }
     if (state.stories.some((story2) => story2.id === command.id && story2.status !== "superseded")) {
       throw new WorkflowError("DUPLICATE_STORY", `story ${command.id} already exists`);
     }
     const story = UserStorySchema.parse({
       ...command,
       revision: 1,
-      status: command.confirmedBehavior ? "confirmed" : "proposed",
+      confirmedBehavior: false,
+      status: "proposed",
       stale: false
     });
     return {
@@ -4696,6 +4767,41 @@ function applyWorkflowCommand(state, raw) {
       duplicate: false,
       result: { storyId: story.id, confirmedBehavior: story.confirmedBehavior }
     };
+  }
+  if (command.action === "record-context") {
+    return {
+      state: {
+        ...state,
+        openQuestions: command.openQuestions ?? state.openQuestions,
+        risks: command.risks ?? state.risks,
+        blockers: command.blockers ?? state.blockers,
+        ...command.notes !== void 0 ? { notes: command.notes } : {}
+      },
+      duplicate: false,
+      result: { notes: command.notes ?? state.notes }
+    };
+  }
+  if (command.action === "confirm-story") {
+    const story = state.stories.find((item) => item.id === command.id && item.status !== "superseded");
+    if (!story)
+      throw new WorkflowError("STORY_NOT_FOUND", `story ${command.id} is not in this workflow`);
+    if (story.revision !== command.revision) {
+      throw new WorkflowError("STORY_REVISION", `story ${command.id} revision ${story.revision} is not ${command.revision}`);
+    }
+    if (story.acceptanceCriteria.length < 1) {
+      throw new WorkflowError("STORY_CONFIRMATION_REQUIRED", `story ${command.id} has no acceptance criteria`);
+    }
+    const contentFingerprint2 = storyContentFingerprint(story);
+    if (contentFingerprint2 !== command.contentFingerprint) {
+      throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the reviewed revision`);
+    }
+    verifyStoryGrant(command.authorization, storyGrantDigest({
+      storyId: story.id,
+      revision: story.revision,
+      contentFingerprint: contentFingerprint2
+    }), story.id);
+    const stories = state.stories.map((item) => item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" } : item);
+    return { state: { ...state, stories }, duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
   }
   if (command.action === "verify-stories" || command.action === "prepare-fix") {
     throw new WorkflowError("EXECUTION_REQUIRED", `${command.action} must run in Praxis Runtime so Quality executes the implementation`);
@@ -4821,11 +4927,13 @@ function applyWorkflowCommand(state, raw) {
         revision: unit.requirementIds.reduce((max, id) => Math.max(max, state.requirements.find((item) => item.id === id)?.revision ?? 1), 1),
         role: command.sourceRole
       })),
-      decisions: state.decisions.filter((d) => d.confirmed).map((d) => d.id),
+      decisions: state.decisions.map((d) => d.id),
+      decisionRecords: state.decisions.map((d) => ({ ...d })),
       assumptions: command.assumptions,
-      openQuestions: command.openQuestions,
-      risks: [],
-      blockers: command.blockers,
+      openQuestions: command.openQuestions.length > 0 ? command.openQuestions : state.openQuestions,
+      risks: command.risks ?? state.risks,
+      blockers: command.blockers.length > 0 ? command.blockers : state.blockers,
+      ...command.notes !== void 0 || state.notes !== void 0 ? { notes: command.notes ?? state.notes } : {},
       nextActions: command.nextActions,
       readiness: command.readiness,
       evidenceRefs: state.implementationUnits.filter((unit) => !unit.stale).map((unit) => `${unit.serviceId}:${unit.path}`)
@@ -4915,10 +5023,11 @@ function evaluateFeature(state) {
   }
   return { verdict: gaps.length === 0 ? "PASS" : "FAIL", gaps };
 }
-var import_node_crypto, WORKFLOW_CONTRACT_VERSION, WorkflowStageSchema, WorkflowRoleSchema, ClarificationClassSchema, SideEffectSchema, QualityVerdictSchema, RequirementIdSchema2, WorkItemSourceSchema, TRANSITIONS, WorkflowError, WorkItemSchema, AcceptanceCriterionSchema, RequirementSchema, ServiceSchema, ArtifactRefSchema, RoleHandoffSchema, FindingSchema, VerdictRecordSchema, CapabilitySchema, WorkflowStateSchema, SECRET_KEY, PARTIAL_SUCCESS, WorkflowCommandSchema;
+var import_node_crypto, import_node_fs, WORKFLOW_CONTRACT_VERSION, WorkflowStageSchema, WorkflowRoleSchema, ClarificationClassSchema, SideEffectSchema, QualityVerdictSchema, RequirementIdSchema2, WorkItemSourceSchema, WorkTrackingProviderSchema, TRANSITIONS, WorkflowError, WorkItemSchema, AcceptanceCriterionSchema, RequirementSchema, ServiceSchema, ArtifactRefSchema, RoleHandoffSchema, FindingSchema, VerdictRecordSchema, CapabilitySchema, WorkflowStateSchema, SECRET_KEY, PARTIAL_SUCCESS, WorkflowCommandSchema;
 var init_workflow = __esm({
   "node_modules/@praxis/contracts/dist/workflow.js"() {
     import_node_crypto = require("node:crypto");
+    import_node_fs = require("node:fs");
     init_zod();
     init_story();
     WORKFLOW_CONTRACT_VERSION = "1.0.0";
@@ -4964,6 +5073,7 @@ var init_workflow = __esm({
       "repository",
       "jira"
     ]);
+    WorkTrackingProviderSchema = external_exports2.enum(["local", "jira"]);
     TRANSITIONS = {
       draft: ["clarification_required", "ready", "blocked"],
       clarification_required: ["draft", "ready", "blocked"],
@@ -4990,6 +5100,14 @@ var init_workflow = __esm({
       source: WorkItemSourceSchema,
       /** Optional external key. Never the work item's identity. */
       jiraIssueKey: external_exports2.string().min(1).optional(),
+      /** Tracker that owns the external record. Local work leaves this unset. */
+      provider: WorkTrackingProviderSchema.optional(),
+      /** External record id (Jira id). Not the Praxis id. */
+      externalId: external_exports2.string().min(1).optional(),
+      /** Human-facing external number (PROJ-1, STR0001234). */
+      externalNumber: external_exports2.string().min(1).optional(),
+      /** Instance base URL or tenant id. Distinguishes two trackers of the same kind. */
+      instanceId: external_exports2.string().min(1).optional(),
       status: WorkflowStageSchema,
       revision: external_exports2.number().int().nonnegative()
     });
@@ -5055,6 +5173,15 @@ var init_workflow = __esm({
       openQuestions: external_exports2.array(external_exports2.string()),
       risks: external_exports2.array(external_exports2.string()),
       blockers: external_exports2.array(external_exports2.string()),
+      decisionRecords: external_exports2.array(external_exports2.object({
+        id: external_exports2.string(),
+        statement: external_exports2.string(),
+        confirmed: external_exports2.boolean(),
+        revision: external_exports2.number().int().positive(),
+        rationale: external_exports2.string().optional(),
+        notes: external_exports2.string().optional()
+      })).default([]),
+      notes: external_exports2.string().optional(),
       nextActions: external_exports2.array(external_exports2.string()),
       readiness: external_exports2.enum(["ready", "partial", "blocked"]),
       evidenceRefs: external_exports2.array(external_exports2.string()),
@@ -5120,8 +5247,14 @@ var init_workflow = __esm({
         id: external_exports2.string(),
         statement: external_exports2.string(),
         confirmed: external_exports2.boolean(),
-        revision: external_exports2.number().int().positive()
+        revision: external_exports2.number().int().positive(),
+        rationale: external_exports2.string().optional(),
+        notes: external_exports2.string().optional()
       })),
+      openQuestions: external_exports2.array(external_exports2.string()).default([]),
+      risks: external_exports2.array(external_exports2.string()).default([]),
+      blockers: external_exports2.array(external_exports2.string()).default([]),
+      notes: external_exports2.string().optional(),
       assumptions: external_exports2.array(external_exports2.object({
         id: external_exports2.string(),
         statement: external_exports2.string(),
@@ -5174,6 +5307,8 @@ var init_workflow = __esm({
         openQuestions: external_exports2.array(external_exports2.string()).default([]),
         assumptions: external_exports2.array(external_exports2.string()).default([]),
         blockers: external_exports2.array(external_exports2.string()).default([]),
+        risks: external_exports2.array(external_exports2.string()).optional(),
+        notes: external_exports2.string().optional(),
         readiness: external_exports2.enum(["ready", "partial", "blocked"])
       }),
       external_exports2.object({
@@ -5203,7 +5338,23 @@ var init_workflow = __esm({
         action: external_exports2.literal("record-decision"),
         id: external_exports2.string().min(1),
         statement: external_exports2.string().min(1),
-        confirmed: external_exports2.boolean()
+        confirmed: external_exports2.boolean(),
+        rationale: external_exports2.string().optional(),
+        notes: external_exports2.string().optional()
+      }),
+      external_exports2.object({
+        action: external_exports2.literal("record-context"),
+        openQuestions: external_exports2.array(external_exports2.string()).optional(),
+        risks: external_exports2.array(external_exports2.string()).optional(),
+        blockers: external_exports2.array(external_exports2.string()).optional(),
+        notes: external_exports2.string().optional()
+      }),
+      external_exports2.object({
+        action: external_exports2.literal("confirm-story"),
+        id: StoryIdSchema,
+        revision: external_exports2.number().int().positive(),
+        contentFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/),
+        authorization: external_exports2.string().min(1)
       }),
       external_exports2.object({
         action: external_exports2.literal("record-implementation"),
@@ -5278,6 +5429,705 @@ var init_workflow = __esm({
         developerClaimsPass: external_exports2.boolean().optional()
       })
     ]);
+  }
+});
+
+// node_modules/@praxis/contracts/dist/approval.js
+function canonicalize(value) {
+  if (Array.isArray(value))
+    return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    const source = value;
+    const out = {};
+    for (const key of Object.keys(source).sort()) {
+      if (source[key] !== void 0)
+        out[key] = canonicalize(source[key]);
+    }
+    return out;
+  }
+  return value;
+}
+function planFingerprint(body) {
+  const digest2 = (0, import_node_crypto2.createHash)("sha256").update(JSON.stringify(canonicalize(body))).digest("hex");
+  return `sha256:${digest2}`;
+}
+function bodyOf(plan) {
+  const { state: _state, fingerprint: _fingerprint, approvedAt: _approvedAt, expiresAt: _expiresAt, ...body } = plan;
+  return body;
+}
+function authorizeOperation(plan, operation, target = {}, now = /* @__PURE__ */ new Date()) {
+  if (plan.state === "REVOKED") {
+    throw new WorkflowError("APPROVAL_REVOKED", `plan ${plan.planId} was revoked`);
+  }
+  if (plan.state === "REJECTED") {
+    throw new WorkflowError("APPROVAL_REJECTED", `plan ${plan.planId} was rejected`);
+  }
+  if (plan.state === "EXPIRED") {
+    throw new WorkflowError("APPROVAL_EXPIRED", `plan ${plan.planId} expired`);
+  }
+  if (plan.state !== "APPROVED" && plan.state !== "EXECUTING") {
+    throw new WorkflowError("APPROVAL_REQUIRED", `plan ${plan.planId} is ${plan.state}`);
+  }
+  if (plan.fingerprint !== planFingerprint(bodyOf(plan))) {
+    throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "plan was modified after approval");
+  }
+  if (target.version !== void 0 && target.version !== plan.version) {
+    throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", `plan ${plan.planId} is version ${plan.version}`);
+  }
+  if (plan.expiresAt && now.getTime() > Date.parse(plan.expiresAt)) {
+    throw new WorkflowError("APPROVAL_EXPIRED", `plan ${plan.planId} expired`);
+  }
+  if (target.provider && target.provider !== plan.provider) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `provider ${target.provider} is outside plan ${plan.planId}`);
+  }
+  if (target.instanceId !== void 0 && target.instanceId !== plan.instanceId) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `instance ${target.instanceId} is outside plan ${plan.planId}`);
+  }
+  if (!plan.operations.includes(operation)) {
+    const publication = PUBLICATION_OPERATIONS.includes(operation);
+    throw new WorkflowError(publication ? "APPROVAL_SCOPE_SEPARATE" : "APPROVAL_SCOPE_MISMATCH", publication ? `${operation} needs its own approval; an implementation plan does not cover it` : `${operation} is outside plan ${plan.planId}`);
+  }
+  if (target.workItemId && !plan.workItemIds.includes(target.workItemId)) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `work item ${target.workItemId} is outside the plan`);
+  }
+  if (target.repository && !plan.repositories.includes(target.repository)) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `repository ${target.repository} is outside the plan`);
+  }
+  if ((target.previewFingerprint !== void 0 || plan.previewFingerprint !== void 0) && target.previewFingerprint !== plan.previewFingerprint) {
+    throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "preview fingerprint is not the approved revision");
+  }
+}
+function approvalSummary(plan) {
+  return [
+    "Praxis approval",
+    `plan: ${plan.planId}`,
+    `version: ${plan.version}`,
+    `fingerprint: ${plan.fingerprint}`,
+    `provider: ${plan.provider}`,
+    `instance: ${plan.instanceId ?? "(local)"}`,
+    `work items: ${plan.workItemIds.join(", ")}`,
+    `repositories: ${plan.repositories.join(", ") || "(none)"}`,
+    `operations: ${plan.operations.join(", ")}`,
+    `in scope: ${plan.inScope.join("; ")}`,
+    `out of scope: ${plan.outOfScope.join("; ") || "(none)"}`,
+    `risks: ${plan.risks.join("; ") || "(none)"}`,
+    `preview: ${plan.previewFingerprint ?? "(none)"}`
+  ].join("\n");
+}
+var import_node_crypto2, APPROVAL_CONTRACT, APPROVAL_CONTRACT_VERSION, DEFAULT_APPROVAL_TTL_MS, ApprovalStateSchema, ApprovalOperationSchema, PUBLICATION_OPERATIONS, ApprovalPlanSchema, BrokerGrantSchema;
+var init_approval = __esm({
+  "node_modules/@praxis/contracts/dist/approval.js"() {
+    import_node_crypto2 = require("node:crypto");
+    init_zod();
+    init_workflow();
+    APPROVAL_CONTRACT = "praxis.approval.plan";
+    APPROVAL_CONTRACT_VERSION = "1.0.0";
+    DEFAULT_APPROVAL_TTL_MS = 12 * 60 * 60 * 1e3;
+    ApprovalStateSchema = external_exports2.enum([
+      "DISCOVERY",
+      "CLARIFICATION",
+      "PLAN_READY",
+      "AWAITING_APPROVAL",
+      "APPROVED",
+      "EXECUTING",
+      "VERIFYING",
+      "COMPLETED",
+      "CHANGES_REQUESTED",
+      "REJECTED",
+      "EXPIRED",
+      "REVOKED",
+      "BLOCKED",
+      "FAILED"
+    ]);
+    ApprovalOperationSchema = external_exports2.enum([
+      "external_record_create",
+      "external_record_update",
+      "external_state_change",
+      "repository_edit",
+      "validation_with_side_effects",
+      "git_commit",
+      "git_push",
+      "merge_request",
+      "merge",
+      "deploy",
+      "release"
+    ]);
+    PUBLICATION_OPERATIONS = [
+      "git_push",
+      "merge_request",
+      "merge",
+      "deploy",
+      "release"
+    ];
+    ApprovalPlanSchema = external_exports2.object({
+      contract: external_exports2.literal(APPROVAL_CONTRACT),
+      contractVersion: external_exports2.literal(APPROVAL_CONTRACT_VERSION),
+      planId: external_exports2.string().min(1),
+      version: external_exports2.number().int().positive(),
+      role: WorkflowRoleSchema.exclude(["user"]),
+      provider: WorkTrackingProviderSchema,
+      instanceId: external_exports2.string().min(1).optional(),
+      workItemIds: external_exports2.array(external_exports2.string().min(1)).min(1),
+      repositories: external_exports2.array(external_exports2.string().min(1)),
+      operations: external_exports2.array(ApprovalOperationSchema).min(1),
+      inScope: external_exports2.array(external_exports2.string().min(1)).min(1),
+      outOfScope: external_exports2.array(external_exports2.string()),
+      assumptions: external_exports2.array(external_exports2.string()),
+      risks: external_exports2.array(external_exports2.string()),
+      /** Preview hash this approval is bound to, when the operation has one. */
+      previewFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
+      state: ApprovalStateSchema,
+      fingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/),
+      approvedAt: external_exports2.string().datetime().optional(),
+      expiresAt: external_exports2.string().datetime().optional()
+    });
+    BrokerGrantSchema = external_exports2.object({
+      planId: external_exports2.string().min(1),
+      fingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/),
+      approvedAt: external_exports2.string().datetime(),
+      dialog: external_exports2.literal("host-dialog"),
+      mac: external_exports2.string().regex(/^[a-f0-9]{64}$/)
+    });
+  }
+});
+
+// node_modules/@praxis/contracts/dist/broker.js
+function executionRequestFingerprint(request) {
+  return `sha256:${(0, import_node_crypto3.createHash)("sha256").update(JSON.stringify(canonicalize(request))).digest("hex")}`;
+}
+function securityMode() {
+  const raw = process.env.PRAXIS_SECURITY_MODE?.trim() ?? "";
+  if (raw === "compatibility")
+    return "compatibility";
+  if (raw === "secure" || raw === "")
+    return "secure";
+  throw new WorkflowError("APPROVAL_REQUIRED", "PRAXIS_SECURITY_MODE must be secure or compatibility");
+}
+function canonicalAuthorizationBytes(body) {
+  return Buffer.from(JSON.stringify(canonicalize(body)));
+}
+function decodeAuthorization(token) {
+  let parsed;
+  try {
+    parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
+  } catch {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
+  }
+  const signature = parsed.signature;
+  const body = parsed.body;
+  if (typeof signature !== "string" || !body || typeof body !== "object") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
+  }
+  return { body, signature };
+}
+function signingKeyVisibleToThisProcess() {
+  if (process.env.PRAXIS_APPROVAL_PRIVATE_KEY?.trim())
+    return true;
+  const keyPath = process.env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH?.trim();
+  if (!keyPath)
+    return false;
+  try {
+    (0, import_node_fs2.accessSync)(keyPath, import_node_fs2.constants.R_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function assertSigningKeyHidden() {
+  if (signingKeyVisibleToThisProcess()) {
+    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
+  }
+}
+function pathInside(parent, child) {
+  const rel = (0, import_node_path.relative)((0, import_node_path.resolve)(parent), (0, import_node_path.resolve)(child));
+  return rel === "" || !rel.startsWith("..") && !rel.startsWith("/");
+}
+function assessDeploymentThreats(opts) {
+  const mode = securityMode();
+  const sockets = opts?.dockerSockets ?? [
+    "/var/run/docker.sock",
+    `${process.env.HOME ?? ""}/.docker/run/docker.sock`
+  ].filter(Boolean);
+  let dockerSocketAccessible = false;
+  for (const socket of sockets) {
+    try {
+      (0, import_node_fs2.accessSync)(socket, import_node_fs2.constants.R_OK | import_node_fs2.constants.W_OK);
+      dockerSocketAccessible = true;
+      break;
+    } catch {
+    }
+  }
+  const signingKeyVisible = signingKeyVisibleToThisProcess();
+  const blocking = [];
+  const warnings = [];
+  if (mode === "compatibility") {
+    warnings.push("compatibility mode trusts forgeable local approval files against same-user agents");
+  }
+  if (mode === "secure" && signingKeyVisible) {
+    blocking.push("approval signing key is visible to this process");
+  }
+  const deploymentModel = process.env.PRAXIS_DEPLOYMENT_MODEL?.trim() ?? "";
+  if (mode === "secure" && deploymentModel === "docker-uid" && dockerSocketAccessible && process.env.PRAXIS_ALLOW_DOCKER_SOCKET !== "1") {
+    blocking.push("Docker control socket is accessible to this process; the agent can attach trusted volumes and defeat UID isolation");
+  } else if (mode === "secure" && dockerSocketAccessible) {
+    warnings.push("Docker socket is visible; set PRAXIS_DEPLOYMENT_MODEL=docker-uid to fail closed when using UID isolation");
+  }
+  return { mode, dockerSocketAccessible, signingKeyVisible, blocking, warnings };
+}
+function assertSecureDeployment() {
+  const assessment = assessDeploymentThreats();
+  if (assessment.blocking.length) {
+    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", assessment.blocking.join("; "));
+  }
+  return assessment;
+}
+function assertSecureExecutor(repo) {
+  assertSecureDeployment();
+  assertSigningKeyHidden();
+  const publicKeyPem = process.env.PRAXIS_APPROVAL_PUBLIC_KEY?.trim() || (process.env.PRAXIS_APPROVAL_PUBLIC_KEY_PATH ? (0, import_node_fs2.readFileSync)(process.env.PRAXIS_APPROVAL_PUBLIC_KEY_PATH, "utf8") : void 0);
+  const ledger = process.env.PRAXIS_APPROVAL_LEDGER?.trim();
+  if (!publicKeyPem || !ledger) {
+    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "secure mode requires PRAXIS_APPROVAL_PUBLIC_KEY (or PATH) and PRAXIS_APPROVAL_LEDGER outside the workspace");
+  }
+  if (pathInside(repo, ledger)) {
+    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval ledger is inside the agent workspace");
+  }
+  return { ledger: (0, import_node_path.resolve)(ledger), publicKeyPem };
+}
+function verifyAuthorization(token, publicKeyPem, now = /* @__PURE__ */ new Date()) {
+  const signed = decodeAuthorization(token);
+  const body = signed.body;
+  if (body.contract !== AUTHORIZATION_CONTRACT || body.version !== AUTHORIZATION_VERSION) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization contract is not accepted");
+  }
+  const ok = (0, import_node_crypto3.verify)(null, canonicalAuthorizationBytes(body), (0, import_node_crypto3.createPublicKey)(publicKeyPem), Buffer.from(signed.signature, "base64"));
+  if (!ok)
+    throw new WorkflowError("APPROVAL_REQUIRED", "authorization signature is not valid");
+  const expires = Date.parse(body.expiresAt);
+  const issued = Date.parse(body.issuedAt);
+  if (!Number.isFinite(expires) || !Number.isFinite(issued) || now.getTime() > expires || issued > expires) {
+    throw new WorkflowError("APPROVAL_EXPIRED", "authorization has expired");
+  }
+  return body;
+}
+function authorizationMatches(body, target) {
+  if (body.planFingerprint !== target.planFingerprint) {
+    throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "plan fingerprint is not the approved revision");
+  }
+  if (body.provider !== target.provider) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "provider is not the approved provider");
+  }
+  if (target.instanceId !== void 0 && body.instanceId !== target.instanceId) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "provider instance is not the approved instance");
+  }
+  if (!body.operations.includes(target.operation)) {
+    throw new WorkflowError("APPROVAL_SCOPE_SEPARATE", "operation is outside the approved scope");
+  }
+  if (body.action !== target.action) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "action is outside the approved scope");
+  }
+  if (target.workItemId !== void 0 && !body.workItemIds.includes(target.workItemId)) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "work item is outside the approved scope");
+  }
+  if (target.repository !== void 0 && !body.repositories.includes(target.repository)) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "repository is outside the approved scope");
+  }
+  if (body.planId !== void 0 && target.planId !== void 0 && body.planId !== target.planId) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "plan id is not the approved plan");
+  }
+  if (body.targets !== void 0 && target.targets !== void 0) {
+    if (JSON.stringify(body.targets) !== JSON.stringify(target.targets)) {
+      throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "targets are not the approved resources");
+    }
+  }
+  if (body.contentDigest !== void 0 && target.contentDigest !== void 0 && body.contentDigest !== target.contentDigest) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "content is not the approved change");
+  }
+}
+function ledgerFile(ledger, consumptionId) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(consumptionId)) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "consumption id is not accepted");
+  }
+  return (0, import_node_path.resolve)(ledger, `${consumptionId}.json`);
+}
+function readLedgerEntry(ledger, consumptionId) {
+  try {
+    return JSON.parse((0, import_node_fs2.readFileSync)(ledgerFile(ledger, consumptionId), "utf8"));
+  } catch {
+    return void 0;
+  }
+}
+function writeLedgerEntry(ledger, consumptionId, entry) {
+  (0, import_node_fs2.mkdirSync)(ledger, { recursive: true });
+  const dest = ledgerFile(ledger, consumptionId);
+  const tmp = `${dest}.${process.pid}.${Date.now()}.tmp`;
+  (0, import_node_fs2.writeFileSync)(tmp, `${JSON.stringify(entry)}
+`);
+  (0, import_node_fs2.renameSync)(tmp, dest);
+}
+function reserveLedgerEntry(ledger, consumptionId, requestFingerprint) {
+  (0, import_node_fs2.mkdirSync)(ledger, { recursive: true });
+  const dest = ledgerFile(ledger, consumptionId);
+  const entry = { status: "started", requestFingerprint };
+  try {
+    const fd = (0, import_node_fs2.openSync)(dest, import_node_fs2.constants.O_CREAT | import_node_fs2.constants.O_EXCL | import_node_fs2.constants.O_WRONLY, 384);
+    try {
+      (0, import_node_fs2.writeSync)(fd, `${JSON.stringify(entry)}
+`);
+    } finally {
+      (0, import_node_fs2.closeSync)(fd);
+    }
+    return { created: true, entry };
+  } catch (error64) {
+    if (error64.code === "EEXIST") {
+      const existing = readLedgerEntry(ledger, consumptionId);
+      if (!existing) {
+        throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", "ledger reservation conflict");
+      }
+      return { created: false, entry: existing };
+    }
+    throw error64;
+  }
+}
+function completeLedgerEntry(ledger, consumptionId, requestFingerprint, result) {
+  writeLedgerEntry(ledger, consumptionId, { status: "completed", requestFingerprint, result });
+}
+function failLedgerEntry(ledger, consumptionId, requestFingerprint, error64, status = "failed") {
+  writeLedgerEntry(ledger, consumptionId, { status, requestFingerprint, error: error64 });
+}
+var import_node_crypto3, import_node_fs2, import_node_path, AUTHORIZATION_CONTRACT, AUTHORIZATION_VERSION;
+var init_broker = __esm({
+  "node_modules/@praxis/contracts/dist/broker.js"() {
+    import_node_crypto3 = require("node:crypto");
+    import_node_fs2 = require("node:fs");
+    import_node_path = require("node:path");
+    init_approval();
+    init_workflow();
+    AUTHORIZATION_CONTRACT = "praxis.approval.authorization";
+    AUTHORIZATION_VERSION = 1;
+  }
+});
+
+// node_modules/@praxis/contracts/dist/action-plan.js
+var ACTION_PLAN_CONTRACT, ACTION_PLAN_VERSION, DecisionKindSchema, ActionPlanSchema;
+var init_action_plan = __esm({
+  "node_modules/@praxis/contracts/dist/action-plan.js"() {
+    init_zod();
+    init_approval();
+    init_workflow();
+    ACTION_PLAN_CONTRACT = "praxis.action.plan";
+    ACTION_PLAN_VERSION = 1;
+    DecisionKindSchema = external_exports2.enum([
+      "architecture_decision",
+      "story_behavior",
+      "requirement_acceptance",
+      "development_action",
+      "quality_verdict",
+      "git_operation",
+      "issue_tracker_mutation"
+    ]);
+    ActionPlanSchema = external_exports2.object({
+      contract: external_exports2.literal(ACTION_PLAN_CONTRACT),
+      version: external_exports2.literal(ACTION_PLAN_VERSION),
+      planId: external_exports2.string().min(1),
+      role: WorkflowRoleSchema.exclude(["user"]),
+      decisionKind: DecisionKindSchema,
+      summary: external_exports2.string().min(1),
+      provider: WorkTrackingProviderSchema,
+      instanceId: external_exports2.string().min(1),
+      operations: external_exports2.array(ApprovalOperationSchema).min(1),
+      workItemIds: external_exports2.array(external_exports2.string()).default([]),
+      storyIds: external_exports2.array(external_exports2.string()).default([]),
+      decisionIds: external_exports2.array(external_exports2.string()).default([]),
+      repositories: external_exports2.array(external_exports2.string()).default([]),
+      branch: external_exports2.string().optional(),
+      remote: external_exports2.string().optional(),
+      actions: external_exports2.array(external_exports2.object({
+        action: external_exports2.string().min(1),
+        description: external_exports2.string().min(1),
+        targets: external_exports2.array(external_exports2.string()).default([]),
+        /** Exact approved change for fixture writes. Bound into the plan fingerprint. */
+        content: external_exports2.string().optional()
+      })).min(1),
+      risks: external_exports2.array(external_exports2.string()).default([]),
+      sideEffects: external_exports2.array(external_exports2.string()).default([]),
+      createdAt: external_exports2.string().datetime(),
+      expiresAt: external_exports2.string().datetime(),
+      fingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/)
+    });
+  }
+});
+
+// node_modules/@praxis/contracts/dist/approval-store.js
+function approvalsDir(repo) {
+  return (0, import_node_path2.join)((0, import_node_path2.resolve)(repo), ".praxis", "approvals");
+}
+function approvalPath(repo, planId) {
+  if (!PLAN_ID.test(planId)) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "plan id is not a persisted approval name");
+  }
+  return (0, import_node_path2.join)(approvalsDir(repo), `${planId}.json`);
+}
+function parseRecord(raw) {
+  if (!raw || typeof raw !== "object") {
+    throw new WorkflowError("APPROVAL_REQUIRED", "approval record is unreadable");
+  }
+  const record5 = raw;
+  if (record5.recordContract !== APPROVAL_RECORD_CONTRACT || record5.recordVersion !== APPROVAL_RECORD_VERSION) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "approval record version is not supported");
+  }
+  const plan = ApprovalPlanSchema.parse(record5.plan);
+  const consumptions = Array.isArray(record5.consumptions) ? record5.consumptions : [];
+  return { recordContract: APPROVAL_RECORD_CONTRACT, recordVersion: APPROVAL_RECORD_VERSION, plan, consumptions };
+}
+function readApproval(repo, planId) {
+  try {
+    return parseRecord(JSON.parse((0, import_node_fs3.readFileSync)(approvalPath(repo, planId), "utf8")));
+  } catch (error64) {
+    if (error64 instanceof WorkflowError)
+      throw error64;
+    throw new WorkflowError("APPROVAL_REQUIRED", `no stored approval ${planId}`);
+  }
+}
+function writeRecord(repo, record5) {
+  const dir = approvalsDir(repo);
+  (0, import_node_fs3.mkdirSync)(dir, { recursive: true });
+  (0, import_node_fs3.writeFileSync)(approvalPath(repo, record5.plan.planId), `${JSON.stringify(record5, null, 2)}
+`);
+}
+function listApprovals(repo) {
+  let names = [];
+  try {
+    names = (0, import_node_fs3.readdirSync)(approvalsDir(repo));
+  } catch {
+    return [];
+  }
+  const records = [];
+  for (const name of names) {
+    if (!name.endsWith(".json"))
+      continue;
+    try {
+      records.push(readApproval(repo, name.slice(0, -".json".length)));
+    } catch {
+      continue;
+    }
+  }
+  return records;
+}
+function consumptionKey(plan, request) {
+  return (0, import_node_crypto4.createHash)("sha256").update([
+    plan.planId,
+    String(plan.version),
+    plan.fingerprint,
+    request.action,
+    request.operation,
+    request.workItemId ?? "",
+    request.repository ?? "",
+    request.previewFingerprint ?? ""
+  ].join("\n")).digest("hex");
+}
+function selectRecord(request, now) {
+  if (request.planId) {
+    const record5 = readApproval(request.repo, request.planId);
+    if (request.planFingerprint && request.planFingerprint !== record5.plan.fingerprint) {
+      throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "plan fingerprint does not match the stored approval");
+    }
+    return record5;
+  }
+  const matches = listApprovals(request.repo).filter((record5) => {
+    try {
+      authorizeBound(record5.plan, request, now);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (matches.length !== 1) {
+    throw new WorkflowError(matches.length === 0 ? "APPROVAL_REQUIRED" : "APPROVAL_AMBIGUOUS", matches.length === 0 ? "no stored approval matches this operation" : "more than one stored approval matches this operation");
+  }
+  return matches[0];
+}
+function authorizeBound(plan, request, now) {
+  if (request.provider === "jira" && !request.instanceId) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "external instance is required");
+  }
+  authorizeOperation(plan, request.operation, {
+    workItemId: request.workItemId,
+    repository: request.repository,
+    provider: request.provider,
+    instanceId: request.instanceId,
+    previewFingerprint: request.previewFingerprint
+  }, now);
+  if (!plan.inScope.includes(request.action)) {
+    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `${request.action} is outside plan ${plan.planId}`);
+  }
+}
+function inspectMutation(request) {
+  const now = request.now ?? /* @__PURE__ */ new Date();
+  const record5 = selectRecord(request, now);
+  authorizeBound(record5.plan, request, now);
+  const key = consumptionKey(record5.plan, request);
+  const prior = record5.consumptions.find((item) => item.key === key);
+  if (prior?.status === "completed") {
+    return { kind: "replay", planId: record5.plan.planId, key, result: prior.result };
+  }
+  if (prior?.status === "started" && request.resumeInFlight) {
+    return { kind: "in_flight", planId: record5.plan.planId, key };
+  }
+  if (prior?.status === "started" || prior?.status === "aborted") {
+    throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", `${request.action} already started and must not run again`);
+  }
+  return { kind: "ready", planId: record5.plan.planId, key };
+}
+function updateConsumption(repo, planId, key, status, action, result) {
+  const record5 = readApproval(repo, planId);
+  const existing = record5.consumptions.find((item) => item.key === key);
+  const next = {
+    key,
+    action,
+    status,
+    at: (/* @__PURE__ */ new Date()).toISOString(),
+    ...result !== void 0 ? { result } : {}
+  };
+  const consumptions = existing ? record5.consumptions.map((item) => item.key === key ? next : item) : [...record5.consumptions, next];
+  writeRecord(repo, { ...record5, consumptions });
+}
+function beginConsumption(repo, planId, key, action) {
+  updateConsumption(repo, planId, key, "started", action);
+}
+function completeConsumption(repo, planId, key, action, result) {
+  updateConsumption(repo, planId, key, "completed", action, result);
+}
+function abortConsumption(repo, planId, key, action) {
+  updateConsumption(repo, planId, key, "aborted", action);
+}
+function hasMutationLease() {
+  return mutationLease.getStore() !== void 0;
+}
+function requireMutationLease() {
+  if (!mutationLease.getStore()) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "direct mutation is not authorized");
+  }
+}
+function isPromise(value) {
+  return Boolean(value) && typeof value.then === "function";
+}
+function runSecureMutation(request, write) {
+  const { ledger, publicKeyPem } = assertSecureExecutor(request.repo);
+  const authorization = request.authorization ?? process.env.PRAXIS_APPROVAL_AUTHORIZATION?.trim();
+  if (!authorization) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "secure mode requires a broker authorization for this plan");
+  }
+  const body = verifyAuthorization(authorization, publicKeyPem, request.now);
+  if (!request.planFingerprint) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "plan fingerprint is required for secure execution");
+  }
+  if (!request.instanceId) {
+    throw new WorkflowError("APPROVAL_REQUIRED", "provider instance is required for secure execution");
+  }
+  authorizationMatches(body, {
+    planFingerprint: request.planFingerprint,
+    provider: request.provider,
+    instanceId: request.instanceId,
+    operation: request.operation,
+    action: request.action,
+    workItemId: request.workItemId,
+    repository: request.repository,
+    planId: request.planId,
+    targets: body.targets,
+    contentDigest: body.contentDigest
+  });
+  const requestFingerprint = executionRequestFingerprint({
+    consumptionId: body.consumptionId,
+    planId: body.planId ?? request.planId ?? "",
+    planFingerprint: request.planFingerprint,
+    provider: request.provider,
+    instanceId: request.instanceId,
+    operation: request.operation,
+    action: request.action,
+    workItemId: request.workItemId ?? "",
+    repository: request.repository ?? request.repo,
+    targets: body.targets ?? [],
+    contentDigest: body.contentDigest ?? ""
+  });
+  const reserved = reserveLedgerEntry(ledger, body.consumptionId, requestFingerprint);
+  if (!reserved.created) {
+    if (reserved.entry.requestFingerprint && reserved.entry.requestFingerprint !== requestFingerprint) {
+      throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "authorization replay is bound to a different execution request");
+    }
+    if (reserved.entry.status === "completed")
+      return reserved.entry.result;
+    if (reserved.entry.status === "started") {
+      throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", "authorization consumption is already in progress");
+    }
+    throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", `authorization consumption is ${reserved.entry.status}; refuse uncontrolled retry`);
+  }
+  const finish = (result) => {
+    completeLedgerEntry(ledger, body.consumptionId, requestFingerprint, result);
+    return result;
+  };
+  const fail2 = (error64) => {
+    failLedgerEntry(ledger, body.consumptionId, requestFingerprint, error64 instanceof Error ? error64.message : String(error64));
+    throw error64;
+  };
+  try {
+    const result = mutationLease.run({ action: request.action }, write);
+    if (isPromise(result))
+      return result.then(finish, fail2);
+    return finish(result);
+  } catch (error64) {
+    return fail2(error64);
+  }
+}
+function runAuthorizedMutation(request, write) {
+  if (securityMode() === "secure")
+    return runSecureMutation(request, write);
+  const inspection = inspectMutation({ ...request, resumeInFlight: true });
+  if (inspection.kind === "replay")
+    return inspection.result;
+  const owner = inspection.kind === "ready";
+  if (owner)
+    beginConsumption(request.repo, inspection.planId, inspection.key, request.action);
+  const finish = (result) => {
+    if (owner)
+      completeConsumption(request.repo, inspection.planId, inspection.key, request.action, result);
+    return result;
+  };
+  const fail2 = (error64) => {
+    if (owner) {
+      try {
+        abortConsumption(request.repo, inspection.planId, inspection.key, request.action);
+      } catch {
+      }
+    }
+    throw error64;
+  };
+  try {
+    const result = mutationLease.run({ action: request.action }, write);
+    if (isPromise(result))
+      return result.then(finish, fail2);
+    return finish(result);
+  } catch (error64) {
+    return fail2(error64);
+  }
+}
+var import_node_async_hooks, import_node_crypto4, import_node_fs3, import_node_path2, APPROVAL_RECORD_CONTRACT, APPROVAL_RECORD_VERSION, PLAN_ID, mutationLease;
+var init_approval_store = __esm({
+  "node_modules/@praxis/contracts/dist/approval-store.js"() {
+    import_node_async_hooks = require("node:async_hooks");
+    import_node_crypto4 = require("node:crypto");
+    import_node_fs3 = require("node:fs");
+    import_node_path2 = require("node:path");
+    init_approval();
+    init_broker();
+    init_workflow();
+    APPROVAL_RECORD_CONTRACT = "praxis.approval.record";
+    APPROVAL_RECORD_VERSION = 1;
+    PLAN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+    mutationLease = new import_node_async_hooks.AsyncLocalStorage();
   }
 });
 
@@ -5538,6 +6388,10 @@ var init_dist = __esm({
     init_zod();
     init_git_host();
     init_workflow();
+    init_approval();
+    init_broker();
+    init_action_plan();
+    init_approval_store();
     init_story();
     init_jira_orchestration();
     ContractMetaSchema = external_exports2.object({
@@ -8637,8 +9491,8 @@ var require_int2 = __commonJS({
     var stringifyNumber = require_stringifyNumber();
     var intIdentify = (value) => typeof value === "bigint" || Number.isInteger(value);
     function intResolve(str2, offset, radix, { intAsBigInt }) {
-      const sign = str2[0];
-      if (sign === "-" || sign === "+")
+      const sign2 = str2[0];
+      if (sign2 === "-" || sign2 === "+")
         offset += 1;
       str2 = str2.substring(offset).replace(/_/g, "");
       if (intAsBigInt) {
@@ -8654,10 +9508,10 @@ var require_int2 = __commonJS({
             break;
         }
         const n2 = BigInt(str2);
-        return sign === "-" ? BigInt(-1) * n2 : n2;
+        return sign2 === "-" ? BigInt(-1) * n2 : n2;
       }
       const n = parseInt(str2, radix);
-      return sign === "-" ? -1 * n : n;
+      return sign2 === "-" ? -1 * n : n;
     }
     function intStringify(node4, radix, prefix2) {
       const { value } = node4;
@@ -8804,11 +9658,11 @@ var require_timestamp = __commonJS({
     "use strict";
     var stringifyNumber = require_stringifyNumber();
     function parseSexagesimal(str2, asBigInt) {
-      const sign = str2[0];
-      const parts = sign === "-" || sign === "+" ? str2.substring(1) : str2;
+      const sign2 = str2[0];
+      const parts = sign2 === "-" || sign2 === "+" ? str2.substring(1) : str2;
       const num = (n) => asBigInt ? BigInt(n) : Number(n);
       const res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num(60) + num(p), num(0));
-      return sign === "-" ? num(-1) * res : res;
+      return sign2 === "-" ? num(-1) * res : res;
     }
     function stringifySexagesimal(node4) {
       let { value } = node4;
@@ -8817,9 +9671,9 @@ var require_timestamp = __commonJS({
         num = (n) => BigInt(n);
       else if (isNaN(value) || !isFinite(value))
         return stringifyNumber.stringifyNumber(node4);
-      let sign = "";
+      let sign2 = "";
       if (value < 0) {
-        sign = "-";
+        sign2 = "-";
         value *= num(-1);
       }
       const _60 = num(60);
@@ -8834,7 +9688,7 @@ var require_timestamp = __commonJS({
           parts.unshift(value);
         }
       }
-      return sign + parts.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
+      return sign2 + parts.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
     }
     var intTime = {
       identify: (value) => typeof value === "bigint" || Number.isInteger(value),
@@ -13107,11 +13961,11 @@ function unsetFields(config4) {
 }
 function loadProjectConfig(repoRoot) {
   for (const name of PROJECT_FILE_NAMES) {
-    const path = (0, import_node_path5.join)(repoRoot, name);
-    if (!(0, import_node_fs5.existsSync)(path))
+    const path = (0, import_node_path7.join)(repoRoot, name);
+    if (!(0, import_node_fs8.existsSync)(path))
       continue;
     try {
-      const raw = (0, import_node_fs5.readFileSync)(path, "utf8");
+      const raw = (0, import_node_fs8.readFileSync)(path, "utf8");
       const data = (0, import_yaml.parse)(raw) ?? {};
       const config4 = ProjectConfigSchema.parse(data);
       return { status: "loaded", path, config: config4, unset: unsetFields(config4) };
@@ -13130,14 +13984,14 @@ function loadProjectConfig(repoRoot) {
     status: "missing",
     config: DEFAULTS,
     unset: unsetFields(DEFAULTS),
-    suggestedPath: (0, import_node_path5.join)(repoRoot, ".project")
+    suggestedPath: (0, import_node_path7.join)(repoRoot, ".project")
   };
 }
 function readJson2(path) {
-  if (!(0, import_node_fs5.existsSync)(path))
+  if (!(0, import_node_fs8.existsSync)(path))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs5.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs8.readFileSync)(path, "utf8"));
   } catch {
     return void 0;
   }
@@ -13145,7 +13999,7 @@ function readJson2(path) {
 function inferProjectConfig(repoRoot) {
   const existing = loadProjectConfig(repoRoot);
   const notes = [];
-  const pkg = readJson2((0, import_node_path5.join)(repoRoot, "package.json"));
+  const pkg = readJson2((0, import_node_path7.join)(repoRoot, "package.json"));
   const scripts = pkg && typeof pkg.scripts === "object" && pkg.scripts ? pkg.scripts : {};
   const stack = [];
   if (pkg) {
@@ -13171,18 +14025,20 @@ function inferProjectConfig(repoRoot) {
   return { proposed, yaml, notes, existing };
 }
 function writeProjectConfig(repoRoot, yamlOrConfig) {
-  const path = (0, import_node_path5.join)(repoRoot, ".project");
+  requireMutationLease();
+  const path = (0, import_node_path7.join)(repoRoot, ".project");
   const yaml = typeof yamlOrConfig === "string" ? yamlOrConfig.endsWith("\n") ? yamlOrConfig : `${yamlOrConfig}
 ` : `${(0, import_yaml.stringify)(yamlOrConfig).trimEnd()}
 `;
-  (0, import_node_fs5.writeFileSync)(path, yaml);
+  (0, import_node_fs8.writeFileSync)(path, yaml);
   return path;
 }
-var import_node_fs5, import_node_path5, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
+var import_node_fs8, import_node_path7, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
 var init_dist2 = __esm({
   "node_modules/@praxis/project-config/dist/index.js"() {
-    import_node_fs5 = require("node:fs");
-    import_node_path5 = require("node:path");
+    init_dist();
+    import_node_fs8 = require("node:fs");
+    import_node_path7 = require("node:path");
     import_yaml = __toESM(require_dist2(), 1);
     init_zod();
     ProjectConfigSchema = external_exports2.object({
@@ -13848,6 +14704,7 @@ async function applySemanticIssueTransition(provider, key, semantic) {
   if (plan.alreadySatisfied || !plan.id) {
     return { alreadySatisfied: true, available: plan.available };
   }
+  requireMutationLease();
   await provider.transitionIssue(key, plan.id);
   return {
     alreadySatisfied: false,
@@ -13859,6 +14716,7 @@ async function applySemanticIssueTransition(provider, key, semantic) {
 var JiraTransitionError, TARGET_CATEGORY, MAPPING_KEYS;
 var init_transitions = __esm({
   "node_modules/@praxis/jira/dist/transitions.js"() {
+    init_dist();
     JiraTransitionError = class extends Error {
       code;
       issueKey;
@@ -13891,13 +14749,24 @@ var init_transitions = __esm({
 });
 
 // node_modules/@praxis/jira/dist/rest-provider.js
-function createJiraProvider(opts) {
-  return new RestJiraProvider(opts);
+function gateProductionWrites(provider) {
+  for (const name of JIRA_WRITE_METHODS) {
+    const original = provider[name].bind(provider);
+    provider[name] = async (...args) => {
+      requireMutationLease();
+      return original(...args);
+    };
+  }
+  return provider;
 }
-var RestJiraProvider;
+function createJiraProvider(opts) {
+  return gateProductionWrites(new RestJiraProvider(opts));
+}
+var RestJiraProvider, JIRA_WRITE_METHODS;
 var init_rest_provider = __esm({
   "node_modules/@praxis/jira/dist/rest-provider.js"() {
     init_config();
+    init_dist();
     init_rich_text();
     init_http();
     init_issue_types();
@@ -14330,6 +15199,16 @@ var init_rest_provider = __esm({
         return this.getIssueProperty(key, "praxis.architecture");
       }
     };
+    JIRA_WRITE_METHODS = [
+      "createIssue",
+      "updateIssue",
+      "addComment",
+      "transitionIssue",
+      "setIssueProperty",
+      "createIssueLink",
+      "writePraxisState",
+      "writeArchitectureMetadata"
+    ];
   }
 });
 
@@ -14344,6 +15223,34 @@ var init_dist3 = __esm({
     init_http();
     init_issue_types();
     init_config();
+  }
+});
+
+// node_modules/@praxis/jira/dist/mutation-auth.js
+function jiraMutation(repo, spec) {
+  const root = (0, import_node_path8.resolve)(repo);
+  return {
+    repo: root,
+    operation: spec.operation,
+    provider: "jira",
+    instanceId: process.env.PRAXIS_JIRA_BASE_URL,
+    workItemId: spec.workItemId,
+    repository: root,
+    action: spec.action,
+    ...spec.previewFingerprint ? { previewFingerprint: spec.previewFingerprint } : {},
+    ...process.env.PRAXIS_APPROVAL_AUTHORIZATION ? { authorization: process.env.PRAXIS_APPROVAL_AUTHORIZATION } : {}
+  };
+}
+function authorizeJira(request, write) {
+  if (hasMutationLease())
+    return write();
+  return runAuthorizedMutation(request, write);
+}
+var import_node_path8;
+var init_mutation_auth = __esm({
+  "node_modules/@praxis/jira/dist/mutation-auth.js"() {
+    import_node_path8 = require("node:path");
+    init_dist();
   }
 });
 
@@ -14395,21 +15302,21 @@ var init_role_policy = __esm({
 
 // node_modules/@praxis/jira/dist/atomic-json.js
 function writeJsonAtomic(filePath, value) {
-  (0, import_node_fs6.mkdirSync)((0, import_node_path6.dirname)(filePath), { recursive: true });
+  (0, import_node_fs9.mkdirSync)((0, import_node_path9.dirname)(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  (0, import_node_fs6.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs9.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs6.renameSync)(tmp, filePath);
+  (0, import_node_fs9.renameSync)(tmp, filePath);
 }
 function readJsonFile(filePath, artifactType) {
-  if (!(0, import_node_fs6.existsSync)(filePath)) {
+  if (!(0, import_node_fs9.existsSync)(filePath)) {
     return {
       ok: false,
       reason: "missing",
       message: `${artifactType} unavailable (${filePath})`
     };
   }
-  const raw = (0, import_node_fs6.readFileSync)(filePath, "utf8");
+  const raw = (0, import_node_fs9.readFileSync)(filePath, "utf8");
   if (!raw.trim()) {
     return {
       ok: false,
@@ -14427,17 +15334,17 @@ function readJsonFile(filePath, artifactType) {
     };
   }
 }
-var import_node_fs6, import_node_path6;
+var import_node_fs9, import_node_path9;
 var init_atomic_json = __esm({
   "node_modules/@praxis/jira/dist/atomic-json.js"() {
-    import_node_fs6 = require("node:fs");
-    import_node_path6 = require("node:path");
+    import_node_fs9 = require("node:fs");
+    import_node_path9 = require("node:path");
   }
 });
 
 // node_modules/@praxis/jira/dist/write-journal.js
 function writeJournalPath(repo) {
-  return (0, import_node_path7.join)(repo, ".praxis-jira", "write-journal.json");
+  return (0, import_node_path10.join)(repo, ".praxis-jira", "write-journal.json");
 }
 function loadWriteJournal(repo) {
   const parsed = readJsonFile(writeJournalPath(repo), "jira-write-journal");
@@ -14479,10 +15386,10 @@ function advanceWriteOp(repo, operationId, patch) {
   };
   return upsertWriteOp(repo, next);
 }
-var import_node_path7;
+var import_node_path10;
 var init_write_journal = __esm({
   "node_modules/@praxis/jira/dist/write-journal.js"() {
-    import_node_path7 = require("node:path");
+    import_node_path10 = require("node:path");
     init_atomic_json();
   }
 });
@@ -14565,6 +15472,7 @@ function selectCanonicalKey(candidates, journalCanonical) {
   return sorted[0]?.key;
 }
 async function markSuperseded(provider, duplicateKey, canonicalKey2) {
+  requireMutationLease();
   await provider.setIssueProperty(duplicateKey, SUPERSEDED_PROP, true);
   await provider.setIssueProperty(duplicateKey, SUPERSEDED_BY_PROP, canonicalKey2);
   const issue4 = await provider.getIssue(duplicateKey);
@@ -14652,6 +15560,7 @@ async function assertCanonicalMembers(provider, keys) {
 var ARTIFACT_PROP, SUPERSEDED_PROP, SUPERSEDED_BY_PROP, DUPLICATE_LABEL, HISTORICAL_DUP;
 var init_managed_scope = __esm({
   "node_modules/@praxis/jira/dist/managed-scope.js"() {
+    init_dist();
     init_write_journal();
     ARTIFACT_PROP = "praxis.artifactId";
     SUPERSEDED_PROP = "praxis.superseded";
@@ -14663,18 +15572,18 @@ var init_managed_scope = __esm({
 
 // node_modules/@praxis/jira/dist/work-package-local.js
 function listDirs(abs) {
-  if (!(0, import_node_fs7.existsSync)(abs))
+  if (!(0, import_node_fs10.existsSync)(abs))
     return [];
-  return (0, import_node_fs7.readdirSync)(abs).map((n) => (0, import_node_path8.join)(abs, n)).filter((p) => {
+  return (0, import_node_fs10.readdirSync)(abs).map((n) => (0, import_node_path11.join)(abs, n)).filter((p) => {
     try {
-      return (0, import_node_fs7.statSync)(p).isDirectory();
+      return (0, import_node_fs10.statSync)(p).isDirectory();
     } catch {
       return false;
     }
   });
 }
 function readIf(path) {
-  return (0, import_node_fs7.existsSync)(path) ? (0, import_node_fs7.readFileSync)(path, "utf8") : void 0;
+  return (0, import_node_fs10.existsSync)(path) ? (0, import_node_fs10.readFileSync)(path, "utf8") : void 0;
 }
 function extractMermaid(text) {
   const out = [];
@@ -14692,7 +15601,7 @@ function discoverLocalWorkPackages(repo) {
       return;
     const cur = byId.get(id) ?? {
       id,
-      manifestDir: (0, import_node_path8.join)(repo, "work-packages", id),
+      manifestDir: (0, import_node_path11.join)(repo, "work-packages", id),
       mermaid: []
     };
     if (kind === "design")
@@ -14703,24 +15612,24 @@ function discoverLocalWorkPackages(repo) {
       cur.manifestDir = abs;
     byId.set(id, cur);
   };
-  for (const p of listDirs((0, import_node_path8.join)(repo, "design")))
+  for (const p of listDirs((0, import_node_path11.join)(repo, "design")))
     take(p, "design");
-  for (const p of listDirs((0, import_node_path8.join)(repo, "wp")))
+  for (const p of listDirs((0, import_node_path11.join)(repo, "wp")))
     take(p, "canon");
-  for (const p of listDirs((0, import_node_path8.join)(repo, "work-packages")))
+  for (const p of listDirs((0, import_node_path11.join)(repo, "work-packages")))
     take(p, "manifest");
   for (const wp of byId.values()) {
     const root = wp.designDir ?? wp.canonWpDir ?? wp.manifestDir;
-    const spec = (0, import_node_path8.join)(root, "change-spec.json");
-    const handoff4 = (0, import_node_path8.join)(root, "architect-developer.handoff.json");
-    wp.changeSpecPath = (0, import_node_fs7.existsSync)(spec) ? spec : void 0;
-    wp.handoffPath = (0, import_node_fs7.existsSync)(handoff4) ? handoff4 : void 0;
-    wp.indexMd = readIf((0, import_node_path8.join)(root, "index.md"));
+    const spec = (0, import_node_path11.join)(root, "change-spec.json");
+    const handoff4 = (0, import_node_path11.join)(root, "architect-developer.handoff.json");
+    wp.changeSpecPath = (0, import_node_fs10.existsSync)(spec) ? spec : void 0;
+    wp.handoffPath = (0, import_node_fs10.existsSync)(handoff4) ? handoff4 : void 0;
+    wp.indexMd = readIf((0, import_node_path11.join)(root, "index.md"));
     const blob = [
       wp.indexMd ?? "",
-      readIf((0, import_node_path8.join)(root, "decisions.md")) ?? "",
-      readIf((0, import_node_path8.join)(root, "nfr-budgets.md")) ?? "",
-      readIf((0, import_node_path8.join)(root, "contracts.md")) ?? ""
+      readIf((0, import_node_path11.join)(root, "decisions.md")) ?? "",
+      readIf((0, import_node_path11.join)(root, "nfr-budgets.md")) ?? "",
+      readIf((0, import_node_path11.join)(root, "contracts.md")) ?? ""
     ].join("\n");
     wp.mermaid = extractMermaid(blob);
   }
@@ -14740,11 +15649,11 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   if (byId)
     return byId;
   for (const w of all) {
-    const manifestPath = (0, import_node_path8.join)(w.manifestDir, "manifest.json");
-    if (!(0, import_node_fs7.existsSync)(manifestPath))
+    const manifestPath = (0, import_node_path11.join)(w.manifestDir, "manifest.json");
+    if (!(0, import_node_fs10.existsSync)(manifestPath))
       continue;
     try {
-      const m = JSON.parse((0, import_node_fs7.readFileSync)(manifestPath, "utf8"));
+      const m = JSON.parse((0, import_node_fs10.readFileSync)(manifestPath, "utf8"));
       if (m.jiraIssueKey === idOrKey || m.id === idOrKey)
         return w;
     } catch {
@@ -14753,24 +15662,24 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   return void 0;
 }
 function writeWpManifest(repo, wp) {
-  const dir = (0, import_node_path8.join)(repo, "work-packages", wp.id);
-  (0, import_node_fs7.mkdirSync)(dir, { recursive: true });
-  const path = (0, import_node_path8.join)(dir, "manifest.json");
-  (0, import_node_fs7.writeFileSync)(path, `${JSON.stringify(wp, null, 2)}
+  const dir = (0, import_node_path11.join)(repo, "work-packages", wp.id);
+  (0, import_node_fs10.mkdirSync)(dir, { recursive: true });
+  const path = (0, import_node_path11.join)(dir, "manifest.json");
+  (0, import_node_fs10.writeFileSync)(path, `${JSON.stringify(wp, null, 2)}
 `);
   return path;
 }
 function readWpManifest(repo, id) {
-  const path = (0, import_node_path8.join)(repo, "work-packages", id, "manifest.json");
-  if (!(0, import_node_fs7.existsSync)(path))
+  const path = (0, import_node_path11.join)(repo, "work-packages", id, "manifest.json");
+  if (!(0, import_node_fs10.existsSync)(path))
     return void 0;
-  return JSON.parse((0, import_node_fs7.readFileSync)(path, "utf8"));
+  return JSON.parse((0, import_node_fs10.readFileSync)(path, "utf8"));
 }
-var import_node_fs7, import_node_path8, WP_ID_RE;
+var import_node_fs10, import_node_path11, WP_ID_RE;
 var init_work_package_local = __esm({
   "node_modules/@praxis/jira/dist/work-package-local.js"() {
-    import_node_fs7 = require("node:fs");
-    import_node_path8 = require("node:path");
+    import_node_fs10 = require("node:fs");
+    import_node_path11 = require("node:path");
     WP_ID_RE = /^WP-\d{8}-\d+$/;
   }
 });
@@ -14817,9 +15726,9 @@ function firstMarkdownHeading(md) {
   return void 0;
 }
 function readText(path) {
-  if (!path || !(0, import_node_fs8.existsSync)(path))
+  if (!path || !(0, import_node_fs11.existsSync)(path))
     return void 0;
-  return (0, import_node_fs8.readFileSync)(path, "utf8");
+  return (0, import_node_fs11.readFileSync)(path, "utf8");
 }
 function readJson3(path) {
   const raw = readText(path);
@@ -14872,10 +15781,10 @@ function jiraWpSummary(id, title) {
   return `[${id}] ${title}`;
 }
 function readNormalizedWorkPackage(repo, local, opts) {
-  const designIndex = local.designDir ? readText((0, import_node_path9.join)(local.designDir, "index.md")) : void 0;
-  const canonIndex = local.canonWpDir ? readText((0, import_node_path9.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path9.join)(repo, "wp", local.id, "index.md"));
-  const manifest = readJson3((0, import_node_path9.join)(local.manifestDir, "manifest.json"));
-  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path9.join)(local.designDir, "change-spec.json") : void 0);
+  const designIndex = local.designDir ? readText((0, import_node_path12.join)(local.designDir, "index.md")) : void 0;
+  const canonIndex = local.canonWpDir ? readText((0, import_node_path12.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path12.join)(repo, "wp", local.id, "index.md"));
+  const manifest = readJson3((0, import_node_path12.join)(local.manifestDir, "manifest.json"));
+  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path12.join)(local.designDir, "change-spec.json") : void 0);
   const spec = readJson3(specPath);
   const fm = {
     ...parseSimpleFrontmatter(splitFrontmatter(designIndex ?? "").frontmatter),
@@ -14953,11 +15862,11 @@ function selectArchitectWorkPackages(opts) {
   }
   return { selected: selected ? [selected] : [], inspected };
 }
-var import_node_fs8, import_node_path9, INVALID_WP_TITLES, WorkPackageScopeError;
+var import_node_fs11, import_node_path12, INVALID_WP_TITLES, WorkPackageScopeError;
 var init_work_package_read = __esm({
   "node_modules/@praxis/jira/dist/work-package-read.js"() {
-    import_node_fs8 = require("node:fs");
-    import_node_path9 = require("node:path");
+    import_node_fs11 = require("node:fs");
+    import_node_path12 = require("node:path");
     init_work_package_local();
     INVALID_WP_TITLES = /* @__PURE__ */ new Set(["", "---", "-", "work package", "untitled"]);
     WorkPackageScopeError = class extends Error {
@@ -15090,6 +15999,14 @@ async function ensureManagedComment(provider, storyKey, body, dryRun) {
   return { action: "CREATE", commentId: created.id };
 }
 async function architectMaterialize(opts) {
+  if (!opts.dryRun && !hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_architect_apply",
+      operation: "external_record_update",
+      workItemId: opts.epicKey,
+      previewFingerprint: opts.previewFingerprint
+    }), () => architectMaterialize(opts));
+  }
   assertRole("architect", "read-epic");
   const remoteHandoff = await traced(opts.trace, "jira-status", () => opts.provider.getIssueProperty(opts.epicKey, "praxis.baHandoff"));
   if (!remoteHandoff?.readyForArchitecture) {
@@ -15293,8 +16210,8 @@ ${usefulMermaid[0]}
       await opts.provider.writePraxisState(wpKey, {
         lifecycle: "ready-for-development"
       });
-      const handoffPath2 = local.handoffPath ?? (0, import_node_path10.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
-      const prev = (0, import_node_fs9.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs9.readFileSync)(handoffPath2, "utf8")) : {};
+      const handoffPath2 = local.handoffPath ?? (0, import_node_path13.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
+      const prev = (0, import_node_fs12.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs12.readFileSync)(handoffPath2, "utf8")) : {};
       writeJsonAtomic(handoffPath2, {
         ...prev,
         contract: prev.contract ?? "architect.developer.handoff",
@@ -15358,11 +16275,11 @@ ${usefulMermaid[0]}
     outOfScopeWorkPackages
   };
 }
-var import_node_fs9, import_node_path10, WP_PROP, ARCH_COMMENT_PROP;
+var import_node_fs12, import_node_path13, WP_PROP, ARCH_COMMENT_PROP;
 var init_architect_apply = __esm({
   "node_modules/@praxis/jira/dist/architect-apply.js"() {
-    import_node_fs9 = require("node:fs");
-    import_node_path10 = require("node:path");
+    import_node_fs12 = require("node:fs");
+    import_node_path13 = require("node:path");
     init_rich_text();
     init_role_policy();
     init_managed_scope();
@@ -15370,6 +16287,7 @@ var init_architect_apply = __esm({
     init_work_package_local();
     init_work_package_read();
     init_preview_trace();
+    init_mutation_auth();
     WP_PROP = "praxis.workPackage";
     ARCH_COMMENT_PROP = "praxis.architectCommentId";
   }
@@ -15400,7 +16318,7 @@ var init_artifact_id = __esm({
 
 // node_modules/@praxis/jira/dist/ba-write.js
 function contentFingerprint(spec) {
-  return (0, import_node_crypto2.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto5.createHash)("sha256").update(JSON.stringify({
     summary: spec.summary,
     userStory: spec.userStory,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -15470,6 +16388,13 @@ function formatBaWritePlan(items) {
   return lines.join("\n");
 }
 async function planAndApplyBaStories(opts) {
+  if (!opts.dryRun && !hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_ba_apply",
+      operation: "external_record_update",
+      workItemId: opts.epicKey
+    }), () => planAndApplyBaStories(opts));
+  }
   const flags = opts.flags ?? await loadEpicIssueFlags(opts.provider, opts.epicKey);
   const claimed = /* @__PURE__ */ new Set();
   const plan = [];
@@ -15622,14 +16547,15 @@ async function planAndApplyBaStories(opts) {
     flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey)
   };
 }
-var import_node_crypto2;
+var import_node_crypto5;
 var init_ba_write = __esm({
   "node_modules/@praxis/jira/dist/ba-write.js"() {
-    import_node_crypto2 = require("node:crypto");
+    import_node_crypto5 = require("node:crypto");
     init_artifact_id();
     init_managed_scope();
     init_write_journal();
     init_rich_text();
+    init_mutation_auth();
   }
 });
 
@@ -15750,10 +16676,10 @@ var init_legacy_adopt = __esm({
 
 // node_modules/@praxis/jira/dist/developer-complete.js
 function readJson4(path) {
-  if (!(0, import_node_fs10.existsSync)(path))
+  if (!(0, import_node_fs13.existsSync)(path))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs10.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs13.readFileSync)(path, "utf8"));
   } catch {
     return void 0;
   }
@@ -15761,10 +16687,10 @@ function readJson4(path) {
 function loadQualityTestCommand(repo) {
   const names = [".project", ".project.yaml", ".project.yml"];
   for (const name of names) {
-    const p = (0, import_node_path11.join)(repo, name);
-    if (!(0, import_node_fs10.existsSync)(p))
+    const p = (0, import_node_path14.join)(repo, name);
+    if (!(0, import_node_fs13.existsSync)(p))
       continue;
-    const raw = (0, import_node_fs10.readFileSync)(p, "utf8");
+    const raw = (0, import_node_fs13.readFileSync)(p, "utf8");
     let inQ = false;
     for (const line of raw.split("\n")) {
       if (/^quality:\s*$/.test(line)) {
@@ -15780,10 +16706,10 @@ function loadQualityTestCommand(repo) {
         return m[1].replace(/^["']|["']$/g, "").trim();
     }
   }
-  const pkgPath = (0, import_node_path11.join)(repo, "package.json");
-  if ((0, import_node_fs10.existsSync)(pkgPath)) {
+  const pkgPath = (0, import_node_path14.join)(repo, "package.json");
+  if ((0, import_node_fs13.existsSync)(pkgPath)) {
     try {
-      const pkg = JSON.parse((0, import_node_fs10.readFileSync)(pkgPath, "utf8"));
+      const pkg = JSON.parse((0, import_node_fs13.readFileSync)(pkgPath, "utf8"));
       if (pkg.scripts?.test)
         return "npm test";
     } catch {
@@ -15830,14 +16756,14 @@ function runProjectVerification(repo) {
   return { command, exitCode, ok, stdout, timestamp, ...counts };
 }
 function completionPaths(repo, workPackageId) {
-  const design = (0, import_node_path11.join)(repo, "design", workPackageId);
-  const dev = (0, import_node_path11.join)(design, "dev");
+  const design = (0, import_node_path14.join)(repo, "design", workPackageId);
+  const dev = (0, import_node_path14.join)(design, "dev");
   return {
     designDir: design,
-    evidencePath: (0, import_node_path11.join)(dev, "completion-evidence.json"),
-    qualityHandoffPath: (0, import_node_path11.join)(dev, "quality-handoff.json"),
-    changeSpecPath: (0, import_node_path11.join)(design, "change-spec.json"),
-    architectHandoffPath: (0, import_node_path11.join)(design, "architect-developer.handoff.json")
+    evidencePath: (0, import_node_path14.join)(dev, "completion-evidence.json"),
+    qualityHandoffPath: (0, import_node_path14.join)(dev, "quality-handoff.json"),
+    changeSpecPath: (0, import_node_path14.join)(design, "change-spec.json"),
+    architectHandoffPath: (0, import_node_path14.join)(design, "architect-developer.handoff.json")
   };
 }
 function readChangeSpec(repo, id) {
@@ -15882,10 +16808,10 @@ function persistLocalComplete(opts) {
     qualityState: "pending",
     claim: opts.claim ? { ...opts.claim, state: "active", expectedState: "ready-for-qa" } : prev.claim ?? null
   });
-  const claimFile = (0, import_node_path11.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
+  const claimFile = (0, import_node_path14.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
   if (opts.claim) {
-    (0, import_node_fs10.mkdirSync)((0, import_node_path11.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-    (0, import_node_fs10.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
+    (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+    (0, import_node_fs13.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
 `);
   }
   void opts.verification;
@@ -15916,6 +16842,13 @@ async function developerCompleteWp(opts) {
       failed: verification.failed
     });
   }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_developer_complete",
+      operation: "external_state_change",
+      workItemId: opts.wpKey
+    }), () => developerCompleteWp(opts));
+  }
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   if (!manifest) {
     throw new DeveloperCompleteError("WORK_PACKAGE_INVALID_STATE", `missing work package manifest on ${wpKey}`);
@@ -15931,7 +16864,7 @@ async function developerCompleteWp(opts) {
   const arch = readJson4(paths.architectHandoffPath) ?? {};
   const features = Array.isArray(spec.features) ? spec.features : Array.isArray(arch.features) ? arch.features : [];
   const acceptanceChecks = acceptanceFromSpec(spec);
-  (0, import_node_fs10.mkdirSync)((0, import_node_path11.join)(paths.designDir, "dev"), { recursive: true });
+  (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(paths.designDir, "dev"), { recursive: true });
   let evidence;
   let handoff4;
   try {
@@ -16047,7 +16980,7 @@ ${paths.qualityHandoffPath}`
   };
 }
 function fingerprint(value) {
-  return `sha256:${(0, import_node_crypto3.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto6.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 async function previewDeveloperCompleteRecovery(opts) {
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
@@ -16111,6 +17044,14 @@ async function applyDeveloperCompleteRecovery(opts) {
   if (preview.previewFingerprint !== opts.previewFingerprint) {
     throw new DeveloperCompleteError("CONFLICT", "previewFingerprint mismatch; re-run recovery preview", { expected: preview.previewFingerprint, got: opts.previewFingerprint });
   }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_developer_complete_recovery_apply",
+      operation: "external_state_change",
+      workItemId: opts.wpKey,
+      previewFingerprint: opts.previewFingerprint
+    }), () => applyDeveloperCompleteRecovery(opts));
+  }
   if (preview.prematureDone) {
     assertRole("developer", "transition-in-progress");
     await applySemanticIssueTransition(opts.provider, preview.jiraWorkPackageKey, "START_DEVELOPMENT");
@@ -16140,14 +17081,15 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto3, import_node_fs10, import_node_path11, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto6, import_node_fs13, import_node_path14, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
-    import_node_crypto3 = require("node:crypto");
-    import_node_fs10 = require("node:fs");
-    import_node_path11 = require("node:path");
+    import_node_crypto6 = require("node:crypto");
+    import_node_fs13 = require("node:fs");
+    import_node_path14 = require("node:path");
     import_node_child_process3 = require("node:child_process");
     init_dist();
+    init_mutation_auth();
     init_role_policy();
     init_transitions();
     init_work_package_local();
@@ -16169,10 +17111,10 @@ var init_developer_complete = __esm({
 
 // node_modules/@praxis/jira/dist/quality-apply.js
 function digest(value) {
-  return (0, import_node_crypto4.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
+  return (0, import_node_crypto7.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sha256Text(text) {
-  return (0, import_node_crypto4.createHash)("sha256").update(text).digest("hex");
+  return (0, import_node_crypto7.createHash)("sha256").update(text).digest("hex");
 }
 function qualityApplyFingerprint(plan) {
   return `sha256:${digest({
@@ -16204,47 +17146,47 @@ function qualityApplyFingerprint(plan) {
   })}`;
 }
 function qualityEvidencePath(repo, workPackageId) {
-  return (0, import_node_path12.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  return (0, import_node_path15.join)(repo, "design", workPackageId, "qa", "quality-review.json");
 }
 function qualityEvidenceSidecarPath(repo, workPackageId) {
-  return (0, import_node_path12.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  return (0, import_node_path15.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
 }
 function qualityApplyPreviewPath(repo, workPackageId) {
-  return (0, import_node_path12.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
+  return (0, import_node_path15.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
 }
 function qualityApplyResultPath(repo, workPackageId) {
-  return (0, import_node_path12.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
+  return (0, import_node_path15.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
 }
 function readQualityEvidence(repo, workPackageId) {
   const p = qualityEvidencePath(repo, workPackageId);
   const alt = qualityEvidenceSidecarPath(repo, workPackageId);
-  const file2 = (0, import_node_fs11.existsSync)(p) ? p : (0, import_node_fs11.existsSync)(alt) ? alt : void 0;
+  const file2 = (0, import_node_fs14.existsSync)(p) ? p : (0, import_node_fs14.existsSync)(alt) ? alt : void 0;
   if (!file2)
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs11.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs14.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeQualityEvidence(repo, evidence) {
   const p = qualityEvidencePath(repo, evidence.workPackageId);
-  (0, import_node_fs11.mkdirSync)((0, import_node_path12.join)(p, ".."), { recursive: true });
-  (0, import_node_fs11.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(p, ".."), { recursive: true });
+  (0, import_node_fs14.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
 `);
   const side = qualityEvidenceSidecarPath(repo, evidence.workPackageId);
-  (0, import_node_fs11.mkdirSync)((0, import_node_path12.join)(side, ".."), { recursive: true });
-  (0, import_node_fs11.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(side, ".."), { recursive: true });
+  (0, import_node_fs14.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
 `);
   return p;
 }
 function liveSnapshotDigest(repo, files) {
   const uniq = [...new Set((files ?? []).map((f) => f.path).filter(Boolean))].sort();
   const entries = uniq.map((rel) => {
-    const abs = (0, import_node_path12.join)(repo, rel);
-    if (!(0, import_node_fs11.existsSync)(abs))
+    const abs = (0, import_node_path15.join)(repo, rel);
+    if (!(0, import_node_fs14.existsSync)(abs))
       return { path: rel, missing: true };
-    return { path: rel, sha256: sha256Text((0, import_node_fs11.readFileSync)(abs, "utf8")) };
+    return { path: rel, sha256: sha256Text((0, import_node_fs14.readFileSync)(abs, "utf8")) };
   });
   return sha256Text(JSON.stringify(entries));
 }
@@ -16252,8 +17194,8 @@ function commentBody(evidence) {
   return `${QUALITY_COMMENT_MARK} ${evidence.verdict} reviewId=${evidence.reviewId}`;
 }
 function writeJson(path, value) {
-  (0, import_node_fs11.mkdirSync)((0, import_node_path12.join)(path, ".."), { recursive: true });
-  (0, import_node_fs11.writeFileSync)(path, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(path, ".."), { recursive: true });
+  (0, import_node_fs14.writeFileSync)(path, `${JSON.stringify(value, null, 2)}
 `);
 }
 function propertyAction(wpKey, propertyKey, intendedValue) {
@@ -16433,10 +17375,10 @@ async function existingBugKey(provider, fingerprint2) {
 }
 function readQualityApplyResult(repo, workPackageId) {
   const p = qualityApplyResultPath(repo, workPackageId);
-  if (!(0, import_node_fs11.existsSync)(p))
+  if (!(0, import_node_fs14.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs11.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs14.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
@@ -16520,10 +17462,10 @@ async function applyQualityReview(opts) {
     throw new QualityApplyError("QUALITY_REVIEW_STALE", "implementation snapshot changed; run a new Quality Review");
   }
   const previewFile = qualityApplyPreviewPath(opts.repo, opts.workPackageId);
-  if (!(0, import_node_fs11.existsSync)(previewFile)) {
+  if (!(0, import_node_fs14.existsSync)(previewFile)) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "no saved apply preview; re-run apply preview");
   }
-  const saved = JSON.parse((0, import_node_fs11.readFileSync)(previewFile, "utf8"));
+  const saved = JSON.parse((0, import_node_fs14.readFileSync)(previewFile, "utf8"));
   if (saved.previewFingerprint !== opts.previewFingerprint) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "previewFingerprint is stale; re-run apply preview");
   }
@@ -16538,6 +17480,14 @@ async function applyQualityReview(opts) {
   }
   if (saved.plan.jiraWorkPackageKey !== evidence.jiraWorkPackageKey) {
     throw new QualityApplyError("QUALITY_INPUTS_INCONSISTENT", "Jira work package mismatch");
+  }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_quality_apply",
+      operation: "external_state_change",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint
+    }), () => applyQualityReview(opts));
   }
   const wpKey = evidence.jiraWorkPackageKey;
   const plan = saved.plan;
@@ -16692,8 +17642,8 @@ async function applyQualityReview(opts) {
       if (action.kind === "manifest") {
         lifecycle = "reconciling";
         const local = resolveLocalWorkPackage(opts.repo, evidence.workPackageId);
-        const manifestFile = local ? (0, import_node_path12.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path12.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
-        if (!local || !(0, import_node_fs11.existsSync)(manifestFile)) {
+        const manifestFile = local ? (0, import_node_path15.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path15.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
+        if (!local || !(0, import_node_fs14.existsSync)(manifestFile)) {
           errors.push(`QUALITY_MANIFEST_MISSING: cannot update ${evidence.workPackageId}`);
           return persistPartial({ code: "QUALITY_MANIFEST_MISSING" });
         }
@@ -16838,12 +17788,13 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto4, import_node_fs11, import_node_path12, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto7, import_node_fs14, import_node_path15, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
-    import_node_crypto4 = require("node:crypto");
-    import_node_fs11 = require("node:fs");
-    import_node_path12 = require("node:path");
+    import_node_crypto7 = require("node:crypto");
+    import_node_fs14 = require("node:fs");
+    import_node_path15 = require("node:path");
+    init_mutation_auth();
     init_managed_scope();
     init_rich_text();
     init_transitions();
@@ -17044,7 +17995,7 @@ var init_quality_lifecycle_status = __esm({
 
 // node_modules/@praxis/jira/dist/workflows.js
 function loadJournal(repo) {
-  const parsed = readJsonFile((0, import_node_path13.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
+  const parsed = readJsonFile((0, import_node_path16.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
   if (!parsed.ok) {
     if (parsed.reason === "missing")
       return [];
@@ -17053,7 +18004,7 @@ function loadJournal(repo) {
   return parsed.value;
 }
 function saveJournal(repo, journal) {
-  writeJsonAtomic((0, import_node_path13.join)(repo, ".praxis-jira", "journal.json"), journal);
+  writeJsonAtomic((0, import_node_path16.join)(repo, ".praxis-jira", "journal.json"), journal);
 }
 function record4(repo, entry) {
   const journal = loadJournal(repo);
@@ -17064,7 +18015,7 @@ function record4(repo, entry) {
   saveJournal(repo, journal);
 }
 function proposalPath(repo, epicKey) {
-  return (0, import_node_path13.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
+  return (0, import_node_path16.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
 }
 function loadBaProposal(repo, epicKey) {
   const parsed = readJsonFile(proposalPath(repo, epicKey), "jira.ba.proposal");
@@ -17134,12 +18085,20 @@ async function ensureBaHandoffComment(provider, epicKey, canonical) {
   await provider.addComment(epicKey, provider.renderDescription(textDocument(`Praxis BA handoff ready. Stories: ${canonical.join(", ") || "none"}`)));
 }
 async function persistPreview(repo, epicKey, payload, planText) {
-  const dir = (0, import_node_path13.join)(repo, ".praxis-jira", "previews");
-  writeJsonAtomic((0, import_node_path13.join)(dir, `${epicKey}.json`), payload);
-  (0, import_node_fs12.writeFileSync)((0, import_node_path13.join)(dir, `${epicKey}.plan.txt`), `${planText}
+  const dir = (0, import_node_path16.join)(repo, ".praxis-jira", "previews");
+  writeJsonAtomic((0, import_node_path16.join)(dir, `${epicKey}.json`), payload);
+  (0, import_node_fs15.writeFileSync)((0, import_node_path16.join)(dir, `${epicKey}.plan.txt`), `${planText}
 `);
 }
 async function baAnalyzeEpic(opts) {
+  if (!opts.dryRun && !hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_ba_apply",
+      operation: "external_record_update",
+      workItemId: opts.epicKey,
+      previewFingerprint: opts.previewFingerprint
+    }), () => baAnalyzeEpic(opts));
+  }
   assertRole("ba", "read-epic");
   const { epicIssue, children, flags } = await traced(opts.trace, "jira-status", async () => {
     const epicIssue2 = await opts.provider.getIssue(opts.epicKey);
@@ -17251,7 +18210,7 @@ CREATE:
     canonicalStoryKeys: canonical,
     supersededStoryKeys: superseded,
     requirementIds: specs.flatMap((s) => s.requirementIds),
-    baArtifacts: [(0, import_node_path13.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
+    baArtifacts: [(0, import_node_path16.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
     openQuestions: [],
     nfrs: [],
     businessRules: [],
@@ -17270,8 +18229,8 @@ CREATE:
       supersededStoryKeys: superseded,
       plan: result.plan
     }, result.planText);
-    (0, import_node_fs12.mkdirSync)((0, import_node_path13.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
-    (0, import_node_fs12.writeFileSync)((0, import_node_path13.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
+    (0, import_node_fs15.mkdirSync)((0, import_node_path16.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
+    (0, import_node_fs15.writeFileSync)((0, import_node_path16.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
 `);
   }
   if (opts.dryRun) {
@@ -17286,7 +18245,7 @@ CREATE:
       migration: adoption.status === "adopted" ? "required" : "none"
     };
   }
-  const handoffPath2 = (0, import_node_path13.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
+  const handoffPath2 = (0, import_node_path16.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
   assertRole("ba", "ba-handoff");
   await opts.provider.setIssueProperty(opts.epicKey, "praxis.baHandoff", handoff4);
   await ensureBaHandoffComment(opts.provider, opts.epicKey, canonical);
@@ -17348,7 +18307,14 @@ async function claimWorkPackage(opts) {
   if (existing && existing.jiraAccountId === opts.accountId) {
     return existing;
   }
-  const token = (0, import_node_crypto5.randomUUID)();
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_developer_claim",
+      operation: "external_state_change",
+      workItemId: opts.wpKey
+    }), () => claimWorkPackage(opts));
+  }
+  const token = (0, import_node_crypto8.randomUUID)();
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
     ...manifest?.storyKeys ?? [],
@@ -17394,8 +18360,8 @@ async function claimWorkPackage(opts) {
   await opts.provider.setIssueProperty(wpKey, "praxis.claim", claim4);
   const labels = Array.from(/* @__PURE__ */ new Set([...remote.labels, "praxis-claimed"]));
   await opts.provider.updateIssue(wpKey, { labels });
-  const verify = await opts.provider.getIssueProperty(wpKey, "praxis.claim");
-  if (!verify || verify.claimToken !== token) {
+  const verify3 = await opts.provider.getIssueProperty(wpKey, "praxis.claim");
+  if (!verify3 || verify3.claimToken !== token) {
     await opts.provider.writePraxisState(wpKey, {
       lifecycle: "blocked",
       reason: "claim-race"
@@ -17418,8 +18384,8 @@ async function claimWorkPackage(opts) {
       claim: claim4
     });
   }
-  (0, import_node_fs12.mkdirSync)((0, import_node_path13.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-  (0, import_node_fs12.writeFileSync)((0, import_node_path13.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
+  (0, import_node_fs15.mkdirSync)((0, import_node_path16.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+  (0, import_node_fs15.writeFileSync)((0, import_node_path16.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
 `);
   await opts.provider.addComment(wpKey, opts.provider.renderDescription(textDocument(`Work Package claimed by ${opts.actor}`)));
   await opts.provider.writePraxisState(wpKey, { lifecycle: "claimed" });
@@ -17428,6 +18394,13 @@ async function claimWorkPackage(opts) {
 async function releaseWorkPackage(opts) {
   if (!opts.confirm) {
     throw new Error("release-work-package requires --confirm");
+  }
+  if (!hasMutationLease()) {
+    return authorizeJira(jiraMutation(opts.repo, {
+      action: "praxis_developer_release",
+      operation: "external_state_change",
+      workItemId: opts.wpKey
+    }), () => releaseWorkPackage(opts));
   }
   if (opts.force && !opts.confirm) {
     throw new Error("force-release requires --confirm");
@@ -17484,13 +18457,14 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto5, import_node_fs12, import_node_path13, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto8, import_node_fs15, import_node_path16, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
-    import_node_crypto5 = require("node:crypto");
-    import_node_fs12 = require("node:fs");
-    import_node_path13 = require("node:path");
+    import_node_crypto8 = require("node:crypto");
+    import_node_fs15 = require("node:fs");
+    import_node_path16 = require("node:path");
     init_dist();
+    init_mutation_auth();
     init_role_policy();
     init_rich_text();
     init_architect_apply();
@@ -17812,16 +18786,16 @@ function splitNames(stdout) {
   return stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 function fileSha256(repo, rel) {
-  const abs = (0, import_node_path14.join)(repo, rel);
-  if (!(0, import_node_fs13.existsSync)(abs) || !(0, import_node_fs13.statSync)(abs).isFile())
+  const abs = (0, import_node_path17.join)(repo, rel);
+  if (!(0, import_node_fs16.existsSync)(abs) || !(0, import_node_fs16.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto6.createHash)("sha256").update((0, import_node_fs13.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto9.createHash)("sha256").update((0, import_node_fs16.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel) {
   const r = runGit(repo, ["show", `${rev}:${rel}`]);
   if (r.status !== 0)
     return null;
-  return (0, import_node_crypto6.createHash)("sha256").update(r.stdout).digest("hex");
+  return (0, import_node_crypto9.createHash)("sha256").update(r.stdout).digest("hex");
 }
 function listCommitFiles(repo, rev) {
   const r = runGit(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]);
@@ -17830,16 +18804,16 @@ function listCommitFiles(repo, rev) {
   return splitNames(r.stdout);
 }
 function listHooks(repo) {
-  const dir = (0, import_node_path14.join)(repo, ".git", "hooks");
-  if (!(0, import_node_fs13.existsSync)(dir))
+  const dir = (0, import_node_path17.join)(repo, ".git", "hooks");
+  if (!(0, import_node_fs16.existsSync)(dir))
     return [];
   const out = [];
-  for (const name of (0, import_node_fs13.readdirSync)(dir)) {
+  for (const name of (0, import_node_fs16.readdirSync)(dir)) {
     if (name.endsWith(".sample"))
       continue;
-    const p = (0, import_node_path14.join)(dir, name);
+    const p = (0, import_node_path17.join)(dir, name);
     try {
-      const st = (0, import_node_fs13.statSync)(p);
+      const st = (0, import_node_fs16.statSync)(p);
       if (!st.isFile())
         continue;
       const executable = (st.mode & 73) !== 0;
@@ -17854,18 +18828,21 @@ function branchExists(repo, name) {
   return runGit(repo, ["rev-parse", "--verify", name]).status === 0;
 }
 function createBranch(repo, name) {
+  requireMutationLease();
   const r = runGit(repo, ["checkout", "-b", name]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_STAGING_BLOCKED, redactSecrets(r.stderr || "git checkout -b failed"));
   }
 }
 function checkoutBranch(repo, name) {
+  requireMutationLease();
   const r = runGit(repo, ["checkout", name]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_STAGING_BLOCKED, redactSecrets(r.stderr || "git checkout failed"));
   }
 }
 function stagePaths(repo, paths) {
+  requireMutationLease();
   if (paths.length === 0)
     return;
   const r = runGit(repo, ["add", "--", ...paths]);
@@ -17874,6 +18851,7 @@ function stagePaths(repo, paths) {
   }
 }
 function commitStaged(repo, message) {
+  requireMutationLease();
   const r = runGit(repo, ["commit", "-m", message]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_STAGING_BLOCKED, redactSecrets(r.stderr || "git commit failed"));
@@ -17890,18 +18868,21 @@ function gitTreeSha(repo, rev = "HEAD") {
   return r.stdout.trim() || null;
 }
 function addRemote(repo, name, url4) {
+  requireMutationLease();
   const r = runGit(repo, ["remote", "add", name, url4]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, redactSecrets(r.stderr || "git remote add failed"));
   }
 }
 function setRemoteUrl(repo, name, url4) {
+  requireMutationLease();
   const r = runGit(repo, ["remote", "set-url", name, url4]);
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, redactSecrets(r.stderr || "git remote set-url failed"));
   }
 }
 function setLocalIdentity(repo, name, email6) {
+  requireMutationLease();
   const n = runGit(repo, ["config", "user.name", name]);
   const e = runGit(repo, ["config", "user.email", email6]);
   if (n.status !== 0 || e.status !== 0) {
@@ -17925,6 +18906,7 @@ function lsRemoteHeadSha(repo, remote, branch) {
   return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 function pushRefspec(repo, remote, source, destinationBranch, opts) {
+  requireMutationLease();
   if (!destinationBranch || destinationBranch.includes("..") || destinationBranch.startsWith("-")) {
     throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "invalid destination branch");
   }
@@ -17974,15 +18956,16 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto6, import_node_fs13, import_node_path14, import_node_child_process4;
+var import_node_crypto9, import_node_fs16, import_node_path17, import_node_child_process4;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
-    import_node_crypto6 = require("node:crypto");
-    import_node_fs13 = require("node:fs");
-    import_node_path14 = require("node:path");
+    import_node_crypto9 = require("node:crypto");
+    import_node_fs16 = require("node:fs");
+    import_node_path17 = require("node:path");
     import_node_child_process4 = require("node:child_process");
     init_redact();
     init_git_url();
+    init_dist();
     init_errors2();
   }
 });
@@ -18052,9 +19035,9 @@ var init_staging_policy = __esm({
 
 // node_modules/@praxis/vcs/dist/gitignore-policy.js
 function previewGitignore(repo) {
-  const path = (0, import_node_path15.join)(repo, ".gitignore");
-  const exists = (0, import_node_fs14.existsSync)(path);
-  const current = exists ? (0, import_node_fs14.readFileSync)(path, "utf8") : "";
+  const path = (0, import_node_path18.join)(repo, ".gitignore");
+  const exists = (0, import_node_fs17.existsSync)(path);
+  const current = exists ? (0, import_node_fs17.readFileSync)(path, "utf8") : "";
   const lines = current.split(/\r?\n/);
   const missingLines = RECOMMENDED_GITIGNORE.filter((rule) => !lines.some((l) => l.trim() === rule));
   let proposed = null;
@@ -18067,11 +19050,11 @@ ${extra}
   }
   return { path: ".gitignore", exists, current, missingLines, proposed, writes: false };
 }
-var import_node_fs14, import_node_path15, RECOMMENDED_GITIGNORE;
+var import_node_fs17, import_node_path18, RECOMMENDED_GITIGNORE;
 var init_gitignore_policy = __esm({
   "node_modules/@praxis/vcs/dist/gitignore-policy.js"() {
-    import_node_fs14 = require("node:fs");
-    import_node_path15 = require("node:path");
+    import_node_fs17 = require("node:fs");
+    import_node_path18 = require("node:path");
     RECOMMENDED_GITIGNORE = [
       ".praxis-jira/",
       ".praxis-quality/",
@@ -18085,19 +19068,19 @@ var init_gitignore_policy = __esm({
 
 // node_modules/@praxis/vcs/dist/quality-snapshot.js
 function readJson5(path) {
-  if (!(0, import_node_fs15.existsSync)(path))
+  if (!(0, import_node_fs18.existsSync)(path))
     return null;
   try {
-    return JSON.parse((0, import_node_fs15.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs18.readFileSync)(path, "utf8"));
   } catch {
     return null;
   }
 }
 function readQualitySnapshot(repo, workPackageId) {
-  const primary = (0, import_node_path16.join)(repo, "design", workPackageId, "qa", "quality-review.json");
-  const sidecar = (0, import_node_path16.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  const primary = (0, import_node_path19.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  const sidecar = (0, import_node_path19.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
   const raw = readJson5(primary) ?? readJson5(sidecar);
-  const source = raw ? (0, import_node_fs15.existsSync)(primary) ? primary : sidecar : null;
+  const source = raw ? (0, import_node_fs18.existsSync)(primary) ? primary : sidecar : null;
   const snapshot = raw?.snapshot && typeof raw.snapshot === "object" ? raw.snapshot : {};
   const files = Array.isArray(snapshot.files) ? snapshot.files : [];
   return {
@@ -18127,7 +19110,7 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
       consistency = "mismatch";
     return { path, liveSha256, snapshotSha256, consistency };
   });
-  const liveDigest = (0, import_node_crypto7.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
+  const liveDigest = (0, import_node_crypto10.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
     const live = liveFileHash(repo, path);
     return live ? { path, sha256: live } : { path, missing: true };
   }))).digest("hex");
@@ -18137,12 +19120,12 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
     liveDigest
   };
 }
-var import_node_fs15, import_node_path16, import_node_crypto7;
+var import_node_fs18, import_node_path19, import_node_crypto10;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
-    import_node_fs15 = require("node:fs");
-    import_node_path16 = require("node:path");
-    import_node_crypto7 = require("node:crypto");
+    import_node_fs18 = require("node:fs");
+    import_node_path19 = require("node:path");
+    import_node_crypto10 = require("node:crypto");
     init_git_local();
   }
 });
@@ -18303,6 +19286,7 @@ function createGithubProvider(opts) {
       return items.map((p) => mapPr(p));
     },
     async createMergeRequest(opts2) {
+      requireMutationLease();
       const path = repoPath(opts2);
       const existing = await this.listOpenMergeRequests(opts2);
       if (existing[0])
@@ -18364,6 +19348,7 @@ function mapPr(p) {
 var DEFAULT_GITHUB_API;
 var init_github_provider = __esm({
   "node_modules/@praxis/vcs/dist/github-provider.js"() {
+    init_dist();
     init_errors2();
     init_redact();
     DEFAULT_GITHUB_API = "https://api.github.com";
@@ -18450,6 +19435,7 @@ function createGitlabProvider(opts) {
       return items.map(mapMr);
     },
     async createMergeRequest(opts2) {
+      requireMutationLease();
       const existing = await this.listOpenMergeRequests(opts2);
       if (existing[0])
         return existing[0];
@@ -18502,6 +19488,7 @@ function mapMr(p) {
 }
 var init_gitlab_provider = __esm({
   "node_modules/@praxis/vcs/dist/gitlab-provider.js"() {
+    init_dist();
     init_errors2();
     init_redact();
   }
@@ -18509,23 +19496,24 @@ var init_gitlab_provider = __esm({
 
 // node_modules/@praxis/vcs/dist/journal.js
 function journalPath(repo, workPackageId) {
-  return (0, import_node_path17.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
+  return (0, import_node_path20.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
 }
 function handoffPath(repo, workPackageId) {
-  return (0, import_node_path17.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
+  return (0, import_node_path20.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
 }
 function readJournal(repo, workPackageId) {
   const p = journalPath(repo, workPackageId);
-  if (!(0, import_node_fs16.existsSync)(p))
+  if (!(0, import_node_fs19.existsSync)(p))
     return null;
   try {
-    const v = JSON.parse((0, import_node_fs16.readFileSync)(p, "utf8"));
+    const v = JSON.parse((0, import_node_fs19.readFileSync)(p, "utf8"));
     return { ...v, forcePush: false, merged: false };
   } catch {
     return null;
   }
 }
 function writeJournal(repo, entry) {
+  requireMutationLease();
   const safe = {
     ...entry,
     deliveryLifecycle: entry.lifecycle,
@@ -18533,30 +19521,31 @@ function writeJournal(repo, entry) {
     merged: false
   };
   const p = journalPath(repo, entry.workPackageId);
-  (0, import_node_fs16.mkdirSync)((0, import_node_path17.join)(p, ".."), { recursive: true });
-  (0, import_node_fs16.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs19.mkdirSync)((0, import_node_path20.join)(p, ".."), { recursive: true });
+  (0, import_node_fs19.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
 `);
   const handoff4 = handoffPath(repo, entry.workPackageId);
-  (0, import_node_fs16.mkdirSync)((0, import_node_path17.join)(handoff4, ".."), { recursive: true });
-  (0, import_node_fs16.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs19.mkdirSync)((0, import_node_path20.join)(handoff4, ".."), { recursive: true });
+  (0, import_node_fs19.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
 `);
 }
-var import_node_path17, import_node_fs16;
+var import_node_path20, import_node_fs19;
 var init_journal = __esm({
   "node_modules/@praxis/vcs/dist/journal.js"() {
-    import_node_path17 = require("node:path");
-    import_node_fs16 = require("node:fs");
+    init_dist();
+    import_node_path20 = require("node:path");
+    import_node_fs19 = require("node:fs");
   }
 });
 
 // node_modules/@praxis/vcs/dist/fingerprint.js
 function deliveryFingerprint(value) {
-  return `sha256:${(0, import_node_crypto8.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
 }
-var import_node_crypto8;
+var import_node_crypto11;
 var init_fingerprint = __esm({
   "node_modules/@praxis/vcs/dist/fingerprint.js"() {
-    import_node_crypto8 = require("node:crypto");
+    import_node_crypto11 = require("node:crypto");
   }
 });
 
@@ -18598,6 +19587,33 @@ var init_secret_scan = __esm({
     init_git_local();
     init_errors2();
     SECRET_GREP = "github_pat_|ghp_[A-Za-z0-9]|gho_|glpat-|ATATT3|AKIA[0-9A-Z]{16}|BEGIN (RSA |OPENSSH )?PRIVATE KEY";
+  }
+});
+
+// node_modules/@praxis/vcs/dist/mutation-auth.js
+function localMutation(repo, spec) {
+  const root = (0, import_node_path21.resolve)(repo);
+  return {
+    repo: root,
+    operation: spec.operation,
+    provider: "local",
+    workItemId: spec.workItemId,
+    repository: root,
+    action: spec.action,
+    ...spec.previewFingerprint ? { previewFingerprint: spec.previewFingerprint } : {},
+    ...process.env.PRAXIS_APPROVAL_AUTHORIZATION ? { authorization: process.env.PRAXIS_APPROVAL_AUTHORIZATION } : {}
+  };
+}
+function authorizeLocal(request, write) {
+  if (hasMutationLease())
+    return write();
+  return runAuthorizedMutation(request, write);
+}
+var import_node_path21;
+var init_mutation_auth2 = __esm({
+  "node_modules/@praxis/vcs/dist/mutation-auth.js"() {
+    import_node_path21 = require("node:path");
+    init_dist();
   }
 });
 
@@ -18743,6 +19759,14 @@ function applyConnect(opts) {
   const remotesBefore = listRemotes(repo);
   const existing = remotesBefore.find((r) => r.name === name);
   const alreadyExact = Boolean(existing && exactRemoteUrlsEqual(existing.fetchUrl, url4));
+  if ((!existing || !alreadyExact) && !hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_connect_apply",
+      operation: "repository_edit",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint
+    }), () => applyConnect(opts));
+  }
   let wrote = false;
   if (!existing) {
     addRemote(repo, name, url4);
@@ -18821,6 +19845,14 @@ function applyIdentity(opts) {
     throw new VcsError(VCS_CODES.GIT_IDENTITY_REQUIRED, "gitUserName and gitUserEmail are required. Praxis will not copy Jira email automatically.");
   }
   const repo = requireGitRepo(opts.repo);
+  if (!hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_identity_apply",
+      operation: "repository_edit",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint
+    }), () => applyIdentity(opts));
+  }
   setLocalIdentity(repo, opts.gitUserName, opts.gitUserEmail);
   return readGitIdentity(repo);
 }
@@ -19031,6 +20063,14 @@ async function applyCommit(opts) {
       recoveryInstructions: "Commit already exists at HEAD; retry is a no-op."
     };
   }
+  if (!hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_commit",
+      operation: "git_commit",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint
+    }), () => applyCommit(opts));
+  }
   const headBefore = gitHeadSha(repo);
   const current = gitCurrentBranch(repo);
   if (current !== preview.branch) {
@@ -19219,6 +20259,14 @@ async function applyPublish(opts) {
   const heads = lsRemoteHeads(repo, remote.name);
   if (pub.mode === "branch" && heads.empty) {
     throw new VcsError(VCS_CODES.GIT_BASELINE_REQUIRED, "GitHub/GitLab repository has no commits. Human-gated baseline publication is required before a pull/merge request. This will not force-push.");
+  }
+  if (!hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_publish",
+      operation: "git_push",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint
+    }), () => applyPublish(opts));
   }
   if (pub.mode === "baseline" && !heads.empty) {
     const existingMain = lsRemoteHeadSha(repo, remote.name, pub.targetRemoteBranch);
@@ -19453,6 +20501,14 @@ async function applyMergeRequest(opts) {
   if (remoteHead !== journal.commitSha) {
     throw new VcsError(VCS_CODES.GIT_COMMIT_DIVERGED, "Remote feature SHA does not match the approved local commit. Praxis will not create a PR from a different SHA.");
   }
+  if (!hasMutationLease()) {
+    return authorizeLocal(localMutation(repo, {
+      action: "praxis_developer_git_merge_request",
+      operation: "merge_request",
+      workItemId: opts.workPackageId,
+      previewFingerprint: opts.previewFingerprint
+    }), () => applyMergeRequest(opts));
+  }
   const existing = await provider.listOpenMergeRequests({
     owner: remote.owner,
     repo: remote.repo,
@@ -19568,6 +20624,7 @@ var init_delivery = __esm({
     init_github_provider();
     init_gitlab_provider();
     init_secret_scan();
+    init_mutation_auth2();
   }
 });
 
@@ -19713,18 +20770,18 @@ function safeErrorMessage(raw) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(0, 240);
 }
 function safeLogTail(logFile) {
-  if (!(0, import_node_fs17.existsSync)(logFile))
+  if (!(0, import_node_fs20.existsSync)(logFile))
     return "";
-  return (0, import_node_fs17.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
+  return (0, import_node_fs20.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
 }
 function looksLikeElectronBinary(execPath, electronVersion) {
   if (electronVersion)
     return true;
-  const base = (0, import_node_path18.basename)(execPath).toLowerCase();
+  const base = (0, import_node_path22.basename)(execPath).toLowerCase();
   return base.includes("electron") || base.includes("claude") || /claude\.app\/contents\/macos\//i.test(execPath);
 }
 function isNodeCliExecutable(execPath) {
-  const base = (0, import_node_path18.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
+  const base = (0, import_node_path22.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
   return base === "node" || base === "nodejs";
 }
 function isElectronHelperExecutable(execPath) {
@@ -19766,7 +20823,7 @@ function classifySpawnFailure(err) {
   return QUALITY_CODES.QUALITY_SPAWN_FAILED;
 }
 function waitForChildStart(child, timeoutMs = 1500) {
-  return new Promise((resolve7) => {
+  return new Promise((resolve12) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -19776,7 +20833,7 @@ function waitForChildStart(child, timeoutMs = 1500) {
       child.off("spawn", onSpawn);
       child.off("error", onError);
       child.off("exit", onExit);
-      resolve7(result);
+      resolve12(result);
     };
     const onSpawn = () => finish({ spawned: true, pid: child.pid });
     const onError = (err) => finish({ spawned: false, pid: child.pid, error: err });
@@ -19809,27 +20866,27 @@ function waitForChildStart(child, timeoutMs = 1500) {
   });
 }
 function repoKey(repo) {
-  const abs = (0, import_node_path18.resolve)(repo);
+  const abs = (0, import_node_path22.resolve)(repo);
   try {
-    return (0, import_node_fs17.realpathSync)(abs);
+    return (0, import_node_fs20.realpathSync)(abs);
   } catch {
     return abs;
   }
 }
 function qualityDir(repo) {
-  return (0, import_node_path18.join)(repoKey(repo), ".praxis-quality");
+  return (0, import_node_path22.join)(repoKey(repo), ".praxis-quality");
 }
 function qualityStatePath(repo) {
-  return (0, import_node_path18.join)(qualityDir(repo), "quality.json");
+  return (0, import_node_path22.join)(qualityDir(repo), "quality.json");
 }
 function qualityPidPath(repo) {
-  return (0, import_node_path18.join)(qualityDir(repo), "quality.pid");
+  return (0, import_node_path22.join)(qualityDir(repo), "quality.pid");
 }
 function qualityDbPath(repo) {
-  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path18.join)(qualityDir(repo), "quality.sqlite");
+  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path22.join)(qualityDir(repo), "quality.sqlite");
 }
 function qualityLogPath(repo) {
-  return (0, import_node_path18.join)(qualityDir(repo), "quality.log");
+  return (0, import_node_path22.join)(qualityDir(repo), "quality.log");
 }
 function startupTimeoutMs() {
   const raw = Number(process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS);
@@ -19860,20 +20917,20 @@ function urlForPort(port) {
 }
 function readState(repo) {
   const p = qualityStatePath(repo);
-  if (!(0, import_node_fs17.existsSync)(p))
+  if (!(0, import_node_fs20.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs17.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs20.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeState(repo, state) {
-  (0, import_node_fs17.mkdirSync)(qualityDir(repo), { recursive: true });
-  (0, import_node_fs17.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state, null, 2)}
+  (0, import_node_fs20.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs20.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state, null, 2)}
 `);
   if (state.pid)
-    (0, import_node_fs17.writeFileSync)(qualityPidPath(repo), `${state.pid}
+    (0, import_node_fs20.writeFileSync)(qualityPidPath(repo), `${state.pid}
 `);
 }
 function patchState(repo, patch) {
@@ -19883,8 +20940,8 @@ function patchState(repo, patch) {
 function appendSupervisorLog(repo, line) {
   try {
     const p = qualityLogPath(repo);
-    (0, import_node_fs17.mkdirSync)((0, import_node_path18.dirname)(p), { recursive: true });
-    (0, import_node_fs17.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+    (0, import_node_fs20.mkdirSync)((0, import_node_path22.dirname)(p), { recursive: true });
+    (0, import_node_fs20.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `, { flag: "a" });
   } catch {
   }
@@ -19992,32 +21049,32 @@ function rootsMatch(a, b) {
 function resolveQualityExecutable() {
   const override = process.env.PRAXIS_QUALITY_ENTRY;
   if (override)
-    return (0, import_node_path18.isAbsolute)(override) ? override : (0, import_node_path18.resolve)(override);
-  const argvDir = process.argv[1] ? (0, import_node_path18.dirname)((0, import_node_path18.resolve)(process.argv[1])) : void 0;
+    return (0, import_node_path22.isAbsolute)(override) ? override : (0, import_node_path22.resolve)(override);
+  const argvDir = process.argv[1] ? (0, import_node_path22.dirname)((0, import_node_path22.resolve)(process.argv[1])) : void 0;
   if (argvDir) {
-    const sibling = (0, import_node_path18.join)(argvDir, "praxis-quality.cjs");
-    if ((0, import_node_fs17.existsSync)(sibling))
+    const sibling = (0, import_node_path22.join)(argvDir, "praxis-quality.cjs");
+    if ((0, import_node_fs20.existsSync)(sibling))
       return sibling;
   }
   try {
-    const here = (0, import_node_path18.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
-    const bundled = (0, import_node_path18.join)(here, "praxis-quality.cjs");
-    if ((0, import_node_fs17.existsSync)(bundled))
+    const here = (0, import_node_path22.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
+    const bundled = (0, import_node_path22.join)(here, "praxis-quality.cjs");
+    if ((0, import_node_fs20.existsSync)(bundled))
       return bundled;
   } catch {
   }
   try {
     const req = (0, import_node_module.createRequire)(import_meta.url);
     const pkg = req.resolve("@praxis/quality-service/package.json");
-    const entry = (0, import_node_path18.join)((0, import_node_path18.dirname)(pkg), "dist", "main.js");
-    if ((0, import_node_fs17.existsSync)(entry))
+    const entry = (0, import_node_path22.join)((0, import_node_path22.dirname)(pkg), "dist", "main.js");
+    if ((0, import_node_fs20.existsSync)(entry))
       return entry;
   } catch {
   }
   try {
-    const here = (0, import_node_path18.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
-    const monorepo = (0, import_node_path18.resolve)(here, "../../../apps/quality-service/dist/main.js");
-    if ((0, import_node_fs17.existsSync)(monorepo))
+    const here = (0, import_node_path22.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
+    const monorepo = (0, import_node_path22.resolve)(here, "../../../apps/quality-service/dist/main.js");
+    if ((0, import_node_fs20.existsSync)(monorepo))
       return monorepo;
   } catch {
   }
@@ -20114,7 +21171,7 @@ function resolveQualityChildRuntime() {
     return { mode: "process", execPath: override, extraArgs, extraEnv, parent, child: child2 };
   }
   if (isElectronHelperExecutable(observedParent)) {
-    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path18.basename)(observedParent)}`);
+    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path22.basename)(observedParent)}`);
     return {
       mode: "worker",
       execPath: process.execPath,
@@ -20154,7 +21211,7 @@ function portListening(port) {
   });
 }
 function waitForWorkerStart(worker, timeoutMs = 1500) {
-  return new Promise((resolve7) => {
+  return new Promise((resolve12) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -20164,7 +21221,7 @@ function waitForWorkerStart(worker, timeoutMs = 1500) {
       worker.off("online", onOnline);
       worker.off("error", onError);
       worker.off("exit", onExit);
-      resolve7(result);
+      resolve12(result);
     };
     const onOnline = () => finish({ spawned: true, pid: process.pid });
     const onError = (err) => finish({ spawned: false, pid: process.pid, error: err });
@@ -20188,8 +21245,8 @@ function startQualityWorker(opts) {
     }
     workers.delete(key);
   }
-  (0, import_node_fs17.mkdirSync)((0, import_node_path18.dirname)(opts.logPath), { recursive: true });
-  const log = (0, import_node_fs17.createWriteStream)(opts.logPath, { flags: "a" });
+  (0, import_node_fs20.mkdirSync)((0, import_node_path22.dirname)(opts.logPath), { recursive: true });
+  const log = (0, import_node_fs20.createWriteStream)(opts.logPath, { flags: "a" });
   const env = {};
   for (const [key2, val] of Object.entries(opts.env)) {
     if (val !== void 0)
@@ -20245,11 +21302,11 @@ function fail(code, message, stage, t0, details) {
 }
 async function probeQuality(opts) {
   const repo = repoKey(opts.repo);
-  const state = (0, import_node_fs17.existsSync)(opts.repo) ? readState(repo) : void 0;
+  const state = (0, import_node_fs20.existsSync)(opts.repo) ? readState(repo) : void 0;
   const port = state?.port ?? configuredPort();
   const url4 = state?.url ?? urlForPort(port);
-  const db = state?.db ?? ((0, import_node_fs17.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
-  const logPath = (0, import_node_fs17.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
+  const db = state?.db ?? ((0, import_node_fs20.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
+  const logPath = (0, import_node_fs20.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
   const extras = {
     lastKnownPid: state?.lastKnownPid ?? state?.pid,
     lastHealthyAt: state?.lastHealthyAt,
@@ -20354,7 +21411,7 @@ async function ensureQualityOnce(opts) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, "Quality service executable is not packaged with Praxis Runtime", "quality.entry.resolve", t0, { healthUrl: probe.url, logPath });
   }
   qlog(`quality.entry.resolve path=${executable}`);
-  if (!(0, import_node_fs17.existsSync)(executable)) {
+  if (!(0, import_node_fs20.existsSync)(executable)) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, `Quality service executable missing: ${executable}`, "quality.entry.resolve", t0, { executable, healthUrl: probe.url, logPath });
   }
   const runtime = resolveQualityChildRuntime();
@@ -20410,7 +21467,7 @@ async function ensureQualityOnce(opts) {
     }
     fail(QUALITY_CODES.QUALITY_PORT_UNAVAILABLE, `Quality port ${port} is already in use by another process`, "port", t0, { ...diagnosticDetails, healthUrl: url4, port });
   }
-  (0, import_node_fs17.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs20.mkdirSync)(qualityDir(repo), { recursive: true });
   qlog(`cwd resolved path=${repo}`);
   qlog(`db path resolved path=${db}`);
   let pid;
@@ -20469,7 +21526,7 @@ async function ensureQualityOnce(opts) {
     env.PRAXIS_QUALITY_DB = db;
     env.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
     env.PRAXIS_QUALITY_HOST = "127.0.0.1";
-    const logFd = (0, import_node_fs17.openSync)(logPath, "a");
+    const logFd = (0, import_node_fs20.openSync)(logPath, "a");
     qlog("quality.spawn");
     let child;
     try {
@@ -20480,7 +21537,7 @@ async function ensureQualityOnce(opts) {
         stdio: ["ignore", logFd, logFd]
       });
     } catch (err) {
-      (0, import_node_fs17.closeSync)(logFd);
+      (0, import_node_fs20.closeSync)(logFd);
       const errno = err;
       fail(classifySpawnFailure(errno), errno instanceof Error ? errno.message : String(err), "quality.spawn", t0, {
         ...diagnosticDetails,
@@ -20491,7 +21548,7 @@ async function ensureQualityOnce(opts) {
       });
     }
     const started = await waitForChildStart(child, 1500);
-    (0, import_node_fs17.closeSync)(logFd);
+    (0, import_node_fs20.closeSync)(logFd);
     pid = started.pid;
     qlog(`quality.child.start spawned=${started.spawned} pid=${pid ?? "none"} exitCode=${started.exitCode ?? "none"} spawnError=${started.error?.code ?? "none"}`);
     if (!started.spawned || started.error || started.exitCode !== void 0 || started.exitSignal) {
@@ -20606,21 +21663,21 @@ function resetQualityEnsureForTests(repo) {
   if (repo) {
     const dir = qualityDir(repo);
     stopQuality(repo);
-    (0, import_node_fs17.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs20.rmSync)(dir, { recursive: true, force: true });
     inFlight.delete(repoKey(repo));
     return;
   }
   inFlight.clear();
 }
-var import_node_child_process5, import_node_worker_threads, import_node_fs17, import_node_net, import_node_module, import_node_path18, import_node_url3, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
+var import_node_child_process5, import_node_worker_threads, import_node_fs20, import_node_net, import_node_module, import_node_path22, import_node_url3, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
 var init_quality_ensure = __esm({
   "node_modules/@praxis/cli/dist/quality-ensure.js"() {
     import_node_child_process5 = require("node:child_process");
     import_node_worker_threads = require("node:worker_threads");
-    import_node_fs17 = require("node:fs");
+    import_node_fs20 = require("node:fs");
     import_node_net = __toESM(require("node:net"), 1);
     import_node_module = require("node:module");
-    import_node_path18 = require("node:path");
+    import_node_path22 = require("node:path");
     import_node_url3 = require("node:url");
     import_meta = {};
     DEFAULT_QUALITY_PORT = 8792;
@@ -20737,7 +21794,7 @@ async function runQualityWorkPackageReview(opts) {
   const { status, json: json2 } = await postJson(`${url4}/reviews/work-package`, {
     projectId: opts.workPackageId,
     workPackageId: opts.workPackageId,
-    path: (0, import_node_path19.resolve)(opts.repo),
+    path: (0, import_node_path23.resolve)(opts.repo),
     runtimeVersion: opts.runtimeVersion
   });
   if (status >= 400) {
@@ -20869,10 +21926,10 @@ function qualityReviewStatus(repo, workPackageId) {
     approvalApplied: evidence.approvalApplied === true
   };
 }
-var import_node_path19, QualityReviewTransportError;
+var import_node_path23, QualityReviewTransportError;
 var init_quality_lifecycle = __esm({
   "node_modules/@praxis/cli/dist/quality-lifecycle.js"() {
-    import_node_path19 = require("node:path");
+    import_node_path23 = require("node:path");
     init_workflows();
     init_quality_ensure();
     QualityReviewTransportError = class extends Error {
@@ -20941,26 +21998,44 @@ __export(operations_exports, {
   qualityReviewShowOp: () => qualityReviewShowOp,
   qualityStatusOp: () => qualityStatusOp,
   redact: () => redact,
+  scrubUnexpandedPlaceholders: () => scrubUnexpandedPlaceholders,
   workPackageListOp: () => workPackageListOp,
   workPackageShowOp: () => workPackageShowOp
 });
 function previewFingerprint(plan) {
-  return `sha256:${(0, import_node_crypto9.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 function redact(text) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
 }
+function scrubUnexpandedPlaceholders(env = process.env) {
+  const removed = [];
+  for (const key of Object.keys(env)) {
+    if (!key.startsWith("PRAXIS_"))
+      continue;
+    const value = env[key];
+    if (value !== void 0 && HOST_PLACEHOLDER_RE.test(value.trim())) {
+      delete env[key];
+      removed.push(key);
+    }
+  }
+  return removed;
+}
 function loadPraxisDotenv(repo) {
+  const removed = scrubUnexpandedPlaceholders();
+  if (removed.length) {
+    hostPlaceholdersIgnored = [.../* @__PURE__ */ new Set([...hostPlaceholdersIgnored, ...removed])].sort();
+  }
   if (process.env.PRAXIS_SKIP_DOTENV === "1")
     return;
-  const resolved = (0, import_node_path20.resolve)(repo);
-  if (!(0, import_node_fs18.existsSync)(resolved))
+  const resolved = (0, import_node_path24.resolve)(repo);
+  if (!(0, import_node_fs21.existsSync)(resolved))
     return;
   for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
-    const p = (0, import_node_path20.join)(resolved, f);
-    if (!(0, import_node_fs18.existsSync)(p))
+    const p = (0, import_node_path24.join)(resolved, f);
+    if (!(0, import_node_fs21.existsSync)(p))
       continue;
-    for (const line of (0, import_node_fs18.readFileSync)(p, "utf8").split("\n")) {
+    for (const line of (0, import_node_fs21.readFileSync)(p, "utf8").split("\n")) {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
       if (!m || process.env[m[1]])
         continue;
@@ -20980,8 +22055,8 @@ function gitRoot(cwd) {
 }
 function requireRepo(repo) {
   loadPraxisDotenv(repo);
-  const resolved = (0, import_node_path20.resolve)(repo);
-  if (!(0, import_node_fs18.existsSync)(resolved)) {
+  const resolved = (0, import_node_path24.resolve)(repo);
+  if (!(0, import_node_fs21.existsSync)(resolved)) {
     throw new PraxisOpError(OP_CODES.REPOSITORY_UNAVAILABLE, `REPOSITORY_UNAVAILABLE: ${resolved}`);
   }
   return resolved;
@@ -21131,6 +22206,59 @@ function requireConfirm(confirmation, what) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, `${what} requires confirmation=YES`);
   }
 }
+function replayResult(result) {
+  if (result && typeof result === "object")
+    return { ...result, replayed: true };
+  return { replayed: true, result };
+}
+function asApprovalError(err) {
+  if (err instanceof WorkflowError && err.code in OP_CODES) {
+    throw new PraxisOpError(err.code, err.message);
+  }
+  throw err;
+}
+async function guardWrite(ctx, spec, write) {
+  if (spec.requireYes)
+    requireConfirm(ctx.confirmation, spec.what);
+  const repo = (0, import_node_path24.resolve)(spec.repository);
+  let inspection;
+  try {
+    inspection = inspectMutation({
+      repo,
+      planId: ctx.planId,
+      planFingerprint: ctx.planFingerprint,
+      operation: spec.operation,
+      provider: spec.provider,
+      instanceId: spec.provider === "local" ? void 0 : ctx.instanceId ?? process.env.PRAXIS_JIRA_BASE_URL,
+      workItemId: spec.workItemId,
+      repository: repo,
+      previewFingerprint: ctx.previewFingerprint,
+      action: spec.action,
+      resumeInFlight: Boolean(ctx.approvalConsumed)
+    });
+  } catch (err) {
+    asApprovalError(err);
+  }
+  if (inspection.kind === "replay")
+    return replayResult(inspection.result);
+  try {
+    return await runAuthorizedMutation({
+      repo,
+      planId: ctx.planId,
+      planFingerprint: ctx.planFingerprint,
+      operation: spec.operation,
+      provider: spec.provider,
+      instanceId: spec.provider === "local" ? void 0 : ctx.instanceId ?? process.env.PRAXIS_JIRA_BASE_URL,
+      workItemId: spec.workItemId,
+      repository: repo,
+      previewFingerprint: ctx.previewFingerprint,
+      action: spec.action,
+      resumeInFlight: true
+    }, write);
+  } catch (err) {
+    asApprovalError(err);
+  }
+}
 function requireFingerprint(expected, got, what) {
   if (!got) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, `${what} requires previewFingerprint from the matching preview`);
@@ -21153,8 +22281,8 @@ async function tracedFingerprint(trace, plan) {
 }
 async function doctorOp(ctx, version4) {
   loadPraxisDotenv(ctx.repo);
-  const resolved = (0, import_node_path20.resolve)(ctx.repo);
-  const repoExists = (0, import_node_fs18.existsSync)(resolved);
+  const resolved = (0, import_node_path24.resolve)(ctx.repo);
+  const repoExists = (0, import_node_fs21.existsSync)(resolved);
   const git2 = repoExists ? gitRoot(resolved) : void 0;
   const project = repoExists ? loadProjectConfig(git2 ?? resolved) : { status: "missing", suggestedPath: resolved };
   const jiraFlags = jiraConfigFlags();
@@ -21197,6 +22325,7 @@ async function doctorOp(ctx, version4) {
     gitlab,
     quality,
     capabilities,
+    hostPlaceholdersIgnored,
     codes: {
       repository: capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : void 0,
       jira: capabilities.jiraConfig === "unavailable" ? OP_CODES.JIRA_CONFIG_UNAVAILABLE : void 0,
@@ -21226,18 +22355,26 @@ async function projectInitPreviewOp(ctx) {
   };
 }
 async function projectInitApplyOp(ctx) {
-  requireConfirm(ctx.confirmation, "project init");
   const repo = requireRepo(ctx.repo);
   const inferred = inferProjectConfig(repo);
-  if (inferred.existing.status === "loaded") {
-    return {
-      wrote: false,
-      reason: "already-exists",
-      path: inferred.existing.path
-    };
-  }
-  const path = writeProjectConfig(repo, inferred.yaml);
-  return { wrote: true, path, config: inferred.proposed };
+  return guardWrite(ctx, {
+    what: "project init",
+    action: "praxis_project_init_apply",
+    operation: "repository_edit",
+    provider: "local",
+    repository: repo,
+    requireYes: true
+  }, async () => {
+    if (inferred.existing.status === "loaded") {
+      return {
+        wrote: false,
+        reason: "already-exists",
+        path: inferred.existing.path
+      };
+    }
+    const path = writeProjectConfig(repo, inferred.yaml);
+    return { wrote: true, path, config: inferred.proposed };
+  });
 }
 async function jiraSmokeOp(ctx) {
   return withProvider(ctx, (p) => p.verifyConnection());
@@ -21300,12 +22437,19 @@ async function baPreviewOp(ctx) {
   });
 }
 async function baApplyOp(ctx) {
-  requireConfirm(ctx.confirmation, "ba apply");
   if (!ctx.epic) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "ba apply requires epic");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "ba apply",
+    action: "praxis_ba_apply",
+    operation: "external_record_update",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.epic,
+    requireYes: true
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     const preview = await baAnalyzeEpic({
       provider: p,
       epicKey: ctx.epic,
@@ -21323,7 +22467,7 @@ async function baApplyOp(ctx) {
       dryRun: false
     });
     return { ...result, previewFingerprint: previewFingerprint(result.plan) };
-  });
+  }));
 }
 async function architectStatusOp(ctx) {
   if (!ctx.epic) {
@@ -21379,12 +22523,19 @@ async function architectPreviewOp(ctx) {
   });
 }
 async function architectApplyOp(ctx) {
-  requireConfirm(ctx.confirmation, "architect apply");
   if (!ctx.epic) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "architect apply requires epic");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "architect apply",
+    action: "praxis_architect_apply",
+    operation: "external_record_update",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.epic,
+    requireYes: true
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     try {
       const preview = await architectPlanEpic({
         provider: p,
@@ -21410,7 +22561,7 @@ async function architectApplyOp(ctx) {
         mapArchitectWpError(e);
       throw e;
     }
-  });
+  }));
 }
 async function workPackageListOp(ctx) {
   const repo = requireRepo(ctx.repo);
@@ -21512,7 +22663,15 @@ async function developerClaimOp(ctx) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer claim requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "developer claim",
+    action: "praxis_developer_claim",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.wp,
+    requireYes: false
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     const user = await p.getCurrentUser();
     return claimWorkPackage({
       provider: p,
@@ -21521,35 +22680,50 @@ async function developerClaimOp(ctx) {
       actor: ctx.actor ?? user.displayName ?? "developer",
       accountId: user.accountId
     });
-  });
+  }));
 }
 async function developerReleaseOp(ctx) {
-  requireConfirm(ctx.confirmation, "developer release");
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer release requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "developer release",
+    action: "praxis_developer_release",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.wp,
+    requireYes: true
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     await releaseWorkPackage({
       provider: p,
       wpKey: resolveRemoteWpKey(repo, ctx.wp),
+      repo,
       confirm: true
     });
     return { released: true, wp: ctx.wp };
-  });
+  }));
 }
 async function developerCompleteOp(ctx) {
-  requireConfirm(ctx.confirmation, "developer complete");
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer complete requires workPackage");
   }
   const repo = requireRepo(ctx.repo);
   const wp = ctx.wp;
-  return withProvider({ ...ctx, repo }, (p) => developerCompleteWp({
+  return guardWrite(ctx, {
+    what: "developer complete",
+    action: "praxis_developer_complete",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: wp,
+    requireYes: true
+  }, () => withProvider({ ...ctx, repo }, (p) => developerCompleteWp({
     provider: p,
     wpKey: wp,
     repo
-  }));
+  })));
 }
 async function developerCompleteRecoveryPreviewOp(ctx) {
   if (!ctx.wp) {
@@ -21564,7 +22738,6 @@ async function developerCompleteRecoveryPreviewOp(ctx) {
   }));
 }
 async function developerCompleteRecoveryApplyOp(ctx) {
-  requireConfirm(ctx.confirmation, "developer complete recovery");
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "developer complete recovery apply requires workPackage");
   }
@@ -21574,12 +22747,20 @@ async function developerCompleteRecoveryApplyOp(ctx) {
   const repo = requireRepo(ctx.repo);
   const wp = ctx.wp;
   const previewFingerprint2 = ctx.previewFingerprint;
-  return withProvider({ ...ctx, repo }, (p) => applyDeveloperCompleteRecovery({
+  return guardWrite(ctx, {
+    what: "developer complete recovery",
+    action: "praxis_developer_complete_recovery_apply",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: wp,
+    requireYes: true
+  }, () => withProvider({ ...ctx, repo }, (p) => applyDeveloperCompleteRecovery({
     provider: p,
     wpKey: wp,
     repo,
     previewFingerprint: previewFingerprint2
-  }));
+  })));
 }
 async function qualityStatusOp(ctx) {
   const repo = requireRepo(ctx.repo);
@@ -21766,13 +22947,20 @@ async function qualityApplyOp(ctx) {
   if (!ctx.wp) {
     throw new PraxisOpError(OP_CODES.INVALID_INPUT, "quality apply requires workPackage");
   }
-  requireConfirm(ctx.confirmation, "quality apply");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "quality apply requires previewFingerprint from the matching preview");
   }
   const repo = requireRepo(ctx.repo);
   const workPackageId = resolveLocalWorkPackage(repo, ctx.wp)?.id ?? ctx.wp;
-  return withProvider({ ...ctx, repo }, async (p) => {
+  return guardWrite(ctx, {
+    what: "quality apply",
+    action: "praxis_quality_apply",
+    operation: "external_state_change",
+    provider: "jira",
+    repository: repo,
+    workItemId: workPackageId,
+    requireYes: true
+  }, () => withProvider({ ...ctx, repo }, async (p) => {
     try {
       const { markQualityReviewApplied: markQualityReviewApplied2 } = await Promise.resolve().then(() => (init_quality_lifecycle(), quality_lifecycle_exports));
       const { ensureQuality: ensureQuality2 } = await Promise.resolve().then(() => (init_quality_ensure(), quality_ensure_exports));
@@ -21799,7 +22987,7 @@ async function qualityApplyOp(ctx) {
     } catch (err) {
       mapQualityReviewError(err);
     }
-  });
+  }));
 }
 function gitCtx(ctx) {
   const repo = requireRepo(ctx.repo);
@@ -21855,12 +23043,20 @@ async function developerGitConnectPreviewOp(ctx) {
 }
 async function developerGitConnectApplyOp(ctx) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git connect");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git connect requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return gitConnectApplyData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git connect",
+      action: "praxis_developer_git_connect_apply",
+      operation: "repository_edit",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true
+    }, () => gitConnectApplyData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -21875,12 +23071,20 @@ async function developerGitIdentityPreviewOp(ctx) {
 }
 async function developerGitIdentityApplyOp(ctx) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git identity");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git identity requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return gitIdentityApplyData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git identity",
+      action: "praxis_developer_git_identity_apply",
+      operation: "repository_edit",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true
+    }, () => gitIdentityApplyData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -21895,12 +23099,20 @@ async function developerGitPreviewOp(ctx) {
 }
 async function developerGitCommitOp(ctx) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git commit");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git commit requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return await gitCommitData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git commit",
+      action: "praxis_developer_git_commit",
+      operation: "git_commit",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true
+    }, () => gitCommitData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -21915,12 +23127,20 @@ async function developerGitPublishPreviewOp(ctx) {
 }
 async function developerGitPublishOp(ctx) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git publish");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git publish requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return await gitPublishData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git publish",
+      action: "praxis_developer_git_publish",
+      operation: "git_push",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true
+    }, () => gitPublishData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -21935,12 +23155,20 @@ async function developerGitMergeRequestPreviewOp(ctx) {
 }
 async function developerGitMergeRequestOp(ctx) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git merge request");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git merge request requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   try {
-    return await gitMergeRequestData(gitCtx(ctx));
+    return await guardWrite(ctx, {
+      what: "git merge request",
+      action: "praxis_developer_git_merge_request",
+      operation: "merge_request",
+      provider: "local",
+      repository: repo,
+      workItemId: ctx.wp,
+      requireYes: true
+    }, () => gitMergeRequestData(gitCtx(ctx)));
   } catch (err) {
     mapVcs(err);
   }
@@ -21970,10 +23198,10 @@ async function developerGitLinkJiraPreviewOp(ctx) {
 }
 async function developerGitLinkJiraApplyOp(ctx) {
   requireGitWp(ctx);
-  requireConfirm(ctx.confirmation, "git link jira");
   if (!ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, "git link jira requires previewFingerprint");
   }
+  const repo = requireRepo(ctx.repo);
   const preview = await developerGitLinkJiraPreviewOp(ctx);
   if (preview.previewFingerprint !== ctx.previewFingerprint) {
     throw new PraxisOpError(OP_CODES.GIT_PREVIEW_STALE, "git link jira previewFingerprint mismatch");
@@ -21981,7 +23209,15 @@ async function developerGitLinkJiraApplyOp(ctx) {
   if (!preview.jiraIssueKey || !preview.proposedComment) {
     throw new PraxisOpError(OP_CODES.GIT_PUSH_BLOCKED, "No merge/pull request URL to link");
   }
-  return withProvider(ctx, async (p) => {
+  return guardWrite(ctx, {
+    what: "git link jira",
+    action: "praxis_developer_git_link_jira_apply",
+    operation: "external_record_update",
+    provider: "jira",
+    repository: repo,
+    workItemId: ctx.wp,
+    requireYes: true
+  }, () => withProvider(ctx, async (p) => {
     await p.addComment(preview.jiraIssueKey, preview.proposedComment);
     return {
       jiraMutated: true,
@@ -21990,19 +23226,20 @@ async function developerGitLinkJiraApplyOp(ctx) {
       transitioned: false,
       qualityApply: false
     };
-  });
+  }));
 }
-var import_node_crypto9, import_node_child_process6, import_node_fs18, import_node_path20, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError;
+var import_node_crypto12, import_node_child_process6, import_node_fs21, import_node_path24, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
-    import_node_crypto9 = require("node:crypto");
+    import_node_crypto12 = require("node:crypto");
     import_node_child_process6 = require("node:child_process");
-    import_node_fs18 = require("node:fs");
-    import_node_path20 = require("node:path");
+    import_node_fs21 = require("node:fs");
+    import_node_path24 = require("node:path");
     init_dist2();
     init_dist3();
     init_workflows();
     init_dist4();
+    init_dist();
     init_git_delivery_ops();
     OP_CODES = {
       INVALID_INPUT: "INVALID_INPUT",
@@ -22060,6 +23297,17 @@ var init_operations = __esm({
       QUALITY_POSTCONDITION_FAILED: "QUALITY_POSTCONDITION_FAILED",
       QUALITY_STORE_SYNC_PENDING: "QUALITY_STORE_SYNC_PENDING",
       QUALITY_APPLY_INCOMPLETE: "QUALITY_APPLY_INCOMPLETE",
+      APPROVAL_REQUIRED: "APPROVAL_REQUIRED",
+      APPROVAL_FINGERPRINT_MISMATCH: "APPROVAL_FINGERPRINT_MISMATCH",
+      APPROVAL_SCOPE_MISMATCH: "APPROVAL_SCOPE_MISMATCH",
+      APPROVAL_SCOPE_SEPARATE: "APPROVAL_SCOPE_SEPARATE",
+      APPROVAL_EXPIRED: "APPROVAL_EXPIRED",
+      APPROVAL_REVOKED: "APPROVAL_REVOKED",
+      APPROVAL_REJECTED: "APPROVAL_REJECTED",
+      APPROVAL_RECONCILIATION_REQUIRED: "APPROVAL_RECONCILIATION_REQUIRED",
+      APPROVAL_SELF_GRANT_FORBIDDEN: "APPROVAL_SELF_GRANT_FORBIDDEN",
+      APPROVAL_AMBIGUOUS: "APPROVAL_AMBIGUOUS",
+      APPROVAL_TRANSITION_FORBIDDEN: "APPROVAL_TRANSITION_FORBIDDEN",
       GIT_REPOSITORY_UNAVAILABLE: "GIT_REPOSITORY_UNAVAILABLE",
       GIT_IDENTITY_REQUIRED: "GIT_IDENTITY_REQUIRED",
       GIT_REMOTE_REQUIRED: "GIT_REMOTE_REQUIRED",
@@ -22098,6 +23346,8 @@ var init_operations = __esm({
         this.details = extra?.details;
       }
     };
+    HOST_PLACEHOLDER_RE = /^\$\{[^}]*\}$/;
+    hostPlaceholdersIgnored = [];
   }
 });
 
@@ -25540,7 +26790,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve7) {
+function isRecursive(inst, stack, resolve12) {
   const cached4 = recursive.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN : NONE;
@@ -25550,7 +26800,7 @@ function isRecursive(inst, stack, resolve7) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve7);
+      const answer = isRecursive(child, stack, resolve12);
       if (answer > result)
         result = answer;
     }
@@ -25561,7 +26811,7 @@ function isRecursive(inst, stack, resolve7) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve7) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve12) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -25624,7 +26874,7 @@ function isRecursive(inst, stack, resolve7) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve7 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve12 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -33026,7 +34276,7 @@ var recursive2 = /* @__PURE__ */ new WeakMap();
 var NONE2 = 0;
 var ASSUMED2 = 1;
 var PROVEN2 = 2;
-function isRecursive2(inst, stack, resolve7) {
+function isRecursive2(inst, stack, resolve12) {
   const cached4 = recursive2.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN2 : NONE2;
@@ -33036,7 +34286,7 @@ function isRecursive2(inst, stack, resolve7) {
   let result = NONE2;
   const check2 = (child) => {
     if (result !== PROVEN2 && child?._zod) {
-      const answer = isRecursive2(child, stack, resolve7);
+      const answer = isRecursive2(child, stack, resolve12);
       if (answer > result)
         result = answer;
     }
@@ -33047,7 +34297,7 @@ function isRecursive2(inst, stack, resolve7) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve7) : NONE2;
+      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve12) : NONE2;
       if (child > answer)
         answer = child;
     }
@@ -33110,7 +34360,7 @@ function isRecursive2(inst, stack, resolve7) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve7 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve12 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive2(inner, stack, false) : ASSUMED2);
       break;
     }
@@ -39692,14 +40942,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve7, reject) => {
+  return new Promise((resolve12, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve7();
+      resolve12();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -40493,7 +41743,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve7, reject) => {
+    return new Promise((resolve12, reject) => {
       const earlyReject = (error64) => {
         reject(error64);
       };
@@ -40561,7 +41811,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options?.allowInputRequired === true) return resolve7(manualInputRequiredValue(decoded));
+          if (options?.allowInputRequired === true) return resolve12(manualInputRequiredValue(decoded));
           const flow = {
             codec: codec2,
             request,
@@ -40573,11 +41823,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve7(this._resolveNonCompleteResult(decoded, flow));
+          return resolve12(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve7(parseResult.data);
+          if (parseResult.success) resolve12(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -41297,9 +42547,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
       return `${varKind} ${this.name}${rhs};` + _n;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants3) {
       if (!names[this.name.str]) return;
-      if (this.rhs) this.rhs = optimizeExpr(this.rhs, names, constants);
+      if (this.rhs) this.rhs = optimizeExpr(this.rhs, names, constants3);
       return this;
     }
     get names() {
@@ -41316,9 +42566,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
     render({ _n }) {
       return `${this.lhs} = ${this.rhs};` + _n;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants3) {
       if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects) return;
-      this.rhs = optimizeExpr(this.rhs, names, constants);
+      this.rhs = optimizeExpr(this.rhs, names, constants3);
       return this;
     }
     get names() {
@@ -41377,8 +42627,8 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
     optimizeNodes() {
       return `${this.code}` ? this : void 0;
     }
-    optimizeNames(names, constants) {
-      this.code = optimizeExpr(this.code, names, constants);
+    optimizeNames(names, constants3) {
+      this.code = optimizeExpr(this.code, names, constants3);
       return this;
     }
     get names() {
@@ -41404,12 +42654,12 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       }
       return nodes.length > 0 ? this : void 0;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants3) {
       const { nodes } = this;
       let i = nodes.length;
       while (i--) {
         const n = nodes[i];
-        if (n.optimizeNames(names, constants)) continue;
+        if (n.optimizeNames(names, constants3)) continue;
         subtractNames(names, n.names);
         nodes.splice(i, 1);
       }
@@ -41456,11 +42706,11 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       if (cond === false || !this.nodes.length) return void 0;
       return this;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants3) {
       var _a7;
-      this.else = (_a7 = this.else) === null || _a7 === void 0 ? void 0 : _a7.optimizeNames(names, constants);
-      if (!(super.optimizeNames(names, constants) || this.else)) return;
-      this.condition = optimizeExpr(this.condition, names, constants);
+      this.else = (_a7 = this.else) === null || _a7 === void 0 ? void 0 : _a7.optimizeNames(names, constants3);
+      if (!(super.optimizeNames(names, constants3) || this.else)) return;
+      this.condition = optimizeExpr(this.condition, names, constants3);
       return this;
     }
     get names() {
@@ -41482,9 +42732,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
     render(opts) {
       return `for(${this.iteration})` + super.render(opts);
     }
-    optimizeNames(names, constants) {
-      if (!super.optimizeNames(names, constants)) return;
-      this.iteration = optimizeExpr(this.iteration, names, constants);
+    optimizeNames(names, constants3) {
+      if (!super.optimizeNames(names, constants3)) return;
+      this.iteration = optimizeExpr(this.iteration, names, constants3);
       return this;
     }
     get names() {
@@ -41519,9 +42769,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
     render(opts) {
       return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
     }
-    optimizeNames(names, constants) {
-      if (!super.optimizeNames(names, constants)) return;
-      this.iterable = optimizeExpr(this.iterable, names, constants);
+    optimizeNames(names, constants3) {
+      if (!super.optimizeNames(names, constants3)) return;
+      this.iterable = optimizeExpr(this.iterable, names, constants3);
       return this;
     }
     get names() {
@@ -41560,11 +42810,11 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       (_b = this.finally) === null || _b === void 0 || _b.optimizeNodes();
       return this;
     }
-    optimizeNames(names, constants) {
+    optimizeNames(names, constants3) {
       var _a7, _b;
-      super.optimizeNames(names, constants);
-      (_a7 = this.catch) === null || _a7 === void 0 || _a7.optimizeNames(names, constants);
-      (_b = this.finally) === null || _b === void 0 || _b.optimizeNames(names, constants);
+      super.optimizeNames(names, constants3);
+      (_a7 = this.catch) === null || _a7 === void 0 || _a7.optimizeNames(names, constants3);
+      (_b = this.finally) === null || _b === void 0 || _b.optimizeNames(names, constants3);
       return this;
     }
     get names() {
@@ -41813,7 +43063,7 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
   function addExprNames(names, from) {
     return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
   }
-  function optimizeExpr(expr, names, constants) {
+  function optimizeExpr(expr, names, constants3) {
     if (expr instanceof code_1.Name) return replaceName(expr);
     if (!canOptimize(expr)) return expr;
     return new code_1._Code(expr._items.reduce((items, c) => {
@@ -41823,13 +43073,13 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       return items;
     }, []));
     function replaceName(n) {
-      const c = constants[n.str];
+      const c = constants3[n.str];
       if (c === void 0 || names[n.str] !== 1) return n;
       delete names[n.str];
       return c;
     }
     function canOptimize(e) {
-      return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants[c.str] !== void 0);
+      return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants3[c.str] !== void 0);
     }
   }
   function subtractNames(names, from) {
@@ -43489,7 +44739,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve7.call(this, root, ref);
+    let _sch = resolve12.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a7 = root.localRefs) === null || _a7 === void 0 ? void 0 : _a7[ref];
       const { schemaId } = this.opts;
@@ -43515,7 +44765,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve7(root, ref) {
+  function resolve12(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -43965,47 +45215,47 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     else if (typeof uri === "object") uri = parse5(serialize(uri, options), options);
     return uri;
   }
-  function resolve7(baseURI, relativeURI, options) {
+  function resolve12(baseURI, relativeURI, options) {
     const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
     const resolved = resolveComponent(parse5(baseURI, schemelessOptions), parse5(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
-  function resolveComponent(base, relative2, options, skipNormalization) {
+  function resolveComponent(base, relative3, options, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
       base = parse5(serialize(base, options), options);
-      relative2 = parse5(serialize(relative2, options), options);
+      relative3 = parse5(serialize(relative3, options), options);
     }
     options = options || {};
-    if (!options.tolerant && relative2.scheme) {
-      target.scheme = relative2.scheme;
-      target.userinfo = relative2.userinfo;
-      target.host = relative2.host;
-      target.port = relative2.port;
-      target.path = removeDotSegments(relative2.path || "");
-      target.query = relative2.query;
+    if (!options.tolerant && relative3.scheme) {
+      target.scheme = relative3.scheme;
+      target.userinfo = relative3.userinfo;
+      target.host = relative3.host;
+      target.port = relative3.port;
+      target.path = removeDotSegments(relative3.path || "");
+      target.query = relative3.query;
     } else {
-      if (relative2.userinfo !== void 0 || relative2.host !== void 0 || relative2.port !== void 0) {
-        target.userinfo = relative2.userinfo;
-        target.host = relative2.host;
-        target.port = relative2.port;
-        target.path = removeDotSegments(relative2.path || "");
-        target.query = relative2.query;
+      if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
+        target.userinfo = relative3.userinfo;
+        target.host = relative3.host;
+        target.port = relative3.port;
+        target.path = removeDotSegments(relative3.path || "");
+        target.query = relative3.query;
       } else {
-        if (!relative2.path) {
+        if (!relative3.path) {
           target.path = base.path;
-          if (relative2.query !== void 0) target.query = relative2.query;
+          if (relative3.query !== void 0) target.query = relative3.query;
           else target.query = base.query;
         } else {
-          if (relative2.path[0] === "/") target.path = removeDotSegments(relative2.path);
+          if (relative3.path[0] === "/") target.path = removeDotSegments(relative3.path);
           else {
-            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative2.path;
-            else if (!base.path) target.path = relative2.path;
-            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative2.path;
+            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative3.path;
+            else if (!base.path) target.path = relative3.path;
+            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
             target.path = removeDotSegments(target.path);
           }
-          target.query = relative2.query;
+          target.query = relative3.query;
         }
         target.userinfo = base.userinfo;
         target.host = base.host;
@@ -44013,7 +45263,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
       }
       target.scheme = base.scheme;
     }
-    target.fragment = relative2.fragment;
+    target.fragment = relative3.fragment;
     return target;
   }
   function equal(uriA, uriB, options) {
@@ -44139,7 +45389,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
   const fastUri = {
     SCHEMES,
     normalize,
-    resolve: resolve7,
+    resolve: resolve12,
     resolveComponent,
     equal,
     serialize,
@@ -49512,7 +50762,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve7, reject) => {
+    return new Promise((resolve12, reject) => {
       const json2 = serializeMessage(message);
       let settled = false;
       const onError = (error64) => {
@@ -49527,14 +50777,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve7();
+        resolve12();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json2)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve7();
+        resolve12();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -49588,14 +50838,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve7) => {
+    return await new Promise((resolve12) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve7(true);
+        resolve12(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve7(false);
+        resolve12(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -49944,7 +51194,7 @@ var wpProp = {
 var confirmProp = {
   type: "string",
   enum: ["YES"],
-  description: "Explicit human approval. Must be YES."
+  description: "Compatibility check. Must be YES. Does not authorize a mutation by itself."
 };
 var fingerprintProp = {
   type: "string",
@@ -50675,8 +51925,40 @@ var TOOLS = [
     },
     roles: ["ba", "architect", "developer", "quality"],
     kind: "read"
+  },
+  {
+    name: "praxis_approval_confirm",
+    description: "READ-ONLY display of a stored proposal for the host permission dialog. Does not approve the plan and does not mutate Jira, Git, or the local workflow. Approval is recorded only by the host hook after the person allows this tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        planId: { type: "string", description: "Stored proposal id" }
+      },
+      required: ["planId"],
+      additionalProperties: false
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read"
   }
 ];
+for (const tool of TOOLS) {
+  if (tool.kind !== "apply")
+    continue;
+  tool.inputSchema.properties.planId = {
+    type: "string",
+    description: "Persisted approval id. Required when more than one approval could match."
+  };
+  tool.inputSchema.properties.planFingerprint = {
+    type: "string",
+    description: "Fingerprint of the approved plan revision. A mismatch fails closed."
+  };
+  tool.inputSchema.properties.instanceId = {
+    type: "string",
+    description: "External instance. Must match the approved plan for Jira."
+  };
+  tool.description += " confirmation=YES does not authorize this write; a persisted host approval for the exact plan is required.";
+}
 function toolsForRole(role) {
   if (role === "runtime")
     return TOOLS;
@@ -55749,7 +57031,7 @@ var recursive3 = /* @__PURE__ */ new WeakMap();
 var NONE3 = 0;
 var ASSUMED3 = 1;
 var PROVEN3 = 2;
-function isRecursive3(inst, stack, resolve7) {
+function isRecursive3(inst, stack, resolve12) {
   const cached4 = recursive3.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN3 : NONE3;
@@ -55759,7 +57041,7 @@ function isRecursive3(inst, stack, resolve7) {
   let result = NONE3;
   const check2 = (child) => {
     if (result !== PROVEN3 && child?._zod) {
-      const answer = isRecursive3(child, stack, resolve7);
+      const answer = isRecursive3(child, stack, resolve12);
       if (answer > result)
         result = answer;
     }
@@ -55770,7 +57052,7 @@ function isRecursive3(inst, stack, resolve7) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve7) : NONE3;
+      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve12) : NONE3;
       if (child > answer)
         answer = child;
     }
@@ -55833,7 +57115,7 @@ function isRecursive3(inst, stack, resolve7) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve7 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve12 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive3(inner, stack, false) : ASSUMED3);
       break;
     }
@@ -70410,8 +71692,9 @@ function jsonSchemaToZod(schema) {
 }
 
 // packages/mcp/dist/tools.js
-var import_node_fs19 = require("node:fs");
-var import_node_path21 = require("node:path");
+var import_node_fs22 = require("node:fs");
+var import_node_path25 = require("node:path");
+init_dist();
 
 // packages/mcp/dist/envelope.js
 var MCP_CONTRACT = "praxis.mcp.result";
@@ -70432,25 +71715,25 @@ function mcpEnvelope(opts) {
 
 // packages/mcp/dist/story-engine.js
 var import_node_child_process2 = require("node:child_process");
-var import_node_fs4 = require("node:fs");
-var import_node_path4 = require("node:path");
+var import_node_fs7 = require("node:fs");
+var import_node_path6 = require("node:path");
 var import_node_url2 = require("node:url");
 init_dist();
 
 // packages/mcp/dist/generic-verification.js
 var import_node_child_process = require("node:child_process");
-var import_node_fs = require("node:fs");
-var import_node_path = require("node:path");
+var import_node_fs4 = require("node:fs");
+var import_node_path3 = require("node:path");
 var import_node_url = require("node:url");
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
-function safeFile(root, relative2) {
-  if (!relative2 || relative2.startsWith("/") || relative2.includes("\0") || relative2.split(/[/\\]/).includes("..")) {
+function safeFile(root, relative3) {
+  if (!relative3 || relative3.startsWith("/") || relative3.includes("\0") || relative3.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
-  const absolute = (0, import_node_path.resolve)(root, relative2);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path.sep}`))
+  const absolute = (0, import_node_path3.resolve)(root, relative3);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path3.sep}`))
     throw new Error("UNSAFE_PATH");
   return absolute;
 }
@@ -70465,7 +71748,7 @@ print(json.dumps(result))
 `;
 async function runSteps(root, modulePath, steps) {
   const file2 = safeFile(root, modulePath);
-  if (!(0, import_node_fs.existsSync)(file2))
+  if (!(0, import_node_fs4.existsSync)(file2))
     throw new Error(`MODULE_MISSING:${modulePath}`);
   if (file2.endsWith(".py")) {
     const result = (0, import_node_child_process.spawnSync)("python3", ["-c", PYTHON, file2, JSON.stringify(steps)], {
@@ -70488,10 +71771,10 @@ async function runSteps(root, modulePath, steps) {
   return value;
 }
 function readChecks(workflowRepo) {
-  const file2 = (0, import_node_path.join)(workflowRepo, ".praxis", "quality", "checks.json");
-  if (!(0, import_node_fs.existsSync)(file2))
+  const file2 = (0, import_node_path3.join)(workflowRepo, ".praxis", "quality", "checks.json");
+  if (!(0, import_node_fs4.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs4.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.checks) || parsed.checks.length === 0)
     throw new Error("CHECKS_INVALID");
   return parsed.checks;
@@ -70699,25 +71982,25 @@ function inspectionPlan(input2) {
 }
 
 // packages/mcp/dist/project-profile.js
-var import_node_fs2 = require("node:fs");
-var import_node_path2 = require("node:path");
+var import_node_fs5 = require("node:fs");
+var import_node_path4 = require("node:path");
 var SKIP = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", "coverage"]);
 function walk(root, dir, out, depth) {
   if (depth > 4 || out.length >= 200)
     return;
   let entries = [];
   try {
-    entries = (0, import_node_fs2.readdirSync)(dir);
+    entries = (0, import_node_fs5.readdirSync)(dir);
   } catch {
     return;
   }
   for (const name of entries) {
     if (SKIP.has(name))
       continue;
-    const absolute = (0, import_node_path2.join)(dir, name);
+    const absolute = (0, import_node_path4.join)(dir, name);
     let info;
     try {
-      info = (0, import_node_fs2.statSync)(absolute);
+      info = (0, import_node_fs5.statSync)(absolute);
     } catch {
       continue;
     }
@@ -70729,14 +72012,14 @@ function walk(root, dir, out, depth) {
 }
 function readJson(file2) {
   try {
-    return JSON.parse((0, import_node_fs2.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs5.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function inspectService(service) {
   const repository = service.repository ?? service.id;
-  if (!service.localPath || !(0, import_node_fs2.existsSync)(service.localPath)) {
+  if (!service.localPath || !(0, import_node_fs5.existsSync)(service.localPath)) {
     return {
       serviceId: service.id,
       repository,
@@ -70756,7 +72039,7 @@ function inspectService(service) {
   const languages = [];
   const frameworks = [];
   const testRunners = [];
-  const packageJson = names.has("package.json") ? readJson((0, import_node_path2.join)(service.localPath, "package.json")) : void 0;
+  const packageJson = names.has("package.json") ? readJson((0, import_node_path4.join)(service.localPath, "package.json")) : void 0;
   const deps = {
     ...packageJson?.dependencies,
     ...packageJson?.devDependencies
@@ -70786,7 +72069,7 @@ function inspectService(service) {
   for (const file2 of pythonTests.slice(0, 20)) {
     let text = "";
     try {
-      text = (0, import_node_fs2.readFileSync)((0, import_node_path2.join)(service.localPath, file2), "utf8");
+      text = (0, import_node_fs5.readFileSync)((0, import_node_path4.join)(service.localPath, file2), "utf8");
     } catch {
       continue;
     }
@@ -70839,8 +72122,8 @@ function inspectService(service) {
 }
 
 // packages/mcp/dist/workflow-store.js
-var import_node_fs3 = require("node:fs");
-var import_node_path3 = require("node:path");
+var import_node_fs6 = require("node:fs");
+var import_node_path5 = require("node:path");
 init_dist();
 var PRAXIS_CAPABILITIES = [
   {
@@ -70905,12 +72188,12 @@ var PRAXIS_CAPABILITIES = [
   }
 ];
 function statePath(repo) {
-  return (0, import_node_path3.join)(repo, ".praxis", "workflow", "state.json");
+  return (0, import_node_path5.join)(repo, ".praxis", "workflow", "state.json");
 }
 function loadWorkflow(repo) {
   let raw;
   try {
-    raw = (0, import_node_fs3.readFileSync)(statePath(repo), "utf8");
+    raw = (0, import_node_fs6.readFileSync)(statePath(repo), "utf8");
   } catch (err) {
     if (err.code === "ENOENT")
       return null;
@@ -70943,13 +72226,14 @@ function workflowStatus(repo) {
   };
 }
 function saveWorkflow(repo, state) {
+  requireMutationLease();
   const path = statePath(repo);
-  (0, import_node_fs3.mkdirSync)((0, import_node_path3.join)(repo, ".praxis", "workflow"), { recursive: true });
+  (0, import_node_fs6.mkdirSync)((0, import_node_path5.join)(repo, ".praxis", "workflow"), { recursive: true });
   const body = `${JSON.stringify(redactPersistent(state), null, 2)}
 `;
   const tmp = `${path}.tmp`;
-  (0, import_node_fs3.writeFileSync)(tmp, body);
-  (0, import_node_fs3.renameSync)(tmp, path);
+  (0, import_node_fs6.writeFileSync)(tmp, body);
+  (0, import_node_fs6.renameSync)(tmp, path);
   return path;
 }
 function previewWorkflow(repo, raw) {
@@ -70963,21 +72247,39 @@ function previewWorkflow(repo, raw) {
     resume: applied.state ? resumeWorkflow(applied.state) : null
   };
 }
+function localWriteRequest(repo, fingerprint2) {
+  const root = (0, import_node_path5.resolve)(repo);
+  return {
+    repo: root,
+    operation: "repository_edit",
+    provider: "local",
+    repository: root,
+    previewFingerprint: fingerprint2,
+    action: "praxis_workflow_apply"
+  };
+}
 function applyResolved(repo, fingerprint2, planned, final) {
   const command = WorkflowCommandSchema.parse(planned);
   const expected = commandFingerprint(command);
   if (fingerprint2 !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
-  const applied = applyWorkflowCommand(loadWorkflow(repo), final);
-  const path = saveWorkflow(repo, applied.state);
-  return {
-    path,
-    duplicate: applied.duplicate,
-    result: applied.result,
-    workflowId: applied.state.workflowId,
-    workItemId: applied.state.workItem.id
-  };
+  const request = localWriteRequest(repo, fingerprint2);
+  const inspection = inspectMutation(request);
+  if (inspection.kind === "replay") {
+    return { ...inspection.result, replayed: true };
+  }
+  return runAuthorizedMutation(request, () => {
+    const applied = applyWorkflowCommand(loadWorkflow(repo), final);
+    const path = saveWorkflow(repo, applied.state);
+    return {
+      path,
+      duplicate: applied.duplicate,
+      result: applied.result,
+      workflowId: applied.state.workflowId,
+      workItemId: applied.state.workItem.id
+    };
+  });
 }
 function applyWorkflow(repo, raw, fingerprint2) {
   const command = WorkflowCommandSchema.parse(raw);
@@ -70985,16 +72287,23 @@ function applyWorkflow(repo, raw, fingerprint2) {
   if (fingerprint2 !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
-  const current = loadWorkflow(repo);
-  const applied = applyWorkflowCommand(current, command);
-  const path = saveWorkflow(repo, applied.state);
-  return {
-    path,
-    duplicate: applied.duplicate,
-    result: applied.result,
-    workflowId: applied.state.workflowId,
-    workItemId: applied.state.workItem.id
-  };
+  const request = localWriteRequest(repo, fingerprint2);
+  const inspection = inspectMutation(request);
+  if (inspection.kind === "replay") {
+    return { ...inspection.result, replayed: true };
+  }
+  return runAuthorizedMutation(request, () => {
+    const current = loadWorkflow(repo);
+    const applied = applyWorkflowCommand(current, command);
+    const path = saveWorkflow(repo, applied.state);
+    return {
+      path,
+      duplicate: applied.duplicate,
+      result: applied.result,
+      workflowId: applied.state.workflowId,
+      workItemId: applied.state.workItem.id
+    };
+  });
 }
 function capabilityRoute(input2) {
   return routeCapabilities({
@@ -71014,27 +72323,27 @@ function git(repo, args, input2) {
   }
   return result.stdout.trim();
 }
-function safeFile2(root, relative2) {
-  if (!relative2 || relative2.startsWith("/") || relative2.includes("\0") || relative2.split(/[/\\]/).includes("..")) {
+function safeFile2(root, relative3) {
+  if (!relative3 || relative3.startsWith("/") || relative3.includes("\0") || relative3.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
-  const absolute = (0, import_node_path4.resolve)(root, relative2);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path4.sep}`))
+  const absolute = (0, import_node_path6.resolve)(root, relative3);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path6.sep}`))
     throw new Error("UNSAFE_PATH");
   return absolute;
 }
 async function loadAdapter(workflowRepo) {
-  const file2 = (0, import_node_path4.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
-  if (!(0, import_node_fs4.existsSync)(file2))
+  const file2 = (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
+  if (!(0, import_node_fs7.existsSync)(file2))
     return void 0;
   return import(`${(0, import_node_url2.pathToFileURL)(file2).href}?v=${Date.now()}-${Math.random()}`);
 }
-async function loadModule(service, relative2) {
+async function loadModule(service, relative3) {
   if (!service.localPath) {
-    return { missingLocation: true, repository: service.repository, file: relative2 };
+    return { missingLocation: true, repository: service.repository, file: relative3 };
   }
-  const file2 = safeFile2(service.localPath, relative2);
-  if (!(0, import_node_fs4.existsSync)(file2))
+  const file2 = safeFile2(service.localPath, relative3);
+  if (!(0, import_node_fs7.existsSync)(file2))
     return { missingModule: true, repository: service.repository, file: file2 };
   const mod = await import(`${(0, import_node_url2.pathToFileURL)(file2).href}?v=${Date.now()}-${Math.random()}`);
   return { mod, repository: service.repository, file: file2 };
@@ -71042,14 +72351,14 @@ async function loadModule(service, relative2) {
 function testsAreGreen(services) {
   let saw = false;
   for (const service of services) {
-    if (!service.localPath || !(0, import_node_fs4.existsSync)(service.localPath))
+    if (!service.localPath || !(0, import_node_fs7.existsSync)(service.localPath))
       continue;
-    const src = (0, import_node_path4.join)(service.localPath, "src");
-    if ((0, import_node_fs4.existsSync)(src)) {
-      const tests = (0, import_node_fs4.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
+    const src = (0, import_node_path6.join)(service.localPath, "src");
+    if ((0, import_node_fs7.existsSync)(src)) {
+      const tests = (0, import_node_fs7.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
       if (tests.length) {
         saw = true;
-        const result = (0, import_node_child_process2.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path4.join)("src", name))], {
+        const result = (0, import_node_child_process2.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path6.join)("src", name))], {
           cwd: service.localPath,
           encoding: "utf8"
         });
@@ -71057,8 +72366,8 @@ function testsAreGreen(services) {
           return false;
       }
     }
-    const testsDir = (0, import_node_path4.join)(service.localPath, "tests");
-    const pytests = (0, import_node_fs4.existsSync)(testsDir) ? (0, import_node_fs4.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
+    const testsDir = (0, import_node_path6.join)(service.localPath, "tests");
+    const pytests = (0, import_node_fs7.existsSync)(testsDir) ? (0, import_node_fs7.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
     if (pytests.length) {
       saw = true;
       const result = (0, import_node_child_process2.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
@@ -71084,10 +72393,10 @@ function serviceVerdicts(scenarios) {
   });
 }
 function readHostProposal(workflowRepo, serviceId) {
-  const file2 = (0, import_node_path4.join)(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
-  if (!(0, import_node_fs4.existsSync)(file2))
+  const file2 = (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
+  if (!(0, import_node_fs7.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs4.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs7.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.files) || parsed.files.length === 0)
     throw new Error("PROPOSAL_INVALID");
   return parsed;
@@ -71158,8 +72467,8 @@ async function buildStoryVerification(repo, independentRerun) {
       "Run verify-stories again with independentRerun true. The patch itself is not a verdict."
     ] : []
   };
-  (0, import_node_fs4.mkdirSync)((0, import_node_path4.join)(repo, ".praxis", "workflow"), { recursive: true });
-  (0, import_node_fs4.writeFileSync)((0, import_node_path4.join)(repo, ".praxis", "workflow", "last-verification.json"), JSON.stringify({ ...meta5, testsGreen: testsAreGreen(services) }, null, 2));
+  (0, import_node_fs7.mkdirSync)((0, import_node_path6.join)(repo, ".praxis", "workflow"), { recursive: true });
+  (0, import_node_fs7.writeFileSync)((0, import_node_path6.join)(repo, ".praxis", "workflow", "last-verification.json"), JSON.stringify({ ...meta5, testsGreen: testsAreGreen(services) }, null, 2));
   return {
     action: "record-verification",
     independentRerun,
@@ -71219,8 +72528,8 @@ function applyProposal(root, proposal) {
     }
     if (typeof file2.after !== "string")
       throw new Error("PROPOSAL_INVALID");
-    (0, import_node_fs4.mkdirSync)((0, import_node_path4.dirname)(absolute), { recursive: true });
-    (0, import_node_fs4.writeFileSync)(absolute, file2.after);
+    (0, import_node_fs7.mkdirSync)((0, import_node_path6.dirname)(absolute), { recursive: true });
+    (0, import_node_fs7.writeFileSync)(absolute, file2.after);
   }
 }
 function commitServiceFix(workflowRepo, planned) {
@@ -71232,6 +72541,29 @@ function commitServiceFix(workflowRepo, planned) {
   const root = service?.localPath;
   if (!root)
     throw new Error("REPOSITORY_LOCATION_MISSING");
+  const repository = (0, import_node_path6.resolve)(root);
+  const workItemId = change.storyIds[0] ?? change.serviceId;
+  if (change.remote) {
+    inspectMutation({
+      repo: repository,
+      operation: "git_push",
+      provider: "local",
+      repository,
+      workItemId,
+      action: "praxis_developer_git_publish"
+    });
+  }
+  return runAuthorizedMutation({
+    repo: repository,
+    operation: "git_commit",
+    provider: "local",
+    repository,
+    workItemId,
+    action: "praxis_quality_service_fix"
+  }, () => commitServiceFixBody(root, planned));
+}
+function commitServiceFixBody(root, planned) {
+  const change = planned.change;
   applyProposal(root, planned.proposal);
   const current = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (current !== change.branch) {
@@ -71315,6 +72647,98 @@ function ctxFromArgs(args, extra) {
     deadlineMs: extra?.deadlineMs
   };
 }
+var YES_BEFORE_APPROVAL = /* @__PURE__ */ new Set([
+  "praxis_project_init_apply",
+  "praxis_ba_apply",
+  "praxis_architect_apply",
+  "praxis_developer_claim",
+  "praxis_developer_release",
+  "praxis_developer_complete",
+  "praxis_developer_complete_recovery_apply",
+  "praxis_quality_apply",
+  "praxis_developer_git_connect_apply",
+  "praxis_developer_git_identity_apply",
+  "praxis_developer_git_commit",
+  "praxis_developer_git_publish",
+  "praxis_developer_git_merge_request",
+  "praxis_developer_git_link_jira_apply",
+  "praxis_workflow_apply"
+]);
+var MCP_MUTATIONS = {
+  praxis_project_init_apply: { operation: "repository_edit", provider: "local", workItem: "none" },
+  praxis_ba_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
+  praxis_architect_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
+  praxis_developer_claim: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_developer_release: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_developer_complete: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_developer_complete_recovery_apply: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_quality_apply: { operation: "external_state_change", provider: "jira", workItem: "wp" },
+  praxis_developer_git_connect_apply: { operation: "repository_edit", provider: "local", workItem: "wp" },
+  praxis_developer_git_identity_apply: { operation: "repository_edit", provider: "local", workItem: "wp" },
+  praxis_developer_git_commit: { operation: "git_commit", provider: "local", workItem: "wp" },
+  praxis_developer_git_publish: { operation: "git_push", provider: "local", workItem: "wp" },
+  praxis_developer_git_merge_request: { operation: "merge_request", provider: "local", workItem: "wp" },
+  praxis_developer_git_link_jira_apply: { operation: "external_record_update", provider: "jira", workItem: "wp" }
+};
+function openMcpGate(name, args, ctx, version4) {
+  if (YES_BEFORE_APPROVAL.has(name) && ctx.confirmation !== "YES") {
+    return {
+      envelope: mcpEnvelope({
+        ok: false,
+        operation: name,
+        version: version4,
+        code: "CONFIRMATION_REQUIRED",
+        errors: [`${name} requires confirmation=YES`]
+      })
+    };
+  }
+  const spec = MCP_MUTATIONS[name];
+  if (!spec)
+    return {};
+  const repo = (0, import_node_path25.resolve)(ctx.repo);
+  const workItemId = spec.workItem === "epic" ? str(args.epic) : spec.workItem === "wp" ? str(args.workPackage) ?? str(args.wp) ?? str(args.workPackageId) : void 0;
+  try {
+    const inspection = inspectMutation({
+      repo,
+      planId: ctx.planId,
+      planFingerprint: ctx.planFingerprint,
+      operation: spec.operation,
+      provider: spec.provider,
+      instanceId: spec.provider === "local" ? void 0 : ctx.instanceId,
+      workItemId,
+      repository: repo,
+      previewFingerprint: ctx.previewFingerprint,
+      action: name
+    });
+    if (inspection.kind === "replay") {
+      const result = inspection.result && typeof inspection.result === "object" ? { ...inspection.result, replayed: true } : { replayed: true, result: inspection.result };
+      return { envelope: mcpEnvelope({ ok: true, operation: name, version: version4, data: result }) };
+    }
+    if (inspection.kind === "ready")
+      beginConsumption(repo, inspection.planId, inspection.key, name);
+    ctx.approvalConsumed = true;
+    return {
+      finish: (data) => completeConsumption(repo, inspection.planId, inspection.key, name, data),
+      abort: () => {
+        try {
+          abortConsumption(repo, inspection.planId, inspection.key, name);
+        } catch {
+        }
+      }
+    };
+  } catch (error64) {
+    const code = error64 && typeof error64 === "object" && "code" in error64 && typeof error64.code === "string" ? error64.code : "APPROVAL_REQUIRED";
+    return {
+      envelope: mcpEnvelope({
+        ok: false,
+        operation: name,
+        version: version4,
+        code,
+        errors: [error64 instanceof Error ? error64.message : String(error64)]
+      })
+    };
+  }
+}
 async function callTool(name, rawArgs, opts) {
   const ops = await loadOperations();
   const allowed = toolsForRole(opts.role);
@@ -71332,6 +72756,10 @@ async function callTool(name, rawArgs, opts) {
   const ctx = ctxFromArgs(args, {
     ...opts.extra
   });
+  const bound = ctx;
+  bound.planId = str(args.planId);
+  bound.planFingerprint = str(args.planFingerprint);
+  bound.instanceId = str(args.instanceId) ?? process.env.PRAXIS_JIRA_BASE_URL;
   ops.loadPraxisDotenv(ctx.repo);
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
@@ -71339,18 +72767,33 @@ async function callTool(name, rawArgs, opts) {
   if (name === "praxis_quality_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_merge_request") {
     ctx.requirePreviewFingerprint = true;
   }
-  if (name === "praxis_developer_claim" || name === "praxis_developer_complete" || name === "praxis_developer_complete_recovery_apply" || name === "praxis_quality_apply" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_identity_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_merge_request" || name === "praxis_developer_git_link_jira_apply" || name === "praxis_workflow_apply") {
-    if (ctx.confirmation !== "YES") {
+  const gate = openMcpGate(name, args, bound, opts.version);
+  if (gate.envelope)
+    return gate.envelope;
+  try {
+    if (name === "praxis_approval_confirm") {
+      const planId = str(args.planId);
+      if (!planId) {
+        return mcpEnvelope({
+          ok: false,
+          operation: name,
+          version: opts.version,
+          code: "INVALID_INPUT",
+          errors: ["praxis_approval_confirm requires planId"]
+        });
+      }
+      const record5 = readApproval(ctx.repo, planId);
       return mcpEnvelope({
-        ok: false,
+        ok: true,
         operation: name,
         version: opts.version,
-        code: "CONFIRMATION_REQUIRED",
-        errors: [`${name} requires confirmation=YES`]
+        data: {
+          approved: false,
+          state: record5.plan.state,
+          summary: approvalSummary(record5.plan)
+        }
       });
     }
-  }
-  try {
     if (name === "praxis_workflow_status" || name === "praxis_workflow_preview" || name === "praxis_workflow_apply" || name === "praxis_capabilities") {
       return mcpEnvelope({
         ok: true,
@@ -71362,6 +72805,8 @@ async function callTool(name, rawArgs, opts) {
     const data = await dispatchTool(ops, name, ctx, opts.version);
     if ((name === "praxis_quality_apply" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_merge_request" || name === "praxis_developer_git_identity_apply") && data && typeof data === "object" && "ok" in data && data.ok === false) {
       const rec = data;
+      if (gate.abort)
+        gate.abort();
       return mcpEnvelope({
         ok: false,
         operation: name,
@@ -71372,10 +72817,15 @@ async function callTool(name, rawArgs, opts) {
         code: rec.code ?? (name === "praxis_quality_apply" ? "QUALITY_APPLY_INCOMPLETE" : "GIT_TRANSPORT_FAILED")
       });
     }
+    if (gate.finish)
+      gate.finish(data);
     return mcpEnvelope({ ok: true, operation: name, version: opts.version, data });
   } catch (err) {
+    if (gate.abort)
+      gate.abort();
     const message = ops.redact(err instanceof Error ? err.message : String(err));
-    const code = err instanceof ops.PraxisOpError ? err.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
+    const coded = err;
+    const code = err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && coded.code.startsWith("APPROVAL_") ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
     const details = err instanceof ops.PraxisOpError ? {
       ...err.stage ? { stage: err.stage } : {},
       ...typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {},
@@ -71395,15 +72845,15 @@ function hydrateWorkflowCommand(repo, raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     return raw;
   const command = { ...raw };
-  const relative2 = command.implementationPath;
-  if (typeof relative2 !== "string" || relative2.length === 0)
+  const relative3 = command.implementationPath;
+  if (typeof relative3 !== "string" || relative3.length === 0)
     return command;
-  const root = (0, import_node_path21.resolve)(repo);
-  const absolute = (0, import_node_path21.resolve)(root, relative2);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path21.sep}`)) {
+  const root = (0, import_node_path25.resolve)(repo);
+  const absolute = (0, import_node_path25.resolve)(root, relative3);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path25.sep}`)) {
     throw new Error("implementation path escapes the repository");
   }
-  command.implementationSource = (0, import_node_fs19.readFileSync)(absolute, "utf8");
+  command.implementationSource = (0, import_node_fs22.readFileSync)(absolute, "utf8");
   delete command.implementationPath;
   return command;
 }
