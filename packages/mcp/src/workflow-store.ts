@@ -180,6 +180,7 @@ export function applyResolved(
   result: unknown;
   workflowId: string;
   workItemId: string;
+  replayed?: boolean;
 } {
   const command = WorkflowCommandSchema.parse(planned);
   const expected = commandFingerprint(command);
@@ -216,6 +217,7 @@ export function applyWorkflow(repo: string, raw: unknown, fingerprint: string): 
   result: unknown;
   workflowId: string;
   workItemId: string;
+  replayed?: boolean;
 } {
   const command = WorkflowCommandSchema.parse(raw);
   const expected = commandFingerprint(command);
