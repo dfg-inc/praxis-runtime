@@ -10741,10 +10741,10 @@ var require_resolve_block_map = __commonJS({
       let offset = bm.offset;
       let commentEnd = null;
       for (const collItem of bm.items) {
-        const { start, key, sep: sep5, value } = collItem;
+        const { start, key, sep: sep6, value } = collItem;
         const keyProps = resolveProps.resolveProps(start, {
           indicator: "explicit-key-ind",
-          next: key ?? sep5?.[0],
+          next: key ?? sep6?.[0],
           offset,
           onError,
           parentIndent: bm.indent,
@@ -10758,7 +10758,7 @@ var require_resolve_block_map = __commonJS({
             else if ("indent" in key && key.indent !== bm.indent)
               onError(offset, "BAD_INDENT", startColMsg);
           }
-          if (!keyProps.anchor && !keyProps.tag && !sep5) {
+          if (!keyProps.anchor && !keyProps.tag && !sep6) {
             commentEnd = keyProps.end;
             if (keyProps.comment) {
               if (map2.comment)
@@ -10782,7 +10782,7 @@ var require_resolve_block_map = __commonJS({
         ctx.atKey = false;
         if (utilMapIncludes.mapIncludes(ctx, map2.items, keyNode))
           onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-        const valueProps = resolveProps.resolveProps(sep5 ?? [], {
+        const valueProps = resolveProps.resolveProps(sep6 ?? [], {
           indicator: "map-value-ind",
           next: value,
           offset: keyNode.range[2],
@@ -10798,7 +10798,7 @@ var require_resolve_block_map = __commonJS({
             if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
               onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep5, null, valueProps, onError);
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep6, null, valueProps, onError);
           if (ctx.schema.compat)
             utilFlowIndentCheck.flowIndentCheck(bm.indent, value, onError);
           offset = valueNode.range[2];
@@ -10889,7 +10889,7 @@ var require_resolve_end = __commonJS({
       let comment = "";
       if (end) {
         let hasSpace = false;
-        let sep5 = "";
+        let sep6 = "";
         for (const token of end) {
           const { source, type } = token;
           switch (type) {
@@ -10903,13 +10903,13 @@ var require_resolve_end = __commonJS({
               if (!comment)
                 comment = cb;
               else
-                comment += sep5 + cb;
-              sep5 = "";
+                comment += sep6 + cb;
+              sep6 = "";
               break;
             }
             case "newline":
               if (comment)
-                sep5 += source;
+                sep6 += source;
               hasSpace = true;
               break;
             default:
@@ -10952,18 +10952,18 @@ var require_resolve_flow_collection = __commonJS({
       let offset = fc.offset + fc.start.source.length;
       for (let i = 0; i < fc.items.length; ++i) {
         const collItem = fc.items[i];
-        const { start, key, sep: sep5, value } = collItem;
+        const { start, key, sep: sep6, value } = collItem;
         const props = resolveProps.resolveProps(start, {
           flow: fcName,
           indicator: "explicit-key-ind",
-          next: key ?? sep5?.[0],
+          next: key ?? sep6?.[0],
           offset,
           onError,
           parentIndent: fc.indent,
           startOnNewline: false
         });
         if (!props.found) {
-          if (!props.anchor && !props.tag && !sep5 && !value) {
+          if (!props.anchor && !props.tag && !sep6 && !value) {
             if (i === 0 && props.comma)
               onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
             else if (i < fc.items.length - 1)
@@ -11017,8 +11017,8 @@ var require_resolve_flow_collection = __commonJS({
             }
           }
         }
-        if (!isMap && !sep5 && !props.found) {
-          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep5, null, props, onError);
+        if (!isMap && !sep6 && !props.found) {
+          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep6, null, props, onError);
           coll.items.push(valueNode);
           offset = valueNode.range[2];
           if (isBlock(value))
@@ -11030,7 +11030,7 @@ var require_resolve_flow_collection = __commonJS({
           if (isBlock(key))
             onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
           ctx.atKey = false;
-          const valueProps = resolveProps.resolveProps(sep5 ?? [], {
+          const valueProps = resolveProps.resolveProps(sep6 ?? [], {
             flow: fcName,
             indicator: "map-value-ind",
             next: value,
@@ -11041,8 +11041,8 @@ var require_resolve_flow_collection = __commonJS({
           });
           if (valueProps.found) {
             if (!isMap && !props.found && ctx.options.strict) {
-              if (sep5)
-                for (const st of sep5) {
+              if (sep6)
+                for (const st of sep6) {
                   if (st === valueProps.found)
                     break;
                   if (st.type === "newline") {
@@ -11059,7 +11059,7 @@ var require_resolve_flow_collection = __commonJS({
             else
               onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep5, null, valueProps, onError) : null;
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep6, null, valueProps, onError) : null;
           if (valueNode) {
             if (isBlock(value))
               onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -11239,7 +11239,7 @@ var require_resolve_block_scalar = __commonJS({
           chompStart = i + 1;
       }
       let value = "";
-      let sep5 = "";
+      let sep6 = "";
       let prevMoreIndented = false;
       for (let i = 0; i < contentStart; ++i)
         value += lines[i][0].slice(trimIndent) + "\n";
@@ -11256,24 +11256,24 @@ var require_resolve_block_scalar = __commonJS({
           indent = "";
         }
         if (type === Scalar.Scalar.BLOCK_LITERAL) {
-          value += sep5 + indent.slice(trimIndent) + content;
-          sep5 = "\n";
+          value += sep6 + indent.slice(trimIndent) + content;
+          sep6 = "\n";
         } else if (indent.length > trimIndent || content[0] === "	") {
-          if (sep5 === " ")
-            sep5 = "\n";
-          else if (!prevMoreIndented && sep5 === "\n")
-            sep5 = "\n\n";
-          value += sep5 + indent.slice(trimIndent) + content;
-          sep5 = "\n";
+          if (sep6 === " ")
+            sep6 = "\n";
+          else if (!prevMoreIndented && sep6 === "\n")
+            sep6 = "\n\n";
+          value += sep6 + indent.slice(trimIndent) + content;
+          sep6 = "\n";
           prevMoreIndented = true;
         } else if (content === "") {
-          if (sep5 === "\n")
+          if (sep6 === "\n")
             value += "\n";
           else
-            sep5 = "\n";
+            sep6 = "\n";
         } else {
-          value += sep5 + content;
-          sep5 = " ";
+          value += sep6 + content;
+          sep6 = " ";
           prevMoreIndented = false;
         }
       }
@@ -11452,25 +11452,25 @@ var require_resolve_flow_scalar = __commonJS({
         trimBoth = /^[ \t]+|[ \t]+$/g;
       }
       let res = match[1].replace(trimEnd, "");
-      let sep5 = " ";
+      let sep6 = " ";
       let pos = line.lastIndex;
       while (match = line.exec(source)) {
         const lm = match[1].replace(trimBoth, "");
         if (lm === "") {
-          if (sep5 === "\n")
-            res += sep5;
+          if (sep6 === "\n")
+            res += sep6;
           else
-            sep5 = "\n";
+            sep6 = "\n";
         } else {
-          res += sep5 + lm;
-          sep5 = " ";
+          res += sep6 + lm;
+          sep6 = " ";
         }
         pos = line.lastIndex;
       }
       const last = /[ \t]*(.*)/sy;
       last.lastIndex = pos;
       match = last.exec(source);
-      return res + sep5 + (match?.[1] ?? "");
+      return res + sep6 + (match?.[1] ?? "");
     }
     function doubleQuotedValue(source, onError) {
       let res = "";
@@ -12280,14 +12280,14 @@ var require_cst_stringify = __commonJS({
         }
       }
     }
-    function stringifyItem({ start, key, sep: sep5, value }) {
+    function stringifyItem({ start, key, sep: sep6, value }) {
       let res = "";
       for (const st of start)
         res += st.source;
       if (key)
         res += stringifyToken(key);
-      if (sep5)
-        for (const st of sep5)
+      if (sep6)
+        for (const st of sep6)
           res += st.source;
       if (value)
         res += stringifyToken(value);
@@ -13447,18 +13447,18 @@ var require_parser = __commonJS({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep5;
+          let sep6;
           if (scalar.end) {
-            sep5 = scalar.end;
-            sep5.push(this.sourceToken);
+            sep6 = scalar.end;
+            sep6.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep5 = [this.sourceToken];
+            sep6 = [this.sourceToken];
           const map2 = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep5 }]
+            items: [{ start, key: scalar, sep: sep6 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map2;
@@ -13610,15 +13610,15 @@ var require_parser = __commonJS({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key = it.key;
-                  const sep5 = it.sep;
-                  sep5.push(this.sourceToken);
+                  const sep6 = it.sep;
+                  sep6.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key, sep: sep5 }]
+                    items: [{ start: start2, key, sep: sep6 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -13812,13 +13812,13 @@ var require_parser = __commonJS({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep5 = fc.end.splice(1, fc.end.length);
-            sep5.push(this.sourceToken);
+            const sep6 = fc.end.splice(1, fc.end.length);
+            sep6.push(this.sourceToken);
             const map2 = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep5 }]
+              items: [{ start, key: fc, sep: sep6 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map2;
@@ -45558,41 +45558,41 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
-  function resolveComponent(base, relative3, options, skipNormalization) {
+  function resolveComponent(base, relative4, options, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
       base = parse5(serialize(base, options), options);
-      relative3 = parse5(serialize(relative3, options), options);
+      relative4 = parse5(serialize(relative4, options), options);
     }
     options = options || {};
-    if (!options.tolerant && relative3.scheme) {
-      target.scheme = relative3.scheme;
-      target.userinfo = relative3.userinfo;
-      target.host = relative3.host;
-      target.port = relative3.port;
-      target.path = removeDotSegments(relative3.path || "");
-      target.query = relative3.query;
+    if (!options.tolerant && relative4.scheme) {
+      target.scheme = relative4.scheme;
+      target.userinfo = relative4.userinfo;
+      target.host = relative4.host;
+      target.port = relative4.port;
+      target.path = removeDotSegments(relative4.path || "");
+      target.query = relative4.query;
     } else {
-      if (relative3.userinfo !== void 0 || relative3.host !== void 0 || relative3.port !== void 0) {
-        target.userinfo = relative3.userinfo;
-        target.host = relative3.host;
-        target.port = relative3.port;
-        target.path = removeDotSegments(relative3.path || "");
-        target.query = relative3.query;
+      if (relative4.userinfo !== void 0 || relative4.host !== void 0 || relative4.port !== void 0) {
+        target.userinfo = relative4.userinfo;
+        target.host = relative4.host;
+        target.port = relative4.port;
+        target.path = removeDotSegments(relative4.path || "");
+        target.query = relative4.query;
       } else {
-        if (!relative3.path) {
+        if (!relative4.path) {
           target.path = base.path;
-          if (relative3.query !== void 0) target.query = relative3.query;
+          if (relative4.query !== void 0) target.query = relative4.query;
           else target.query = base.query;
         } else {
-          if (relative3.path[0] === "/") target.path = removeDotSegments(relative3.path);
+          if (relative4.path[0] === "/") target.path = removeDotSegments(relative4.path);
           else {
-            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative3.path;
-            else if (!base.path) target.path = relative3.path;
-            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative3.path;
+            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative4.path;
+            else if (!base.path) target.path = relative4.path;
+            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative4.path;
             target.path = removeDotSegments(target.path);
           }
-          target.query = relative3.query;
+          target.query = relative4.query;
         }
         target.userinfo = base.userinfo;
         target.host = base.host;
@@ -45600,7 +45600,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
       }
       target.scheme = base.scheme;
     }
-    target.fragment = relative3.fragment;
+    target.fragment = relative4.fragment;
     return target;
   }
   function equal(uriA, uriB, options) {
@@ -72070,11 +72070,11 @@ var import_node_url = require("node:url");
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
-function safeFile(root, relative3) {
-  if (!relative3 || relative3.startsWith("/") || relative3.includes("\0") || relative3.split(/[/\\]/).includes("..")) {
+function safeFile(root, relative4) {
+  if (!relative4 || relative4.startsWith("/") || relative4.includes("\0") || relative4.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
-  const absolute = (0, import_node_path3.resolve)(root, relative3);
+  const absolute = (0, import_node_path3.resolve)(root, relative4);
   if (absolute !== root && !absolute.startsWith(`${root}${import_node_path3.sep}`))
     throw new Error("UNSAFE_PATH");
   return absolute;
@@ -72578,6 +72578,28 @@ function summarize(state2) {
     links: state2.workItem.links ?? []
   };
 }
+function toPortable(repo, state2) {
+  const root = (0, import_node_path5.resolve)(repo);
+  return {
+    ...state2,
+    services: state2.services.map((service) => {
+      if (!service.localPath || !(0, import_node_path5.isAbsolute)(service.localPath))
+        return service;
+      const rel = (0, import_node_path5.relative)(root, service.localPath);
+      const ups = rel.split(import_node_path5.sep).filter((part) => part === "..").length;
+      if (ups > 2)
+        return service;
+      return { ...service, localPath: (rel === "" ? "." : rel).split(import_node_path5.sep).join("/") };
+    })
+  };
+}
+function toAbsolute(repo, state2) {
+  const root = (0, import_node_path5.resolve)(repo);
+  return {
+    ...state2,
+    services: state2.services.map((service) => service.localPath && !(0, import_node_path5.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path5.resolve)(root, service.localPath) } : service)
+  };
+}
 function readLegacy(repo) {
   let raw;
   try {
@@ -72589,7 +72611,28 @@ function readLegacy(repo) {
   }
   if (raw?.contract === MIGRATED_CONTRACT)
     return null;
-  return WorkflowStateSchema.parse(raw);
+  return toAbsolute(repo, WorkflowStateSchema.parse(raw));
+}
+function itemFiles(repo) {
+  const dir = (0, import_node_path5.join)(workflowDir(repo), "items");
+  try {
+    return (0, import_node_fs6.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
+  } catch {
+    return [];
+  }
+}
+function rebuildIndex(repo, files) {
+  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson2((0, import_node_path5.join)(workflowDir(repo), "items", name))))));
+  return {
+    legacy: false,
+    index: {
+      contract: INDEX_CONTRACT,
+      version: 1,
+      current: items.length === 1 ? items[0].workItemId : null,
+      epoch: 0,
+      items
+    }
+  };
 }
 function readLayout(repo) {
   let raw;
@@ -72599,16 +72642,22 @@ function readLayout(repo) {
     if (err.code !== "ENOENT")
       throw err;
     const legacy = readLegacy(repo);
-    if (!legacy) {
-      if ((0, import_node_fs6.existsSync)(legacyPath(repo))) {
-        throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but index.json is missing");
-      }
-      return null;
+    const files = itemFiles(repo);
+    if (legacy && files.length > 0) {
+      throw new WorkItemError("WORKFLOW_CONFLICT", "both a legacy state.json and items/ exist; there must be one authoritative copy. Keep one and remove the other.");
     }
-    return {
-      legacy: true,
-      index: { contract: INDEX_CONTRACT, version: 1, current: legacy.workItem.id, items: [summarize(legacy)] }
-    };
+    if (legacy) {
+      return {
+        legacy: true,
+        index: { contract: INDEX_CONTRACT, version: 1, current: legacy.workItem.id, items: [summarize(legacy)] }
+      };
+    }
+    if (files.length > 0)
+      return rebuildIndex(repo, files);
+    if ((0, import_node_fs6.existsSync)(legacyPath(repo))) {
+      throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but there are no items to rebuild the index from");
+    }
+    return null;
   }
   const index = raw;
   if (index?.contract !== INDEX_CONTRACT || index.version !== 1 || !Array.isArray(index.items)) {
@@ -72643,12 +72692,15 @@ function resolveId(layout, explicit) {
     }
     return explicit;
   }
-  return layout.index.current;
+  if (layout.index.current === null && layout.index.items.length > 1) {
+    throw new WorkItemError("WORK_ITEM_SELECTION_REQUIRED", `this repository has ${layout.index.items.length} work items and none is selected; pass workItemId or run select-work-item. Items: ${layout.index.items.map((item) => item.workItemId).join(", ")}`);
+  }
+  return layout.index.current ?? layout.index.items[0]?.workItemId ?? null;
 }
 function readItem(repo, layout, id) {
   if (layout.legacy)
     return readLegacy(repo);
-  return WorkflowStateSchema.parse(readJson2(itemPath(repo, id)));
+  return toAbsolute(repo, WorkflowStateSchema.parse(readJson2(itemPath(repo, id))));
 }
 function loadWorkflow(repo, workItemId) {
   const layout = readLayout(repo);
@@ -72666,6 +72718,15 @@ function listWorkItems(repo) {
   return layout ? { current: layout.index.current, items: layout.index.items } : { current: null, items: [] };
 }
 function workflowStatus(repo, workItemId) {
+  const layout = readLayout(repo);
+  if (layout && workItemId === void 0 && layout.index.current === null && layout.index.items.length > 1) {
+    return {
+      present: true,
+      currentWorkItemId: null,
+      selectionRequired: true,
+      workItems: layout.index.items.map((item) => ({ ...item, current: false }))
+    };
+  }
   const state2 = loadWorkflow(repo, workItemId);
   if (!state2)
     return { present: false };
@@ -72766,7 +72827,7 @@ function writeIndex(repo, index) {
 function writeItem(repo, state2) {
   requireMutationLease();
   const path = itemPath(repo, state2.workItem.id);
-  writeAtomic(path, redactPersistent(state2));
+  writeAtomic(path, redactPersistent(toPortable(repo, state2)));
   return path;
 }
 function ensureMigrated(repo) {
@@ -72939,11 +73000,11 @@ function git(repo, args, input2) {
   }
   return result.stdout.trim();
 }
-function safeFile2(root, relative3) {
-  if (!relative3 || relative3.startsWith("/") || relative3.includes("\0") || relative3.split(/[/\\]/).includes("..")) {
+function safeFile2(root, relative4) {
+  if (!relative4 || relative4.startsWith("/") || relative4.includes("\0") || relative4.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
-  const absolute = (0, import_node_path6.resolve)(root, relative3);
+  const absolute = (0, import_node_path6.resolve)(root, relative4);
   if (absolute !== root && !absolute.startsWith(`${root}${import_node_path6.sep}`))
     throw new Error("UNSAFE_PATH");
   return absolute;
@@ -72954,11 +73015,11 @@ async function loadAdapter(workflowRepo) {
     return void 0;
   return import(`${(0, import_node_url2.pathToFileURL)(file2).href}?v=${Date.now()}-${Math.random()}`);
 }
-async function loadModule(service, relative3) {
+async function loadModule(service, relative4) {
   if (!service.localPath) {
-    return { missingLocation: true, repository: service.repository, file: relative3 };
+    return { missingLocation: true, repository: service.repository, file: relative4 };
   }
-  const file2 = safeFile2(service.localPath, relative3);
+  const file2 = safeFile2(service.localPath, relative4);
   if (!(0, import_node_fs7.existsSync)(file2))
     return { missingModule: true, repository: service.repository, file: file2 };
   const mod = await import(`${(0, import_node_url2.pathToFileURL)(file2).href}?v=${Date.now()}-${Math.random()}`);
@@ -73443,7 +73504,7 @@ async function callTool(name, rawArgs, opts) {
       gate.abort();
     const message = ops.redact(err instanceof Error ? err.message : String(err));
     const coded = err;
-    const code = err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|WORKFLOW_(LOCKED|INDEX))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
+    const code = err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
     const details = err instanceof ops.PraxisOpError ? {
       ...err.stage ? { stage: err.stage } : {},
       ...typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {},
@@ -73463,11 +73524,11 @@ function hydrateWorkflowCommand(repo, raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     return raw;
   const command = { ...raw };
-  const relative3 = command.implementationPath;
-  if (typeof relative3 !== "string" || relative3.length === 0)
+  const relative4 = command.implementationPath;
+  if (typeof relative4 !== "string" || relative4.length === 0)
     return command;
   const root = (0, import_node_path25.resolve)(repo);
-  const absolute = (0, import_node_path25.resolve)(root, relative3);
+  const absolute = (0, import_node_path25.resolve)(root, relative4);
   if (absolute !== root && !absolute.startsWith(`${root}${import_node_path25.sep}`)) {
     throw new Error("implementation path escapes the repository");
   }

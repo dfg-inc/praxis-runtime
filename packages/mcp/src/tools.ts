@@ -295,7 +295,7 @@ export async function callTool(
     const code =
       err instanceof ops.PraxisOpError
         ? err.code
-        : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|WORKFLOW_(LOCKED|INDEX))/.test(coded.code)
+        : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code)
           ? coded.code
           : message.startsWith("FINGERPRINT_MISMATCH")
             ? "FINGERPRINT_MISMATCH"

@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import {
   applyWorkflowCommand,
@@ -170,6 +170,39 @@ function summarize(state: WorkflowState): WorkItemSummary {
   };
 }
 
+/**
+ * services[].localPath is machine-specific. It is persisted relative to the workflow repository when
+ * the target is inside it or at most two levels up (a sibling checkout), so committed state carries no
+ * username or home directory, and it is resolved back to an absolute path on load. Absolute values from
+ * older state are read unchanged and become relative on the next write; anything further away stays
+ * absolute because no relative form would be portable.
+ */
+function toPortable(repo: string, state: WorkflowState): WorkflowState {
+  const root = resolve(repo);
+  return {
+    ...state,
+    services: state.services.map((service) => {
+      if (!service.localPath || !isAbsolute(service.localPath)) return service;
+      const rel = relative(root, service.localPath);
+      const ups = rel.split(sep).filter((part) => part === "..").length;
+      if (ups > 2) return service;
+      return { ...service, localPath: (rel === "" ? "." : rel).split(sep).join("/") };
+    }),
+  };
+}
+
+function toAbsolute(repo: string, state: WorkflowState): WorkflowState {
+  const root = resolve(repo);
+  return {
+    ...state,
+    services: state.services.map((service) =>
+      service.localPath && !isAbsolute(service.localPath)
+        ? { ...service, localPath: resolve(root, service.localPath) }
+        : service,
+    ),
+  };
+}
+
 function readLegacy(repo: string): WorkflowState | null {
   let raw: unknown;
   try {
@@ -179,7 +212,37 @@ function readLegacy(repo: string): WorkflowState | null {
     throw err;
   }
   if ((raw as { contract?: string })?.contract === MIGRATED_CONTRACT) return null;
-  return WorkflowStateSchema.parse(raw);
+  return toAbsolute(repo, WorkflowStateSchema.parse(raw));
+}
+
+function itemFiles(repo: string): string[] {
+  const dir = join(workflowDir(repo), "items");
+  try {
+    return readdirSync(dir).filter((name) => name.endsWith(".json")).sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * index.json is a rebuildable cache (it holds the per-operator current selection), so a clone that
+ * has items/ but no index gets one rebuilt from the items. A single item becomes current; with
+ * several, current stays null and the operator must choose: the Runtime never guesses.
+ */
+function rebuildIndex(repo: string, files: string[]): Layout {
+  const items = files.map((name) =>
+    summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson(join(workflowDir(repo), "items", name))))),
+  );
+  return {
+    legacy: false,
+    index: {
+      contract: INDEX_CONTRACT,
+      version: 1,
+      current: items.length === 1 ? items[0]!.workItemId : null,
+      epoch: 0,
+      items,
+    },
+  };
 }
 
 function readLayout(repo: string): Layout | null {
@@ -189,16 +252,24 @@ function readLayout(repo: string): Layout | null {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
     const legacy = readLegacy(repo);
-    if (!legacy) {
-      if (existsSync(legacyPath(repo))) {
-        throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but index.json is missing");
-      }
-      return null;
+    const files = itemFiles(repo);
+    if (legacy && files.length > 0) {
+      throw new WorkItemError(
+        "WORKFLOW_CONFLICT",
+        "both a legacy state.json and items/ exist; there must be one authoritative copy. Keep one and remove the other.",
+      );
     }
-    return {
-      legacy: true,
-      index: { contract: INDEX_CONTRACT, version: 1, current: legacy.workItem.id, items: [summarize(legacy)] },
-    };
+    if (legacy) {
+      return {
+        legacy: true,
+        index: { contract: INDEX_CONTRACT, version: 1, current: legacy.workItem.id, items: [summarize(legacy)] },
+      };
+    }
+    if (files.length > 0) return rebuildIndex(repo, files);
+    if (existsSync(legacyPath(repo))) {
+      throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but there are no items to rebuild the index from");
+    }
+    return null;
   }
   const index = raw as WorkflowIndex;
   if (index?.contract !== INDEX_CONTRACT || index.version !== 1 || !Array.isArray(index.items)) {
@@ -245,12 +316,18 @@ function resolveId(layout: Layout, explicit?: string): string | null {
     }
     return explicit;
   }
-  return layout.index.current;
+  if (layout.index.current === null && layout.index.items.length > 1) {
+    throw new WorkItemError(
+      "WORK_ITEM_SELECTION_REQUIRED",
+      `this repository has ${layout.index.items.length} work items and none is selected; pass workItemId or run select-work-item. Items: ${layout.index.items.map((item) => item.workItemId).join(", ")}`,
+    );
+  }
+  return layout.index.current ?? layout.index.items[0]?.workItemId ?? null;
 }
 
 function readItem(repo: string, layout: Layout, id: string): WorkflowState {
   if (layout.legacy) return readLegacy(repo) as WorkflowState;
-  return WorkflowStateSchema.parse(readJson(itemPath(repo, id)));
+  return toAbsolute(repo, WorkflowStateSchema.parse(readJson(itemPath(repo, id))));
 }
 
 export function loadWorkflow(repo: string, workItemId?: string): WorkflowState | null {
@@ -275,6 +352,8 @@ export function workflowStatus(repo: string, workItemId?: string): {
   workflowId?: string;
   workItemId?: string;
   currentWorkItemId?: string | null;
+  /** Several work items exist and none is selected; pass workItemId or run select-work-item. */
+  selectionRequired?: boolean;
   workItems?: Array<WorkItemSummary & { current: boolean }>;
   stage?: string;
   requirementIds?: string[];
@@ -285,6 +364,15 @@ export function workflowStatus(repo: string, workItemId?: string): {
   suggested?: string[];
   executed?: [];
 } {
+  const layout = readLayout(repo);
+  if (layout && workItemId === undefined && layout.index.current === null && layout.index.items.length > 1) {
+    return {
+      present: true,
+      currentWorkItemId: null,
+      selectionRequired: true,
+      workItems: layout.index.items.map((item) => ({ ...item, current: false })),
+    };
+  }
   const state = loadWorkflow(repo, workItemId);
   if (!state) return { present: false };
   const { current, items } = listWorkItems(repo);
@@ -392,7 +480,7 @@ function writeIndex(repo: string, index: WorkflowIndex): void {
 function writeItem(repo: string, state: WorkflowState): string {
   requireMutationLease();
   const path = itemPath(repo, state.workItem.id);
-  writeAtomic(path, redactPersistent(state));
+  writeAtomic(path, redactPersistent(toPortable(repo, state)));
   return path;
 }
 
