@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   extractLeadingFrontmatter,
@@ -83,8 +84,9 @@ describe("validatePluginTree", () => {
 
 describe("validatePluginsRoot against monorepo plugins/", () => {
   it("current plugins/ tree PASSes", () => {
-    const root = join(process.cwd(), "..", "..", "plugins");
-    if (!existsSync(root)) return;
+    // Located from this file, not the working directory, and asserted: a missing plugins/ is a failure.
+    const root = fileURLToPath(new URL("../../plugins", import.meta.url));
+    expect(existsSync(root), `plugins directory not found at ${root}`).toBe(true);
     const r = validatePluginsRoot(root);
     expect(r.ok, r.errors.join("\n")).toBe(true);
     // Split repos host few plugins (praxis-runtime: only `runtime`); require each one to be validated.

@@ -135,7 +135,9 @@ export async function buildStoryVerification(
   const state = loadWorkflow(repo, workItemId);
   if (!state) throw new Error("WORKFLOW_MISSING");
   const stories = state.stories.filter((item) => item.status !== "superseded");
-  if (!stories.length) throw new Error("STORY_MISSING");
+  const requirements = state.requirements.filter((item) => item.status !== "superseded");
+  // A work item with requirements but no Story is verified from checks bound to its acceptance criteria.
+  if (!stories.length && !requirements.length) throw new Error("STORY_MISSING");
   const services = state.services as ServiceLocation[];
   const profiles = services.map((service) => inspectService(service));
   const adapter = await loadAdapter(repo);
@@ -163,6 +165,12 @@ export async function buildStoryVerification(
     }));
   } else {
     const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state.workItem.id, stories, services, profiles });
+    if (!executed && !stories.length) {
+      throw new Error(
+        "EVIDENCE_MISSING: this work item has requirements but no Story and no executable checks. Add " +
+          `.praxis/quality/${state.workItem.id}/checks.json (or .praxis/quality/checks.json) with checks that name a requirementId and an acceptanceCriterionId, then verify again. Nothing was recorded.`,
+      );
+    }
     const selected = executed ?? inspectionPlan({ stories, services, profiles });
     scenarios = selected.scenarios;
     findings = selected.findings;
@@ -197,11 +205,7 @@ export async function buildStoryVerification(
         ]
       : [],
   };
-  mkdirSync(join(repo, ".praxis", "workflow"), { recursive: true });
-  writeFileSync(
-    join(repo, ".praxis", "workflow", "last-verification.json"),
-    JSON.stringify({ ...meta, testsGreen: testsAreGreen(services) }, null, 2),
-  );
+  // Previews never write: the verification summary travels in the tool result and the evidence lives in state.
   return {
     action: "record-verification",
     independentRerun,

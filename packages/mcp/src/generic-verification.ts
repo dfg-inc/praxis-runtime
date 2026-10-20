@@ -5,7 +5,8 @@ import { pathToFileURL } from "node:url";
 import type { ProjectProfile, ServiceLocation } from "./project-profile.js";
 
 export type Scenario = {
-  storyId: string;
+  /** Absent when a requirement is verified directly, without a Story. */
+  storyId?: string;
   requirementId: string;
   acceptanceCriterionId: string;
   scenarioId: string;
@@ -142,7 +143,6 @@ export async function runProjectChecks(input: {
   const checks = readChecks(input.workflowRepo, input.workItemId);
   if (!checks) return undefined;
   const story = input.stories.find((item) => item.status !== "superseded") ?? input.stories[0];
-  if (!story) throw new Error("STORY_MISSING");
   const services = new Map(input.services.map((service) => [service.id, service]));
   const scenarios: Scenario[] = [];
   const findings: Finding[] = [];
@@ -153,15 +153,23 @@ export async function runProjectChecks(input: {
   for (const check of checks) {
     const service = services.get(check.serviceId);
     const profile = input.profiles.find((item) => item.serviceId === check.serviceId);
-    const requirementId = check.requirementId ?? story.requirementIds[0];
-    const criterionId = check.acceptanceCriterionId ?? story.acceptanceCriteria[0]?.id ?? story.id;
+    const requirementId = check.requirementId ?? story?.requirementIds[0];
+    if (!requirementId) {
+      throw new Error(`CHECKS_INVALID: check ${check.scenarioId} names no requirementId and there is no Story to take one from`);
+    }
+    // Without a Story, a check must say which acceptance criterion it proves; guessing one would
+    // claim coverage the check does not give.
+    const criterionId = check.acceptanceCriterionId ?? story?.acceptanceCriteria[0]?.id ?? story?.id;
+    if (!criterionId) {
+      throw new Error(`CHECKS_INVALID: check ${check.scenarioId} must name acceptanceCriterionId when no Story exists`);
+    }
     const scenarioId = check.scenarioId;
     const kind = check.kind ?? "happy";
     const level = check.level ?? "unit";
     covered.add(check.serviceId);
     const base = {
-      storyId: check.storyId ?? story.id,
-      requirementId: requirementId!,
+      ...((check.storyId ?? story?.id) ? { storyId: (check.storyId ?? story?.id) as string } : {}),
+      requirementId,
       acceptanceCriterionId: criterionId,
       scenarioId,
       kind,
@@ -218,8 +226,8 @@ export async function runProjectChecks(input: {
       findings.push(findingFor(base, "FAIL", observed, check.expect));
     }
   }
-  for (const serviceId of story.serviceIds) {
-    if (covered.has(serviceId)) continue;
+  for (const serviceId of story?.serviceIds ?? []) {
+    if (!story || covered.has(serviceId)) continue;
     const service = services.get(serviceId);
     const blocked = !service?.localPath;
     const scenarioId = `${story.id}-${blocked ? "BLOCKED" : "UNVERIFIED"}-${serviceId.toUpperCase()}`;
@@ -284,7 +292,7 @@ function findingFor(
     evidence: [`observed:${observed}`],
     status: "open",
     severity: scenario.critical === false ? "medium" : "high",
-    storyIds: [scenario.storyId],
+    storyIds: scenario.storyId ? [scenario.storyId] : [],
     acceptanceCriterionIds: [scenario.acceptanceCriterionId],
     repository: scenario.repository,
     file: scenario.implementationPath,

@@ -4261,7 +4261,8 @@ var init_story = __esm({
       stale: external_exports2.boolean().default(false)
     });
     CoverageEntrySchema = external_exports2.object({
-      storyId: StoryIdSchema,
+      /** Absent for requirement-only evidence: a work item verified without a Story. */
+      storyId: StoryIdSchema.optional(),
       /** Story revision this scenario verified. Older revisions are not evidence for the current one. */
       storyRevision: external_exports2.number().int().positive().optional(),
       requirementId: RequirementIdSchema,
@@ -4624,9 +4625,12 @@ function carryForwardContext(state2, command) {
 }
 function requirementEvidence(state2, requirementId) {
   const current = new Map(state2.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]));
+  const requirement = state2.requirements.find((item) => item.id === requirementId && item.status !== "superseded");
   const executed = state2.coverage.filter((entry) => {
     if (entry.requirementId !== requirementId)
       return false;
+    if (entry.storyId === void 0)
+      return requirement !== void 0;
     const story = current.get(entry.storyId);
     if (!story || entry.scenarioId === `${entry.storyId}-CONFIRMATION`)
       return false;
@@ -4637,7 +4641,7 @@ function requirementEvidence(state2, requirementId) {
   const rolled = rollupStoryVerdict(executed);
   let verdict = rolled.verdict;
   const reasons = [...rolled.reasons];
-  const verified = new Set(executed.map((entry) => entry.storyId));
+  const verified = new Set(executed.flatMap((entry) => entry.storyId ? [entry.storyId] : []));
   const linked = [...current.values()].filter((story) => story.requirementIds.includes(requirementId));
   for (const story of linked) {
     if (!verified.has(story.id))
@@ -4645,10 +4649,18 @@ function requirementEvidence(state2, requirementId) {
     else if (!story.confirmedBehavior)
       reasons.push(`story-unconfirmed:${story.id}@${story.revision}`);
   }
+  if (linked.length === 0 && requirement) {
+    const passed = new Set(executed.filter((entry) => entry.status === "PASS").map((entry) => entry.acceptanceCriterionId));
+    for (const criterion of requirement.acceptanceCriteria) {
+      if (!passed.has(criterion.id))
+        reasons.push(`ac-not-verified:${criterion.id}`);
+    }
+  }
   if (verdict === "PASS" && reasons.length > 0)
     verdict = "PASS_WITH_RISKS";
   const provenance = [
     ...[...verified].map((id) => `story:${id}@${current.get(id).revision}`),
+    ...verified.size === 0 ? [`requirement:${requirementId}@${requirement?.revision ?? 1}`] : [],
     ...executed.map((entry) => `${entry.scenarioId}:${entry.status}`)
   ];
   return { status: "executed", verdict, reasons, provenance };
@@ -4890,7 +4902,7 @@ function applyWorkflowCommand(state2, raw) {
   }
   if (command.action === "record-verification") {
     const scenarios = command.scenarios.map((scenario) => {
-      const storyRevision = scenario.storyRevision ?? state2.stories.find((story) => story.id === scenario.storyId)?.revision;
+      const storyRevision = scenario.storyRevision ?? (scenario.storyId ? state2.stories.find((story) => story.id === scenario.storyId)?.revision : void 0);
       const stamped = storyRevision === void 0 ? scenario : { ...scenario, storyRevision };
       return stamped.critical || stamped.kind === "happy" ? { ...stamped, critical: true } : stamped;
     });
@@ -72115,8 +72127,6 @@ async function runProjectChecks(input2) {
   if (!checks)
     return void 0;
   const story = input2.stories.find((item) => item.status !== "superseded") ?? input2.stories[0];
-  if (!story)
-    throw new Error("STORY_MISSING");
   const services = new Map(input2.services.map((service) => [service.id, service]));
   const scenarios = [];
   const findings = [];
@@ -72127,14 +72137,20 @@ async function runProjectChecks(input2) {
   for (const check2 of checks) {
     const service = services.get(check2.serviceId);
     const profile = input2.profiles.find((item) => item.serviceId === check2.serviceId);
-    const requirementId = check2.requirementId ?? story.requirementIds[0];
-    const criterionId = check2.acceptanceCriterionId ?? story.acceptanceCriteria[0]?.id ?? story.id;
+    const requirementId = check2.requirementId ?? story?.requirementIds[0];
+    if (!requirementId) {
+      throw new Error(`CHECKS_INVALID: check ${check2.scenarioId} names no requirementId and there is no Story to take one from`);
+    }
+    const criterionId = check2.acceptanceCriterionId ?? story?.acceptanceCriteria[0]?.id ?? story?.id;
+    if (!criterionId) {
+      throw new Error(`CHECKS_INVALID: check ${check2.scenarioId} must name acceptanceCriterionId when no Story exists`);
+    }
     const scenarioId = check2.scenarioId;
     const kind = check2.kind ?? "happy";
     const level = check2.level ?? "unit";
     covered.add(check2.serviceId);
     const base = {
-      storyId: check2.storyId ?? story.id,
+      ...check2.storyId ?? story?.id ? { storyId: check2.storyId ?? story?.id } : {},
       requirementId,
       acceptanceCriterionId: criterionId,
       scenarioId,
@@ -72196,8 +72212,8 @@ async function runProjectChecks(input2) {
       findings.push(findingFor(base, "FAIL", observed, check2.expect));
     }
   }
-  for (const serviceId of story.serviceIds) {
-    if (covered.has(serviceId))
+  for (const serviceId of story?.serviceIds ?? []) {
+    if (!story || covered.has(serviceId))
       continue;
     const service = services.get(serviceId);
     const blocked = !service?.localPath;
@@ -72248,7 +72264,7 @@ function findingFor(scenario, status, observed, expected) {
     evidence: [`observed:${observed}`],
     status: "open",
     severity: scenario.critical === false ? "medium" : "high",
-    storyIds: [scenario.storyId],
+    storyIds: scenario.storyId ? [scenario.storyId] : [],
     acceptanceCriterionIds: [scenario.acceptanceCriterionId],
     repository: scenario.repository,
     file: scenario.implementationPath,
@@ -73006,7 +73022,8 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
   if (!state2)
     throw new Error("WORKFLOW_MISSING");
   const stories = state2.stories.filter((item) => item.status !== "superseded");
-  if (!stories.length)
+  const requirements = state2.requirements.filter((item) => item.status !== "superseded");
+  if (!stories.length && !requirements.length)
     throw new Error("STORY_MISSING");
   const services = state2.services;
   const profiles = services.map((service) => inspectService(service));
@@ -73035,6 +73052,9 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
     }));
   } else {
     const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state2.workItem.id, stories, services, profiles });
+    if (!executed && !stories.length) {
+      throw new Error(`EVIDENCE_MISSING: this work item has requirements but no Story and no executable checks. Add .praxis/quality/${state2.workItem.id}/checks.json (or .praxis/quality/checks.json) with checks that name a requirementId and an acceptanceCriterionId, then verify again. Nothing was recorded.`);
+    }
     const selected = executed ?? inspectionPlan({ stories, services, profiles });
     scenarios = selected.scenarios;
     findings = selected.findings;
@@ -73067,8 +73087,6 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
       "Run verify-stories again with independentRerun true. The patch itself is not a verdict."
     ] : []
   };
-  (0, import_node_fs7.mkdirSync)((0, import_node_path6.join)(repo, ".praxis", "workflow"), { recursive: true });
-  (0, import_node_fs7.writeFileSync)((0, import_node_path6.join)(repo, ".praxis", "workflow", "last-verification.json"), JSON.stringify({ ...meta5, testsGreen: testsAreGreen(services) }, null, 2));
   return {
     action: "record-verification",
     independentRerun,

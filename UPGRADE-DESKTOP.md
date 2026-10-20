@@ -1,7 +1,7 @@
 # Upgrading the Claude Desktop extension (local build)
 
 This procedure installs the locally built `claude-extensions/praxis-runtime.mcpb` over an older
-Praxis Runtime. It was written for the build packed from praxis-core `1883cc3` and has **not** been
+Praxis Runtime. It was written for the build packed from praxis-core `83d2953` and has **not** been
 executed through Claude Desktop yet: the sections marked *check* are how you confirm it worked.
 Nothing here publishes, tags or bumps a version.
 
@@ -29,7 +29,8 @@ approval; it is **not** a security boundary, and `praxis_doctor` will say so.
 
 ```bash
 cd /path/to/praxis-runtime
-shasum -a 256 claude-extensions/praxis-runtime.mcpb   # expect b0a10c694797e8a346905bbb2d5bd839fdebffbd95336f84c06b7bdd3cbe9c23
+shasum -a 256 claude-extensions/praxis-runtime.mcpb   # must equal "sha256" in claude-extensions/manifest.json
+# (the .mcpb is a zip with timestamps, so it is not reproducible byte-for-byte; the runtime inside is, see step 5)
 ```
 
 ## 2. Back up what is installed (do not skip)
@@ -65,7 +66,7 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 2b05b51b31e46109c36413282b934380bf516b9c842c707b70efbb2bbc736e96
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 18c764baf1a0efbd36b33e72193e212d86913e1c7a03cb9c28ba755e3bb41580
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -97,5 +98,5 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `2b05b51b31e46109c36413282b934380bf516b9c842c707b70efbb2bbc736e96`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
+(sha256 `18c764baf1a0efbd36b33e72193e212d86913e1c7a03cb9c28ba755e3bb41580`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
 `PRAXIS_SECURITY_MODE` to `secure`.
