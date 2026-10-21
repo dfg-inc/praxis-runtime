@@ -20,7 +20,7 @@ specific to one person's machine. This is the split, and how to adopt it.
 | `.praxis/workflow/state.json` | The pre-multi-item file. Before migration it is the single authoritative copy; after migration it is a tombstone. Either way it must not sit next to `items/` as a second copy. |
 | `.praxis/workflow/.lock/`, `*.tmp`, `.lock.stale-*` | Transient. |
 | `.praxis/workflow/last-verification.json` | Written by older Runtimes at preview time; nothing reads it. |
-| `.praxis/approvals/`, `*.ledger` | Approval records and replay ledgers are private authorization state. |
+| `.praxis/approvals/`, `*.ledger` | Left over from the removed stored-approval flow; ignored. The decision journal is no longer in the repository (`~/.praxis/decisions/`). |
 | `*.pem`, `*.key` | Signing keys. They must never be inside a repository at all. |
 | `.praxis/local/`, `*.log` | Local-only state and logs. |
 | `.project` | Already ignored by the repositories in this workspace. |
