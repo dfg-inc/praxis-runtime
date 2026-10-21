@@ -14,5 +14,6 @@ export type McpEnvelope = {
   ok: boolean;
   code?: string;
   errors?: string[];
+  warnings: string[];
   data: Record<string, any>;
 };

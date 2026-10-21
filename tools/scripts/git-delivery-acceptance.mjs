@@ -36,18 +36,18 @@ import {
   validateGithubApiUrl,
   VCS_CODES,
 } from "@praxis/vcs";
-import { installTestBroker } from "./test-broker.mjs";
+import { installTestApprovals } from "./test-approval.mjs";
 
-// Protected Git writes run under real signed authorizations from an in-process test signer (see test-broker.mjs).
-// The Runtime stays in secure mode; this script does not switch to compatibility mode.
-const testBroker = installTestBroker({ acknowledgeUnisolated: true });
-process.on("exit", () => testBroker.close());
+// Protected Git writes run as if the user had approved them (scripted, see test-approval.mjs); nothing here proves that a
+// person approved anything. The packaged MCPB is exercised separately, with approvals refused or answered by an MCP client.
+const testApprovals = installTestApprovals();
+process.on("exit", () => testApprovals.close());
 // Calls straight into a mock hosting provider (no product gate of its own beyond the write lease).
 const fixtureScratch = mkdtempSync(join(tmpdir(), "praxis-gd-fixture-"));
 const fixtureCall = (write) =>
-  testBroker.authorized({ repo: fixtureScratch, action: "acceptance_fixture_provider_write", operation: "merge_request" }, write);
+  testApprovals.authorized({ repo: fixtureScratch, action: "acceptance_fixture_provider_write", operation: "merge_request" }, write);
 const guarded = (action, operation, fn) => (input, ...rest) =>
-  testBroker.authorized({ repo: input.repo, action, operation, workItemId: input.workPackageId ?? "acceptance" }, () => fn(input, ...rest));
+  testApprovals.authorized({ repo: input.repo, action, operation, workItemId: input.workPackageId ?? "acceptance" }, () => fn(input, ...rest));
 
 const applyCommit = guarded("applyCommit", "git_commit", rawApplyCommit);
 const applyConnect = guarded("applyConnect", "repository_edit", rawApplyConnect);
@@ -590,6 +590,7 @@ void applyMergeRequest;
     env: {
       ...hostedCleanEnv(extracted.dest),
       PRAXIS_SKIP_DOTENV: "1",
+      PRAXIS_APPROVAL_STRICT: "1",
       GIT_TERMINAL_PROMPT: "0",
       GIT_SSH_COMMAND: "false",
     },
@@ -619,7 +620,7 @@ void applyMergeRequest;
     );
     if (!preview?.ok || !preview.data?.previewFingerprint) fail("MCPB connect preview");
     const approved = preview.data.previewFingerprint;
-    // The packaged Runtime is in secure mode with no broker: confirmation=YES must not write anything.
+    // Strict approval and a client with no approval dialog: confirmation=YES must not write anything.
     const applied = parseDoctorEnvelope(
       await session.client.callTool({
         name: "praxis_developer_git_connect_apply",
@@ -634,7 +635,7 @@ void applyMergeRequest;
       }),
     );
     if (applied?.ok !== false || !/^APPROVAL_/.test(applied.code ?? "")) {
-      fail(`MCPB connect apply was not refused in secure mode: ${JSON.stringify(applied)}`);
+      fail(`MCPB connect apply was not refused under strict approval: ${JSON.stringify(applied)}`);
     }
     const origin = spawnSync("git", ["remote", "get-url", "origin"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
     if (origin !== "https://github.com/hisagedru/praxis-acceptance-test") {
@@ -642,8 +643,8 @@ void applyMergeRequest;
     }
     const branches = spawnSync("git", ["branch", "-r"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
     if (branches) fail("MCPB connect pushed unexpectedly");
-    proven.push(`extracted MCPB refuses an unsigned connect in secure mode (${applied.code}); origin unchanged`);
-    proven.push("signed MCPB connect through the broker: covered by accept:git-authorization");
+    proven.push(`extracted MCPB refuses a connect without a client dialog under strict approval (${applied.code}); origin unchanged`);
+    proven.push("approving through the client dialog: covered by accept:git-delivery-e2e (baseline publish) and accept:approval-ux");
     proven.push("no unintended push");
     proven.push("no unintended baseline publication");
   } finally {

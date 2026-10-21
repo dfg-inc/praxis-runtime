@@ -12,18 +12,21 @@ Uninstall first rather than relying on an in-place upgrade.
 
 | Area | Older installed build | This build |
 | --- | --- | --- |
-| Local workflow write (`praxis_workflow_apply`) | Accepts a bare `confirmation=YES` | Refused with `APPROVAL_REQUIRED` in the default `secure` mode |
+| Protected writes (Git, Jira, confirming a Story) | Accepted a bare `confirmation=YES`, or demanded a broker | You approve or reject the exact action in the client's approval dialog; `confirmation=YES` alone is the agent's request, and a client without the dialog is reported as an unverified fallback |
 | Work items per repository | One; a second `open` silently resumes the first | Many; `workItemId`, `select-work-item`, `link-work-item` |
 | Handoffs | Drop `risks`/notes, lose context after one hop | Context carried to every later handoff |
 | Blank optional settings | Passed through as the text `${user_config.…}` | Treated as unset |
 | Jira settings | Required | Optional |
-| `praxis_doctor` | Flags only | `providers`, `security`, `nextSteps` |
+| `praxis_doctor` | Flags only | `providers`, `approval`, `nextSteps` |
 
-Secure mode means a write needs a stored, fingerprint-bound approval. A Desktop extension runs as the
-same user as the agent, so it cannot provide the broker's isolation by itself. Until you set up the
-operator approval path (see `praxis-core/tools/broker/README.md`), local workflow writes will be
-refused. Setting `security_mode` to `compatibility` allows single-user local work without a signed
-approval; it is **not** a security boundary, and `praxis_doctor` will say so.
+Approvals are yours, in the client: before a commit, push, merge request, Jira write or Story confirmation runs,
+Praxis shows you the exact action in the client's own approval dialog (MCP elicitation) and runs it only if you
+approve. If your client cannot show that dialog, `praxis_doctor` says so (`approval.mode: unverified-fallback`) and a
+protected action runs on the agent's `confirmation=YES` after you said yes in chat, recorded as **unverified**. The
+optional setting *Require approval in the client dialog* (`PRAXIS_APPROVAL_STRICT=1`) refuses that fallback. Nothing
+else needs installing: no service, no system account, no administrator rights. See
+`praxis-core/docs/user-approval.md`. If you ever started installing the removed native Approval Service, see
+`praxis-core/docs/cleanup-native-approval-service.md`.
 
 ## 1. Verify the artifact
 
@@ -59,14 +62,14 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 1. Reopen Claude Desktop → Settings → Extensions → **Praxis Runtime** → Uninstall.
 2. Settings → Extensions → Install Extension… → choose `claude-extensions/praxis-runtime.mcpb`.
-3. Re-enter any settings you use. All are optional. Leave **Security mode** blank for `secure`.
+3. Re-enter any settings you use. All are optional. The old *Security mode*, *Approval broker*, *trust anchor*, *ledger* and *operator page* settings no longer exist.
 4. Quit and reopen Claude Desktop.
 
 ## 5. Check (this is what proves the new code is the code running)
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect c19fb407afe3c8276b2276277472cfc637c79063ea6c8f4bb2629a04b47ffdfe
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 156e25470f834d8dccf08ab8be1b0f231b9d99f3da97be3300e7cbd3b71ffef2
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -74,7 +77,7 @@ In a new chat run **praxis_doctor** for a repository and confirm:
 
 - `providers.jira.state` is `unconfigured` (or your real state), never `configured` for blank settings;
 - `hostPlaceholdersIgnored` lists the settings you left blank;
-- `security.mode` is what you chose (`secure` when blank);
+- `approval.mode` is `client-ui` when your client can show the approval dialog, otherwise `unverified-fallback` (and `approval.strict` shows whether you required the dialog);
 - `nextSteps` names concrete actions, if any.
 
 Then call **praxis_workflow_status** and confirm the result contains `workItems`. If it does not, the
@@ -98,8 +101,7 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `c19fb407afe3c8276b2276277472cfc637c79063ea6c8f4bb2629a04b47ffdfe`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
-`PRAXIS_SECURITY_MODE` to `secure`.
+(sha256 `156e25470f834d8dccf08ab8be1b0f231b9d99f3da97be3300e7cbd3b71ffef2`, byte-identical to the file inside the `.mcpb`). Claude Code shows its own permission prompt per tool call; Praxis marks previews read-only and applies destructive so that prompt can appear.
 
 ## Verify the loaded build, not the version string
 
@@ -108,24 +110,23 @@ The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-
 | field | expect |
 | --- | --- |
 | `origin` | `bundle` |
-| `bundleSha256` | `c19fb407afe3c8276b2276277472cfc637c79063ea6c8f4bb2629a04b47ffdfe` (the file Desktop is running) |
-| `coreBaseline` | `0d21b07ec775d0f5bb44e54e745d538f3526e452` |
-| `sourceDigest` | `4334f133c5f10bed1095763194aa7229708c9fa5084724e2de792ddbf577afeb` |
+| `bundleSha256` | `156e25470f834d8dccf08ab8be1b0f231b9d99f3da97be3300e7cbd3b71ffef2` (the file Desktop is running) |
+| `coreBaseline` | `fddfd71be1222280d8467376703946bf46c9a6a0` |
 
 Mismatching `bundleSha256` means an older extension is still loaded: fully quit Claude Desktop and reopen.
 
-## Human approvals (secure mode)
+## Approvals
 
-Optional extension settings: *Approval broker shared folder*, *Approval trust anchor*, *Approval ledger path*, *Operator approval page URL*. They are only meaningful when a broker runs under a **different OS identity** than the one running Claude Desktop. `praxis_doctor` → `security` reports whether that holds. On a same-user host, or one where the agent can drive Docker, it reports the approval path as not isolated and Praxis writes stay refused. That is the intended outcome, not a fault to work around.
+The only approval setting is *Require approval in the client dialog* (optional). With a client that supports elicitation, `praxis_doctor` → `approval.mode` is `client-ui` and every protected action is approved or rejected by you in the dialog; the result of the call says how (`data.approval`). With a client that does not, the mode is `unverified-fallback`: say yes in chat, and the result carries a warning that Praxis could not verify a person was asked. Every decision is logged in `.praxis/approvals/decisions.jsonl` of the repository. `npm run accept:approval-ux` drives the packaged extension with an MCP client that plays a host with a dialog; it cannot show how Claude Desktop itself renders the dialog.
 
-## This build: 52 tools, inspection, role initialisation
+## This build: 51 tools, inspection, role initialisation
 
 Expected after install (Desktop → ask Praxis Doctor, then list tools):
 
-- **52 MCP tools** (50 before): new read-only `praxis_workflow_inspect` (requirements, Stories, decisions, work, handoffs, open items, Quality evidence, links) and `praxis_session_start` (role initialisation without a local script).
+- **51 MCP tools** (52 in the previous build, which still had `praxis_approval_confirm`): new read-only `praxis_workflow_inspect` (requirements, Stories, decisions, work, handoffs, open items, Quality evidence, links) and `praxis_session_start` (role initialisation without a local script).
 - `praxis_developer_status` takes `workItemId` for a local Work Item; `workPackage` accepts only a Work Package id or a Jira key and refuses a Work Item id.
 - Role plugins: install the four `praxis-<role>.zip` files from `desktop-install/` (skills: BA 23, Architect 25, Developer 30, Quality 7). Their `session-start` skills call `praxis_session_start`.
-- `.mcpb` sha256 `c2110f2ec0ea85b0cee6704c3d2e5231eea0e8b4a630bf01cf8fa889e4d2c941`.
+- `.mcpb` sha256 `d09ff50e0841e5e9d11ddc6ce2ef450550300993b2a73320ffa7aa929f196036`.
 
 Desktop acceptance is **not** claimed for this build until it has been installed and re-tested on the real Desktop host.
 
@@ -135,14 +136,10 @@ A Claude session takes its tool list when it starts. After the extension is upda
 the old list (50 tools) while its calls already reach the new server (the doctor reports the new bundle). Claude
 Desktop has one Praxis Runtime server (the MCPB extension); Chat and Code use the same one. `npm run report:tool-origins`
 starts every local build and prints bundle sha, build kind, tool count and a digest of the tool names; all of them
-offer the same 52 tools (digest `d744e798ae38f991abd03922566cd054aa6409b7bbe40abb62dd1ab22391b62a`). `praxis_doctor` now reports `build.tools` (count, digest, names) and
+offer the same tool set (51 tools in this build). `praxis_doctor` now reports `build.tools` (count, digest, names) and
 `build.kind` (`production` for shipped bundles). If a session shows fewer tools than `build.tools.count`, start a
 new session; do not reinstall.
 
-## Secure Git writes
+## Git writes
 
-Commit, push, merge request, remote connect and identity writes are approved per request through the broker inbox
-(`PRAXIS_BROKER_SHARED_DIR`); see `praxis-core/docs/git-authorization.md`. The shipped bundle accepts only approvals
-issued through a human channel (operator page with an authenticator, or the operator console) and ignores the
-same-identity test override. On a same-user host it still refuses: that is the intended result until a broker runs
-under a separate OS identity.
+Commit, push, merge request, remote connect and identity writes are approved per request in the client dialog (see Approvals). A commit approval is not a push approval, and each approval names one action and the exact content previewed.

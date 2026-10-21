@@ -26,8 +26,9 @@ const wpProp = {
 };
 const confirmProp = {
   type: "string",
-  enum: ["YES"],
-  description: "Compatibility check. Must be YES. Does not authorize a mutation by itself.",
+  enum: ["YES", "NO"],
+  description:
+    "YES applies what was previewed. The user then approves it in the client's own dialog; a client without a dialog cannot ask, so ask the user in chat first and pass YES only after they said yes (recorded as unverified). NO means the user rejected it: it is recorded and nothing runs.",
 };
 const fingerprintProp = {
   type: "string",
@@ -845,39 +846,16 @@ export const TOOLS: ToolDef[] = [
     roles: ["ba", "architect", "developer", "quality"],
     kind: "read",
   },
-  {
-    name: "praxis_approval_confirm",
-    description:
-      "READ-ONLY display of a stored proposal for the host permission dialog. Does not approve the plan and does not mutate Jira, Git, or the local workflow. Approval is recorded only by the host hook after the person allows this tool.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        repo: repoProp,
-        planId: { type: "string", description: "Stored proposal id" },
-      },
-      required: ["planId"],
-      additionalProperties: false,
-    },
-    roles: ["ba", "architect", "developer", "quality"],
-    kind: "read",
-  },
 ];
 
 for (const tool of TOOLS) {
   if (tool.kind !== "apply") continue;
-  tool.inputSchema.properties.planId = {
-    type: "string",
-    description: "Persisted approval id. Required when more than one approval could match.",
-  };
-  tool.inputSchema.properties.planFingerprint = {
-    type: "string",
-    description: "Fingerprint of the approved plan revision. A mismatch fails closed.",
-  };
   tool.inputSchema.properties.instanceId = {
     type: "string",
-    description: "External instance. Must match the approved plan for Jira.",
+    description: "External instance (Jira base URL). Defaults to the configured one.",
   };
-  tool.description += " confirmation=YES does not authorize this write; a persisted host approval for the exact plan is required.";
+  tool.description +=
+    " The user approves this exact action before it runs: in the client's own dialog when the client has one; otherwise ask the user in chat and pass confirmation=YES only after they said yes. A rejection runs nothing.";
 }
 
 export function toolsForRole(role: PraxisRole): ToolDef[] {

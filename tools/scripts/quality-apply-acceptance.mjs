@@ -20,13 +20,13 @@ import {
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
 } from "@praxis/jira";
-import { installTestBroker } from "./test-broker.mjs";
+import { installTestApprovals } from "./test-approval.mjs";
 
 // Protected writes (including the mock tracker this script seeds) run under real signed authorizations from an
-// in-process test signer; the Runtime stays in secure mode. See test-broker.mjs for its limits.
-const testBroker = installTestBroker({ acknowledgeUnisolated: true });
-process.on("exit", () => testBroker.close());
-const createJiraProvider = (options) => testBroker.leasedProvider(rawCreateJiraProvider(options));
+// scripted user approval (see test-approval.mjs); nothing here proves that a person approved anything.
+const testApprovals = installTestApprovals();
+process.on("exit", () => testApprovals.close());
+const createJiraProvider = (options) => testApprovals.leasedProvider(rawCreateJiraProvider(options));
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -60,7 +60,7 @@ const {
   versionNegotiationModern,
 } = await import("./official-mcp-client.mjs");
 const applyQualityReview = (options, ...rest) =>
-  testBroker.authorized(
+  testApprovals.authorized(
     { repo: options.repo, action: "applyQualityReview", operation: "external_state_change", provider: "jira", instanceId: "mock-jira", workItemId: options.wpKey ?? options.workPackageId ?? "acceptance" },
     () => rawApplyQualityReview(options, ...rest),
   );
@@ -545,30 +545,30 @@ proven.push("O-P failed review bugs / no Done / dedupe");
   });
   const nPreview = await qualityApplyPreviewOp({ repo: nRepo, wp: WP, provider: nProvider });
   nState.transitionPostStatus = 400;
-  // Without an approval the same call is refused, whatever confirmation says, and Jira is not touched.
+  // A client with no approval dialog cannot ask the user. Under PRAXIS_APPROVAL_STRICT=1 the same call is refused, whatever
+  // confirmation says, and Jira is not touched.
+  process.env.PRAXIS_APPROVAL_STRICT = "1";
   const unsigned = await callTool(
     "praxis_quality_apply",
     { workPackage: WP, repo: nRepo, confirmation: "YES", previewFingerprint: nPreview.previewFingerprint },
     { role: "runtime", version, extra: { provider: nProvider } },
   );
-  if (unsigned.ok !== false || !/^APPROVAL_/.test(unsigned.code ?? "")) fail(`N: unsigned apply was not refused ${JSON.stringify(unsigned)}`);
-  proven.push("N unsigned MCP apply refused with an APPROVAL_* code");
-  // The MCP gate wants the stored host approval AND, in secure mode, a signed broker authorization.
-  const nEnv = await testBroker.approvedToolCall(
-    {
-      repo: nRepo,
-      role: "quality",
-      action: "praxis_quality_apply",
-      operation: "external_state_change",
-      provider: "jira",
-      instanceId: "mock-jira",
-      workItemId: WP,
-      previewFingerprint: nPreview.previewFingerprint,
-    },
-    (approval) =>
+  delete process.env.PRAXIS_APPROVAL_STRICT;
+  if (unsigned.ok !== false || unsigned.code !== "APPROVAL_CLIENT_UI_REQUIRED") fail(`N: strict apply without a dialog was not refused ${JSON.stringify(unsigned)}`);
+  const declined = await callTool(
+    "praxis_quality_apply",
+    { workPackage: WP, repo: nRepo, confirmation: "NO", previewFingerprint: nPreview.previewFingerprint },
+    { role: "runtime", version, extra: { provider: nProvider } },
+  );
+  if (declined.ok !== false || declined.code !== "APPROVAL_REJECTED") fail(`N: a declined apply was not rejected ${JSON.stringify(declined)}`);
+  proven.push("N MCP apply refused without a client dialog under strict approval, and rejected on confirmation=NO; Jira untouched");
+  // With the user's approval (the unverified fallback: confirmation=YES) the apply runs; Jira's transition fails (400).
+  const nEnv = await testApprovals.approvedToolCall(
+    {},
+    () =>
       callTool(
         "praxis_quality_apply",
-        { workPackage: WP, repo: nRepo, confirmation: "YES", previewFingerprint: nPreview.previewFingerprint, ...approval },
+        { workPackage: WP, repo: nRepo, confirmation: "YES", previewFingerprint: nPreview.previewFingerprint },
         { role: "runtime", version, extra: { provider: nProvider } },
       ),
   );

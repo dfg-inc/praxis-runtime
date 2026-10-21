@@ -81,6 +81,12 @@ export async function connectOfficialMcp({
   timeoutMs = MCP_STARTUP_BUDGET_MS,
   clientName = "praxis-acceptance",
   clientVersion = "0.0.0",
+  /**
+   * Plays an MCP client that can show elicitation dialogs. `async (params) => ({ action, content })`; every request
+   * it was shown is kept in `session.elicited`. Without it the client declares no elicitation capability, like a
+   * client that cannot ask the user anything.
+   */
+  elicit,
 }) {
   const transport = new StdioClientTransport({
     command,
@@ -93,10 +99,17 @@ export async function connectOfficialMcp({
   transport.stderr?.on("data", (chunk) => {
     stderr += chunk.toString();
   });
+  const elicited = [];
   const client = new Client(
     { name: clientName, version: clientVersion },
-    { versionNegotiation },
+    { versionNegotiation, ...(elicit ? { capabilities: { elicitation: { form: {} } } } : {}) },
   );
+  if (elicit) {
+    client.setRequestHandler("elicitation/create", async (request) => {
+      elicited.push(request.params);
+      return elicit(request.params);
+    });
+  }
   const started = Date.now();
   const stderrOf = () => stderr;
   try {
@@ -119,6 +132,7 @@ export async function connectOfficialMcp({
   const session = {
     client,
     transport,
+    elicited,
     stderr: stderrOf,
     startupMs: Date.now() - started,
     protocolVersion: client.getNegotiatedProtocolVersion(),

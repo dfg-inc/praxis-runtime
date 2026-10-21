@@ -1,10 +1,12 @@
 import { basename, resolve } from "node:path";
 import {
+  decisionContentFingerprint,
   evaluateFeature,
   featureReadiness,
   redactPersistent,
   requirementEvidence,
   resumeWorkflow,
+  storyContentFingerprint,
   type WorkflowState,
 } from "@praxis/contracts";
 import { listWorkItems, loadWorkflow, WorkItemError } from "./workflow-store.js";
@@ -139,6 +141,8 @@ function requirements(state: WorkflowState) {
 function stories(state: WorkflowState) {
   return state.stories.map((story) => ({
     ...story,
+    /** What confirm-story must carry: the digest of exactly this revision. The user is shown this content before approving. */
+    contentFingerprint: storyContentFingerprint(story),
     confirmation: storyConfirmation(story),
     coverage: state.coverage
       .filter((entry) => entry.storyId === story.id)
@@ -156,7 +160,7 @@ function stories(state: WorkflowState) {
 
 function decisions(state: WorkflowState) {
   return {
-    decisions: state.decisions,
+    decisions: state.decisions.map((decision) => ({ ...decision, contentFingerprint: decisionContentFingerprint(decision) })),
     assumptions: state.assumptions,
     openQuestions: state.openQuestions,
     unresolvedByStory: state.stories

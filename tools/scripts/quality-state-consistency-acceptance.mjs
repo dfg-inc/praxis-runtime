@@ -13,13 +13,13 @@ import {
   createMockJiraState,
   LOCALIZED_RU_TRANSITIONS,
 } from "@praxis/jira";
-import { installTestBroker } from "./test-broker.mjs";
+import { installTestApprovals } from "./test-approval.mjs";
 
 // Protected writes (including the mock tracker this script seeds) run under real signed authorizations from an
-// in-process test signer; the Runtime stays in secure mode. See test-broker.mjs for its limits.
-const testBroker = installTestBroker({ acknowledgeUnisolated: true });
-process.on("exit", () => testBroker.close());
-const createJiraProvider = (options) => testBroker.leasedProvider(rawCreateJiraProvider(options));
+// scripted user approval (see test-approval.mjs); nothing here proves that a person approved anything.
+const testApprovals = installTestApprovals();
+process.on("exit", () => testApprovals.close());
+const createJiraProvider = (options) => testApprovals.leasedProvider(rawCreateJiraProvider(options));
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const WP = "WP-20260914-002";
@@ -39,7 +39,7 @@ if ((built.status ?? 1) !== 0) fail(`build failed\n${built.stderr || built.stdou
 const { developerStatusOp, qualityApplyStatusOp } = await import("@praxis/cli/operations");
 const { writeQualityEvidence, applyQualityReview: rawApplyQualityReview } = await import("@praxis/jira/workflow");
 const applyQualityReview = (options, ...rest) =>
-  testBroker.authorized(
+  testApprovals.authorized(
     { repo: options.repo, action: "applyQualityReview", operation: "external_state_change", provider: "jira", instanceId: "mock-jira", workItemId: options.wpKey ?? options.workPackageId ?? "acceptance" },
     () => rawApplyQualityReview(options, ...rest),
   );

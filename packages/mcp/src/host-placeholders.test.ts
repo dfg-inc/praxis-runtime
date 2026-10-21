@@ -8,8 +8,7 @@ import type { McpEnvelope } from "./workflow-test-helpers.js";
 // REQ-CFG-001 through the real MCP entry point: Claude Desktop passes every blank optional setting as a literal
 // ${user_config.*} template, and no tool may treat that as configuration.
 const SETTINGS = [
-  "PRAXIS_JIRA_BASE_URL", "PRAXIS_JIRA_EMAIL", "PRAXIS_JIRA_PROJECT_KEY", "PRAXIS_JIRA_TOKEN", "PRAXIS_SECURITY_MODE",
-  "PRAXIS_BROKER_SHARED_DIR", "PRAXIS_APPROVAL_PUBLIC_KEY_PATH", "PRAXIS_APPROVAL_LEDGER", "PRAXIS_OPERATOR_URL",
+  "PRAXIS_JIRA_BASE_URL", "PRAXIS_JIRA_EMAIL", "PRAXIS_JIRA_PROJECT_KEY", "PRAXIS_JIRA_TOKEN", "PRAXIS_APPROVAL_STRICT",
   "PRAXIS_GITHUB_TOKEN", "PRAXIS_GITHUB_API_URL", "PRAXIS_GITLAB_TOKEN", "PRAXIS_GITLAB_BASE_URL",
 ];
 let saved: Record<string, string | undefined>;
@@ -42,15 +41,19 @@ describe("unexpanded Desktop placeholders through MCP tools", () => {
       expect(JSON.stringify(res), tool).not.toContain("${");
     }
     const doctor = await call("praxis_doctor", repo);
-    expect(doctor.data.security).toMatchObject({ mode: "secure" });
+    expect(doctor.data.approval).toMatchObject({ mode: "unverified-fallback", strict: false });
     expect(doctor.data.jira.configured).toBe(false);
     expect(doctor.data.github.tokenConfigured).toBe(false);
   });
 
-  it("a protected write is still refused: a blank approval setting does not weaken secure mode", async () => {
+  it("a protected write is still refused without confirmation: a blank approval setting does not weaken approval", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-ph-"));
-    const res = await call("praxis_project_init_apply", repo, { confirmation: "YES" });
+    const res = await call("praxis_project_init_apply", repo, {});
     expect(res.ok).toBe(false);
-    expect(res.code).toMatch(/^APPROVAL_/);
+    expect(res.code).toBe("CONFIRMATION_REQUIRED");
+    // a blank strict setting is unset, not "1": the fallback is still available, and says so
+    const relayed = await call("praxis_project_init_apply", repo, { confirmation: "YES" });
+    expect(relayed.ok, JSON.stringify(relayed.errors)).toBe(true);
+    expect(relayed.warnings.join(" ")).toMatch(/approval unverified/);
   });
 });

@@ -2,14 +2,11 @@ import { readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
 import {
-  abortConsumption,
-  approvalSummary,
-  beginConsumption,
-  completeConsumption,
-  inspectMutation,
-  readApproval,
-  securityMode,
-  type ApprovalOperation,
+  approvalsGivenInThisCall,
+  logDecision,
+  subjectDigest,
+  withApprovalChannel,
+  type UserApprovalChannel,
   type WorkflowRole,
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
@@ -18,7 +15,7 @@ import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
 import { developerWorkItemStatus, inspectWorkflow } from "./workflow-inspect.js";
 import { sessionStart } from "./session-start.js";
-import { applyResolved, applyWorkflow, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
+import { applyResolved, applyWorkflow, applyWorkflowApproved, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
 
 export {
   TOOLS,
@@ -76,7 +73,13 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
   };
 }
 
-const YES_BEFORE_APPROVAL = new Set([
+/**
+ * Tools that change something outside the agent's own notes. Each one needs confirmation=YES (the agent's intent to
+ * apply what it previewed) and then the user's approval, asked in the client's dialog when the client has one. The
+ * approval is obtained where the change is made (core guardWrite, the workflow store, the fix committer), never here.
+ * confirmation=NO is the user's refusal reported by the agent: it is recorded and nothing runs.
+ */
+const PROTECTED_TOOLS = new Set([
   "praxis_project_init_apply",
   "praxis_ba_apply",
   "praxis_architect_apply",
@@ -94,107 +97,76 @@ const YES_BEFORE_APPROVAL = new Set([
   "praxis_workflow_apply",
 ]);
 
-const BROKER_INBOX_TOOLS = new Set([
-  "praxis_developer_git_connect_apply",
-  "praxis_developer_git_identity_apply",
-  "praxis_developer_git_commit",
-  "praxis_developer_git_publish",
-  "praxis_developer_git_merge_request",
-]);
+export const isProtectedTool = (name: string): boolean => PROTECTED_TOOLS.has(name);
 
-const MCP_MUTATIONS: Record<string, { operation: ApprovalOperation; provider: "jira" | "local"; workItem: "epic" | "wp" | "none" }> = {
-  praxis_project_init_apply: { operation: "repository_edit", provider: "local", workItem: "none" },
-  praxis_ba_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
-  praxis_architect_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
-  praxis_developer_claim: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_developer_release: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_developer_complete: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_developer_complete_recovery_apply: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_quality_apply: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_developer_git_connect_apply: { operation: "repository_edit", provider: "local", workItem: "wp" },
-  praxis_developer_git_identity_apply: { operation: "repository_edit", provider: "local", workItem: "wp" },
-  praxis_developer_git_commit: { operation: "git_commit", provider: "local", workItem: "wp" },
-  praxis_developer_git_publish: { operation: "git_push", provider: "local", workItem: "wp" },
-  praxis_developer_git_merge_request: { operation: "merge_request", provider: "local", workItem: "wp" },
-  praxis_developer_git_link_jira_apply: { operation: "external_record_update", provider: "jira", workItem: "wp" },
-};
+/**
+ * Says in the result how the user's approval was obtained, so nobody has to guess: client-ui (asked in the client's own
+ * dialog; the agent cannot write that answer) or unverified (the agent relayed confirmation=YES; Praxis cannot tell
+ * whether a person was asked).
+ */
+function withApprovalNote(name: string, data: unknown): { data: unknown; warnings?: string[] } {
+  if (!PROTECTED_TOOLS.has(name)) return { data };
+  const given = approvalsGivenInThisCall();
+  if (given.length === 0) return { data };
+  const approval = given.map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
+  const unverified = given.filter((item) => item.assurance === "unverified");
+  const enriched = data && typeof data === "object" && !Array.isArray(data) ? { ...(data as object), approval } : { result: data, approval };
+  return {
+    data: enriched,
+    ...(unverified.length
+      ? { warnings: [`approval unverified: ${name} ran on the agent's confirmation=YES; this client cannot show an approval dialog, so Praxis cannot verify that a person was asked`] }
+      : {}),
+  };
+}
 
-function openMcpGate(
-  name: string,
-  args: Record<string, unknown>,
-  ctx: OpContext & { planId?: string; planFingerprint?: string; instanceId?: string; approvalConsumed?: boolean },
-  version: string,
-): { envelope?: McpEnvelope; finish?: (data: unknown) => void; abort?: () => void } {
-  if (YES_BEFORE_APPROVAL.has(name) && ctx.confirmation !== "YES") {
-    return {
-      envelope: mcpEnvelope({
-        ok: false,
-        operation: name,
-        version,
-        code: "CONFIRMATION_REQUIRED",
-        errors: [`${name} requires confirmation=YES`],
-      }),
-    };
-  }
-  const spec = MCP_MUTATIONS[name];
-  if (!spec) return {};
-  // Protected Git tools in secure mode are authorized per request through the broker inbox inside the operation
-  // (core guardWrite). A stored approval file is agent-writable, so it is not consulted here.
-  if (BROKER_INBOX_TOOLS.has(name) && securityMode() === "secure") return {};
-  const repo = resolve(ctx.repo);
-  const workItemId = spec.workItem === "epic"
-    ? str(args.epic)
-    : spec.workItem === "wp"
-      ? (str(args.workPackage) ?? str(args.wp) ?? str(args.workPackageId))
-      : undefined;
-  try {
-    const inspection = inspectMutation({
-      repo,
-      planId: ctx.planId,
-      planFingerprint: ctx.planFingerprint,
-      operation: spec.operation,
-      provider: spec.provider,
-      instanceId: spec.provider === "local" ? undefined : ctx.instanceId,
-      workItemId,
-      repository: repo,
-      previewFingerprint: ctx.previewFingerprint,
+function preflight(name: string, args: Record<string, unknown>, ctx: OpContext, version: string): McpEnvelope | undefined {
+  if (!PROTECTED_TOOLS.has(name)) return undefined;
+  if (ctx.confirmation === "NO") {
+    logDecision(ctx.repo, {
+      at: new Date().toISOString(),
       action: name,
+      summary: `${name} declined`,
+      subjectDigest: subjectDigest(JSON.stringify({ name, previewFingerprint: str(args.previewFingerprint) ?? "" })),
+      decision: "rejected",
+      channel: "confirmation-flag",
+      assurance: "unverified",
+      reason: "the user declined (reported by the agent)",
     });
-    if (inspection.kind === "replay") {
-      const result = inspection.result && typeof inspection.result === "object"
-        ? { ...(inspection.result as object), replayed: true }
-        : { replayed: true, result: inspection.result };
-      return { envelope: mcpEnvelope({ ok: true, operation: name, version, data: result }) };
-    }
-    if (inspection.kind === "ready") beginConsumption(repo, inspection.planId, inspection.key, name);
-    ctx.approvalConsumed = true;
-    return {
-      finish: (data) => completeConsumption(repo, inspection.planId, inspection.key, name, data),
-      abort: () => {
-        try {
-          abortConsumption(repo, inspection.planId, inspection.key, name);
-        } catch {
-          /* keep the tool error */
-        }
-      },
-    };
-  } catch (error) {
-    const code = error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string"
-      ? (error as { code: string }).code
-      : "APPROVAL_REQUIRED";
-    return {
-      envelope: mcpEnvelope({
-        ok: false,
-        operation: name,
-        version,
-        code,
-        errors: [error instanceof Error ? error.message : String(error)],
-      }),
-    };
+    return mcpEnvelope({
+      ok: false,
+      operation: name,
+      version,
+      code: "APPROVAL_REJECTED",
+      errors: [`${name} was rejected by the user. Nothing was changed.`],
+    });
   }
+  if (ctx.confirmation !== "YES") {
+    return mcpEnvelope({
+      ok: false,
+      operation: name,
+      version,
+      code: "CONFIRMATION_REQUIRED",
+      errors: [`${name} requires confirmation=YES after the preview was shown to the user`],
+    });
+  }
+  return undefined;
 }
 
 export async function callTool(
+  name: string,
+  rawArgs: unknown,
+  opts: {
+    role: PraxisRole;
+    version: string;
+    extra?: Partial<OpContext>;
+    /** How to ask the user in the MCP client's own dialog. Absent when the client cannot (the unverified fallback). */
+    approvalChannel?: UserApprovalChannel;
+  },
+): Promise<McpEnvelope> {
+  return withApprovalChannel(opts.approvalChannel, () => callToolInner(name, rawArgs, opts));
+}
+
+async function callToolInner(
   name: string,
   rawArgs: unknown,
   opts: { role: PraxisRole; version: string; extra?: Partial<OpContext> },
@@ -215,15 +187,7 @@ export async function callTool(
   const ctx = ctxFromArgs(args, {
     ...opts.extra,
   });
-  const bound = ctx as OpContext & {
-    planId?: string;
-    planFingerprint?: string;
-    instanceId?: string;
-    approvalConsumed?: boolean;
-  };
-  bound.planId = str(args.planId);
-  bound.planFingerprint = str(args.planFingerprint);
-  bound.instanceId = str(args.instanceId) ?? process.env.PRAXIS_JIRA_BASE_URL;
+  ctx.instanceId = str(args.instanceId) ?? process.env.PRAXIS_JIRA_BASE_URL;
   ops.loadPraxisDotenv(ctx.repo);
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
@@ -231,32 +195,9 @@ export async function callTool(
   if (name === "praxis_quality_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_merge_request") {
     ctx.requirePreviewFingerprint = true;
   }
-  const gate = openMcpGate(name, args, bound, opts.version);
-  if (gate.envelope) return gate.envelope;
+  const refused = preflight(name, args, ctx, opts.version);
+  if (refused) return refused;
   try {
-    if (name === "praxis_approval_confirm") {
-      const planId = str(args.planId);
-      if (!planId) {
-        return mcpEnvelope({
-          ok: false,
-          operation: name,
-          version: opts.version,
-          code: "INVALID_INPUT",
-          errors: ["praxis_approval_confirm requires planId"],
-        });
-      }
-      const record = readApproval(ctx.repo, planId);
-      return mcpEnvelope({
-        ok: true,
-        operation: name,
-        version: opts.version,
-        data: {
-          approved: false,
-          state: record.plan.state,
-          summary: approvalSummary(record.plan),
-        },
-      });
-    }
     if (
       name === "praxis_workflow_status" ||
       name === "praxis_workflow_inspect" ||
@@ -269,7 +210,7 @@ export async function callTool(
         ok: true,
         operation: name,
         version: opts.version,
-        data: await runWorkflowTool(name, args, ctx.repo, opts.version),
+        ...withApprovalNote(name, await runWorkflowTool(name, args, ctx.repo, opts.version)),
       });
     }
     if (name === "praxis_developer_status" && str(args.workItemId)) {
@@ -305,7 +246,6 @@ export async function callTool(
       (data as { ok?: unknown }).ok === false
     ) {
       const rec = data as { ok: false; errors?: string[]; code?: string; warnings?: string[]; recoveryInstructions?: string };
-      if (gate.abort) gate.abort();
       return mcpEnvelope({
         ok: false,
         operation: name,
@@ -320,10 +260,8 @@ export async function callTool(
         code: rec.code ?? (name === "praxis_quality_apply" ? "QUALITY_APPLY_INCOMPLETE" : "GIT_TRANSPORT_FAILED"),
       });
     }
-    if (gate.finish) gate.finish(data);
-    return mcpEnvelope({ ok: true, operation: name, version: opts.version, data });
+    return mcpEnvelope({ ok: true, operation: name, version: opts.version, ...withApprovalNote(name, data) });
   } catch (err) {
-    if (gate.abort) gate.abort();
     const message = ops.redact(err instanceof Error ? err.message : String(err));
     const coded = err as { code?: unknown };
     const code =
@@ -403,11 +341,11 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
       workItemId,
     );
     if (name === "praxis_workflow_preview") return previewWorkflow(repo, planned, workItemId);
-    const committed = commitServiceFix(repo, planned, workItemId);
+    const committed = await commitServiceFix(repo, planned, workItemId, str(args.confirmation));
     return applyResolved(repo, str(args.previewFingerprint) ?? "", planned, committed, workItemId);
   }
   if (name === "praxis_workflow_preview") return previewWorkflow(repo, parsed, workItemId);
-  return applyWorkflow(repo, parsed, str(args.previewFingerprint) ?? "", workItemId);
+  return applyWorkflowApproved(repo, parsed, str(args.previewFingerprint) ?? "", workItemId, str(args.confirmation));
 }
 
 function withBuild(result: unknown, version: string, role: PraxisRole): unknown {

@@ -1,25 +1,8 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { installHostApproval } from "@praxis/contracts";
 import { applyWorkflow, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
-
-function allowWorkflow(repo: string, fingerprint: string) {
-  installHostApproval(repo, {
-    planId: `wf-${fingerprint.slice(-12)}`,
-    role: "ba",
-    provider: "local",
-    workItemIds: ["local-workflow"],
-    repositories: [resolve(repo)],
-    operations: ["repository_edit"],
-    inScope: ["praxis_workflow_apply"],
-    outOfScope: ["git push"],
-    assumptions: [],
-    risks: ["writes the local workflow file"],
-    previewFingerprint: fingerprint,
-  });
-}
 
 describe("local workflow store", () => {
   it("persists a Jira-free workflow and does not duplicate a resumed handoff", () => {
@@ -32,7 +15,6 @@ describe("local workflow store", () => {
     };
     const preview = previewWorkflow(repo, open);
     expect(workflowStatus(repo).present).toBe(false);
-    allowWorkflow(repo, preview.fingerprint);
     const applied = applyWorkflow(repo, open, preview.fingerprint);
     expect(applied.workItemId).toBe("WI-BULK-USER-IMPORT-001");
     expect(workflowStatus(repo).jiraIssueKey).toBeNull();
@@ -43,7 +25,6 @@ describe("local workflow store", () => {
       acceptanceCriteria: ["Valid rows still import."],
     };
     const reqPreview = previewWorkflow(repo, requirement);
-    allowWorkflow(repo, reqPreview.fingerprint);
     applyWorkflow(repo, requirement, reqPreview.fingerprint);
     const handoff = {
       action: "handoff",
@@ -53,14 +34,12 @@ describe("local workflow store", () => {
       readiness: "ready",
     };
     const handPreview = previewWorkflow(repo, handoff);
-    allowWorkflow(repo, handPreview.fingerprint);
     applyWorkflow(repo, handoff, handPreview.fingerprint);
     // The state moved on, so the same command needs its own approval and is deduplicated by the
     // handoff itself rather than by replaying the first approval.
     const againPreview = previewWorkflow(repo, handoff);
     expect(againPreview.fingerprint).not.toBe(handPreview.fingerprint);
     expect(againPreview.duplicate).toBe(true);
-    allowWorkflow(repo, againPreview.fingerprint);
     const again = applyWorkflow(repo, handoff, againPreview.fingerprint);
     expect(again.duplicate).toBe(true);
     expect(workflowStatus(repo).requirementIds).toEqual(["REQ-BUI-001"]);

@@ -4172,246 +4172,7 @@ var init_git_host = __esm({
   }
 });
 
-// node_modules/@praxis/contracts/dist/deployment.js
-function productionBuild() {
-  return true;
-}
-function testIdentityOverrideActive() {
-  return process.env.PRAXIS_TEST_ALLOW_SAME_IDENTITY === "1" && !productionBuild();
-}
-function nonEmpty(value) {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : void 0;
-}
-function assessApprovalDeployment(opts = {}) {
-  const env = opts.env ?? process.env;
-  const probe = opts.probe ?? defaultProbe;
-  const findings = [];
-  const add = (finding) => findings.push(finding);
-  const mode = nonEmpty(env.PRAXIS_SECURITY_MODE) ?? "secure";
-  const uid = probe.uid();
-  const keyInline = nonEmpty(env.PRAXIS_APPROVAL_PUBLIC_KEY);
-  const keyPath = nonEmpty(env.PRAXIS_APPROVAL_PUBLIC_KEY_PATH);
-  const ledger = nonEmpty(env.PRAXIS_APPROVAL_LEDGER);
-  const brokerDir = nonEmpty(env.PRAXIS_BROKER_TRUSTED_DIR);
-  const privateInline = nonEmpty(env.PRAXIS_APPROVAL_PRIVATE_KEY);
-  const privatePath = nonEmpty(env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH);
-  const testHarnessOverride = env.PRAXIS_TEST_ALLOW_SAME_IDENTITY === "1" && !productionBuild();
-  const sockets = opts.dockerSockets ?? DOCKER_SOCKETS(env.HOME ?? "");
-  const dockerSocketReachable = sockets.some((socket) => probe.canRead(socket) && probe.canWrite(socket));
-  const signingKeyVisible = Boolean(privateInline) || Boolean(privatePath && probe.canRead(privatePath));
-  const trustAnchor = keyInline ? "env-inline" : keyPath ? "file" : "none";
-  const brokerDirectoryVisible = Boolean(brokerDir && probe.stat(brokerDir));
-  const finish = (tier) => ({
-    tier,
-    secureOperation: tier === "isolated",
-    findings,
-    observed: {
-      uid,
-      trustAnchor,
-      ledgerConfigured: Boolean(ledger),
-      brokerDirectoryVisible,
-      dockerSocketReachable,
-      signingKeyVisible,
-      testHarnessOverride
-    }
-  });
-  if (mode !== "secure" && mode !== "compatibility") {
-    add({
-      id: "security-mode-invalid",
-      severity: "blocking",
-      detail: "PRAXIS_SECURITY_MODE is neither 'secure' nor 'compatibility'; mutations fail closed.",
-      remedy: "Set it to 'secure' (or leave it blank), or to 'compatibility' for trusted single-user development."
-    });
-    return finish("invalid");
-  }
-  if (mode === "compatibility") {
-    add({
-      id: "compatibility-mode",
-      severity: "blocking",
-      detail: "Approvals are not enforced against the agent: stored approval files are forgeable by the same user.",
-      remedy: "Use secure mode with an isolated broker for anything that matters. Compatibility is for trusted local development only."
-    });
-    return finish("compatibility");
-  }
-  if (env.PRAXIS_TEST_ALLOW_SAME_IDENTITY === "1" && productionBuild()) {
-    add({
-      id: "test-override-ignored",
-      severity: "warning",
-      detail: "PRAXIS_TEST_ALLOW_SAME_IDENTITY=1 is set but this is a production build, which never honours it.",
-      remedy: "Remove PRAXIS_TEST_ALLOW_SAME_IDENTITY from the environment."
-    });
-  }
-  if (testHarnessOverride) {
-    add({
-      id: "test-harness-override",
-      severity: "blocking",
-      detail: "PRAXIS_TEST_ALLOW_SAME_IDENTITY=1 lets the broker and the agent share an identity. This exists for automated tests only.",
-      remedy: "Unset PRAXIS_TEST_ALLOW_SAME_IDENTITY. A host that needs it is not a secure deployment."
-    });
-  }
-  if (trustAnchor === "none" || !ledger) {
-    add({
-      id: "broker-not-configured",
-      severity: "blocking",
-      detail: `Secure mode has no ${trustAnchor === "none" ? "trust anchor (PRAXIS_APPROVAL_PUBLIC_KEY or _PATH)" : "replay ledger (PRAXIS_APPROVAL_LEDGER)"}, so protected mutations fail closed.`,
-      remedy: "Deploy the broker and executor under a separate identity and point this Runtime at the public key and ledger."
-    });
-  }
-  if (trustAnchor === "env-inline") {
-    add({
-      id: "trust-anchor-unverifiable",
-      severity: "blocking",
-      detail: "The verifying public key reaches this process only through its environment, so it cannot be shown to be out of the agent's reach. On Claude Desktop that is the extension settings file, which the same user (and so the agent) can edit.",
-      remedy: "Supply the public key as a file owned by the broker identity and not writable by this user (PRAXIS_APPROVAL_PUBLIC_KEY_PATH)."
-    });
-  }
-  if (trustAnchor === "file" && keyPath && (probe.canWrite(keyPath) || probe.canWrite((0, import_node_path.dirname)((0, import_node_path.resolve)(keyPath))))) {
-    add({
-      id: "trust-anchor-writable",
-      severity: "blocking",
-      detail: "This identity can replace the public key that verifies approvals, then sign its own.",
-      remedy: "Install the public key where only the broker identity can write it."
-    });
-  }
-  if (ledger) {
-    const ledgerPath = (0, import_node_path.resolve)(ledger);
-    const inWorkspace = opts.workspace ? !(0, import_node_path.relative)((0, import_node_path.resolve)(opts.workspace), ledgerPath).startsWith("..") : false;
-    if (inWorkspace || probe.canWrite(ledgerPath) || probe.canWrite((0, import_node_path.dirname)(ledgerPath))) {
-      add({
-        id: "ledger-writable",
-        severity: "blocking",
-        detail: "This identity can edit the replay ledger, so a used approval could be made reusable.",
-        remedy: "Keep the ledger in a directory only the executor identity can write."
-      });
-    }
-  }
-  if (signingKeyVisible) {
-    add({
-      id: "signing-key-visible",
-      severity: "blocking",
-      detail: "The approval signing key is readable by this process.",
-      remedy: "Keep the private key under the broker identity only. The Runtime must never see it."
-    });
-  }
-  if (brokerDir) {
-    const info = probe.stat(brokerDir);
-    if (info) {
-      if (uid !== null && info.uid === uid) {
-        add({
-          id: "broker-same-identity",
-          severity: "blocking",
-          detail: `The broker directory is owned by uid ${info.uid}, the identity this Runtime runs as: the broker is not a separate identity.`,
-          remedy: "Run the broker and executor as a different OS user (or on another machine)."
-        });
-      }
-      if (probe.canWrite(brokerDir)) {
-        add({
-          id: "broker-directory-writable",
-          severity: "blocking",
-          detail: "This identity can write the broker's trusted directory.",
-          remedy: "Make the trusted directory writable only by the broker identity."
-        });
-      }
-    }
-  }
-  if (dockerSocketReachable) {
-    const claimed = env.PRAXIS_DEPLOYMENT_MODEL === "docker-uid";
-    add({
-      id: "docker-control",
-      severity: claimed ? "blocking" : "warning",
-      detail: "This identity can control Docker. A process that can start containers can mount a 'protected' volume and read it, so Docker volumes are not a boundary against it.",
-      remedy: "Do not rely on Docker volumes for the broker. Use a separate OS identity or a remote broker, or remove Docker access from the agent identity."
-    });
-  }
-  const blocking = findings.filter((finding) => finding.severity === "blocking");
-  if (blocking.some((finding) => finding.id === "broker-not-configured") && blocking.length === 1)
-    return finish("unconfigured");
-  if (blocking.length > 0)
-    return finish("unisolated");
-  return finish("isolated");
-}
-function assertSecureDeploymentAssessment(assessment) {
-  if (assessment.secureOperation)
-    return;
-  const reasons = assessment.findings.filter((finding) => finding.severity === "blocking").map((finding) => finding.id);
-  throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", `${assessment.tier} deployment (${reasons.join(", ") || "no secure configuration"}): approval isolation is not available, so protected mutations are refused`);
-}
-function isHumanApprovalChannel(channel) {
-  return typeof channel === "string" && (channel.startsWith("webauthn:") || channel === "operator-socket");
-}
-function assertApprovalChannelAcceptable(body) {
-  if (productionBuild() && !isHumanApprovalChannel(body.channel)) {
-    throw new WorkflowError("APPROVAL_SELF_GRANT_FORBIDDEN", `an approval issued through the "${body.channel ?? "unrecorded"}" channel is not accepted by a production build; the owner must decide at the operator page`);
-  }
-}
-var import_node_fs, import_node_path, defaultProbe, DOCKER_SOCKETS;
-var init_deployment = __esm({
-  "node_modules/@praxis/contracts/dist/deployment.js"() {
-    import_node_fs = require("node:fs");
-    import_node_path = require("node:path");
-    init_workflow();
-    defaultProbe = {
-      uid: () => typeof process.getuid === "function" ? process.getuid() : null,
-      stat: (path) => {
-        try {
-          const s = (0, import_node_fs.statSync)(path);
-          return { uid: s.uid, mode: s.mode };
-        } catch {
-          return null;
-        }
-      },
-      canWrite: (path) => {
-        try {
-          (0, import_node_fs.accessSync)(path, import_node_fs.constants.W_OK);
-          return true;
-        } catch {
-          return false;
-        }
-      },
-      canRead: (path) => {
-        try {
-          (0, import_node_fs.accessSync)(path, import_node_fs.constants.R_OK);
-          return true;
-        } catch {
-          return false;
-        }
-      }
-    };
-    DOCKER_SOCKETS = (home) => ["/var/run/docker.sock", `${home}/.docker/run/docker.sock`];
-  }
-});
-
-// node_modules/@praxis/contracts/dist/grants.js
-function verifyToken(token, publicKeyPem, now) {
-  let parsed;
-  try {
-    parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
-  } catch {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
-  }
-  if (!parsed?.body || typeof parsed.signature !== "string") {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
-  }
-  const body = parsed.body;
-  if (body.contract !== "praxis.approval.authorization" || body.version !== 1) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization contract is not accepted");
-  }
-  let ok = false;
-  try {
-    ok = (0, import_node_crypto.verify)(null, Buffer.from(JSON.stringify(canonicalValue(body))), (0, import_node_crypto.createPublicKey)(publicKeyPem), Buffer.from(parsed.signature, "base64"));
-  } catch {
-    ok = false;
-  }
-  if (!ok)
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization signature is not valid");
-  const expires = Date.parse(body.expiresAt ?? "");
-  const issued = Date.parse(body.issuedAt ?? "");
-  if (!Number.isFinite(expires) || !Number.isFinite(issued) || now.getTime() > expires || issued > expires) {
-    throw new WorkflowError("APPROVAL_EXPIRED", "authorization has expired");
-  }
-  return body;
-}
+// node_modules/@praxis/contracts/dist/human-acts.js
 function canonicalText(value) {
   if (Array.isArray(value))
     return `[${value.map(canonicalText).join(",")}]`;
@@ -4420,75 +4181,187 @@ function canonicalText(value) {
   }
   return JSON.stringify(value);
 }
-function humanGrantContent(action, subject) {
-  return canonicalText({ kind: action, ...subject });
+function humanActContent(act, subject) {
+  return canonicalText({ kind: act, ...subject });
 }
-function publicKey() {
-  const inline = process.env.PRAXIS_APPROVAL_PUBLIC_KEY?.trim();
-  if (inline)
-    return inline;
-  const path = process.env.PRAXIS_APPROVAL_PUBLIC_KEY_PATH?.trim();
-  if (path) {
-    try {
-      return (0, import_node_fs2.readFileSync)(path, "utf8");
-    } catch {
-      throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "the approval public key file cannot be read");
-    }
-  }
-  throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "a human grant requires the approval public key (PRAXIS_APPROVAL_PUBLIC_KEY or _PATH)");
-}
-function assertSigningKeyHiddenFromThisProcess() {
-  const refuse2 = () => {
-    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
+function humanActApprovalRequest(request) {
+  return {
+    action: request.action,
+    kind: HUMAN_ACT_KIND[request.action],
+    summary: request.summary,
+    description: request.description,
+    subject: request.content,
+    risks: request.risks
   };
-  if (process.env.PRAXIS_APPROVAL_PRIVATE_KEY?.trim())
-    refuse2();
-  const keyPath = process.env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH?.trim();
-  if (keyPath) {
-    try {
-      (0, import_node_fs2.accessSync)(keyPath, import_node_fs2.constants.R_OK);
-    } catch {
-      return;
-    }
-    refuse2();
-  }
 }
-function verifyHumanGrant(input2) {
-  assertSigningKeyHiddenFromThisProcess();
-  const compatibility = process.env.PRAXIS_SECURITY_MODE?.trim() === "compatibility";
-  if (!compatibility && !testIdentityOverrideActive()) {
-    assertSecureDeploymentAssessment(assessApprovalDeployment());
-  }
-  const body = verifyToken(input2.token, publicKey(), input2.now ?? /* @__PURE__ */ new Date());
-  assertApprovalChannelAcceptable(body);
-  const kind = HUMAN_GRANT_KIND[input2.action];
-  if (body.action !== input2.action) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `this approval is for ${body.action}, not ${input2.action}`);
-  }
-  if (body.decisionKind !== void 0 && body.decisionKind !== kind) {
-    throw new WorkflowError("APPROVAL_SCOPE_SEPARATE", `this approval is for ${body.decisionKind}, not ${kind}; one kind of approval never authorizes another`);
-  }
-  const bindsContent = Array.isArray(body.targets) && body.targets.includes(input2.targetId) && body.contentDigest === approvedContentDigest(input2.content);
-  if (bindsContent && body.decisionKind === kind)
-    return;
-  const legacy = input2.legacyPlanFingerprint !== void 0 && body.planFingerprint === input2.legacyPlanFingerprint && Array.isArray(body.workItemIds) && body.workItemIds.includes(input2.targetId);
-  if (legacy)
-    return;
-  throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `this approval is not for ${input2.targetId} as it is now: the ${input2.action} content differs from what was approved, or the approval does not name it`);
-}
-var import_node_crypto, import_node_fs2, approvedContentDigest, HUMAN_GRANT_KIND;
-var init_grants = __esm({
-  "node_modules/@praxis/contracts/dist/grants.js"() {
-    import_node_crypto = require("node:crypto");
-    import_node_fs2 = require("node:fs");
-    init_deployment();
-    init_workflow();
-    approvedContentDigest = (content) => `sha256:${(0, import_node_crypto.createHash)("sha256").update(content, "utf8").digest("hex")}`;
-    HUMAN_GRANT_KIND = {
+var HUMAN_ACT_KIND;
+var init_human_acts = __esm({
+  "node_modules/@praxis/contracts/dist/human-acts.js"() {
+    HUMAN_ACT_KIND = {
       "confirm-story": "story_behavior",
       "confirm-decision": "architecture_decision",
       "approve-service": "quality_verdict"
     };
+  }
+});
+
+// node_modules/@praxis/contracts/dist/user-approval.js
+function strict() {
+  return process.env.PRAXIS_APPROVAL_STRICT?.trim() === "1";
+}
+function createUserApproval(input2) {
+  if (input2.channel === "test" && process.env.PRAXIS_TEST_APPROVALS !== "1") {
+    throw new ApprovalError("APPROVAL_REQUIRED", "a test approval is only accepted under the test harness");
+  }
+  const approval = Object.freeze({
+    contract: USER_APPROVAL_CONTRACT,
+    version: USER_APPROVAL_VERSION,
+    action: input2.request.action,
+    kind: input2.request.kind,
+    summary: input2.request.summary,
+    subjectDigest: subjectDigest(input2.request.subject),
+    decision: "approved",
+    channel: input2.channel,
+    assurance: input2.channel === "client-elicitation" || input2.channel === "test" ? "client-ui" : "unverified",
+    decidedAt: (input2.now ?? /* @__PURE__ */ new Date()).toISOString(),
+    ...input2.reason ? { reason: input2.reason } : {}
+  });
+  issued.add(approval);
+  return approval;
+}
+function withApprovalChannel(channel, run) {
+  return channelStore.run({ channel, approvals: [] }, run);
+}
+function currentApprovalChannel() {
+  return channelStore.getStore()?.channel;
+}
+function approvalsGivenInThisCall() {
+  return channelStore.getStore()?.approvals ?? [];
+}
+function approvalModeReport() {
+  const channel = currentApprovalChannel();
+  const isStrict = strict();
+  if (channel) {
+    return { mode: "client-ui", strict: isStrict, note: "Approvals are asked in the MCP client's own dialog; the answer cannot be written by the agent." };
+  }
+  return {
+    mode: "unverified-fallback",
+    strict: isStrict,
+    note: isStrict ? "This client cannot ask for approval (no elicitation support) and PRAXIS_APPROVAL_STRICT=1 refuses unverified approvals, so protected actions will be refused." : "This client cannot ask for approval (no elicitation support). Protected actions run on the agent's confirmation=YES after you said yes in chat; Praxis cannot verify that a person was asked and records the approval as unverified."
+  };
+}
+function logDecision(repo, entry) {
+  if (!repo)
+    return;
+  try {
+    const dir = (0, import_node_path.join)((0, import_node_path.resolve)(repo), ".praxis", "approvals");
+    (0, import_node_fs.mkdirSync)(dir, { recursive: true });
+    (0, import_node_fs.appendFileSync)((0, import_node_path.join)(dir, "decisions.jsonl"), `${JSON.stringify(entry)}
+`);
+  } catch {
+  }
+}
+async function obtainUserApproval(request, options2 = {}) {
+  const base = { at: (/* @__PURE__ */ new Date()).toISOString(), action: request.action, summary: request.summary, subjectDigest: subjectDigest(request.subject) };
+  if (options2.confirmation === "NO") {
+    logDecision(options2.repo, { ...base, decision: "rejected", channel: "confirmation-flag", assurance: "unverified", reason: "the person declined (reported by the agent)" });
+    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected. Nothing was changed.`, { rejected: true });
+  }
+  const channel = currentApprovalChannel();
+  let answer;
+  if (channel) {
+    try {
+      answer = await channel.ask(request);
+    } catch (error64) {
+      logDecision(options2.repo, { ...base, decision: "refused", channel: "client-elicitation", assurance: "client-ui", reason: error64 instanceof Error ? error64.message : String(error64) });
+      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error64 instanceof Error ? error64.message : String(error64)}. Nothing was changed.`);
+    }
+  }
+  if (answer && answer.answer !== "unavailable") {
+    if (answer.answer === "approve") {
+      const approval2 = createUserApproval({ request, channel: "client-elicitation", reason: answer.reason });
+      channelStore.getStore()?.approvals.push(approval2);
+      logDecision(options2.repo, { ...base, decision: "approved", channel: "client-elicitation", assurance: "client-ui", ...answer.reason ? { reason: answer.reason } : {} });
+      return approval2;
+    }
+    const dismissed = answer.answer === "dismiss";
+    logDecision(options2.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", channel: "client-elicitation", assurance: "client-ui", ...answer.reason ? { reason: answer.reason } : {} });
+    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was ${dismissed ? "dismissed" : "rejected"} by the user. Nothing was changed.`, { rejected: !dismissed, dismissed });
+  }
+  if (strict()) {
+    logDecision(options2.repo, { ...base, decision: "refused", channel: "none", assurance: "none", reason: "strict mode, no client approval dialog" });
+    throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} needs approval in the client's own dialog, and this client cannot ask (PRAXIS_APPROVAL_STRICT=1). Nothing was changed.`);
+  }
+  if (options2.confirmation !== "YES") {
+    throw new ApprovalError("APPROVAL_REQUIRED", `${request.summary} needs the user's approval. Show the preview, ask the user, then apply with confirmation=YES. Nothing was changed.`);
+  }
+  const approval = createUserApproval({ request, channel: "confirmation-flag" });
+  channelStore.getStore()?.approvals.push(approval);
+  logDecision(options2.repo, { ...base, decision: "approved", channel: "confirmation-flag", assurance: "unverified", reason: "agent-relayed confirmation=YES; Praxis cannot verify that a person was asked" });
+  return approval;
+}
+function verifyUserApproval(approval, expected) {
+  if (!approval || typeof approval !== "object" || !issued.has(approval)) {
+    throw new ApprovalError("APPROVAL_REQUIRED", `${expected.action} needs the user's approval; none was given for this call`);
+  }
+  if (approval.decision !== "approved")
+    throw new ApprovalError("APPROVAL_REJECTED", `${expected.action} was not approved`);
+  if (approval.action !== expected.action) {
+    throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is for ${approval.action}, not ${expected.action}`);
+  }
+  if (approval.subjectDigest !== subjectDigest(expected.subject)) {
+    throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is not for ${expected.action} as it is now: the content differs from what the user approved`);
+  }
+  const age = (expected.now ?? /* @__PURE__ */ new Date()).getTime() - Date.parse(approval.decidedAt);
+  if (!Number.isFinite(age) || age > USER_APPROVAL_TTL_MS || age < -6e4) {
+    throw new ApprovalError("APPROVAL_EXPIRED", "the user's approval is too old; ask again");
+  }
+  if (strict() && approval.assurance !== "client-ui") {
+    throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", "strict mode accepts only approvals given in the client's own dialog");
+  }
+  return approval;
+}
+function hasMutationLease() {
+  return lease.getStore() !== void 0;
+}
+function requireMutationLease() {
+  if (!lease.getStore()) {
+    throw new ApprovalError("APPROVAL_REQUIRED", "direct mutation is not authorized: the user has not approved it. It must run through a Praxis apply tool, after the user's approval");
+  }
+}
+function runWorkflowRecordWrite(write) {
+  return lease.run({ action: "workflow-record" }, write);
+}
+function runApprovedMutation(approval, write) {
+  if (!issued.has(approval) || approval.decision !== "approved") {
+    throw new ApprovalError("APPROVAL_REQUIRED", "a mutation needs an approval issued for this call");
+  }
+  return lease.run({ action: approval.action, approval }, write);
+}
+var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, ApprovalError, channelStore, lease;
+var init_user_approval = __esm({
+  "node_modules/@praxis/contracts/dist/user-approval.js"() {
+    import_node_async_hooks = require("node:async_hooks");
+    import_node_crypto = require("node:crypto");
+    import_node_fs = require("node:fs");
+    import_node_path = require("node:path");
+    USER_APPROVAL_CONTRACT = "praxis.approval.user";
+    USER_APPROVAL_VERSION = 1;
+    USER_APPROVAL_TTL_MS = 10 * 60 * 1e3;
+    issued = /* @__PURE__ */ new WeakSet();
+    subjectDigest = (subject) => `sha256:${(0, import_node_crypto.createHash)("sha256").update(subject, "utf8").digest("hex")}`;
+    ApprovalError = class extends Error {
+      code;
+      details;
+      constructor(code, message, details = {}) {
+        super(message);
+        this.name = "ApprovalError";
+        this.code = code;
+        this.details = details;
+      }
+    };
+    channelStore = new import_node_async_hooks.AsyncLocalStorage();
+    lease = new import_node_async_hooks.AsyncLocalStorage();
   }
 });
 
@@ -4744,31 +4617,14 @@ function reviseRequirement(state2, id, statement) {
 function fingerprintPayload(payload) {
   return `sha256:${(0, import_node_crypto2.createHash)("sha256").update(JSON.stringify(payload)).digest("hex")}`;
 }
-function canonicalValue(value) {
-  if (Array.isArray(value))
-    return value.map(canonicalValue);
-  if (value && typeof value === "object") {
-    const source = value;
-    const out = {};
-    for (const key of Object.keys(source).sort()) {
-      if (source[key] !== void 0)
-        out[key] = canonicalValue(source[key]);
-    }
-    return out;
-  }
-  return value;
-}
-function storyGrantDigest(input2) {
-  return `sha256:${(0, import_node_crypto2.createHash)("sha256").update(JSON.stringify(canonicalValue(input2))).digest("hex")}`;
-}
-function humanGrantRequest(state2, command) {
+function humanActRequest(state2, command) {
   const idFor = (action, content) => `hg-${action}-${(0, import_node_crypto2.createHash)("sha256").update(content).digest("hex").slice(0, 20)}`;
   if (command.action === "confirm-story") {
     const story = state2.stories.find((item) => item.id === command.id && item.status !== "superseded");
     if (!story)
       return null;
     const contentFingerprint2 = storyContentFingerprint(story);
-    const content = humanGrantContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 });
+    const content = humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 });
     return {
       action: "confirm-story",
       targetId: story.id,
@@ -4807,7 +4663,7 @@ ${bullet(story.expectedResults)}`,
     if (!decision)
       return null;
     const contentFingerprint2 = decisionContentFingerprint(decision);
-    const content = humanGrantContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 });
+    const content = humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 });
     return {
       action: "confirm-decision",
       targetId: decision.id,
@@ -4830,8 +4686,8 @@ ${bullet(story.expectedResults)}`,
     const previous = state2.services.find((item) => item.id === command.service.id);
     if (!approving || previous && fingerprintPayload(previous) === fingerprintPayload(command.service))
       return null;
-    const subject = serviceGrantSubject(state2, command.service);
-    const content = humanGrantContent("approve-service", subject);
+    const subject = serviceApprovalSubject(state2, command.service);
+    const content = humanActContent("approve-service", subject);
     const verdicts = state2.verdicts.filter((v) => !v.stale && v.scope === "service" && v.scopeId === command.service.id);
     return {
       action: "approve-service",
@@ -4865,7 +4721,7 @@ function decisionContentFingerprint(decision) {
     notes: decision.notes ?? null
   });
 }
-function serviceGrantSubject(state2, service) {
+function serviceApprovalSubject(state2, service) {
   const { status: _status, ...rest } = service;
   return {
     workItemId: state2.workItem.id,
@@ -5129,7 +4985,7 @@ function routeCapabilities(input2) {
 function commandFingerprint(command) {
   return fingerprintPayload(command);
 }
-function applyWorkflowCommand(state2, raw) {
+function applyWorkflowCommand(state2, raw, options2) {
   const command = WorkflowCommandSchema.parse(raw);
   if (command.action === "open") {
     if (state2)
@@ -5166,14 +5022,12 @@ function applyWorkflowCommand(state2, raw) {
     const approving = command.service.status === "approved" || command.service.status === "completed";
     const unchanged = previous !== void 0 && fingerprintPayload(previous) === fingerprintPayload(command.service);
     if (approving && !unchanged) {
-      if (!command.authorization) {
-        throw new WorkflowError("SERVICE_APPROVAL_REQUIRED", `service ${command.service.id} cannot be marked ${command.service.status} by an agent; a human grant (approve-service) is required`);
+      if (!options2?.userApproval) {
+        throw new WorkflowError("SERVICE_APPROVAL_REQUIRED", `service ${command.service.id} cannot be marked ${command.service.status} by an agent; the user's approval (approve-service) is required`);
       }
-      verifyHumanGrant({
-        token: command.authorization,
+      verifyUserApproval(options2.userApproval, {
         action: "approve-service",
-        targetId: command.service.id,
-        content: humanGrantContent("approve-service", serviceGrantSubject(state2, command.service))
+        subject: humanActContent("approve-service", serviceApprovalSubject(state2, command.service))
       });
     }
     const services = [
@@ -5216,14 +5070,12 @@ function applyWorkflowCommand(state2, raw) {
     if (contentFingerprint2 !== command.contentFingerprint) {
       throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the reviewed revision`);
     }
-    if (!command.authorization) {
-      throw new WorkflowError("APPROVAL_REQUIRED", `confirming decision ${decision.id} needs a human grant: propose the plan, have the owner approve it, then apply`);
+    if (!options2?.userApproval) {
+      throw new WorkflowError("APPROVAL_REQUIRED", `confirming decision ${decision.id} needs the user's approval: preview it, let the user approve, then apply`);
     }
-    verifyHumanGrant({
-      token: command.authorization,
+    verifyUserApproval(options2.userApproval, {
       action: "confirm-decision",
-      targetId: decision.id,
-      content: humanGrantContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 })
+      subject: humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 })
     });
     const decisions2 = state2.decisions.map((item) => item.id === decision.id ? { ...item, confirmed: true } : item);
     let confirmed = { ...state2, decisions: decisions2 };
@@ -5234,7 +5086,7 @@ function applyWorkflowCommand(state2, raw) {
   }
   if (command.action === "record-decision") {
     if (command.confirmed) {
-      throw new WorkflowError("DECISION_CONFIRMATION_REQUIRED", "recording a decision cannot confirm it; record it, then confirm the exact revision with a human grant (confirm-decision)");
+      throw new WorkflowError("DECISION_CONFIRMATION_REQUIRED", "recording a decision cannot confirm it; record it, then confirm the exact revision with the user's approval (confirm-decision)");
     }
     const decisions2 = [
       ...state2.decisions.filter((item) => item.id !== command.id),
@@ -5325,15 +5177,12 @@ function applyWorkflowCommand(state2, raw) {
     if (contentFingerprint2 !== command.contentFingerprint) {
       throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the reviewed revision`);
     }
-    if (!command.authorization) {
-      throw new WorkflowError("APPROVAL_REQUIRED", `confirming story ${story.id} needs a human grant: propose the plan, have the owner approve it, then apply`);
+    if (!options2?.userApproval) {
+      throw new WorkflowError("APPROVAL_REQUIRED", `confirming story ${story.id} needs the user's approval: preview it, let the user approve, then apply`);
     }
-    verifyHumanGrant({
-      token: command.authorization,
+    verifyUserApproval(options2.userApproval, {
       action: "confirm-story",
-      targetId: story.id,
-      content: humanGrantContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 }),
-      legacyPlanFingerprint: storyGrantDigest({ storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 })
+      subject: humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 })
     });
     const stories2 = state2.stories.map((item) => item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" } : item);
     return { state: { ...state2, stories: stories2 }, duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
@@ -5610,7 +5459,8 @@ var init_workflow = __esm({
   "node_modules/@praxis/contracts/dist/workflow.js"() {
     import_node_crypto2 = require("node:crypto");
     init_zod();
-    init_grants();
+    init_human_acts();
+    init_user_approval();
     init_story();
     WORKFLOW_CONTRACT_VERSION = "1.0.0";
     WorkflowStageSchema = external_exports2.enum([
@@ -5922,9 +5772,7 @@ var init_workflow = __esm({
       }),
       external_exports2.object({
         action: external_exports2.literal("set-service"),
-        service: ServiceSchema,
-        /** Broker-signed grant. Required to move a service to approved or completed. */
-        authorization: external_exports2.string().min(1).optional()
+        service: ServiceSchema
       }),
       external_exports2.object({
         action: external_exports2.literal("clarify"),
@@ -5944,7 +5792,7 @@ var init_workflow = __esm({
         action: external_exports2.literal("record-decision"),
         id: external_exports2.string().min(1),
         statement: external_exports2.string().min(1),
-        /** Recording a decision never confirms it; confirmation is a human grant (confirm-decision). */
+        /** Recording a decision never confirms it; confirmation is a human act (confirm-decision) that needs the user's approval. */
         confirmed: external_exports2.boolean().default(false),
         rationale: external_exports2.string().optional(),
         notes: external_exports2.string().optional()
@@ -5953,8 +5801,7 @@ var init_workflow = __esm({
         action: external_exports2.literal("confirm-decision"),
         id: external_exports2.string().min(1),
         revision: external_exports2.number().int().positive(),
-        contentFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/),
-        authorization: external_exports2.string().min(1).optional()
+        contentFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/)
       }),
       external_exports2.object({
         action: external_exports2.literal("record-context"),
@@ -5967,9 +5814,7 @@ var init_workflow = __esm({
         action: external_exports2.literal("confirm-story"),
         id: StoryIdSchema,
         revision: external_exports2.number().int().positive(),
-        contentFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/),
-        /** Broker-signed grant. Without one the command is refused with APPROVAL_REQUIRED. */
-        authorization: external_exports2.string().min(1).optional()
+        contentFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/)
       }),
       external_exports2.object({
         action: external_exports2.literal("record-implementation"),
@@ -6047,165 +5892,6 @@ var init_workflow = __esm({
   }
 });
 
-// node_modules/@praxis/contracts/dist/approval.js
-function canonicalize(value) {
-  if (Array.isArray(value))
-    return value.map(canonicalize);
-  if (value && typeof value === "object") {
-    const source = value;
-    const out = {};
-    for (const key of Object.keys(source).sort()) {
-      if (source[key] !== void 0)
-        out[key] = canonicalize(source[key]);
-    }
-    return out;
-  }
-  return value;
-}
-function planFingerprint(body) {
-  const digest2 = (0, import_node_crypto3.createHash)("sha256").update(JSON.stringify(canonicalize(body))).digest("hex");
-  return `sha256:${digest2}`;
-}
-function bodyOf(plan) {
-  const { state: _state, fingerprint: _fingerprint, approvedAt: _approvedAt, expiresAt: _expiresAt, ...body } = plan;
-  return body;
-}
-function authorizeOperation(plan, operation, target = {}, now = /* @__PURE__ */ new Date()) {
-  if (plan.state === "REVOKED") {
-    throw new WorkflowError("APPROVAL_REVOKED", `plan ${plan.planId} was revoked`);
-  }
-  if (plan.state === "REJECTED") {
-    throw new WorkflowError("APPROVAL_REJECTED", `plan ${plan.planId} was rejected`);
-  }
-  if (plan.state === "EXPIRED") {
-    throw new WorkflowError("APPROVAL_EXPIRED", `plan ${plan.planId} expired`);
-  }
-  if (plan.state !== "APPROVED" && plan.state !== "EXECUTING") {
-    throw new WorkflowError("APPROVAL_REQUIRED", `plan ${plan.planId} is ${plan.state}`);
-  }
-  if (plan.fingerprint !== planFingerprint(bodyOf(plan))) {
-    throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "plan was modified after approval");
-  }
-  if (target.version !== void 0 && target.version !== plan.version) {
-    throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", `plan ${plan.planId} is version ${plan.version}`);
-  }
-  if (plan.expiresAt && now.getTime() > Date.parse(plan.expiresAt)) {
-    throw new WorkflowError("APPROVAL_EXPIRED", `plan ${plan.planId} expired`);
-  }
-  if (target.provider && target.provider !== plan.provider) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `provider ${target.provider} is outside plan ${plan.planId}`);
-  }
-  if (target.instanceId !== void 0 && target.instanceId !== plan.instanceId) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `instance ${target.instanceId} is outside plan ${plan.planId}`);
-  }
-  if (!plan.operations.includes(operation)) {
-    const publication = PUBLICATION_OPERATIONS.includes(operation);
-    throw new WorkflowError(publication ? "APPROVAL_SCOPE_SEPARATE" : "APPROVAL_SCOPE_MISMATCH", publication ? `${operation} needs its own approval; an implementation plan does not cover it` : `${operation} is outside plan ${plan.planId}`);
-  }
-  if (target.workItemId && !plan.workItemIds.includes(target.workItemId)) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `work item ${target.workItemId} is outside the plan`);
-  }
-  if (target.repository && !plan.repositories.includes(target.repository)) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `repository ${target.repository} is outside the plan`);
-  }
-  if ((target.previewFingerprint !== void 0 || plan.previewFingerprint !== void 0) && target.previewFingerprint !== plan.previewFingerprint) {
-    throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "preview fingerprint is not the approved revision");
-  }
-}
-function approvalSummary(plan) {
-  return [
-    "Praxis approval",
-    `plan: ${plan.planId}`,
-    `version: ${plan.version}`,
-    `fingerprint: ${plan.fingerprint}`,
-    `provider: ${plan.provider}`,
-    `instance: ${plan.instanceId ?? "(local)"}`,
-    `work items: ${plan.workItemIds.join(", ")}`,
-    `repositories: ${plan.repositories.join(", ") || "(none)"}`,
-    `operations: ${plan.operations.join(", ")}`,
-    `in scope: ${plan.inScope.join("; ")}`,
-    `out of scope: ${plan.outOfScope.join("; ") || "(none)"}`,
-    `risks: ${plan.risks.join("; ") || "(none)"}`,
-    `preview: ${plan.previewFingerprint ?? "(none)"}`
-  ].join("\n");
-}
-var import_node_crypto3, APPROVAL_CONTRACT, APPROVAL_CONTRACT_VERSION, DEFAULT_APPROVAL_TTL_MS, ApprovalStateSchema, ApprovalOperationSchema, PUBLICATION_OPERATIONS, ApprovalPlanSchema, BrokerGrantSchema;
-var init_approval = __esm({
-  "node_modules/@praxis/contracts/dist/approval.js"() {
-    import_node_crypto3 = require("node:crypto");
-    init_zod();
-    init_workflow();
-    APPROVAL_CONTRACT = "praxis.approval.plan";
-    APPROVAL_CONTRACT_VERSION = "1.0.0";
-    DEFAULT_APPROVAL_TTL_MS = 12 * 60 * 60 * 1e3;
-    ApprovalStateSchema = external_exports2.enum([
-      "DISCOVERY",
-      "CLARIFICATION",
-      "PLAN_READY",
-      "AWAITING_APPROVAL",
-      "APPROVED",
-      "EXECUTING",
-      "VERIFYING",
-      "COMPLETED",
-      "CHANGES_REQUESTED",
-      "REJECTED",
-      "EXPIRED",
-      "REVOKED",
-      "BLOCKED",
-      "FAILED"
-    ]);
-    ApprovalOperationSchema = external_exports2.enum([
-      "external_record_create",
-      "external_record_update",
-      "external_state_change",
-      "repository_edit",
-      "validation_with_side_effects",
-      "git_commit",
-      "git_push",
-      "merge_request",
-      "merge",
-      "deploy",
-      "release"
-    ]);
-    PUBLICATION_OPERATIONS = [
-      "git_push",
-      "merge_request",
-      "merge",
-      "deploy",
-      "release"
-    ];
-    ApprovalPlanSchema = external_exports2.object({
-      contract: external_exports2.literal(APPROVAL_CONTRACT),
-      contractVersion: external_exports2.literal(APPROVAL_CONTRACT_VERSION),
-      planId: external_exports2.string().min(1),
-      version: external_exports2.number().int().positive(),
-      role: WorkflowRoleSchema.exclude(["user"]),
-      provider: WorkTrackingProviderSchema,
-      instanceId: external_exports2.string().min(1).optional(),
-      workItemIds: external_exports2.array(external_exports2.string().min(1)).min(1),
-      repositories: external_exports2.array(external_exports2.string().min(1)),
-      operations: external_exports2.array(ApprovalOperationSchema).min(1),
-      inScope: external_exports2.array(external_exports2.string().min(1)).min(1),
-      outOfScope: external_exports2.array(external_exports2.string()),
-      assumptions: external_exports2.array(external_exports2.string()),
-      risks: external_exports2.array(external_exports2.string()),
-      /** Preview hash this approval is bound to, when the operation has one. */
-      previewFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
-      state: ApprovalStateSchema,
-      fingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/),
-      approvedAt: external_exports2.string().datetime().optional(),
-      expiresAt: external_exports2.string().datetime().optional()
-    });
-    BrokerGrantSchema = external_exports2.object({
-      planId: external_exports2.string().min(1),
-      fingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/),
-      approvedAt: external_exports2.string().datetime(),
-      dialog: external_exports2.literal("host-dialog"),
-      mac: external_exports2.string().regex(/^[a-f0-9]{64}$/)
-    });
-  }
-});
-
 // node_modules/@praxis/contracts/dist/authority.js
 function authorityProblems(plan) {
   const problems = [];
@@ -6263,254 +5949,50 @@ var init_authority = __esm({
   }
 });
 
-// node_modules/@praxis/contracts/dist/broker.js
-function approvedContentDigest2(content) {
-  return `sha256:${(0, import_node_crypto4.createHash)("sha256").update(content, "utf8").digest("hex")}`;
-}
-function executionRequestFingerprint(request) {
-  return `sha256:${(0, import_node_crypto4.createHash)("sha256").update(JSON.stringify(canonicalize(request))).digest("hex")}`;
-}
-function securityMode() {
-  const raw = process.env.PRAXIS_SECURITY_MODE?.trim() ?? "";
-  if (raw === "compatibility")
-    return "compatibility";
-  if (raw === "secure" || raw === "")
-    return "secure";
-  throw new WorkflowError("APPROVAL_REQUIRED", "PRAXIS_SECURITY_MODE must be secure or compatibility");
-}
-function canonicalAuthorizationBytes(body) {
-  return Buffer.from(JSON.stringify(canonicalize(body)));
-}
-function decodeAuthorization(token) {
-  let parsed;
-  try {
-    parsed = JSON.parse(Buffer.from(token, "base64url").toString("utf8"));
-  } catch {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
-  }
-  if (!parsed || typeof parsed !== "object") {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
-  }
-  const signature = parsed.signature;
-  const body = parsed.body;
-  if (typeof signature !== "string" || !body || typeof body !== "object") {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization artifact is malformed");
-  }
-  return { body, signature };
-}
-function signingKeyVisibleToThisProcess() {
-  if (process.env.PRAXIS_APPROVAL_PRIVATE_KEY?.trim())
-    return true;
-  const keyPath = process.env.PRAXIS_APPROVAL_PRIVATE_KEY_PATH?.trim();
-  if (!keyPath)
-    return false;
-  try {
-    (0, import_node_fs3.accessSync)(keyPath, import_node_fs3.constants.R_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function assertSigningKeyHidden() {
-  if (signingKeyVisibleToThisProcess()) {
-    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval signing key is visible to this process; secure mode refuses");
-  }
-}
-function pathInside(parent, child) {
-  const rel2 = (0, import_node_path2.relative)((0, import_node_path2.resolve)(parent), (0, import_node_path2.resolve)(child));
-  return rel2 === "" || !rel2.startsWith("..") && !rel2.startsWith("/");
-}
-function assessDeploymentThreats(opts) {
-  const mode = securityMode();
-  const sockets = opts?.dockerSockets ?? [
-    "/var/run/docker.sock",
-    `${process.env.HOME ?? ""}/.docker/run/docker.sock`
-  ].filter(Boolean);
-  let dockerSocketAccessible = false;
-  for (const socket of sockets) {
-    try {
-      (0, import_node_fs3.accessSync)(socket, import_node_fs3.constants.R_OK | import_node_fs3.constants.W_OK);
-      dockerSocketAccessible = true;
-      break;
-    } catch {
+// node_modules/@praxis/contracts/dist/approval.js
+function canonicalize(value) {
+  if (Array.isArray(value))
+    return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    const source = value;
+    const out = {};
+    for (const key of Object.keys(source).sort()) {
+      if (source[key] !== void 0)
+        out[key] = canonicalize(source[key]);
     }
+    return out;
   }
-  const signingKeyVisible = signingKeyVisibleToThisProcess();
-  const blocking = [];
-  const warnings = [];
-  if (mode === "compatibility") {
-    warnings.push("compatibility mode trusts forgeable local approval files against same-user agents");
-  }
-  if (mode === "secure" && signingKeyVisible) {
-    blocking.push("approval signing key is visible to this process");
-  }
-  const deploymentModel = process.env.PRAXIS_DEPLOYMENT_MODEL?.trim() ?? "";
-  if (mode === "secure" && deploymentModel === "docker-uid" && dockerSocketAccessible && process.env.PRAXIS_ALLOW_DOCKER_SOCKET !== "1") {
-    blocking.push("Docker control socket is accessible to this process; the agent can attach trusted volumes and defeat UID isolation");
-  } else if (mode === "secure" && dockerSocketAccessible) {
-    warnings.push("Docker socket is visible; set PRAXIS_DEPLOYMENT_MODEL=docker-uid to fail closed when using UID isolation");
-  }
-  return { mode, dockerSocketAccessible, signingKeyVisible, blocking, warnings };
+  return value;
 }
-function assertSecureDeployment() {
-  const assessment = assessDeploymentThreats();
-  if (assessment.blocking.length) {
-    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", assessment.blocking.join("; "));
-  }
-  return assessment;
-}
-function assertSecureExecutor(repo) {
-  assertSecureDeployment();
-  assertSigningKeyHidden();
-  if (!testIdentityOverrideActive()) {
-    assertSecureDeploymentAssessment(assessApprovalDeployment({ workspace: repo }));
-  }
-  const publicKeyPem = process.env.PRAXIS_APPROVAL_PUBLIC_KEY?.trim() || (process.env.PRAXIS_APPROVAL_PUBLIC_KEY_PATH ? (0, import_node_fs3.readFileSync)(process.env.PRAXIS_APPROVAL_PUBLIC_KEY_PATH, "utf8") : void 0);
-  const ledger = process.env.PRAXIS_APPROVAL_LEDGER?.trim();
-  if (!publicKeyPem || !ledger) {
-    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "secure mode requires PRAXIS_APPROVAL_PUBLIC_KEY (or PATH) and PRAXIS_APPROVAL_LEDGER outside the workspace");
-  }
-  if (pathInside(repo, ledger)) {
-    throw new WorkflowError("APPROVAL_ISOLATION_UNAVAILABLE", "approval ledger is inside the agent workspace");
-  }
-  return { ledger: (0, import_node_path2.resolve)(ledger), publicKeyPem };
-}
-function verifyAuthorization(token, publicKeyPem, now = /* @__PURE__ */ new Date()) {
-  const signed = decodeAuthorization(token);
-  const body = signed.body;
-  if (body.contract !== AUTHORIZATION_CONTRACT || body.version !== AUTHORIZATION_VERSION) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization contract is not accepted");
-  }
-  const ok = (0, import_node_crypto4.verify)(null, canonicalAuthorizationBytes(body), (0, import_node_crypto4.createPublicKey)(publicKeyPem), Buffer.from(signed.signature, "base64"));
-  if (!ok)
-    throw new WorkflowError("APPROVAL_REQUIRED", "authorization signature is not valid");
-  const expires = Date.parse(body.expiresAt);
-  const issued = Date.parse(body.issuedAt);
-  if (!Number.isFinite(expires) || !Number.isFinite(issued) || now.getTime() > expires || issued > expires) {
-    throw new WorkflowError("APPROVAL_EXPIRED", "authorization has expired");
-  }
-  return body;
-}
-function authorizationMatches(body, target) {
-  if (body.decisionKind !== void 0 && body.decisionKind !== target.decisionKind) {
-    throw new WorkflowError("APPROVAL_SCOPE_SEPARATE", `this approval is for ${body.decisionKind}, not ${target.decisionKind ?? "an unstated kind of decision"}; one kind of approval never authorizes another`);
-  }
-  if (body.planFingerprint !== target.planFingerprint) {
-    throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "plan fingerprint is not the approved revision");
-  }
-  if (body.provider !== target.provider) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "provider is not the approved provider");
-  }
-  if (target.instanceId !== void 0 && body.instanceId !== target.instanceId) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "provider instance is not the approved instance");
-  }
-  if (!body.operations.includes(target.operation)) {
-    throw new WorkflowError("APPROVAL_SCOPE_SEPARATE", "operation is outside the approved scope");
-  }
-  if (body.action !== target.action) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "action is outside the approved scope");
-  }
-  if (target.workItemId !== void 0 && !body.workItemIds.includes(target.workItemId)) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "work item is outside the approved scope");
-  }
-  if (target.repository !== void 0 && !body.repositories.includes(target.repository)) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "repository is outside the approved scope");
-  }
-  if (body.planId !== void 0 && target.planId !== void 0 && body.planId !== target.planId) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "plan id is not the approved plan");
-  }
-  if (body.targets !== void 0 && target.targets !== void 0) {
-    if (JSON.stringify(body.targets) !== JSON.stringify(target.targets)) {
-      throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "targets are not the approved resources");
-    }
-  }
-  if (body.contentDigest !== void 0 && target.contentDigest !== void 0 && body.contentDigest !== target.contentDigest) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "content is not the approved change");
-  }
-}
-function ledgerFile(ledger, consumptionId) {
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(consumptionId)) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "consumption id is not accepted");
-  }
-  return (0, import_node_path2.resolve)(ledger, `${consumptionId}.json`);
-}
-function readLedgerEntry(ledger, consumptionId) {
-  try {
-    return JSON.parse((0, import_node_fs3.readFileSync)(ledgerFile(ledger, consumptionId), "utf8"));
-  } catch {
-    return void 0;
-  }
-}
-function writeLedgerEntry(ledger, consumptionId, entry) {
-  (0, import_node_fs3.mkdirSync)(ledger, { recursive: true });
-  const dest = ledgerFile(ledger, consumptionId);
-  const tmp = `${dest}.${process.pid}.${Date.now()}.tmp`;
-  (0, import_node_fs3.writeFileSync)(tmp, `${JSON.stringify(entry)}
-`);
-  (0, import_node_fs3.renameSync)(tmp, dest);
-}
-function reserveLedgerEntry(ledger, consumptionId, requestFingerprint) {
-  (0, import_node_fs3.mkdirSync)(ledger, { recursive: true });
-  const dest = ledgerFile(ledger, consumptionId);
-  const entry = { status: "started", requestFingerprint };
-  try {
-    const fd = (0, import_node_fs3.openSync)(dest, import_node_fs3.constants.O_CREAT | import_node_fs3.constants.O_EXCL | import_node_fs3.constants.O_WRONLY, 384);
-    try {
-      (0, import_node_fs3.writeSync)(fd, `${JSON.stringify(entry)}
-`);
-    } finally {
-      (0, import_node_fs3.closeSync)(fd);
-    }
-    return { created: true, entry };
-  } catch (error64) {
-    if (error64.code === "EEXIST") {
-      const existing = readLedgerEntry(ledger, consumptionId);
-      if (!existing) {
-        throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", "ledger reservation conflict");
-      }
-      return { created: false, entry: existing };
-    }
-    throw error64;
-  }
-}
-function completeLedgerEntry(ledger, consumptionId, requestFingerprint, result) {
-  writeLedgerEntry(ledger, consumptionId, { status: "completed", requestFingerprint, result });
-}
-function failLedgerEntry(ledger, consumptionId, requestFingerprint, error64, status = "failed") {
-  writeLedgerEntry(ledger, consumptionId, { status, requestFingerprint, error: error64 });
-}
-var import_node_crypto4, import_node_fs3, import_node_path2, AUTHORIZATION_CONTRACT, AUTHORIZATION_VERSION;
-var init_broker = __esm({
-  "node_modules/@praxis/contracts/dist/broker.js"() {
-    import_node_crypto4 = require("node:crypto");
-    import_node_fs3 = require("node:fs");
-    import_node_path2 = require("node:path");
-    init_approval();
-    init_deployment();
-    init_authority();
-    init_workflow();
-    AUTHORIZATION_CONTRACT = "praxis.approval.authorization";
-    AUTHORIZATION_VERSION = 1;
+var ApprovalOperationSchema;
+var init_approval = __esm({
+  "node_modules/@praxis/contracts/dist/approval.js"() {
+    init_zod();
+    ApprovalOperationSchema = external_exports2.enum([
+      "external_record_create",
+      "external_record_update",
+      "external_state_change",
+      "repository_edit",
+      "validation_with_side_effects",
+      "git_commit",
+      "git_push",
+      "merge_request",
+      "merge",
+      "deploy",
+      "release"
+    ]);
   }
 });
 
 // node_modules/@praxis/contracts/dist/action-plan.js
 function actionPlanFingerprint(body) {
-  const digest2 = (0, import_node_crypto5.createHash)("sha256").update(JSON.stringify(canonicalize(body))).digest("hex");
+  const digest2 = (0, import_node_crypto3.createHash)("sha256").update(JSON.stringify(canonicalize(body))).digest("hex");
   return `sha256:${digest2}`;
 }
-function buildActionPlan(input2) {
-  const body = ActionPlanBaseSchema.parse({
-    contract: "praxis.action.plan",
-    version: 1,
-    ...input2
-  });
-  return ActionPlanSchema.parse({ ...body, fingerprint: actionPlanFingerprint(body) });
-}
-var import_node_crypto5, ACTION_PLAN_CONTRACT, ACTION_PLAN_VERSION, ActionPlanBaseSchema, ActionPlanSchema;
+var import_node_crypto3, ACTION_PLAN_CONTRACT, ACTION_PLAN_VERSION, ActionPlanBaseSchema, ActionPlanSchema;
 var init_action_plan = __esm({
   "node_modules/@praxis/contracts/dist/action-plan.js"() {
-    import_node_crypto5 = require("node:crypto");
+    import_node_crypto3 = require("node:crypto");
     init_zod();
     init_authority();
     init_approval();
@@ -6558,281 +6040,6 @@ var init_action_plan = __esm({
         ctx.addIssue({ code: external_exports2.ZodIssueCode.custom, message: "plan fingerprint does not match the plan's content", path: ["fingerprint"] });
       }
     });
-  }
-});
-
-// node_modules/@praxis/contracts/dist/approval-store.js
-function approvalsDir(repo) {
-  return (0, import_node_path3.join)((0, import_node_path3.resolve)(repo), ".praxis", "approvals");
-}
-function approvalPath(repo, planId) {
-  if (!PLAN_ID.test(planId)) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "plan id is not a persisted approval name");
-  }
-  return (0, import_node_path3.join)(approvalsDir(repo), `${planId}.json`);
-}
-function parseRecord(raw) {
-  if (!raw || typeof raw !== "object") {
-    throw new WorkflowError("APPROVAL_REQUIRED", "approval record is unreadable");
-  }
-  const record5 = raw;
-  if (record5.recordContract !== APPROVAL_RECORD_CONTRACT || record5.recordVersion !== APPROVAL_RECORD_VERSION) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "approval record version is not supported");
-  }
-  const plan = ApprovalPlanSchema.parse(record5.plan);
-  const consumptions = Array.isArray(record5.consumptions) ? record5.consumptions : [];
-  return { recordContract: APPROVAL_RECORD_CONTRACT, recordVersion: APPROVAL_RECORD_VERSION, plan, consumptions };
-}
-function readApproval(repo, planId) {
-  try {
-    return parseRecord(JSON.parse((0, import_node_fs4.readFileSync)(approvalPath(repo, planId), "utf8")));
-  } catch (error64) {
-    if (error64 instanceof WorkflowError)
-      throw error64;
-    throw new WorkflowError("APPROVAL_REQUIRED", `no stored approval ${planId}`);
-  }
-}
-function writeRecord(repo, record5) {
-  const dir = approvalsDir(repo);
-  (0, import_node_fs4.mkdirSync)(dir, { recursive: true });
-  (0, import_node_fs4.writeFileSync)(approvalPath(repo, record5.plan.planId), `${JSON.stringify(record5, null, 2)}
-`);
-}
-function listApprovals(repo) {
-  let names = [];
-  try {
-    names = (0, import_node_fs4.readdirSync)(approvalsDir(repo));
-  } catch {
-    return [];
-  }
-  const records = [];
-  for (const name of names) {
-    if (!name.endsWith(".json"))
-      continue;
-    try {
-      records.push(readApproval(repo, name.slice(0, -".json".length)));
-    } catch {
-      continue;
-    }
-  }
-  return records;
-}
-function consumptionKey(plan, request) {
-  return (0, import_node_crypto6.createHash)("sha256").update([
-    plan.planId,
-    String(plan.version),
-    plan.fingerprint,
-    request.action,
-    request.operation,
-    request.workItemId ?? "",
-    request.repository ?? "",
-    request.previewFingerprint ?? ""
-  ].join("\n")).digest("hex");
-}
-function selectRecord(request, now) {
-  if (request.planId) {
-    const record5 = readApproval(request.repo, request.planId);
-    if (request.planFingerprint && request.planFingerprint !== record5.plan.fingerprint) {
-      throw new WorkflowError("APPROVAL_FINGERPRINT_MISMATCH", "plan fingerprint does not match the stored approval");
-    }
-    return record5;
-  }
-  const matches = listApprovals(request.repo).filter((record5) => {
-    try {
-      authorizeBound(record5.plan, request, now);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  if (matches.length !== 1) {
-    throw new WorkflowError(matches.length === 0 ? "APPROVAL_REQUIRED" : "APPROVAL_AMBIGUOUS", matches.length === 0 ? "no stored approval matches this operation" : "more than one stored approval matches this operation");
-  }
-  return matches[0];
-}
-function authorizeBound(plan, request, now) {
-  if (request.provider === "jira" && !request.instanceId) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "external instance is required");
-  }
-  authorizeOperation(plan, request.operation, {
-    workItemId: request.workItemId,
-    repository: request.repository,
-    provider: request.provider,
-    instanceId: request.instanceId,
-    previewFingerprint: request.previewFingerprint
-  }, now);
-  if (!plan.inScope.includes(request.action)) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", `${request.action} is outside plan ${plan.planId}`);
-  }
-}
-function inspectMutation(request) {
-  const now = request.now ?? /* @__PURE__ */ new Date();
-  const record5 = selectRecord(request, now);
-  authorizeBound(record5.plan, request, now);
-  const key = consumptionKey(record5.plan, request);
-  const prior = record5.consumptions.find((item) => item.key === key);
-  if (prior?.status === "completed") {
-    return { kind: "replay", planId: record5.plan.planId, key, result: prior.result };
-  }
-  if (prior?.status === "started" && request.resumeInFlight) {
-    return { kind: "in_flight", planId: record5.plan.planId, key };
-  }
-  if (prior?.status === "started" || prior?.status === "aborted") {
-    throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", `${request.action} already started and must not run again`);
-  }
-  return { kind: "ready", planId: record5.plan.planId, key };
-}
-function updateConsumption(repo, planId, key, status, action, result) {
-  const record5 = readApproval(repo, planId);
-  const existing = record5.consumptions.find((item) => item.key === key);
-  const next = {
-    key,
-    action,
-    status,
-    at: (/* @__PURE__ */ new Date()).toISOString(),
-    ...result !== void 0 ? { result } : {}
-  };
-  const consumptions = existing ? record5.consumptions.map((item) => item.key === key ? next : item) : [...record5.consumptions, next];
-  writeRecord(repo, { ...record5, consumptions });
-}
-function beginConsumption(repo, planId, key, action) {
-  updateConsumption(repo, planId, key, "started", action);
-}
-function completeConsumption(repo, planId, key, action, result) {
-  updateConsumption(repo, planId, key, "completed", action, result);
-}
-function abortConsumption(repo, planId, key, action) {
-  updateConsumption(repo, planId, key, "aborted", action);
-}
-function hasMutationLease() {
-  return mutationLease.getStore() !== void 0;
-}
-function runWorkflowRecordWrite(write) {
-  return mutationLease.run({ action: "workflow-record" }, write);
-}
-function requireMutationLease() {
-  if (!mutationLease.getStore()) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "direct mutation is not authorized");
-  }
-}
-function isPromise(value) {
-  return Boolean(value) && typeof value.then === "function";
-}
-function runSecureMutation(request, write) {
-  const { ledger, publicKeyPem } = assertSecureExecutor(request.repo);
-  const authorization = request.authorization ?? process.env.PRAXIS_APPROVAL_AUTHORIZATION?.trim();
-  if (!authorization) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "secure mode requires a broker authorization for this plan");
-  }
-  const body = verifyAuthorization(authorization, publicKeyPem, request.now);
-  if (!request.planFingerprint) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "plan fingerprint is required for secure execution");
-  }
-  if (!request.instanceId) {
-    throw new WorkflowError("APPROVAL_REQUIRED", "provider instance is required for secure execution");
-  }
-  authorizationMatches(body, {
-    planFingerprint: request.planFingerprint,
-    provider: request.provider,
-    instanceId: request.instanceId,
-    operation: request.operation,
-    action: request.action,
-    workItemId: request.workItemId,
-    repository: request.repository,
-    planId: request.planId,
-    targets: body.targets,
-    contentDigest: body.contentDigest,
-    decisionKind: decisionKindFor(request.operation, request.action, request.decisionKind)
-  });
-  const requestFingerprint = executionRequestFingerprint({
-    consumptionId: body.consumptionId,
-    planId: body.planId ?? request.planId ?? "",
-    planFingerprint: request.planFingerprint,
-    provider: request.provider,
-    instanceId: request.instanceId,
-    operation: request.operation,
-    action: request.action,
-    workItemId: request.workItemId ?? "",
-    repository: request.repository ?? request.repo,
-    targets: body.targets ?? [],
-    contentDigest: body.contentDigest ?? ""
-  });
-  const reserved = reserveLedgerEntry(ledger, body.consumptionId, requestFingerprint);
-  if (!reserved.created) {
-    if (reserved.entry.requestFingerprint && reserved.entry.requestFingerprint !== requestFingerprint) {
-      throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "authorization replay is bound to a different execution request");
-    }
-    if (reserved.entry.status === "completed")
-      return reserved.entry.result;
-    if (reserved.entry.status === "started") {
-      throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", "authorization consumption is already in progress");
-    }
-    throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", `authorization consumption is ${reserved.entry.status}; refuse uncontrolled retry`);
-  }
-  const finish = (result) => {
-    completeLedgerEntry(ledger, body.consumptionId, requestFingerprint, result);
-    return result;
-  };
-  const fail2 = (error64) => {
-    failLedgerEntry(ledger, body.consumptionId, requestFingerprint, error64 instanceof Error ? error64.message : String(error64));
-    throw error64;
-  };
-  try {
-    const result = mutationLease.run({ action: request.action }, write);
-    if (isPromise(result))
-      return result.then(finish, fail2);
-    return finish(result);
-  } catch (error64) {
-    return fail2(error64);
-  }
-}
-function runAuthorizedMutation(request, write) {
-  if (securityMode() === "secure")
-    return runSecureMutation(request, write);
-  const inspection = inspectMutation({ ...request, resumeInFlight: true });
-  if (inspection.kind === "replay")
-    return inspection.result;
-  const owner = inspection.kind === "ready";
-  if (owner)
-    beginConsumption(request.repo, inspection.planId, inspection.key, request.action);
-  const finish = (result) => {
-    if (owner)
-      completeConsumption(request.repo, inspection.planId, inspection.key, request.action, result);
-    return result;
-  };
-  const fail2 = (error64) => {
-    if (owner) {
-      try {
-        abortConsumption(request.repo, inspection.planId, inspection.key, request.action);
-      } catch {
-      }
-    }
-    throw error64;
-  };
-  try {
-    const result = mutationLease.run({ action: request.action }, write);
-    if (isPromise(result))
-      return result.then(finish, fail2);
-    return finish(result);
-  } catch (error64) {
-    return fail2(error64);
-  }
-}
-var import_node_async_hooks, import_node_crypto6, import_node_fs4, import_node_path3, APPROVAL_RECORD_CONTRACT, APPROVAL_RECORD_VERSION, PLAN_ID, mutationLease;
-var init_approval_store = __esm({
-  "node_modules/@praxis/contracts/dist/approval-store.js"() {
-    import_node_async_hooks = require("node:async_hooks");
-    import_node_crypto6 = require("node:crypto");
-    import_node_fs4 = require("node:fs");
-    import_node_path3 = require("node:path");
-    init_approval();
-    init_broker();
-    init_authority();
-    init_workflow();
-    APPROVAL_RECORD_CONTRACT = "praxis.approval.record";
-    APPROVAL_RECORD_VERSION = 1;
-    PLAN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-    mutationLease = new import_node_async_hooks.AsyncLocalStorage();
   }
 });
 
@@ -7086,468 +6293,12 @@ var init_jira_orchestration = __esm({
   }
 });
 
-// node_modules/@praxis/contracts/dist/broker-inbox.js
-function inboxPath(kind, planId, ext = "json") {
-  const dir = brokerSharedDir();
-  if (!dir || !INBOX_PLAN_ID.test(planId))
-    return void 0;
-  return (0, import_node_path4.join)(dir, kind, `${planId}.${ext}`);
-}
-function readInboxToken(planId) {
-  const path = inboxPath("authorizations", planId, "token");
-  if (!path || !(0, import_node_fs5.existsSync)(path))
-    return void 0;
-  const token = (0, import_node_fs5.readFileSync)(path, "utf8").trim();
-  return token || void 0;
-}
-function inboxStatus(planId) {
-  if (!brokerSharedDir())
-    return "broker-not-configured";
-  if (readInboxToken(planId))
-    return "approved";
-  const rejected = inboxPath("rejected", planId);
-  if (rejected && (0, import_node_fs5.existsSync)(rejected))
-    return "rejected";
-  return "awaiting-operator";
-}
-function readInboxPlan(planId) {
-  for (const where of ["approved", "pending"]) {
-    const path = inboxPath(where, planId);
-    if (!path || !(0, import_node_fs5.existsSync)(path))
-      continue;
-    try {
-      return { plan: ActionPlanSchema.parse(JSON.parse((0, import_node_fs5.readFileSync)(path, "utf8"))), where };
-    } catch {
-    }
-  }
-  return void 0;
-}
-function proposeInboxPlan(plan, now = /* @__PURE__ */ new Date(), opts = {}) {
-  const pending = inboxPath("pending", plan.planId);
-  if (!pending)
-    throw new Error("no broker shared directory is configured");
-  const existing = readInboxPlan(plan.planId);
-  if (existing?.where === "pending" && Date.parse(existing.plan.expiresAt) > now.getTime() && !opts.replace?.(existing.plan)) {
-    return { written: false, path: pending };
-  }
-  (0, import_node_fs5.mkdirSync)((0, import_node_path4.join)(brokerSharedDir(), "pending"), { recursive: true });
-  const tmp = `${pending}.${process.pid}.tmp`;
-  (0, import_node_fs5.writeFileSync)(tmp, `${JSON.stringify(plan, null, 2)}
-`);
-  (0, import_node_fs5.renameSync)(tmp, pending);
-  return { written: true, path: pending };
-}
-var import_node_fs5, import_node_path4, INBOX_PLAN_ID, brokerSharedDir, operatorPageUrl;
-var init_broker_inbox = __esm({
-  "node_modules/@praxis/contracts/dist/broker-inbox.js"() {
-    import_node_fs5 = require("node:fs");
-    import_node_path4 = require("node:path");
-    init_action_plan();
-    INBOX_PLAN_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-    brokerSharedDir = () => {
-      const dir = process.env.PRAXIS_BROKER_SHARED_DIR?.trim();
-      return dir ? (0, import_node_path4.resolve)(dir) : void 0;
-    };
-    operatorPageUrl = (planId) => `${process.env.PRAXIS_OPERATOR_URL?.trim() || "http://localhost:8780"}/plan/${encodeURIComponent(planId)}`;
-  }
-});
-
-// node_modules/@praxis/contracts/dist/git-authorization.js
-function canonical(value) {
-  if (Array.isArray(value))
-    return `[${value.map(canonical).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
-function gitRequestContent(key, live) {
-  return canonical({
-    contract: GIT_REQUEST_CONTRACT,
-    operation: key.operation,
-    action: key.action,
-    repository: (0, import_node_path5.resolve)(key.repository),
-    workItemId: key.workItemId,
-    provider: "local",
-    instanceId: live.instanceId,
-    targets: live.targets,
-    revision: live.revision,
-    previewFingerprint: key.previewFingerprint
-  });
-}
-function gitPlanId(key) {
-  const op = key.operation.replace("_", "-");
-  return `git-${op}-${sha(canonical({ ...key, repository: (0, import_node_path5.resolve)(key.repository) })).slice(0, 24)}`;
-}
-function planTtlMs() {
-  const requested = Number(process.env.PRAXIS_APPROVAL_PLAN_TTL_MS);
-  return Number.isFinite(requested) && requested > 0 ? Math.min(Math.max(requested, 1e3), 864e5) : 36e5;
-}
-function buildGitPlan(key, live, now = /* @__PURE__ */ new Date(), ttlMs = planTtlMs()) {
-  return buildActionPlan({
-    planId: gitPlanId(key),
-    role: "developer",
-    decisionKind: decisionKindFor(key.operation, key.action),
-    summary: live.summary,
-    provider: "local",
-    instanceId: live.instanceId,
-    operations: [key.operation],
-    workItemIds: [key.workItemId],
-    storyIds: [],
-    decisionIds: [],
-    repositories: [(0, import_node_path5.resolve)(key.repository)],
-    ...live.branch ? { branch: live.branch } : {},
-    ...live.remote ? { remote: live.remote } : {},
-    actions: [{ action: key.action, description: live.description, targets: live.targets, content: gitRequestContent(key, live) }],
-    risks: live.risks ?? [],
-    sideEffects: [`${live.summary} in ${(0, import_node_path5.resolve)(key.repository)}.`],
-    createdAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + ttlMs).toISOString()
-  });
-}
-function rebuildWithTimes(key, live, like) {
-  const created = new Date(like.createdAt);
-  return buildGitPlan(key, live, created, Date.parse(like.expiresAt) - created.getTime());
-}
-function assertTokenBindsPlan(input2) {
-  const { key, plan, token, now } = input2;
-  const planId = gitPlanId(key);
-  const body = verifyAuthorization(token, input2.publicKeyPem, now);
-  assertApprovalChannelAcceptable(body);
-  const action = plan.actions[0];
-  const content = action.content ?? "";
-  const bound = plan.planId === planId && plan.provider === "local" && plan.operations.length === 1 && plan.operations[0] === key.operation && action.action === key.action && plan.workItemIds.length === 1 && plan.workItemIds[0] === key.workItemId && plan.repositories.length === 1 && plan.repositories[0] === (0, import_node_path5.resolve)(key.repository) && plan.decisionKind === decisionKindFor(key.operation, key.action);
-  if (!bound)
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved plan is not for this operation, work item or repository");
-  let approvedRequest;
-  try {
-    approvedRequest = JSON.parse(content);
-  } catch {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved plan has no readable request");
-  }
-  if (approvedRequest.contract !== GIT_REQUEST_CONTRACT || approvedRequest.previewFingerprint !== key.previewFingerprint) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the approved request is not this preview");
-  }
-  if (body.planId !== planId || body.planFingerprint !== plan.fingerprint || body.contentDigest !== approvedContentDigest2(content) || JSON.stringify(body.targets ?? []) !== JSON.stringify(action.targets) || body.instanceId !== plan.instanceId) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the token is not for the plan the owner was shown");
-  }
-  return { body, content };
-}
-async function authorizeGitOperation(input2) {
-  const { key } = input2;
-  const now = input2.now ?? /* @__PURE__ */ new Date();
-  const planId = gitPlanId(key);
-  const token = readInboxToken(planId);
-  if (!token) {
-    const status = inboxStatus(planId);
-    if (status === "broker-not-configured") {
-      throw new GitApprovalRequired("APPROVAL_ISOLATION_UNAVAILABLE", `${key.action} needs the owner's approval and no approval broker is configured (PRAXIS_BROKER_SHARED_DIR). Nothing was changed.`, { planId, status });
-    }
-    if (status === "rejected") {
-      throw new GitApprovalRequired("APPROVAL_REJECTED", `the owner rejected ${key.action} (plan ${planId}). Nothing was changed; a changed request is a new plan.`, { planId, status });
-    }
-    const live2 = await input2.describe();
-    const plan2 = buildGitPlan(key, live2, now);
-    proposeInboxPlan(plan2, now, { replace: (existing) => existing.fingerprint !== rebuildWithTimes(key, live2, existing).fingerprint });
-    throw new GitApprovalRequired("APPROVAL_REQUIRED", `${live2.summary} is waiting for the owner. Plan ${planId} is in the approval inbox; the owner reviews it and decides at ${operatorPageUrl(planId)}. Then apply this same request again. Nothing was changed.`, { planId, status: "awaiting-operator", operatorUrl: operatorPageUrl(planId), fingerprint: plan2.fingerprint });
-  }
-  const { ledger, publicKeyPem } = assertSecureExecutor(input2.repo);
-  const stored = readInboxPlan(planId);
-  if (!stored)
-    throw new WorkflowError("APPROVAL_REQUIRED", `a token exists for ${planId} but its plan is not in the inbox; refusing`);
-  const plan = stored.plan;
-  const { body, content } = assertTokenBindsPlan({ token, plan, key, publicKeyPem, now });
-  const request = {
-    repo: input2.repo,
-    planId,
-    planFingerprint: plan.fingerprint,
-    operation: key.operation,
-    provider: "local",
-    instanceId: plan.instanceId,
-    workItemId: key.workItemId,
-    repository: (0, import_node_path5.resolve)(key.repository),
-    previewFingerprint: key.previewFingerprint,
-    action: key.action,
-    authorization: token,
-    now
-  };
-  if (readLedgerEntry(ledger, body.consumptionId)?.status === "completed") {
-    return runAuthorizedMutation(request, () => {
-      throw new WorkflowError("APPROVAL_RECONCILIATION_REQUIRED", "a completed approval must replay, not run");
-    });
-  }
-  const live = await input2.describe();
-  if (live.previewFingerprint !== key.previewFingerprint || gitRequestContent(key, live) !== content) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the repository is no longer in the state the owner approved; ask for a new approval");
-  }
-  if (rebuildWithTimes(key, live, plan).fingerprint !== plan.fingerprint) {
-    throw new WorkflowError("APPROVAL_SCOPE_MISMATCH", "the plan the owner approved is not the plan this request produces (its wording differs); ask for a new approval");
-  }
-  return runAuthorizedMutation(request, input2.write);
-}
-var import_node_crypto7, import_node_path5, GIT_REQUEST_CONTRACT, sha, GitApprovalRequired;
-var init_git_authorization = __esm({
-  "node_modules/@praxis/contracts/dist/git-authorization.js"() {
-    import_node_crypto7 = require("node:crypto");
-    import_node_path5 = require("node:path");
-    init_action_plan();
-    init_authority();
-    init_broker();
-    init_deployment();
-    init_broker_inbox();
-    init_approval_store();
+// node_modules/@praxis/contracts/dist/human-act-testing.js
+var init_human_act_testing = __esm({
+  "node_modules/@praxis/contracts/dist/human-act-testing.js"() {
+    init_human_acts();
+    init_user_approval();
     init_workflow();
-    GIT_REQUEST_CONTRACT = "praxis.git.request.v1";
-    sha = (text) => (0, import_node_crypto7.createHash)("sha256").update(text).digest("hex");
-    GitApprovalRequired = class extends WorkflowError {
-      details;
-      constructor(code, message, details) {
-        super(code, message);
-        this.details = details;
-      }
-    };
-  }
-});
-
-// node_modules/@praxis/contracts/dist/approval-service.js
-function defaultServiceEndpoint(os = (0, import_node_os.platform)()) {
-  if (os === "win32")
-    return "\\\\.\\pipe\\praxis-approval-service";
-  if (os === "darwin")
-    return "/Library/Application Support/Praxis/ApprovalService/run/service.sock";
-  return "/run/praxis-approval/service.sock";
-}
-function serviceEndpoint(env = process.env) {
-  return env.PRAXIS_APPROVAL_SERVICE_ENDPOINT?.trim() || defaultServiceEndpoint();
-}
-function serviceDelegationActive(env = process.env) {
-  if (env.PRAXIS_APPROVAL_SERVICE_ENDPOINT?.trim())
-    return true;
-  try {
-    (0, import_node_fs6.statSync)(defaultServiceEndpoint());
-    return true;
-  } catch {
-    return false;
-  }
-}
-function callApprovalService(message, opts = {}) {
-  const endpoint = opts.endpoint ?? serviceEndpoint();
-  const timeoutMs = opts.timeoutMs ?? 12e4;
-  return new Promise((resolve19, reject) => {
-    const socket = (0, import_node_net.createConnection)(endpoint);
-    let buffer = "";
-    let settled = false;
-    const finish = (fn) => {
-      if (settled)
-        return;
-      settled = true;
-      clearTimeout(timer);
-      socket.destroy();
-      fn();
-    };
-    const timer = setTimeout(() => finish(() => reject(new ApprovalServiceError("SERVICE_TIMEOUT", `the approval service did not answer within ${timeoutMs} ms`))), timeoutMs);
-    socket.on("connect", () => socket.write(`${JSON.stringify({ protocol: APPROVAL_SERVICE_PROTOCOL, ...message })}
-`));
-    socket.on("data", (chunk) => {
-      buffer += chunk.toString("utf8");
-      if (buffer.length > 4 * MAX_MESSAGE_BYTES)
-        return finish(() => reject(new ApprovalServiceError("SERVICE_PROTOCOL", "reply too large")));
-      const nl = buffer.indexOf("\n");
-      if (nl < 0)
-        return;
-      try {
-        const reply = JSON.parse(buffer.slice(0, nl));
-        finish(() => resolve19(reply));
-      } catch {
-        finish(() => reject(new ApprovalServiceError("SERVICE_PROTOCOL", "the approval service sent a reply that is not JSON")));
-      }
-    });
-    socket.on("error", (error64) => finish(() => reject(new ApprovalServiceError("SERVICE_UNAVAILABLE", `the approval service is not reachable at ${endpoint}: ${error64.code ?? error64.message}`))));
-    socket.on("end", () => finish(() => reject(new ApprovalServiceError("SERVICE_PROTOCOL", "the approval service closed the connection without a reply"))));
-  });
-}
-async function assessApprovalService(opts = {}) {
-  const endpoint = opts.endpoint ?? serviceEndpoint();
-  const reasons = [];
-  let health;
-  try {
-    const reply = await callApprovalService({ op: "health" }, { endpoint, timeoutMs: opts.timeoutMs ?? 5e3 });
-    if (reply.ok)
-      health = reply.health;
-    else
-      reasons.push(`health refused: ${reply.code}`);
-  } catch (error64) {
-    return { endpoint, reachable: false, isolated: false, reasons: [error64.message] };
-  }
-  if (!health)
-    return { endpoint, reachable: true, isolated: false, reasons };
-  if (health.mode !== "production")
-    reasons.push("the service runs in development mode (same-identity, not an isolation boundary)");
-  if (!health.isolation.verified)
-    reasons.push("the service does not attest verified isolation");
-  if ((0, import_node_os.platform)() === "win32") {
-    reasons.push("endpoint ownership cannot be verified from this process on Windows; isolation is reported unverified");
-  } else {
-    try {
-      const owner = (0, import_node_fs6.statSync)(endpoint).uid;
-      const me = process.getuid?.();
-      if (me !== void 0 && owner === me)
-        reasons.push("the endpoint is owned by the same user as this process");
-      try {
-        (0, import_node_fs6.accessSync)((0, import_node_path6.dirname)(endpoint), import_node_fs6.constants.W_OK);
-        reasons.push("this process can write to the endpoint's directory");
-      } catch {
-      }
-    } catch (error64) {
-      reasons.push(`cannot inspect the endpoint: ${error64.message}`);
-    }
-  }
-  return { endpoint, reachable: true, isolated: reasons.length === 0, reasons, health };
-}
-var import_node_net, import_node_fs6, import_node_path6, import_node_os, APPROVAL_SERVICE_PROTOCOL, SERVICE_OPERATIONS, MAX_MESSAGE_BYTES, RepoPath, Ref, RelPath, RemoteName, WorkItem, CommitParams, PushParams, MergeRequestParams, Id, Common, SubmitRequestSchema, StatusRequestSchema, ExecuteRequestSchema, HealthRequestSchema, ApprovalServiceError;
-var init_approval_service = __esm({
-  "node_modules/@praxis/contracts/dist/approval-service.js"() {
-    import_node_net = require("node:net");
-    import_node_fs6 = require("node:fs");
-    import_node_path6 = require("node:path");
-    import_node_os = require("node:os");
-    init_zod();
-    APPROVAL_SERVICE_PROTOCOL = "praxis.approval-service.v1";
-    SERVICE_OPERATIONS = ["git_commit", "git_push", "merge_request"];
-    MAX_MESSAGE_BYTES = 64 * 1024;
-    RepoPath = external_exports2.string().min(1).max(4096);
-    Ref = external_exports2.string().min(1).max(200).regex(/^[A-Za-z0-9._\/-]+$/, "unsupported characters in a ref name").refine((ref) => !ref.startsWith("-") && !ref.startsWith("/") && !ref.endsWith("/") && !ref.endsWith(".lock") && !ref.endsWith(".") && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{"), "not a valid branch name");
-    RelPath = external_exports2.string().min(1).max(1024);
-    RemoteName = external_exports2.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/).refine((n) => !["__proto__", "constructor", "prototype"].includes(n), "reserved name");
-    WorkItem = external_exports2.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/, "work item ids use letters, digits and . _ : / -");
-    CommitParams = external_exports2.object({ message: external_exports2.string().min(1).max(8e3), branch: Ref.optional(), paths: external_exports2.array(RelPath).min(1).max(500).optional() }).strict();
-    PushParams = external_exports2.object({ remote: RemoteName, branch: Ref }).strict();
-    MergeRequestParams = external_exports2.object({
-      remote: RemoteName,
-      sourceBranch: Ref,
-      targetBranch: Ref,
-      title: external_exports2.string().min(1).max(300),
-      body: external_exports2.string().max(8e3).optional()
-    }).strict();
-    Id = external_exports2.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
-    Common = {
-      protocol: external_exports2.literal(APPROVAL_SERVICE_PROTOCOL),
-      /**
-       * Chosen by the caller, stable for one logical operation. The service binds it to the first request it was used for:
-       * the same id returns that request's recorded state or result (even after the repository has moved on), and the same
-       * id with different parameters is refused as a changed plan.
-       */
-      executionId: Id.optional(),
-      /** Opaque correlation id echoed in the reply; never trusted for anything. */
-      id: external_exports2.string().max(64).optional()
-    };
-    SubmitRequestSchema = external_exports2.discriminatedUnion("operation", [
-      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("git_commit"), repository: RepoPath, workItemId: WorkItem, params: CommitParams }).strict(),
-      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("git_push"), repository: RepoPath, workItemId: WorkItem, params: PushParams }).strict(),
-      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("merge_request"), repository: RepoPath, workItemId: WorkItem, params: MergeRequestParams }).strict()
-    ]);
-    StatusRequestSchema = external_exports2.object({ ...Common, op: external_exports2.literal("status"), requestId: Id.optional() }).strict().refine((r) => Boolean(r.requestId) !== Boolean(r.executionId), "give exactly one of requestId or executionId");
-    ExecuteRequestSchema = external_exports2.object({ ...Common, op: external_exports2.literal("execute"), requestId: external_exports2.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) }).strict();
-    HealthRequestSchema = external_exports2.object({ ...Common, op: external_exports2.literal("health") }).strict();
-    ApprovalServiceError = class extends Error {
-      code;
-      details;
-      constructor(code, message, details) {
-        super(message);
-        this.code = code;
-        this.details = details;
-      }
-    };
-  }
-});
-
-// node_modules/@praxis/contracts/dist/git-executor-delegate.js
-function refuse(reply, what) {
-  const code = reply.code === "APPROVAL_REJECTED" || reply.code === "APPROVAL_REQUIRED" || reply.code === "APPROVAL_ISOLATION_UNAVAILABLE" ? reply.code : "APPROVAL_REQUIRED";
-  throw new GitApprovalRequired(code, `${what} was refused by the approval service (${reply.code}): ${reply.message}`, { service: reply.code, ...reply.details ?? {} });
-}
-async function assertUsableService(what, endpoint) {
-  const assessment = await assessApprovalService({ endpoint, timeoutMs: 5e3 });
-  if (!assessment.reachable) {
-    throw new GitApprovalRequired("APPROVAL_ISOLATION_UNAVAILABLE", `${what} needs the approval service and it is not available: ${assessment.reasons.join("; ")}. Nothing was changed.`, { service: "SERVICE_UNAVAILABLE" });
-  }
-  if (assessment.health && assessment.health.protocol !== APPROVAL_SERVICE_PROTOCOL) {
-    throw new GitApprovalRequired("APPROVAL_ISOLATION_UNAVAILABLE", `the approval service speaks ${assessment.health.protocol}, this Runtime speaks ${APPROVAL_SERVICE_PROTOCOL}; refusing. Nothing was changed.`, { service: "PROTOCOL_MISMATCH" });
-  }
-  if (!assessment.isolated && !testIdentityOverrideActive()) {
-    throw new GitApprovalRequired("APPROVAL_ISOLATION_UNAVAILABLE", `${what} is refused: the approval service is not verified as isolated from the agent (${assessment.reasons.join("; ")}). Nothing was changed.`, { service: "NOT_ISOLATED", reasons: assessment.reasons });
-  }
-}
-async function run(what, submit, endpoint) {
-  await assertUsableService(what, endpoint);
-  let submitted;
-  try {
-    submitted = await callApprovalService(submit, { endpoint });
-  } catch (error64) {
-    if (error64 instanceof ApprovalServiceError)
-      throw new GitApprovalRequired("APPROVAL_ISOLATION_UNAVAILABLE", `${what} needs the approval service and it is not available: ${error64.message}. Nothing was changed.`, { service: error64.code });
-    throw error64;
-  }
-  if (!submitted.ok)
-    refuse(submitted, what);
-  const state2 = submitted.state;
-  if (state2 === "awaiting-operator") {
-    throw new GitApprovalRequired("APPROVAL_REQUIRED", `${what} is waiting for the owner. The approval service shows the exact request at ${submitted.operatorUrl}; the owner approves it with Touch ID, Windows Hello or a security key. Then apply this same request again. Nothing was changed.`, { requestId: submitted.requestId, status: "awaiting-operator", operatorUrl: submitted.operatorUrl, fingerprint: submitted.fingerprint, executedBy: "approval-service" });
-  }
-  if (state2 === "rejected")
-    throw new GitApprovalRequired("APPROVAL_REJECTED", `the owner rejected ${what} (request ${submitted.requestId}). Nothing was changed; a changed request is a new request.`, { requestId: submitted.requestId, status: "rejected" });
-  if (state2 === "expired")
-    throw new GitApprovalRequired("APPROVAL_REQUIRED", `the approval for ${what} expired (request ${submitted.requestId}). Apply again to propose a fresh request. Nothing was changed.`, { requestId: submitted.requestId, status: "expired" });
-  if (state2 === "completed")
-    return submitted.result ?? {};
-  if (state2 === "failed" || state2 === "executing") {
-    throw new GitApprovalRequired("APPROVAL_REQUIRED", `${what} is ${state2 === "executing" ? "being executed" : "consumed and failed"} in the approval service (${String(submitted.detail ?? "")}). Check the repository before asking again.`, { requestId: submitted.requestId, status: state2 });
-  }
-  const executed = await callApprovalService({ op: "execute", requestId: submitted.requestId }, { endpoint });
-  if (!executed.ok)
-    refuse(executed, what);
-  return executed.result ?? {};
-}
-function executionIdFor(parts) {
-  return `ex-${(0, import_node_crypto8.createHash)("sha256").update(JSON.stringify([parts.operation, (0, import_node_path7.resolve)(parts.repository), parts.workItemId, parts.previewFingerprint])).digest("hex").slice(0, 40)}`;
-}
-async function recordedExecution(executionId, endpoint) {
-  try {
-    const reply = await callApprovalService({ op: "status", executionId }, { endpoint, timeoutMs: 5e3 });
-    if (reply.ok && reply.state === "completed")
-      return reply.result ?? {};
-  } catch {
-  }
-  return void 0;
-}
-function approvalServiceDelegate(endpoint, executionId) {
-  return {
-    async commit(i) {
-      const result = await run("git commit", { op: "submit", operation: "git_commit", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { message: i.message, branch: i.branch, paths: i.paths }, ...executionId ? { executionId } : {} }, endpoint);
-      return { commitSha: String(result.commit), treeSha: String(result.tree) };
-    },
-    async push(i) {
-      const result = await run("git push", { op: "submit", operation: "git_push", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, branch: i.branch }, ...executionId ? { executionId } : {} }, endpoint);
-      return { pushedSha: String(result.pushed) };
-    },
-    async mergeRequest(i) {
-      const result = await run("opening the merge request", { op: "submit", operation: "merge_request", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, sourceBranch: i.sourceBranch, targetBranch: i.targetBranch, title: i.title, body: i.body }, ...executionId ? { executionId } : {} }, endpoint);
-      return { id: String(result.id), url: String(result.url) };
-    }
-  };
-}
-var import_node_async_hooks2, import_node_crypto8, import_node_path7, store, gitExecutorDelegate, withGitExecutorDelegate;
-var init_git_executor_delegate = __esm({
-  "node_modules/@praxis/contracts/dist/git-executor-delegate.js"() {
-    import_node_async_hooks2 = require("node:async_hooks");
-    import_node_crypto8 = require("node:crypto");
-    import_node_path7 = require("node:path");
-    init_git_authorization();
-    init_approval_service();
-    init_deployment();
-    store = new import_node_async_hooks2.AsyncLocalStorage();
-    gitExecutorDelegate = () => store.getStore();
-    withGitExecutorDelegate = (delegate, fn) => store.run(delegate, fn);
   }
 });
 
@@ -7558,20 +6309,13 @@ var init_dist = __esm({
     init_zod();
     init_git_host();
     init_workflow();
-    init_approval();
-    init_broker();
     init_action_plan();
-    init_grants();
-    init_deployment();
-    init_approval_store();
     init_story();
     init_jira_orchestration();
-    init_broker_inbox();
-    init_git_authorization();
-    init_deployment();
-    init_deployment();
-    init_approval_service();
-    init_git_executor_delegate();
+    init_approval();
+    init_human_acts();
+    init_human_act_testing();
+    init_user_approval();
     ContractMetaSchema = external_exports2.object({
       contract: external_exports2.string().min(1),
       version: external_exports2.string().regex(/^\d+\.\d+\.\d+$/)
@@ -10669,8 +9413,8 @@ var require_int2 = __commonJS({
     var stringifyNumber = require_stringifyNumber();
     var intIdentify = (value) => typeof value === "bigint" || Number.isInteger(value);
     function intResolve(str3, offset, radix, { intAsBigInt }) {
-      const sign2 = str3[0];
-      if (sign2 === "-" || sign2 === "+")
+      const sign = str3[0];
+      if (sign === "-" || sign === "+")
         offset += 1;
       str3 = str3.substring(offset).replace(/_/g, "");
       if (intAsBigInt) {
@@ -10686,10 +9430,10 @@ var require_int2 = __commonJS({
             break;
         }
         const n2 = BigInt(str3);
-        return sign2 === "-" ? BigInt(-1) * n2 : n2;
+        return sign === "-" ? BigInt(-1) * n2 : n2;
       }
       const n = parseInt(str3, radix);
-      return sign2 === "-" ? -1 * n : n;
+      return sign === "-" ? -1 * n : n;
     }
     function intStringify(node4, radix, prefix2) {
       const { value } = node4;
@@ -10836,11 +9580,11 @@ var require_timestamp = __commonJS({
     "use strict";
     var stringifyNumber = require_stringifyNumber();
     function parseSexagesimal(str3, asBigInt) {
-      const sign2 = str3[0];
-      const parts = sign2 === "-" || sign2 === "+" ? str3.substring(1) : str3;
+      const sign = str3[0];
+      const parts = sign === "-" || sign === "+" ? str3.substring(1) : str3;
       const num = (n) => asBigInt ? BigInt(n) : Number(n);
       const res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num(60) + num(p), num(0));
-      return sign2 === "-" ? num(-1) * res : res;
+      return sign === "-" ? num(-1) * res : res;
     }
     function stringifySexagesimal(node4) {
       let { value } = node4;
@@ -10849,9 +9593,9 @@ var require_timestamp = __commonJS({
         num = (n) => BigInt(n);
       else if (isNaN(value) || !isFinite(value))
         return stringifyNumber.stringifyNumber(node4);
-      let sign2 = "";
+      let sign = "";
       if (value < 0) {
-        sign2 = "-";
+        sign = "-";
         value *= num(-1);
       }
       const _60 = num(60);
@@ -10866,7 +9610,7 @@ var require_timestamp = __commonJS({
           parts.unshift(value);
         }
       }
-      return sign2 + parts.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
+      return sign + parts.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
     }
     var intTime = {
       identify: (value) => typeof value === "bigint" || Number.isInteger(value),
@@ -12321,7 +11065,7 @@ var require_resolve_block_scalar = __commonJS({
       const end = start + header.length + scalar.source.length;
       return { value, type, comment: header.comment, range: [start, end, end] };
     }
-    function parseBlockScalarHeader({ offset, props }, strict, onError) {
+    function parseBlockScalarHeader({ offset, props }, strict2, onError) {
       if (props[0].type !== "block-scalar-header") {
         onError(props[0], "IMPOSSIBLE", "Block scalar header not found");
         return null;
@@ -12357,7 +11101,7 @@ var require_resolve_block_scalar = __commonJS({
             length += token.source.length;
             break;
           case "comment":
-            if (strict && !hasSpace) {
+            if (strict2 && !hasSpace) {
               const message = "Comments must be separated from other tokens by white space characters";
               onError(token, "MISSING_CHAR", message);
             }
@@ -12399,7 +11143,7 @@ var require_resolve_flow_scalar = __commonJS({
     "use strict";
     var Scalar = require_Scalar();
     var resolveEnd = require_resolve_end();
-    function resolveFlowScalar(scalar, strict, onError) {
+    function resolveFlowScalar(scalar, strict2, onError) {
       const { offset, type, source, end } = scalar;
       let _type;
       let value;
@@ -12427,7 +11171,7 @@ var require_resolve_flow_scalar = __commonJS({
           };
       }
       const valueEnd = offset + source.length;
-      const re = resolveEnd.resolveEnd(end, valueEnd, strict, onError);
+      const re = resolveEnd.resolveEnd(end, valueEnd, strict2, onError);
       return {
         value,
         type: _type,
@@ -13088,7 +11832,7 @@ var require_cst_scalar = __commonJS({
     var resolveFlowScalar = require_resolve_flow_scalar();
     var errors = require_errors2();
     var stringifyString = require_stringifyString();
-    function resolveAsScalar(token, strict = true, onError) {
+    function resolveAsScalar(token, strict2 = true, onError) {
       if (token) {
         const _onError = (pos, code, message) => {
           const offset = typeof pos === "number" ? pos : Array.isArray(pos) ? pos[0] : pos.offset;
@@ -13101,9 +11845,9 @@ var require_cst_scalar = __commonJS({
           case "scalar":
           case "single-quoted-scalar":
           case "double-quoted-scalar":
-            return resolveFlowScalar.resolveFlowScalar(token, strict, _onError);
+            return resolveFlowScalar.resolveFlowScalar(token, strict2, _onError);
           case "block-scalar":
-            return resolveBlockScalar.resolveBlockScalar({ options: { strict } }, token, _onError);
+            return resolveBlockScalar.resolveBlockScalar({ options: { strict: strict2 } }, token, _onError);
         }
       }
       return null;
@@ -15139,11 +13883,11 @@ function unsetFields(config4) {
 }
 function loadProjectConfig(repoRoot) {
   for (const name of PROJECT_FILE_NAMES) {
-    const path = (0, import_node_path13.join)(repoRoot, name);
-    if (!(0, import_node_fs13.existsSync)(path))
+    const path = (0, import_node_path6.join)(repoRoot, name);
+    if (!(0, import_node_fs7.existsSync)(path))
       continue;
     try {
-      const raw = (0, import_node_fs13.readFileSync)(path, "utf8");
+      const raw = (0, import_node_fs7.readFileSync)(path, "utf8");
       const data = (0, import_yaml.parse)(raw) ?? {};
       const config4 = ProjectConfigSchema.parse(data);
       return { status: "loaded", path, config: config4, unset: unsetFields(config4) };
@@ -15162,14 +13906,14 @@ function loadProjectConfig(repoRoot) {
     status: "missing",
     config: DEFAULTS,
     unset: unsetFields(DEFAULTS),
-    suggestedPath: (0, import_node_path13.join)(repoRoot, ".project")
+    suggestedPath: (0, import_node_path6.join)(repoRoot, ".project")
   };
 }
 function readJson3(path) {
-  if (!(0, import_node_fs13.existsSync)(path))
+  if (!(0, import_node_fs7.existsSync)(path))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs13.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs7.readFileSync)(path, "utf8"));
   } catch {
     return void 0;
   }
@@ -15177,7 +13921,7 @@ function readJson3(path) {
 function inferProjectConfig(repoRoot) {
   const existing = loadProjectConfig(repoRoot);
   const notes = [];
-  const pkg = readJson3((0, import_node_path13.join)(repoRoot, "package.json"));
+  const pkg = readJson3((0, import_node_path6.join)(repoRoot, "package.json"));
   const scripts = pkg && typeof pkg.scripts === "object" && pkg.scripts ? pkg.scripts : {};
   const stack = [];
   if (pkg) {
@@ -15204,19 +13948,19 @@ function inferProjectConfig(repoRoot) {
 }
 function writeProjectConfig(repoRoot, yamlOrConfig) {
   requireMutationLease();
-  const path = (0, import_node_path13.join)(repoRoot, ".project");
+  const path = (0, import_node_path6.join)(repoRoot, ".project");
   const yaml2 = typeof yamlOrConfig === "string" ? yamlOrConfig.endsWith("\n") ? yamlOrConfig : `${yamlOrConfig}
 ` : `${(0, import_yaml.stringify)(yamlOrConfig).trimEnd()}
 `;
-  (0, import_node_fs13.writeFileSync)(path, yaml2);
+  (0, import_node_fs7.writeFileSync)(path, yaml2);
   return path;
 }
-var import_node_fs13, import_node_path13, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
+var import_node_fs7, import_node_path6, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
 var init_dist2 = __esm({
   "node_modules/@praxis/project-config/dist/index.js"() {
     init_dist();
-    import_node_fs13 = require("node:fs");
-    import_node_path13 = require("node:path");
+    import_node_fs7 = require("node:fs");
+    import_node_path6 = require("node:path");
     import_yaml = __toESM(require_dist2(), 1);
     init_zod();
     ProjectConfigSchema = external_exports2.object({
@@ -16406,7 +15150,7 @@ var init_dist3 = __esm({
 
 // node_modules/@praxis/jira/dist/mutation-auth.js
 function jiraMutation(repo, spec) {
-  const root = (0, import_node_path14.resolve)(repo);
+  const root = (0, import_node_path7.resolve)(repo);
   return {
     repo: root,
     operation: spec.operation,
@@ -16415,19 +15159,18 @@ function jiraMutation(repo, spec) {
     workItemId: spec.workItemId,
     repository: root,
     action: spec.action,
-    ...spec.previewFingerprint ? { previewFingerprint: spec.previewFingerprint } : {},
-    ...process.env.PRAXIS_APPROVAL_AUTHORIZATION ? { authorization: process.env.PRAXIS_APPROVAL_AUTHORIZATION } : {}
+    ...spec.previewFingerprint ? { previewFingerprint: spec.previewFingerprint } : {}
   };
 }
 function authorizeJira(request, write) {
   if (hasMutationLease())
     return write();
-  return runAuthorizedMutation(request, write);
+  throw new ApprovalError("APPROVAL_REQUIRED", `${request.action} changes Jira and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was sent.`);
 }
-var import_node_path14;
+var import_node_path7;
 var init_mutation_auth = __esm({
   "node_modules/@praxis/jira/dist/mutation-auth.js"() {
-    import_node_path14 = require("node:path");
+    import_node_path7 = require("node:path");
     init_dist();
   }
 });
@@ -16480,21 +15223,21 @@ var init_role_policy = __esm({
 
 // node_modules/@praxis/jira/dist/atomic-json.js
 function writeJsonAtomic(filePath, value) {
-  (0, import_node_fs14.mkdirSync)((0, import_node_path15.dirname)(filePath), { recursive: true });
+  (0, import_node_fs8.mkdirSync)((0, import_node_path8.dirname)(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  (0, import_node_fs14.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs8.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs14.renameSync)(tmp, filePath);
+  (0, import_node_fs8.renameSync)(tmp, filePath);
 }
 function readJsonFile(filePath, artifactType) {
-  if (!(0, import_node_fs14.existsSync)(filePath)) {
+  if (!(0, import_node_fs8.existsSync)(filePath)) {
     return {
       ok: false,
       reason: "missing",
       message: `${artifactType} unavailable (${filePath})`
     };
   }
-  const raw = (0, import_node_fs14.readFileSync)(filePath, "utf8");
+  const raw = (0, import_node_fs8.readFileSync)(filePath, "utf8");
   if (!raw.trim()) {
     return {
       ok: false,
@@ -16512,17 +15255,17 @@ function readJsonFile(filePath, artifactType) {
     };
   }
 }
-var import_node_fs14, import_node_path15;
+var import_node_fs8, import_node_path8;
 var init_atomic_json = __esm({
   "node_modules/@praxis/jira/dist/atomic-json.js"() {
-    import_node_fs14 = require("node:fs");
-    import_node_path15 = require("node:path");
+    import_node_fs8 = require("node:fs");
+    import_node_path8 = require("node:path");
   }
 });
 
 // node_modules/@praxis/jira/dist/write-journal.js
 function writeJournalPath(repo) {
-  return (0, import_node_path16.join)(repo, ".praxis-jira", "write-journal.json");
+  return (0, import_node_path9.join)(repo, ".praxis-jira", "write-journal.json");
 }
 function loadWriteJournal(repo) {
   const parsed = readJsonFile(writeJournalPath(repo), "jira-write-journal");
@@ -16564,10 +15307,10 @@ function advanceWriteOp(repo, operationId, patch) {
   };
   return upsertWriteOp(repo, next);
 }
-var import_node_path16;
+var import_node_path9;
 var init_write_journal = __esm({
   "node_modules/@praxis/jira/dist/write-journal.js"() {
-    import_node_path16 = require("node:path");
+    import_node_path9 = require("node:path");
     init_atomic_json();
   }
 });
@@ -16676,19 +15419,19 @@ async function recoverDuplicatesForArtifact(provider, flags, artifactId, repo, o
   if (matches.length === 0)
     return { superseded: [] };
   const journal = findWriteOpByArtifact(repo, artifactId);
-  const canonical2 = selectCanonicalKey(matches, journal?.jiraIssueKey);
+  const canonical = selectCanonicalKey(matches, journal?.jiraIssueKey);
   const superseded = [];
-  if (!canonical2)
+  if (!canonical)
     return { superseded };
   for (const m of matches) {
-    if (m.key === canonical2)
+    if (m.key === canonical)
       continue;
     if (!isSupersededFlags(m) && !opts?.dryRun) {
-      await markSuperseded(provider, m.key, canonical2);
+      await markSuperseded(provider, m.key, canonical);
     }
     superseded.push(m.key);
   }
-  return { canonical: canonical2, superseded };
+  return { canonical, superseded };
 }
 async function lookupByArtifactId(provider, flags, artifactId, repo, epicKey, opts) {
   const recovered = await recoverDuplicatesForArtifact(provider, flags, artifactId, repo, opts);
@@ -16750,18 +15493,18 @@ var init_managed_scope = __esm({
 
 // node_modules/@praxis/jira/dist/work-package-local.js
 function listDirs(abs) {
-  if (!(0, import_node_fs15.existsSync)(abs))
+  if (!(0, import_node_fs9.existsSync)(abs))
     return [];
-  return (0, import_node_fs15.readdirSync)(abs).map((n) => (0, import_node_path17.join)(abs, n)).filter((p) => {
+  return (0, import_node_fs9.readdirSync)(abs).map((n) => (0, import_node_path10.join)(abs, n)).filter((p) => {
     try {
-      return (0, import_node_fs15.statSync)(p).isDirectory();
+      return (0, import_node_fs9.statSync)(p).isDirectory();
     } catch {
       return false;
     }
   });
 }
 function readIf(path) {
-  return (0, import_node_fs15.existsSync)(path) ? (0, import_node_fs15.readFileSync)(path, "utf8") : void 0;
+  return (0, import_node_fs9.existsSync)(path) ? (0, import_node_fs9.readFileSync)(path, "utf8") : void 0;
 }
 function extractMermaid(text) {
   const out = [];
@@ -16779,7 +15522,7 @@ function discoverLocalWorkPackages(repo) {
       return;
     const cur = byId.get(id) ?? {
       id,
-      manifestDir: (0, import_node_path17.join)(repo, "work-packages", id),
+      manifestDir: (0, import_node_path10.join)(repo, "work-packages", id),
       mermaid: []
     };
     if (kind === "design")
@@ -16790,24 +15533,24 @@ function discoverLocalWorkPackages(repo) {
       cur.manifestDir = abs;
     byId.set(id, cur);
   };
-  for (const p of listDirs((0, import_node_path17.join)(repo, "design")))
+  for (const p of listDirs((0, import_node_path10.join)(repo, "design")))
     take(p, "design");
-  for (const p of listDirs((0, import_node_path17.join)(repo, "wp")))
+  for (const p of listDirs((0, import_node_path10.join)(repo, "wp")))
     take(p, "canon");
-  for (const p of listDirs((0, import_node_path17.join)(repo, "work-packages")))
+  for (const p of listDirs((0, import_node_path10.join)(repo, "work-packages")))
     take(p, "manifest");
   for (const wp of byId.values()) {
     const root = wp.designDir ?? wp.canonWpDir ?? wp.manifestDir;
-    const spec = (0, import_node_path17.join)(root, "change-spec.json");
-    const handoff4 = (0, import_node_path17.join)(root, "architect-developer.handoff.json");
-    wp.changeSpecPath = (0, import_node_fs15.existsSync)(spec) ? spec : void 0;
-    wp.handoffPath = (0, import_node_fs15.existsSync)(handoff4) ? handoff4 : void 0;
-    wp.indexMd = readIf((0, import_node_path17.join)(root, "index.md"));
+    const spec = (0, import_node_path10.join)(root, "change-spec.json");
+    const handoff4 = (0, import_node_path10.join)(root, "architect-developer.handoff.json");
+    wp.changeSpecPath = (0, import_node_fs9.existsSync)(spec) ? spec : void 0;
+    wp.handoffPath = (0, import_node_fs9.existsSync)(handoff4) ? handoff4 : void 0;
+    wp.indexMd = readIf((0, import_node_path10.join)(root, "index.md"));
     const blob = [
       wp.indexMd ?? "",
-      readIf((0, import_node_path17.join)(root, "decisions.md")) ?? "",
-      readIf((0, import_node_path17.join)(root, "nfr-budgets.md")) ?? "",
-      readIf((0, import_node_path17.join)(root, "contracts.md")) ?? ""
+      readIf((0, import_node_path10.join)(root, "decisions.md")) ?? "",
+      readIf((0, import_node_path10.join)(root, "nfr-budgets.md")) ?? "",
+      readIf((0, import_node_path10.join)(root, "contracts.md")) ?? ""
     ].join("\n");
     wp.mermaid = extractMermaid(blob);
   }
@@ -16827,11 +15570,11 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   if (byId)
     return byId;
   for (const w of all) {
-    const manifestPath = (0, import_node_path17.join)(w.manifestDir, "manifest.json");
-    if (!(0, import_node_fs15.existsSync)(manifestPath))
+    const manifestPath = (0, import_node_path10.join)(w.manifestDir, "manifest.json");
+    if (!(0, import_node_fs9.existsSync)(manifestPath))
       continue;
     try {
-      const m = JSON.parse((0, import_node_fs15.readFileSync)(manifestPath, "utf8"));
+      const m = JSON.parse((0, import_node_fs9.readFileSync)(manifestPath, "utf8"));
       if (m.jiraIssueKey === idOrKey || m.id === idOrKey)
         return w;
     } catch {
@@ -16840,24 +15583,24 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   return void 0;
 }
 function writeWpManifest(repo, wp) {
-  const dir = (0, import_node_path17.join)(repo, "work-packages", wp.id);
-  (0, import_node_fs15.mkdirSync)(dir, { recursive: true });
-  const path = (0, import_node_path17.join)(dir, "manifest.json");
-  (0, import_node_fs15.writeFileSync)(path, `${JSON.stringify(wp, null, 2)}
+  const dir = (0, import_node_path10.join)(repo, "work-packages", wp.id);
+  (0, import_node_fs9.mkdirSync)(dir, { recursive: true });
+  const path = (0, import_node_path10.join)(dir, "manifest.json");
+  (0, import_node_fs9.writeFileSync)(path, `${JSON.stringify(wp, null, 2)}
 `);
   return path;
 }
 function readWpManifest(repo, id) {
-  const path = (0, import_node_path17.join)(repo, "work-packages", id, "manifest.json");
-  if (!(0, import_node_fs15.existsSync)(path))
+  const path = (0, import_node_path10.join)(repo, "work-packages", id, "manifest.json");
+  if (!(0, import_node_fs9.existsSync)(path))
     return void 0;
-  return JSON.parse((0, import_node_fs15.readFileSync)(path, "utf8"));
+  return JSON.parse((0, import_node_fs9.readFileSync)(path, "utf8"));
 }
-var import_node_fs15, import_node_path17, WP_ID_RE;
+var import_node_fs9, import_node_path10, WP_ID_RE;
 var init_work_package_local = __esm({
   "node_modules/@praxis/jira/dist/work-package-local.js"() {
-    import_node_fs15 = require("node:fs");
-    import_node_path17 = require("node:path");
+    import_node_fs9 = require("node:fs");
+    import_node_path10 = require("node:path");
     WP_ID_RE = /^WP-\d{8}-\d+$/;
   }
 });
@@ -16904,9 +15647,9 @@ function firstMarkdownHeading(md) {
   return void 0;
 }
 function readText(path) {
-  if (!path || !(0, import_node_fs16.existsSync)(path))
+  if (!path || !(0, import_node_fs10.existsSync)(path))
     return void 0;
-  return (0, import_node_fs16.readFileSync)(path, "utf8");
+  return (0, import_node_fs10.readFileSync)(path, "utf8");
 }
 function readJson4(path) {
   const raw = readText(path);
@@ -16959,10 +15702,10 @@ function jiraWpSummary(id, title) {
   return `[${id}] ${title}`;
 }
 function readNormalizedWorkPackage(repo, local, opts) {
-  const designIndex = local.designDir ? readText((0, import_node_path18.join)(local.designDir, "index.md")) : void 0;
-  const canonIndex = local.canonWpDir ? readText((0, import_node_path18.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path18.join)(repo, "wp", local.id, "index.md"));
-  const manifest = readJson4((0, import_node_path18.join)(local.manifestDir, "manifest.json"));
-  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path18.join)(local.designDir, "change-spec.json") : void 0);
+  const designIndex = local.designDir ? readText((0, import_node_path11.join)(local.designDir, "index.md")) : void 0;
+  const canonIndex = local.canonWpDir ? readText((0, import_node_path11.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path11.join)(repo, "wp", local.id, "index.md"));
+  const manifest = readJson4((0, import_node_path11.join)(local.manifestDir, "manifest.json"));
+  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path11.join)(local.designDir, "change-spec.json") : void 0);
   const spec = readJson4(specPath);
   const fm = {
     ...parseSimpleFrontmatter(splitFrontmatter(designIndex ?? "").frontmatter),
@@ -17040,11 +15783,11 @@ function selectArchitectWorkPackages(opts) {
   }
   return { selected: selected ? [selected] : [], inspected };
 }
-var import_node_fs16, import_node_path18, INVALID_WP_TITLES, WorkPackageScopeError;
+var import_node_fs10, import_node_path11, INVALID_WP_TITLES, WorkPackageScopeError;
 var init_work_package_read = __esm({
   "node_modules/@praxis/jira/dist/work-package-read.js"() {
-    import_node_fs16 = require("node:fs");
-    import_node_path18 = require("node:path");
+    import_node_fs10 = require("node:fs");
+    import_node_path11 = require("node:path");
     init_work_package_local();
     INVALID_WP_TITLES = /* @__PURE__ */ new Set(["", "---", "-", "work package", "untitled"]);
     WorkPackageScopeError = class extends Error {
@@ -17388,8 +16131,8 @@ ${usefulMermaid[0]}
       await opts.provider.writePraxisState(wpKey, {
         lifecycle: "ready-for-development"
       });
-      const handoffPath2 = local.handoffPath ?? (0, import_node_path19.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
-      const prev = (0, import_node_fs17.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs17.readFileSync)(handoffPath2, "utf8")) : {};
+      const handoffPath2 = local.handoffPath ?? (0, import_node_path12.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
+      const prev = (0, import_node_fs11.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs11.readFileSync)(handoffPath2, "utf8")) : {};
       writeJsonAtomic(handoffPath2, {
         ...prev,
         contract: prev.contract ?? "architect.developer.handoff",
@@ -17453,11 +16196,11 @@ ${usefulMermaid[0]}
     outOfScopeWorkPackages
   };
 }
-var import_node_fs17, import_node_path19, WP_PROP, ARCH_COMMENT_PROP;
+var import_node_fs11, import_node_path12, WP_PROP, ARCH_COMMENT_PROP;
 var init_architect_apply = __esm({
   "node_modules/@praxis/jira/dist/architect-apply.js"() {
-    import_node_fs17 = require("node:fs");
-    import_node_path19 = require("node:path");
+    import_node_fs11 = require("node:fs");
+    import_node_path12 = require("node:path");
     init_rich_text();
     init_role_policy();
     init_managed_scope();
@@ -17496,7 +16239,7 @@ var init_artifact_id = __esm({
 
 // node_modules/@praxis/jira/dist/ba-write.js
 function contentFingerprint(spec) {
-  return (0, import_node_crypto11.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto6.createHash)("sha256").update(JSON.stringify({
     summary: spec.summary,
     userStory: spec.userStory,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -17596,25 +16339,25 @@ async function planAndApplyBaStories(opts) {
       });
       claimed.add(s);
     }
-    let canonical2 = looked.canonical;
-    if (!canonical2) {
+    let canonical = looked.canonical;
+    if (!canonical) {
       const incomplete = findWriteOp(opts.repo, operationId);
       if (incomplete?.jiraIssueKey)
-        canonical2 = incomplete.jiraIssueKey;
+        canonical = incomplete.jiraIssueKey;
     }
-    if (!canonical2) {
+    if (!canonical) {
       const unmatched = unmatchedCanonicalStories(flags, claimed);
       if (unmatched.length === 1 && opts.specs.length === 1) {
-        canonical2 = unmatched[0].key;
+        canonical = unmatched[0].key;
       }
     }
-    if (canonical2) {
-      claimed.add(canonical2);
-      const existingFp = await opts.provider.getIssueProperty(canonical2, "praxis.contentFingerprint");
+    if (canonical) {
+      claimed.add(canonical);
+      const existingFp = await opts.provider.getIssueProperty(canonical, "praxis.contentFingerprint");
       const action = existingFp === fingerprint2 ? "UNCHANGED" : "UPDATE";
-      plan.push({ action, artifactId, jiraIssueKey: canonical2, summary: spec.summary });
+      plan.push({ action, artifactId, jiraIssueKey: canonical, summary: spec.summary });
       if (opts.dryRun) {
-        applied.push({ action, artifactId, jiraIssueKey: canonical2, superseded: looked.superseded });
+        applied.push({ action, artifactId, jiraIssueKey: canonical, superseded: looked.superseded });
         continue;
       }
       const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -17624,29 +16367,29 @@ async function planAndApplyBaStories(opts) {
         operationType: "upsert-story",
         artifactId,
         epicKey: opts.epicKey,
-        jiraIssueKey: canonical2,
+        jiraIssueKey: canonical,
         state: "created",
         provider: opts.provider.flavor,
         projectKey: opts.provider.config.projectKey,
         startedAt: now
       });
       if (action === "UPDATE") {
-        await opts.provider.updateIssue(canonical2, {
+        await opts.provider.updateIssue(canonical, {
           summary: spec.summary,
           description: storyDescription(opts.provider, spec, opts.epicKey)
         });
       }
-      await applyPraxisMetadata(opts.provider, canonical2, spec, artifactId, opts.epicKey, fingerprint2);
+      await applyPraxisMetadata(opts.provider, canonical, spec, artifactId, opts.epicKey, fingerprint2);
       if (opts.hooks?.crashAfterProperty) {
         throw new Error("injected crash: after property");
       }
-      await verifyCreated(opts.provider, canonical2, artifactId, opts.epicKey);
+      await verifyCreated(opts.provider, canonical, artifactId, opts.epicKey);
       advanceWriteOp(opts.repo, operationId, { state: "verified" });
       if (opts.hooks?.crashBeforeCommit) {
         throw new Error("injected crash: before commit");
       }
       advanceWriteOp(opts.repo, operationId, { state: "committed" });
-      applied.push({ action, artifactId, jiraIssueKey: canonical2, superseded: looked.superseded });
+      applied.push({ action, artifactId, jiraIssueKey: canonical, superseded: looked.superseded });
       continue;
     }
     plan.push({
@@ -17725,10 +16468,10 @@ async function planAndApplyBaStories(opts) {
     flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey)
   };
 }
-var import_node_crypto11;
+var import_node_crypto6;
 var init_ba_write = __esm({
   "node_modules/@praxis/jira/dist/ba-write.js"() {
-    import_node_crypto11 = require("node:crypto");
+    import_node_crypto6 = require("node:crypto");
     init_artifact_id();
     init_managed_scope();
     init_write_journal();
@@ -17800,13 +16543,13 @@ async function adoptLegacyStories(opts) {
     return issue4 ? looksLikePraxisBaStory(issue4) : false;
   });
   if (handoffKeys.length === 1) {
-    const canonical2 = handoffKeys[0];
-    const issue4 = byKey.get(canonical2);
-    const flagsFor = flagged.get(canonical2);
+    const canonical = handoffKeys[0];
+    const issue4 = byKey.get(canonical);
+    const flagsFor = flagged.get(canonical);
     if (issue4 && looksLikePraxisBaStory(issue4) && (!flagsFor || !isSupersededFlags(flagsFor))) {
       return {
         status: "adopted",
-        canonicalKey: canonical2,
+        canonicalKey: canonical,
         supersededKeys: superseded.map((s) => s.key),
         logicalId: extractLogicalId(opts.epicKey, issue4),
         confidence: "handoff+structure"
@@ -17824,16 +16567,16 @@ async function adoptLegacyStories(opts) {
     }
   }
   if (praxisShaped.length === 1) {
-    const canonical2 = praxisShaped[0];
-    const issue4 = byKey.get(canonical2.key);
+    const canonical = praxisShaped[0];
+    const issue4 = byKey.get(canonical.key);
     const meta5 = typeof issue4.properties?.["praxis.artifactId"] === "string" ? "metadata" : "structure";
     return {
       status: "adopted",
-      canonicalKey: canonical2.key,
+      canonicalKey: canonical.key,
       supersededKeys: [
         .../* @__PURE__ */ new Set([
           ...superseded.map((s) => s.key),
-          ...active.filter((a) => a.key !== canonical2.key).filter((a) => parseHistoricalSupersededBy(a.summary) === canonical2.key).map((a) => a.key)
+          ...active.filter((a) => a.key !== canonical.key).filter((a) => parseHistoricalSupersededBy(a.summary) === canonical.key).map((a) => a.key)
         ])
       ],
       logicalId: extractLogicalId(opts.epicKey, issue4),
@@ -17854,10 +16597,10 @@ var init_legacy_adopt = __esm({
 
 // node_modules/@praxis/jira/dist/developer-complete.js
 function readJson5(path) {
-  if (!(0, import_node_fs18.existsSync)(path))
+  if (!(0, import_node_fs12.existsSync)(path))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs18.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs12.readFileSync)(path, "utf8"));
   } catch {
     return void 0;
   }
@@ -17865,10 +16608,10 @@ function readJson5(path) {
 function loadQualityTestCommand(repo) {
   const names = [".project", ".project.yaml", ".project.yml"];
   for (const name of names) {
-    const p = (0, import_node_path20.join)(repo, name);
-    if (!(0, import_node_fs18.existsSync)(p))
+    const p = (0, import_node_path13.join)(repo, name);
+    if (!(0, import_node_fs12.existsSync)(p))
       continue;
-    const raw = (0, import_node_fs18.readFileSync)(p, "utf8");
+    const raw = (0, import_node_fs12.readFileSync)(p, "utf8");
     let inQ = false;
     for (const line of raw.split("\n")) {
       if (/^quality:\s*$/.test(line)) {
@@ -17884,10 +16627,10 @@ function loadQualityTestCommand(repo) {
         return m[1].replace(/^["']|["']$/g, "").trim();
     }
   }
-  const pkgPath = (0, import_node_path20.join)(repo, "package.json");
-  if ((0, import_node_fs18.existsSync)(pkgPath)) {
+  const pkgPath = (0, import_node_path13.join)(repo, "package.json");
+  if ((0, import_node_fs12.existsSync)(pkgPath)) {
     try {
-      const pkg = JSON.parse((0, import_node_fs18.readFileSync)(pkgPath, "utf8"));
+      const pkg = JSON.parse((0, import_node_fs12.readFileSync)(pkgPath, "utf8"));
       if (pkg.scripts?.test)
         return "npm test";
     } catch {
@@ -17934,14 +16677,14 @@ function runProjectVerification(repo) {
   return { command, exitCode, ok, stdout, timestamp, ...counts };
 }
 function completionPaths(repo, workPackageId) {
-  const design = (0, import_node_path20.join)(repo, "design", workPackageId);
-  const dev = (0, import_node_path20.join)(design, "dev");
+  const design = (0, import_node_path13.join)(repo, "design", workPackageId);
+  const dev = (0, import_node_path13.join)(design, "dev");
   return {
     designDir: design,
-    evidencePath: (0, import_node_path20.join)(dev, "completion-evidence.json"),
-    qualityHandoffPath: (0, import_node_path20.join)(dev, "quality-handoff.json"),
-    changeSpecPath: (0, import_node_path20.join)(design, "change-spec.json"),
-    architectHandoffPath: (0, import_node_path20.join)(design, "architect-developer.handoff.json")
+    evidencePath: (0, import_node_path13.join)(dev, "completion-evidence.json"),
+    qualityHandoffPath: (0, import_node_path13.join)(dev, "quality-handoff.json"),
+    changeSpecPath: (0, import_node_path13.join)(design, "change-spec.json"),
+    architectHandoffPath: (0, import_node_path13.join)(design, "architect-developer.handoff.json")
   };
 }
 function readChangeSpec(repo, id) {
@@ -17986,10 +16729,10 @@ function persistLocalComplete(opts) {
     qualityState: "pending",
     claim: opts.claim ? { ...opts.claim, state: "active", expectedState: "ready-for-qa" } : prev.claim ?? null
   });
-  const claimFile = (0, import_node_path20.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
+  const claimFile = (0, import_node_path13.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
   if (opts.claim) {
-    (0, import_node_fs18.mkdirSync)((0, import_node_path20.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-    (0, import_node_fs18.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
+    (0, import_node_fs12.mkdirSync)((0, import_node_path13.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+    (0, import_node_fs12.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
 `);
   }
   void opts.verification;
@@ -18042,7 +16785,7 @@ async function developerCompleteWp(opts) {
   const arch = readJson5(paths.architectHandoffPath) ?? {};
   const features = Array.isArray(spec.features) ? spec.features : Array.isArray(arch.features) ? arch.features : [];
   const acceptanceChecks = acceptanceFromSpec(spec);
-  (0, import_node_fs18.mkdirSync)((0, import_node_path20.join)(paths.designDir, "dev"), { recursive: true });
+  (0, import_node_fs12.mkdirSync)((0, import_node_path13.join)(paths.designDir, "dev"), { recursive: true });
   let evidence;
   let handoff4;
   try {
@@ -18158,7 +16901,7 @@ ${paths.qualityHandoffPath}`
   };
 }
 function fingerprint(value) {
-  return `sha256:${(0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto7.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 async function previewDeveloperCompleteRecovery(opts) {
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
@@ -18259,12 +17002,12 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto12, import_node_fs18, import_node_path20, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto7, import_node_fs12, import_node_path13, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
-    import_node_crypto12 = require("node:crypto");
-    import_node_fs18 = require("node:fs");
-    import_node_path20 = require("node:path");
+    import_node_crypto7 = require("node:crypto");
+    import_node_fs12 = require("node:fs");
+    import_node_path13 = require("node:path");
     import_node_child_process3 = require("node:child_process");
     init_dist();
     init_mutation_auth();
@@ -18289,10 +17032,10 @@ var init_developer_complete = __esm({
 
 // node_modules/@praxis/jira/dist/quality-apply.js
 function digest(value) {
-  return (0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
+  return (0, import_node_crypto8.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sha256Text(text) {
-  return (0, import_node_crypto13.createHash)("sha256").update(text).digest("hex");
+  return (0, import_node_crypto8.createHash)("sha256").update(text).digest("hex");
 }
 function qualityApplyFingerprint(plan) {
   return `sha256:${digest({
@@ -18324,47 +17067,47 @@ function qualityApplyFingerprint(plan) {
   })}`;
 }
 function qualityEvidencePath(repo, workPackageId) {
-  return (0, import_node_path21.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  return (0, import_node_path14.join)(repo, "design", workPackageId, "qa", "quality-review.json");
 }
 function qualityEvidenceSidecarPath(repo, workPackageId) {
-  return (0, import_node_path21.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  return (0, import_node_path14.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
 }
 function qualityApplyPreviewPath(repo, workPackageId) {
-  return (0, import_node_path21.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
+  return (0, import_node_path14.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
 }
 function qualityApplyResultPath(repo, workPackageId) {
-  return (0, import_node_path21.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
+  return (0, import_node_path14.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
 }
 function readQualityEvidence(repo, workPackageId) {
   const p = qualityEvidencePath(repo, workPackageId);
   const alt = qualityEvidenceSidecarPath(repo, workPackageId);
-  const file2 = (0, import_node_fs19.existsSync)(p) ? p : (0, import_node_fs19.existsSync)(alt) ? alt : void 0;
+  const file2 = (0, import_node_fs13.existsSync)(p) ? p : (0, import_node_fs13.existsSync)(alt) ? alt : void 0;
   if (!file2)
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs19.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs13.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeQualityEvidence(repo, evidence) {
   const p = qualityEvidencePath(repo, evidence.workPackageId);
-  (0, import_node_fs19.mkdirSync)((0, import_node_path21.join)(p, ".."), { recursive: true });
-  (0, import_node_fs19.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(p, ".."), { recursive: true });
+  (0, import_node_fs13.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
 `);
   const side = qualityEvidenceSidecarPath(repo, evidence.workPackageId);
-  (0, import_node_fs19.mkdirSync)((0, import_node_path21.join)(side, ".."), { recursive: true });
-  (0, import_node_fs19.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(side, ".."), { recursive: true });
+  (0, import_node_fs13.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
 `);
   return p;
 }
 function liveSnapshotDigest(repo, files) {
   const uniq = [...new Set((files ?? []).map((f) => f.path).filter(Boolean))].sort();
   const entries = uniq.map((rel2) => {
-    const abs = (0, import_node_path21.join)(repo, rel2);
-    if (!(0, import_node_fs19.existsSync)(abs))
+    const abs = (0, import_node_path14.join)(repo, rel2);
+    if (!(0, import_node_fs13.existsSync)(abs))
       return { path: rel2, missing: true };
-    return { path: rel2, sha256: sha256Text((0, import_node_fs19.readFileSync)(abs, "utf8")) };
+    return { path: rel2, sha256: sha256Text((0, import_node_fs13.readFileSync)(abs, "utf8")) };
   });
   return sha256Text(JSON.stringify(entries));
 }
@@ -18372,8 +17115,8 @@ function commentBody(evidence) {
   return `${QUALITY_COMMENT_MARK} ${evidence.verdict} reviewId=${evidence.reviewId}`;
 }
 function writeJson(path, value) {
-  (0, import_node_fs19.mkdirSync)((0, import_node_path21.join)(path, ".."), { recursive: true });
-  (0, import_node_fs19.writeFileSync)(path, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(path, ".."), { recursive: true });
+  (0, import_node_fs13.writeFileSync)(path, `${JSON.stringify(value, null, 2)}
 `);
 }
 function propertyAction(wpKey, propertyKey, intendedValue) {
@@ -18553,10 +17296,10 @@ async function existingBugKey(provider, fingerprint2) {
 }
 function readQualityApplyResult(repo, workPackageId) {
   const p = qualityApplyResultPath(repo, workPackageId);
-  if (!(0, import_node_fs19.existsSync)(p))
+  if (!(0, import_node_fs13.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs19.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs13.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
@@ -18640,10 +17383,10 @@ async function applyQualityReview(opts) {
     throw new QualityApplyError("QUALITY_REVIEW_STALE", "implementation snapshot changed; run a new Quality Review");
   }
   const previewFile = qualityApplyPreviewPath(opts.repo, opts.workPackageId);
-  if (!(0, import_node_fs19.existsSync)(previewFile)) {
+  if (!(0, import_node_fs13.existsSync)(previewFile)) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "no saved apply preview; re-run apply preview");
   }
-  const saved = JSON.parse((0, import_node_fs19.readFileSync)(previewFile, "utf8"));
+  const saved = JSON.parse((0, import_node_fs13.readFileSync)(previewFile, "utf8"));
   if (saved.previewFingerprint !== opts.previewFingerprint) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "previewFingerprint is stale; re-run apply preview");
   }
@@ -18820,8 +17563,8 @@ async function applyQualityReview(opts) {
       if (action.kind === "manifest") {
         lifecycle = "reconciling";
         const local = resolveLocalWorkPackage(opts.repo, evidence.workPackageId);
-        const manifestFile = local ? (0, import_node_path21.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path21.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
-        if (!local || !(0, import_node_fs19.existsSync)(manifestFile)) {
+        const manifestFile = local ? (0, import_node_path14.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path14.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
+        if (!local || !(0, import_node_fs13.existsSync)(manifestFile)) {
           errors.push(`QUALITY_MANIFEST_MISSING: cannot update ${evidence.workPackageId}`);
           return persistPartial({ code: "QUALITY_MANIFEST_MISSING" });
         }
@@ -18966,12 +17709,12 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto13, import_node_fs19, import_node_path21, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto8, import_node_fs13, import_node_path14, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
-    import_node_crypto13 = require("node:crypto");
-    import_node_fs19 = require("node:fs");
-    import_node_path21 = require("node:path");
+    import_node_crypto8 = require("node:crypto");
+    import_node_fs13 = require("node:fs");
+    import_node_path14 = require("node:path");
     init_mutation_auth();
     init_managed_scope();
     init_rich_text();
@@ -19176,7 +17919,7 @@ var init_quality_lifecycle_status = __esm({
 
 // node_modules/@praxis/jira/dist/workflows.js
 function loadJournal(repo) {
-  const parsed = readJsonFile((0, import_node_path22.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
+  const parsed = readJsonFile((0, import_node_path15.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
   if (!parsed.ok) {
     if (parsed.reason === "missing")
       return [];
@@ -19185,7 +17928,7 @@ function loadJournal(repo) {
   return parsed.value;
 }
 function saveJournal(repo, journal) {
-  writeJsonAtomic((0, import_node_path22.join)(repo, ".praxis-jira", "journal.json"), journal);
+  writeJsonAtomic((0, import_node_path15.join)(repo, ".praxis-jira", "journal.json"), journal);
 }
 function record4(repo, entry) {
   const journal = loadJournal(repo);
@@ -19196,7 +17939,7 @@ function record4(repo, entry) {
   saveJournal(repo, journal);
 }
 function proposalPath(repo, epicKey) {
-  return (0, import_node_path22.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
+  return (0, import_node_path15.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
 }
 function loadBaProposal(repo, epicKey) {
   const parsed = readJsonFile(proposalPath(repo, epicKey), "jira.ba.proposal");
@@ -19258,17 +18001,17 @@ function emptyHandoff(epicKey, extra = {}) {
     ...extra
   });
 }
-async function ensureBaHandoffComment(provider, epicKey, canonical2) {
+async function ensureBaHandoffComment(provider, epicKey, canonical) {
   const comments = await provider.getComments(epicKey);
   const exists = comments.some((c) => HANDOFF_COMMENT.test(JSON.stringify(c.body ?? "")));
   if (exists)
     return;
-  await provider.addComment(epicKey, provider.renderDescription(textDocument(`Praxis BA handoff ready. Stories: ${canonical2.join(", ") || "none"}`)));
+  await provider.addComment(epicKey, provider.renderDescription(textDocument(`Praxis BA handoff ready. Stories: ${canonical.join(", ") || "none"}`)));
 }
 async function persistPreview(repo, epicKey, payload, planText) {
-  const dir = (0, import_node_path22.join)(repo, ".praxis-jira", "previews");
-  writeJsonAtomic((0, import_node_path22.join)(dir, `${epicKey}.json`), payload);
-  (0, import_node_fs20.writeFileSync)((0, import_node_path22.join)(dir, `${epicKey}.plan.txt`), `${planText}
+  const dir = (0, import_node_path15.join)(repo, ".praxis-jira", "previews");
+  writeJsonAtomic((0, import_node_path15.join)(dir, `${epicKey}.json`), payload);
+  (0, import_node_fs14.writeFileSync)((0, import_node_path15.join)(dir, `${epicKey}.plan.txt`), `${planText}
 `);
 }
 async function baAnalyzeEpic(opts) {
@@ -19373,7 +18116,7 @@ CREATE:
     hooks: opts.hooks,
     flags
   }));
-  const canonical2 = result.applied.filter((a) => a.action !== "SUPERSEDED" && a.jiraIssueKey).map((a) => a.jiraIssueKey).filter((k, i, arr) => arr.indexOf(k) === i);
+  const canonical = result.applied.filter((a) => a.action !== "SUPERSEDED" && a.jiraIssueKey).map((a) => a.jiraIssueKey).filter((k, i, arr) => arr.indexOf(k) === i);
   const created = result.applied.filter((a) => a.action === "CREATE" && a.jiraIssueKey).map((a) => a.jiraIssueKey);
   const superseded = [
     ...result.plan.filter((p) => p.action === "SUPERSEDED" && p.jiraIssueKey).map((p) => p.jiraIssueKey),
@@ -19381,17 +18124,17 @@ CREATE:
   ].filter((k, i, arr) => arr.indexOf(k) === i);
   const blocking = false;
   const pending = result.applied.length === 0 && !opts.dryRun;
-  const remoteReady = !opts.dryRun && canonical2.length > 0 && !blocking && !pending;
+  const remoteReady = !opts.dryRun && canonical.length > 0 && !blocking && !pending;
   const readyForArchitecture = opts.dryRun ? remoteHandoff?.readyForArchitecture === true : remoteReady;
   const handoff4 = JiraBaHandoffSchema.parse({
     contract: "jira.ba.architect.handoff",
     version: "1.0.0",
     epicKey: opts.epicKey,
-    storyKeys: canonical2,
-    canonicalStoryKeys: canonical2,
+    storyKeys: canonical,
+    canonicalStoryKeys: canonical,
     supersededStoryKeys: superseded,
     requirementIds: specs.flatMap((s) => s.requirementIds),
-    baArtifacts: [(0, import_node_path22.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
+    baArtifacts: [(0, import_node_path15.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
     openQuestions: [],
     nfrs: [],
     businessRules: [],
@@ -19406,19 +18149,19 @@ CREATE:
       proposalReady,
       readyForArchitecture: false,
       remoteReadyForArchitecture: false,
-      canonicalStoryKeys: canonical2,
+      canonicalStoryKeys: canonical,
       supersededStoryKeys: superseded,
       plan: result.plan
     }, result.planText);
-    (0, import_node_fs20.mkdirSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
-    (0, import_node_fs20.writeFileSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
+    (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
+    (0, import_node_fs14.writeFileSync)((0, import_node_path15.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
 `);
   }
   if (opts.dryRun) {
     return {
       ok: true,
       handoff: handoff4,
-      storyKeys: canonical2,
+      storyKeys: canonical,
       created,
       plan: result.plan,
       planText: result.planText,
@@ -19426,10 +18169,10 @@ CREATE:
       migration: adoption.status === "adopted" ? "required" : "none"
     };
   }
-  const handoffPath2 = (0, import_node_path22.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
+  const handoffPath2 = (0, import_node_path15.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
   assertRole("ba", "ba-handoff");
   await opts.provider.setIssueProperty(opts.epicKey, "praxis.baHandoff", handoff4);
-  await ensureBaHandoffComment(opts.provider, opts.epicKey, canonical2);
+  await ensureBaHandoffComment(opts.provider, opts.epicKey, canonical);
   await opts.provider.writePraxisState(opts.epicKey, { lifecycle: "architecture" });
   const remote = await opts.provider.getIssueProperty(opts.epicKey, "praxis.baHandoff");
   if (!remote || remote.readyForArchitecture !== true) {
@@ -19452,7 +18195,7 @@ CREATE:
   return {
     ok: true,
     handoff: handoff4,
-    storyKeys: canonical2,
+    storyKeys: canonical,
     created,
     plan: result.plan,
     planText: result.planText,
@@ -19495,7 +18238,7 @@ async function claimWorkPackage(opts) {
       workItemId: opts.wpKey
     }), () => claimWorkPackage(opts));
   }
-  const token = (0, import_node_crypto14.randomUUID)();
+  const token = (0, import_node_crypto9.randomUUID)();
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
     ...manifest?.storyKeys ?? [],
@@ -19541,8 +18284,8 @@ async function claimWorkPackage(opts) {
   await opts.provider.setIssueProperty(wpKey, "praxis.claim", claim4);
   const labels = Array.from(/* @__PURE__ */ new Set([...remote.labels, "praxis-claimed"]));
   await opts.provider.updateIssue(wpKey, { labels });
-  const verify3 = await opts.provider.getIssueProperty(wpKey, "praxis.claim");
-  if (!verify3 || verify3.claimToken !== token) {
+  const verify = await opts.provider.getIssueProperty(wpKey, "praxis.claim");
+  if (!verify || verify.claimToken !== token) {
     await opts.provider.writePraxisState(wpKey, {
       lifecycle: "blocked",
       reason: "claim-race"
@@ -19565,8 +18308,8 @@ async function claimWorkPackage(opts) {
       claim: claim4
     });
   }
-  (0, import_node_fs20.mkdirSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-  (0, import_node_fs20.writeFileSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
+  (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+  (0, import_node_fs14.writeFileSync)((0, import_node_path15.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
 `);
   await opts.provider.addComment(wpKey, opts.provider.renderDescription(textDocument(`Work Package claimed by ${opts.actor}`)));
   await opts.provider.writePraxisState(wpKey, { lifecycle: "claimed" });
@@ -19638,12 +18381,12 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto14, import_node_fs20, import_node_path22, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto9, import_node_fs14, import_node_path15, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
-    import_node_crypto14 = require("node:crypto");
-    import_node_fs20 = require("node:fs");
-    import_node_path22 = require("node:path");
+    import_node_crypto9 = require("node:crypto");
+    import_node_fs14 = require("node:fs");
+    import_node_path15 = require("node:path");
     init_dist();
     init_mutation_auth();
     init_role_policy();
@@ -19684,16 +18427,16 @@ var init_workflows = __esm({
 
 // node_modules/@praxis/cli/dist/identity.js
 function workItemIds(repo) {
-  const dir = (0, import_node_path23.join)(repo, ".praxis", "workflow");
+  const dir = (0, import_node_path16.join)(repo, ".praxis", "workflow");
   const ids = /* @__PURE__ */ new Set();
   try {
-    for (const name of (0, import_node_fs21.readdirSync)((0, import_node_path23.join)(dir, "items")))
+    for (const name of (0, import_node_fs15.readdirSync)((0, import_node_path16.join)(dir, "items")))
       if (name.endsWith(".json"))
         ids.add(name.slice(0, -5));
   } catch {
   }
   try {
-    const legacy = JSON.parse((0, import_node_fs21.readFileSync)((0, import_node_path23.join)(dir, "state.json"), "utf8"));
+    const legacy = JSON.parse((0, import_node_fs15.readFileSync)((0, import_node_path16.join)(dir, "state.json"), "utf8"));
     if (typeof legacy.workItem?.id === "string")
       ids.add(legacy.workItem.id);
   } catch {
@@ -19701,7 +18444,7 @@ function workItemIds(repo) {
   return [...ids];
 }
 function isWorkItemId(repo, value) {
-  return (0, import_node_fs21.existsSync)((0, import_node_path23.join)(repo, ".praxis", "workflow")) && workItemIds(repo).includes(value);
+  return (0, import_node_fs15.existsSync)((0, import_node_path16.join)(repo, ".praxis", "workflow")) && workItemIds(repo).includes(value);
 }
 function resolveWorkPackageRef(repo, value) {
   const local = resolveLocalWorkPackage(repo, value);
@@ -19722,17 +18465,17 @@ function resolveWorkPackageRef(repo, value) {
 }
 function readManifestKey(manifestDir) {
   try {
-    const manifest = JSON.parse((0, import_node_fs21.readFileSync)((0, import_node_path23.join)(manifestDir, "manifest.json"), "utf8"));
+    const manifest = JSON.parse((0, import_node_fs15.readFileSync)((0, import_node_path16.join)(manifestDir, "manifest.json"), "utf8"));
     return typeof manifest.jiraIssueKey === "string" && manifest.jiraIssueKey.length > 0 ? manifest.jiraIssueKey : null;
   } catch {
     return null;
   }
 }
-var import_node_fs21, import_node_path23, JIRA_KEY_RE;
+var import_node_fs15, import_node_path16, JIRA_KEY_RE;
 var init_identity = __esm({
   "node_modules/@praxis/cli/dist/identity.js"() {
-    import_node_fs21 = require("node:fs");
-    import_node_path23 = require("node:path");
+    import_node_fs15 = require("node:fs");
+    import_node_path16 = require("node:path");
     init_workflows();
     JIRA_KEY_RE = /^[A-Z][A-Z0-9]+-\d+$/;
   }
@@ -19811,48 +18554,9 @@ function providerDiagnostics(env, githubApiUrl) {
   };
   return { jira, github, gitlab };
 }
-function securityDiagnostics(env, workspace) {
-  const raw = (env.PRAXIS_SECURITY_MODE ?? "").trim();
-  const assessment = assessApprovalDeployment({ env, workspace });
-  const shared = (env.PRAXIS_BROKER_SHARED_DIR ?? "").trim();
-  let waiting = null;
-  if (shared) {
-    try {
-      waiting = (0, import_node_fs22.readdirSync)((0, import_node_path24.join)(shared, "pending")).filter((name) => name.endsWith(".json")).length;
-    } catch {
-      waiting = 0;
-    }
-  }
-  const evidence = {
-    secureOperation: assessment.secureOperation,
-    deploymentTier: assessment.tier,
-    deployment: assessment.findings,
-    records: (env.PRAXIS_WORKFLOW_RECORDS ?? "").trim() === "approval" ? "approval" : "unsigned",
-    humanApproval: {
-      inbox: shared ? "configured" : "not-configured",
-      operatorUrl: shared ? (env.PRAXIS_OPERATOR_URL ?? "").trim() || "http://localhost:8780" : null,
-      waiting
-    }
-  };
-  if (raw === "" || raw === "secure") {
-    return {
-      mode: "secure",
-      approvals: "Protected mutations need an approval signed by a broker the agent cannot reach; confirmation=YES alone and local approval files are refused. Agent-authored workflow records are written without one and are marked as unconfirmed.",
-      ...evidence
-    };
-  }
-  if (raw === "compatibility") {
-    return {
-      mode: "compatibility",
-      approvals: "Approvals are NOT enforced against the agent: stored approval files are forgeable by the same user. This is not a security boundary.",
-      ...evidence
-    };
-  }
-  return {
-    mode: "invalid",
-    approvals: "PRAXIS_SECURITY_MODE must be 'secure' or 'compatibility'; mutations fail closed until it is fixed.",
-    ...evidence
-  };
+function approvalDiagnostics(env) {
+  const report = approvalModeReport();
+  return { mode: report.mode, strict: (env.PRAXIS_APPROVAL_STRICT ?? "").trim() === "1" || report.strict, note: report.note, decisionLog: ".praxis/approvals/decisions.jsonl" };
 }
 function doctorNextSteps(input2) {
   const steps = [];
@@ -19888,30 +18592,17 @@ function doctorNextSteps(input2) {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
   }
-  if (input2.security.humanApproval.inbox === "not-configured") {
-    steps.push("Confirming a Story, confirming a decision and approving a service need the owner's approval, and no approval inbox is configured (PRAXIS_BROKER_SHARED_DIR). Agent-authored records still work; those three are refused until it is set.");
-  } else if ((input2.security.humanApproval.waiting ?? 0) > 0) {
-    steps.push(`${input2.security.humanApproval.waiting} plan(s) are waiting for the owner at ${input2.security.humanApproval.operatorUrl}.`);
-  }
-  if (input2.security.mode === "secure" && !input2.security.secureOperation) {
-    const blocking = input2.security.deployment.filter((finding) => finding.severity === "blocking");
-    steps.push(`Secure operation is NOT available on this host (${input2.security.deploymentTier}): protected mutations (Jira, Git, confirmations) are refused until an isolated broker is in place. ` + blocking.map((finding) => `${finding.id}: ${finding.remedy}`).join(" "));
-  }
-  if (input2.security.mode === "invalid") {
-    steps.push("Set PRAXIS_SECURITY_MODE (extension setting security_mode) to 'secure' or 'compatibility', or leave it blank for secure.");
-  } else if (input2.security.mode === "compatibility") {
-    steps.push("Compatibility mode is on: approvals are not enforced. Use it only for local development you fully trust.");
+  if (input2.approval.mode === "unverified-fallback") {
+    steps.push(input2.approval.strict ? "This MCP client cannot show an approval dialog and PRAXIS_APPROVAL_STRICT=1 refuses unverified approvals: protected actions (Git, Jira, confirming a Story) will be refused. Use a client that supports elicitation, or unset PRAXIS_APPROVAL_STRICT." : "This MCP client cannot show an approval dialog, so protected actions run on the agent's confirmation=YES after you say yes in chat. Praxis cannot verify that a person was asked; each approval is recorded as unverified in .praxis/approvals/decisions.jsonl. Set PRAXIS_APPROVAL_STRICT=1 to refuse such approvals.");
   }
   if (input2.dotenvRejected?.length) {
-    steps.push(`A repository .env file tried to set ${input2.dotenvRejected.join(", ")}. Security and approval settings are only read from the real environment, so they were ignored. Remove them from the file.`);
+    steps.push(`A repository .env file tried to set ${input2.dotenvRejected.join(", ")}. Approval settings are only read from the real environment, so they were ignored. Remove them from the file.`);
   }
   return steps;
 }
-var import_node_fs22, import_node_path24, present;
+var present;
 var init_diagnostics = __esm({
   "node_modules/@praxis/cli/dist/diagnostics.js"() {
-    import_node_fs22 = require("node:fs");
-    import_node_path24 = require("node:path");
     init_dist();
     present = (value) => Boolean(value && value.trim());
   }
@@ -20202,16 +18893,16 @@ function splitNames(stdout) {
   return stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 function fileSha256(repo, rel2) {
-  const abs = (0, import_node_path25.join)(repo, rel2);
-  if (!(0, import_node_fs23.existsSync)(abs) || !(0, import_node_fs23.statSync)(abs).isFile())
+  const abs = (0, import_node_path17.join)(repo, rel2);
+  if (!(0, import_node_fs16.existsSync)(abs) || !(0, import_node_fs16.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto15.createHash)("sha256").update((0, import_node_fs23.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto10.createHash)("sha256").update((0, import_node_fs16.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel2) {
   const r = runGit(repo, ["show", `${rev}:${rel2}`]);
   if (r.status !== 0)
     return null;
-  return (0, import_node_crypto15.createHash)("sha256").update(r.stdout).digest("hex");
+  return (0, import_node_crypto10.createHash)("sha256").update(r.stdout).digest("hex");
 }
 function listCommitFiles(repo, rev) {
   const r = runGit(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]);
@@ -20220,16 +18911,16 @@ function listCommitFiles(repo, rev) {
   return splitNames(r.stdout);
 }
 function listHooks(repo) {
-  const dir = (0, import_node_path25.join)(repo, ".git", "hooks");
-  if (!(0, import_node_fs23.existsSync)(dir))
+  const dir = (0, import_node_path17.join)(repo, ".git", "hooks");
+  if (!(0, import_node_fs16.existsSync)(dir))
     return [];
   const out = [];
-  for (const name of (0, import_node_fs23.readdirSync)(dir)) {
+  for (const name of (0, import_node_fs16.readdirSync)(dir)) {
     if (name.endsWith(".sample"))
       continue;
-    const p = (0, import_node_path25.join)(dir, name);
+    const p = (0, import_node_path17.join)(dir, name);
     try {
-      const st = (0, import_node_fs23.statSync)(p);
+      const st = (0, import_node_fs16.statSync)(p);
       if (!st.isFile())
         continue;
       const executable = (st.mode & 73) !== 0;
@@ -20272,10 +18963,10 @@ function commitStaged(repo, message) {
   if (r.status !== 0) {
     throw new VcsError(VCS_CODES.GIT_STAGING_BLOCKED, redactSecrets(r.stderr || "git commit failed"));
   }
-  const sha2 = gitHeadSha(repo);
-  if (!sha2)
+  const sha = gitHeadSha(repo);
+  if (!sha)
     throw new VcsError(VCS_CODES.GIT_COMMIT_DIVERGED, "commit succeeded but HEAD SHA is missing");
-  return sha2;
+  return sha;
 }
 function gitTreeSha(repo, rev = "HEAD") {
   const r = runGit(repo, ["rev-parse", `${rev}^{tree}`]);
@@ -20318,8 +19009,8 @@ function lsRemoteHeadSha(repo, remote, branch) {
   if (r.status !== 0)
     return null;
   const line = r.stdout.trim().split("\n")[0] ?? "";
-  const sha2 = line.split(/\s+/)[0] ?? "";
-  return /^[0-9a-f]{40}$/.test(sha2) ? sha2 : null;
+  const sha = line.split(/\s+/)[0] ?? "";
+  return /^[0-9a-f]{40}$/.test(sha) ? sha : null;
 }
 function pushRefspec(repo, remote, source, destinationBranch, opts) {
   requireMutationLease();
@@ -20372,12 +19063,12 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto15, import_node_fs23, import_node_path25, import_node_child_process4;
+var import_node_crypto10, import_node_fs16, import_node_path17, import_node_child_process4;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
-    import_node_crypto15 = require("node:crypto");
-    import_node_fs23 = require("node:fs");
-    import_node_path25 = require("node:path");
+    import_node_crypto10 = require("node:crypto");
+    import_node_fs16 = require("node:fs");
+    import_node_path17 = require("node:path");
     import_node_child_process4 = require("node:child_process");
     init_redact();
     init_git_url();
@@ -20451,9 +19142,9 @@ var init_staging_policy = __esm({
 
 // node_modules/@praxis/vcs/dist/gitignore-policy.js
 function previewGitignore(repo) {
-  const path = (0, import_node_path26.join)(repo, ".gitignore");
-  const exists = (0, import_node_fs24.existsSync)(path);
-  const current = exists ? (0, import_node_fs24.readFileSync)(path, "utf8") : "";
+  const path = (0, import_node_path18.join)(repo, ".gitignore");
+  const exists = (0, import_node_fs17.existsSync)(path);
+  const current = exists ? (0, import_node_fs17.readFileSync)(path, "utf8") : "";
   const lines = current.split(/\r?\n/);
   const missingLines = RECOMMENDED_GITIGNORE.filter((rule) => !lines.some((l) => l.trim() === rule));
   let proposed = null;
@@ -20466,11 +19157,11 @@ ${extra}
   }
   return { path: ".gitignore", exists, current, missingLines, proposed, writes: false };
 }
-var import_node_fs24, import_node_path26, RECOMMENDED_GITIGNORE;
+var import_node_fs17, import_node_path18, RECOMMENDED_GITIGNORE;
 var init_gitignore_policy = __esm({
   "node_modules/@praxis/vcs/dist/gitignore-policy.js"() {
-    import_node_fs24 = require("node:fs");
-    import_node_path26 = require("node:path");
+    import_node_fs17 = require("node:fs");
+    import_node_path18 = require("node:path");
     RECOMMENDED_GITIGNORE = [
       ".praxis-jira/",
       ".praxis-quality/",
@@ -20484,19 +19175,19 @@ var init_gitignore_policy = __esm({
 
 // node_modules/@praxis/vcs/dist/quality-snapshot.js
 function readJson6(path) {
-  if (!(0, import_node_fs25.existsSync)(path))
+  if (!(0, import_node_fs18.existsSync)(path))
     return null;
   try {
-    return JSON.parse((0, import_node_fs25.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs18.readFileSync)(path, "utf8"));
   } catch {
     return null;
   }
 }
 function readQualitySnapshot(repo, workPackageId) {
-  const primary = (0, import_node_path27.join)(repo, "design", workPackageId, "qa", "quality-review.json");
-  const sidecar = (0, import_node_path27.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  const primary = (0, import_node_path19.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  const sidecar = (0, import_node_path19.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
   const raw = readJson6(primary) ?? readJson6(sidecar);
-  const source = raw ? (0, import_node_fs25.existsSync)(primary) ? primary : sidecar : null;
+  const source = raw ? (0, import_node_fs18.existsSync)(primary) ? primary : sidecar : null;
   const snapshot = raw?.snapshot && typeof raw.snapshot === "object" ? raw.snapshot : {};
   const files = Array.isArray(snapshot.files) ? snapshot.files : [];
   return {
@@ -20526,7 +19217,7 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
       consistency = "mismatch";
     return { path, liveSha256, snapshotSha256, consistency };
   });
-  const liveDigest = (0, import_node_crypto16.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
+  const liveDigest = (0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
     const live = liveFileHash(repo, path);
     return live ? { path, sha256: live } : { path, missing: true };
   }))).digest("hex");
@@ -20536,12 +19227,12 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
     liveDigest
   };
 }
-var import_node_fs25, import_node_path27, import_node_crypto16;
+var import_node_fs18, import_node_path19, import_node_crypto11;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
-    import_node_fs25 = require("node:fs");
-    import_node_path27 = require("node:path");
-    import_node_crypto16 = require("node:crypto");
+    import_node_fs18 = require("node:fs");
+    import_node_path19 = require("node:path");
+    import_node_crypto11 = require("node:crypto");
     init_git_local();
   }
 });
@@ -20726,11 +19417,11 @@ function createGithubProvider(opts) {
     async pipelineStatus(opts2) {
       const path = repoPath(opts2);
       const res = await api("GET", `${path}/actions/runs?branch=${encodeURIComponent(opts2.branch)}&per_page=1`);
-      const run2 = res.json?.workflow_runs?.[0];
-      if (!run2)
+      const run = res.json?.workflow_runs?.[0];
+      if (!run)
         return { ciStatus: "not_started" };
-      const status = String(run2.status ?? "");
-      const conclusion = String(run2.conclusion ?? "");
+      const status = String(run.status ?? "");
+      const conclusion = String(run.conclusion ?? "");
       if (status !== "completed") {
         if (status === "queued")
           return { ciStatus: "queued" };
@@ -20912,17 +19603,17 @@ var init_gitlab_provider = __esm({
 
 // node_modules/@praxis/vcs/dist/journal.js
 function journalPath(repo, workPackageId) {
-  return (0, import_node_path28.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
+  return (0, import_node_path20.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
 }
 function handoffPath(repo, workPackageId) {
-  return (0, import_node_path28.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
+  return (0, import_node_path20.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
 }
 function readJournal(repo, workPackageId) {
   const p = journalPath(repo, workPackageId);
-  if (!(0, import_node_fs26.existsSync)(p))
+  if (!(0, import_node_fs19.existsSync)(p))
     return null;
   try {
-    const v = JSON.parse((0, import_node_fs26.readFileSync)(p, "utf8"));
+    const v = JSON.parse((0, import_node_fs19.readFileSync)(p, "utf8"));
     return { ...v, forcePush: false, merged: false };
   } catch {
     return null;
@@ -20937,31 +19628,31 @@ function writeJournal(repo, entry) {
     merged: false
   };
   const p = journalPath(repo, entry.workPackageId);
-  (0, import_node_fs26.mkdirSync)((0, import_node_path28.join)(p, ".."), { recursive: true });
-  (0, import_node_fs26.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs19.mkdirSync)((0, import_node_path20.join)(p, ".."), { recursive: true });
+  (0, import_node_fs19.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
 `);
   const handoff4 = handoffPath(repo, entry.workPackageId);
-  (0, import_node_fs26.mkdirSync)((0, import_node_path28.join)(handoff4, ".."), { recursive: true });
-  (0, import_node_fs26.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs19.mkdirSync)((0, import_node_path20.join)(handoff4, ".."), { recursive: true });
+  (0, import_node_fs19.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
 `);
 }
-var import_node_path28, import_node_fs26;
+var import_node_path20, import_node_fs19;
 var init_journal = __esm({
   "node_modules/@praxis/vcs/dist/journal.js"() {
     init_dist();
-    import_node_path28 = require("node:path");
-    import_node_fs26 = require("node:fs");
+    import_node_path20 = require("node:path");
+    import_node_fs19 = require("node:fs");
   }
 });
 
 // node_modules/@praxis/vcs/dist/fingerprint.js
 function deliveryFingerprint(value) {
-  return `sha256:${(0, import_node_crypto17.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
 }
-var import_node_crypto17;
+var import_node_crypto12;
 var init_fingerprint = __esm({
   "node_modules/@praxis/vcs/dist/fingerprint.js"() {
-    import_node_crypto17 = require("node:crypto");
+    import_node_crypto12 = require("node:crypto");
   }
 });
 
@@ -21008,7 +19699,7 @@ var init_secret_scan = __esm({
 
 // node_modules/@praxis/vcs/dist/mutation-auth.js
 function localMutation(repo, spec) {
-  const root = (0, import_node_path29.resolve)(repo);
+  const root = (0, import_node_path21.resolve)(repo);
   return {
     repo: root,
     operation: spec.operation,
@@ -21016,19 +19707,18 @@ function localMutation(repo, spec) {
     workItemId: spec.workItemId,
     repository: root,
     action: spec.action,
-    ...spec.previewFingerprint ? { previewFingerprint: spec.previewFingerprint } : {},
-    ...process.env.PRAXIS_APPROVAL_AUTHORIZATION ? { authorization: process.env.PRAXIS_APPROVAL_AUTHORIZATION } : {}
+    ...spec.previewFingerprint ? { previewFingerprint: spec.previewFingerprint } : {}
   };
 }
 function authorizeLocal(request, write) {
   if (hasMutationLease())
     return write();
-  return runAuthorizedMutation(request, write);
+  throw new ApprovalError("APPROVAL_REQUIRED", `${request.action} changes the repository and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was changed.`);
 }
-var import_node_path29;
+var import_node_path21;
 var init_mutation_auth2 = __esm({
   "node_modules/@praxis/vcs/dist/mutation-auth.js"() {
-    import_node_path29 = require("node:path");
+    import_node_path21 = require("node:path");
     init_dist();
   }
 });
@@ -21488,20 +20178,17 @@ async function applyCommit(opts) {
     }), () => applyCommit(opts));
   }
   const headBefore = gitHeadSha(repo);
-  const delegate = gitExecutorDelegate();
-  if (!delegate) {
-    const current = gitCurrentBranch(repo);
-    if (current !== preview.branch) {
-      if (branchExists(repo, preview.branch))
-        checkoutBranch(repo, preview.branch);
-      else
-        createBranch(repo, preview.branch);
-    }
-    const tree = readWorkingTree(repo);
-    const foreign = tree.staged.filter((p) => !preview.selectedFiles.includes(p));
-    if (foreign.length) {
-      throw new VcsError(VCS_CODES.GIT_FOREIGN_STAGED, `refusing to commit with foreign staged paths: ${foreign.join(", ")}`);
-    }
+  const current = gitCurrentBranch(repo);
+  if (current !== preview.branch) {
+    if (branchExists(repo, preview.branch))
+      checkoutBranch(repo, preview.branch);
+    else
+      createBranch(repo, preview.branch);
+  }
+  const tree = readWorkingTree(repo);
+  const foreign = tree.staged.filter((p) => !preview.selectedFiles.includes(p));
+  if (foreign.length) {
+    throw new VcsError(VCS_CODES.GIT_FOREIGN_STAGED, `refusing to commit with foreign staged paths: ${foreign.join(", ")}`);
   }
   for (const rel2 of preview.selectedFiles) {
     const live = fileSha256(repo, rel2);
@@ -21510,13 +20197,8 @@ async function applyCommit(opts) {
       throw new VcsError(VCS_CODES.GIT_PREVIEW_STALE, `file hash changed: ${rel2}`);
     }
   }
-  let commitSha;
-  if (delegate) {
-    commitSha = (await delegate.commit({ repo, workItemId: opts.workPackageId, branch: preview.branch, message: preview.commitMessage, paths: preview.selectedFiles })).commitSha;
-  } else {
-    stagePaths(repo, preview.selectedFiles);
-    commitSha = commitStaged(repo, preview.commitMessage);
-  }
+  stagePaths(repo, preview.selectedFiles);
+  const commitSha = commitStaged(repo, preview.commitMessage);
   const committed = listCommitFiles(repo, commitSha);
   const extra = committed.filter((p) => !preview.selectedFiles.includes(p));
   const hashes = preview.selectedFiles.map((path) => ({
@@ -21761,19 +20443,9 @@ async function applyPublish(opts) {
   if (pub.mode === "baseline" && gitHeadSha(repo) !== pub.sourceCommitSha) {
     throw new VcsError(VCS_CODES.GIT_PREVIEW_STALE, "HEAD moved since baseline preview. Re-run publish preview. Working tree is not published.");
   }
-  const pushDelegate = gitExecutorDelegate();
-  let pushed;
-  if (pushDelegate) {
-    if (pub.sourceBranch !== pub.targetRemoteBranch) {
-      throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "the approval service pushes a branch to the remote branch of the same name only");
-    }
-    await pushDelegate.push({ repo, workItemId: opts.workPackageId, remoteName: remote.name, branch: pub.sourceBranch });
-    pushed = { force: false };
-  } else {
-    pushed = pushRefspec(repo, remote.name, pub.sourceCommitSha, pub.targetRemoteBranch, {
-      setUpstream: pub.mode === "branch"
-    });
-  }
+  const pushed = pushRefspec(repo, remote.name, pub.sourceCommitSha, pub.targetRemoteBranch, {
+    setUpstream: pub.mode === "branch"
+  });
   if (pushed.force) {
     throw new VcsError(VCS_CODES.GIT_FORCE_PUSH_FORBIDDEN, "force push is not allowed");
   }
@@ -21943,7 +20615,6 @@ async function applyMergeRequest(opts) {
       previewFingerprint: opts.previewFingerprint
     }), () => applyMergeRequest(opts));
   }
-  const mrDelegate = gitExecutorDelegate();
   const mrTitle = journal.jiraWorkPackageKey ? `${journal.jiraWorkPackageKey}: ${opts.workPackageId}` : opts.workPackageId;
   const mrBody = mergeRequestBody({
     jiraKey: journal.jiraWorkPackageKey,
@@ -21954,7 +20625,7 @@ async function applyMergeRequest(opts) {
     qualityReviewId: journal.qaReviewId,
     selectedFiles: journal.selectedFiles
   });
-  const existing = mrDelegate ? [] : await provider.listOpenMergeRequests({
+  const existing = await provider.listOpenMergeRequests({
     owner: remote.owner,
     repo: remote.repo,
     projectPath: remote.projectPath,
@@ -21965,10 +20636,7 @@ async function applyMergeRequest(opts) {
   let mr;
   if (existing[0])
     mr = existing[0];
-  else if (mrDelegate) {
-    const made = await mrDelegate.mergeRequest({ repo, workItemId: opts.workPackageId, remoteName: remote.name, sourceBranch, targetBranch, title: mrTitle, body: mrBody });
-    mr = { kind: kind === "gitlab" ? "merge-request" : "pull-request", id: made.id, url: made.url, sourceBranch, targetBranch, title: mrTitle, state: "open", merged: false };
-  } else {
+  else {
     mr = await provider.createMergeRequest({
       owner: remote.owner,
       repo: remote.repo,
@@ -21984,7 +20652,7 @@ async function applyMergeRequest(opts) {
     throw new VcsError(VCS_CODES.GIT_PUSH_BLOCKED, "Existing pull/merge request is already merged. Praxis does not merge.");
   }
   const ciConfigured = hasGithubWorkflows(repo, journal.commitSha);
-  const ci = mrDelegate ? { ciStatus: "unknown", details: "CI status is not read while the approval service holds the hosting credential" } : ciConfigured ? await provider.pipelineStatus({
+  const ci = ciConfigured ? await provider.pipelineStatus({
     owner: remote.owner,
     repo: remote.repo,
     projectPath: remote.projectPath,
@@ -22068,7 +20736,6 @@ var init_delivery = __esm({
     init_staging_policy();
     init_github_provider();
     init_gitlab_provider();
-    init_dist();
     init_secret_scan();
     init_mutation_auth2();
   }
@@ -22216,18 +20883,18 @@ function safeErrorMessage(raw) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(0, 240);
 }
 function safeLogTail(logFile) {
-  if (!(0, import_node_fs27.existsSync)(logFile))
+  if (!(0, import_node_fs20.existsSync)(logFile))
     return "";
-  return (0, import_node_fs27.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
+  return (0, import_node_fs20.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
 }
 function looksLikeElectronBinary(execPath, electronVersion) {
   if (electronVersion)
     return true;
-  const base = (0, import_node_path30.basename)(execPath).toLowerCase();
+  const base = (0, import_node_path22.basename)(execPath).toLowerCase();
   return base.includes("electron") || base.includes("claude") || /claude\.app\/contents\/macos\//i.test(execPath);
 }
 function isNodeCliExecutable(execPath) {
-  const base = (0, import_node_path30.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
+  const base = (0, import_node_path22.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
   return base === "node" || base === "nodejs";
 }
 function isElectronHelperExecutable(execPath) {
@@ -22269,7 +20936,7 @@ function classifySpawnFailure(err) {
   return QUALITY_CODES.QUALITY_SPAWN_FAILED;
 }
 function waitForChildStart(child, timeoutMs = 1500) {
-  return new Promise((resolve19) => {
+  return new Promise((resolve13) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -22279,7 +20946,7 @@ function waitForChildStart(child, timeoutMs = 1500) {
       child.off("spawn", onSpawn);
       child.off("error", onError);
       child.off("exit", onExit);
-      resolve19(result);
+      resolve13(result);
     };
     const onSpawn = () => finish({ spawned: true, pid: child.pid });
     const onError = (err) => finish({ spawned: false, pid: child.pid, error: err });
@@ -22312,27 +20979,27 @@ function waitForChildStart(child, timeoutMs = 1500) {
   });
 }
 function repoKey(repo) {
-  const abs = (0, import_node_path30.resolve)(repo);
+  const abs = (0, import_node_path22.resolve)(repo);
   try {
-    return (0, import_node_fs27.realpathSync)(abs);
+    return (0, import_node_fs20.realpathSync)(abs);
   } catch {
     return abs;
   }
 }
 function qualityDir(repo) {
-  return (0, import_node_path30.join)(repoKey(repo), ".praxis-quality");
+  return (0, import_node_path22.join)(repoKey(repo), ".praxis-quality");
 }
 function qualityStatePath(repo) {
-  return (0, import_node_path30.join)(qualityDir(repo), "quality.json");
+  return (0, import_node_path22.join)(qualityDir(repo), "quality.json");
 }
 function qualityPidPath(repo) {
-  return (0, import_node_path30.join)(qualityDir(repo), "quality.pid");
+  return (0, import_node_path22.join)(qualityDir(repo), "quality.pid");
 }
 function qualityDbPath(repo) {
-  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path30.join)(qualityDir(repo), "quality.sqlite");
+  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path22.join)(qualityDir(repo), "quality.sqlite");
 }
 function qualityLogPath(repo) {
-  return (0, import_node_path30.join)(qualityDir(repo), "quality.log");
+  return (0, import_node_path22.join)(qualityDir(repo), "quality.log");
 }
 function startupTimeoutMs() {
   const raw = Number(process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS);
@@ -22363,20 +21030,20 @@ function urlForPort(port) {
 }
 function readState(repo) {
   const p = qualityStatePath(repo);
-  if (!(0, import_node_fs27.existsSync)(p))
+  if (!(0, import_node_fs20.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs27.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs20.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeState(repo, state2) {
-  (0, import_node_fs27.mkdirSync)(qualityDir(repo), { recursive: true });
-  (0, import_node_fs27.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
+  (0, import_node_fs20.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs20.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
 `);
   if (state2.pid)
-    (0, import_node_fs27.writeFileSync)(qualityPidPath(repo), `${state2.pid}
+    (0, import_node_fs20.writeFileSync)(qualityPidPath(repo), `${state2.pid}
 `);
 }
 function patchState(repo, patch) {
@@ -22386,8 +21053,8 @@ function patchState(repo, patch) {
 function appendSupervisorLog(repo, line) {
   try {
     const p = qualityLogPath(repo);
-    (0, import_node_fs27.mkdirSync)((0, import_node_path30.dirname)(p), { recursive: true });
-    (0, import_node_fs27.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+    (0, import_node_fs20.mkdirSync)((0, import_node_path22.dirname)(p), { recursive: true });
+    (0, import_node_fs20.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `, { flag: "a" });
   } catch {
   }
@@ -22495,32 +21162,32 @@ function rootsMatch(a, b) {
 function resolveQualityExecutable() {
   const override = process.env.PRAXIS_QUALITY_ENTRY;
   if (override)
-    return (0, import_node_path30.isAbsolute)(override) ? override : (0, import_node_path30.resolve)(override);
-  const argvDir = process.argv[1] ? (0, import_node_path30.dirname)((0, import_node_path30.resolve)(process.argv[1])) : void 0;
+    return (0, import_node_path22.isAbsolute)(override) ? override : (0, import_node_path22.resolve)(override);
+  const argvDir = process.argv[1] ? (0, import_node_path22.dirname)((0, import_node_path22.resolve)(process.argv[1])) : void 0;
   if (argvDir) {
-    const sibling = (0, import_node_path30.join)(argvDir, "praxis-quality.cjs");
-    if ((0, import_node_fs27.existsSync)(sibling))
+    const sibling = (0, import_node_path22.join)(argvDir, "praxis-quality.cjs");
+    if ((0, import_node_fs20.existsSync)(sibling))
       return sibling;
   }
   try {
-    const here = (0, import_node_path30.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
-    const bundled = (0, import_node_path30.join)(here, "praxis-quality.cjs");
-    if ((0, import_node_fs27.existsSync)(bundled))
+    const here = (0, import_node_path22.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
+    const bundled = (0, import_node_path22.join)(here, "praxis-quality.cjs");
+    if ((0, import_node_fs20.existsSync)(bundled))
       return bundled;
   } catch {
   }
   try {
     const req = (0, import_node_module.createRequire)(import_meta.url);
     const pkg = req.resolve("@praxis/quality-service/package.json");
-    const entry = (0, import_node_path30.join)((0, import_node_path30.dirname)(pkg), "dist", "main.js");
-    if ((0, import_node_fs27.existsSync)(entry))
+    const entry = (0, import_node_path22.join)((0, import_node_path22.dirname)(pkg), "dist", "main.js");
+    if ((0, import_node_fs20.existsSync)(entry))
       return entry;
   } catch {
   }
   try {
-    const here = (0, import_node_path30.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
-    const monorepo = (0, import_node_path30.resolve)(here, "../../../apps/quality-service/dist/main.js");
-    if ((0, import_node_fs27.existsSync)(monorepo))
+    const here = (0, import_node_path22.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
+    const monorepo = (0, import_node_path22.resolve)(here, "../../../apps/quality-service/dist/main.js");
+    if ((0, import_node_fs20.existsSync)(monorepo))
       return monorepo;
   } catch {
   }
@@ -22617,7 +21284,7 @@ function resolveQualityChildRuntime() {
     return { mode: "process", execPath: override, extraArgs, extraEnv, parent, child: child2 };
   }
   if (isElectronHelperExecutable(observedParent)) {
-    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path30.basename)(observedParent)}`);
+    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path22.basename)(observedParent)}`);
     return {
       mode: "worker",
       execPath: process.execPath,
@@ -22645,7 +21312,7 @@ function resolveQualityChildRuntime() {
 }
 function portListening(port) {
   return new Promise((resolvePromise) => {
-    const socket = import_node_net2.default.connect({ host: "127.0.0.1", port }, () => {
+    const socket = import_node_net.default.connect({ host: "127.0.0.1", port }, () => {
       socket.end();
       resolvePromise(true);
     });
@@ -22657,7 +21324,7 @@ function portListening(port) {
   });
 }
 function waitForWorkerStart(worker, timeoutMs = 1500) {
-  return new Promise((resolve19) => {
+  return new Promise((resolve13) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -22667,7 +21334,7 @@ function waitForWorkerStart(worker, timeoutMs = 1500) {
       worker.off("online", onOnline);
       worker.off("error", onError);
       worker.off("exit", onExit);
-      resolve19(result);
+      resolve13(result);
     };
     const onOnline = () => finish({ spawned: true, pid: process.pid });
     const onError = (err) => finish({ spawned: false, pid: process.pid, error: err });
@@ -22691,8 +21358,8 @@ function startQualityWorker(opts) {
     }
     workers.delete(key);
   }
-  (0, import_node_fs27.mkdirSync)((0, import_node_path30.dirname)(opts.logPath), { recursive: true });
-  const log = (0, import_node_fs27.createWriteStream)(opts.logPath, { flags: "a" });
+  (0, import_node_fs20.mkdirSync)((0, import_node_path22.dirname)(opts.logPath), { recursive: true });
+  const log = (0, import_node_fs20.createWriteStream)(opts.logPath, { flags: "a" });
   const env = {};
   for (const [key2, val] of Object.entries(opts.env)) {
     if (val !== void 0)
@@ -22748,11 +21415,11 @@ function fail(code, message, stage, t0, details) {
 }
 async function probeQuality(opts) {
   const repo = repoKey(opts.repo);
-  const state2 = (0, import_node_fs27.existsSync)(opts.repo) ? readState(repo) : void 0;
+  const state2 = (0, import_node_fs20.existsSync)(opts.repo) ? readState(repo) : void 0;
   const port = state2?.port ?? configuredPort();
   const url4 = state2?.url ?? urlForPort(port);
-  const db = state2?.db ?? ((0, import_node_fs27.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
-  const logPath = (0, import_node_fs27.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
+  const db = state2?.db ?? ((0, import_node_fs20.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
+  const logPath = (0, import_node_fs20.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
   const extras = {
     lastKnownPid: state2?.lastKnownPid ?? state2?.pid,
     lastHealthyAt: state2?.lastHealthyAt,
@@ -22857,7 +21524,7 @@ async function ensureQualityOnce(opts) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, "Quality service executable is not packaged with Praxis Runtime", "quality.entry.resolve", t0, { healthUrl: probe.url, logPath });
   }
   qlog(`quality.entry.resolve path=${executable}`);
-  if (!(0, import_node_fs27.existsSync)(executable)) {
+  if (!(0, import_node_fs20.existsSync)(executable)) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, `Quality service executable missing: ${executable}`, "quality.entry.resolve", t0, { executable, healthUrl: probe.url, logPath });
   }
   const runtime = resolveQualityChildRuntime();
@@ -22913,7 +21580,7 @@ async function ensureQualityOnce(opts) {
     }
     fail(QUALITY_CODES.QUALITY_PORT_UNAVAILABLE, `Quality port ${port} is already in use by another process`, "port", t0, { ...diagnosticDetails, healthUrl: url4, port });
   }
-  (0, import_node_fs27.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs20.mkdirSync)(qualityDir(repo), { recursive: true });
   qlog(`cwd resolved path=${repo}`);
   qlog(`db path resolved path=${db}`);
   let pid;
@@ -22972,7 +21639,7 @@ async function ensureQualityOnce(opts) {
     env.PRAXIS_QUALITY_DB = db;
     env.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
     env.PRAXIS_QUALITY_HOST = "127.0.0.1";
-    const logFd = (0, import_node_fs27.openSync)(logPath, "a");
+    const logFd = (0, import_node_fs20.openSync)(logPath, "a");
     qlog("quality.spawn");
     let child;
     try {
@@ -22983,7 +21650,7 @@ async function ensureQualityOnce(opts) {
         stdio: ["ignore", logFd, logFd]
       });
     } catch (err) {
-      (0, import_node_fs27.closeSync)(logFd);
+      (0, import_node_fs20.closeSync)(logFd);
       const errno = err;
       fail(classifySpawnFailure(errno), errno instanceof Error ? errno.message : String(err), "quality.spawn", t0, {
         ...diagnosticDetails,
@@ -22994,7 +21661,7 @@ async function ensureQualityOnce(opts) {
       });
     }
     const started = await waitForChildStart(child, 1500);
-    (0, import_node_fs27.closeSync)(logFd);
+    (0, import_node_fs20.closeSync)(logFd);
     pid = started.pid;
     qlog(`quality.child.start spawned=${started.spawned} pid=${pid ?? "none"} exitCode=${started.exitCode ?? "none"} spawnError=${started.error?.code ?? "none"}`);
     if (!started.spawned || started.error || started.exitCode !== void 0 || started.exitSignal) {
@@ -23109,21 +21776,21 @@ function resetQualityEnsureForTests(repo) {
   if (repo) {
     const dir = qualityDir(repo);
     stopQuality(repo);
-    (0, import_node_fs27.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs20.rmSync)(dir, { recursive: true, force: true });
     inFlight.delete(repoKey(repo));
     return;
   }
   inFlight.clear();
 }
-var import_node_child_process5, import_node_worker_threads, import_node_fs27, import_node_net2, import_node_module, import_node_path30, import_node_url3, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
+var import_node_child_process5, import_node_worker_threads, import_node_fs20, import_node_net, import_node_module, import_node_path22, import_node_url3, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
 var init_quality_ensure = __esm({
   "node_modules/@praxis/cli/dist/quality-ensure.js"() {
     import_node_child_process5 = require("node:child_process");
     import_node_worker_threads = require("node:worker_threads");
-    import_node_fs27 = require("node:fs");
-    import_node_net2 = __toESM(require("node:net"), 1);
+    import_node_fs20 = require("node:fs");
+    import_node_net = __toESM(require("node:net"), 1);
     import_node_module = require("node:module");
-    import_node_path30 = require("node:path");
+    import_node_path22 = require("node:path");
     import_node_url3 = require("node:url");
     import_meta = {};
     DEFAULT_QUALITY_PORT = 8792;
@@ -23240,7 +21907,7 @@ async function runQualityWorkPackageReview(opts) {
   const { status, json: json2 } = await postJson(`${url4}/reviews/work-package`, {
     projectId: opts.workPackageId,
     workPackageId: opts.workPackageId,
-    path: (0, import_node_path31.resolve)(opts.repo),
+    path: (0, import_node_path23.resolve)(opts.repo),
     runtimeVersion: opts.runtimeVersion
   });
   if (status >= 400) {
@@ -23372,10 +22039,10 @@ function qualityReviewStatus(repo, workPackageId) {
     approvalApplied: evidence.approvalApplied === true
   };
 }
-var import_node_path31, QualityReviewTransportError;
+var import_node_path23, QualityReviewTransportError;
 var init_quality_lifecycle = __esm({
   "node_modules/@praxis/cli/dist/quality-lifecycle.js"() {
-    import_node_path31 = require("node:path");
+    import_node_path23 = require("node:path");
     init_workflows();
     init_quality_ensure();
     QualityReviewTransportError = class extends Error {
@@ -23450,7 +22117,7 @@ __export(operations_exports, {
   workPackageShowOp: () => workPackageShowOp
 });
 function previewFingerprint(plan) {
-  return `sha256:${(0, import_node_crypto18.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 function redact(text) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
@@ -23481,14 +22148,14 @@ function loadPraxisDotenv(repo) {
   }
   if (process.env.PRAXIS_SKIP_DOTENV === "1")
     return;
-  const resolved = (0, import_node_path32.resolve)(repo);
-  if (!(0, import_node_fs28.existsSync)(resolved))
+  const resolved = (0, import_node_path24.resolve)(repo);
+  if (!(0, import_node_fs21.existsSync)(resolved))
     return;
   for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
-    const p = (0, import_node_path32.join)(resolved, f);
-    if (!(0, import_node_fs28.existsSync)(p))
+    const p = (0, import_node_path24.join)(resolved, f);
+    if (!(0, import_node_fs21.existsSync)(p))
       continue;
-    for (const line of (0, import_node_fs28.readFileSync)(p, "utf8").split("\n")) {
+    for (const line of (0, import_node_fs21.readFileSync)(p, "utf8").split("\n")) {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
       if (!m)
         continue;
@@ -23515,8 +22182,8 @@ function gitRoot(cwd) {
 }
 function requireRepo(repo) {
   loadPraxisDotenv(repo);
-  const resolved = (0, import_node_path32.resolve)(repo);
-  if (!(0, import_node_fs28.existsSync)(resolved)) {
+  const resolved = (0, import_node_path24.resolve)(repo);
+  if (!(0, import_node_fs21.existsSync)(resolved)) {
     throw new PraxisOpError(OP_CODES.REPOSITORY_UNAVAILABLE, `REPOSITORY_UNAVAILABLE: ${resolved}`);
   }
   return resolved;
@@ -23581,7 +22248,7 @@ function mapJiraWorkflowError(err) {
   throw err;
 }
 async function withProvider(ctx, fn) {
-  const run2 = async (p) => {
+  const run = async (p) => {
     try {
       return await fn(p);
     } catch (e) {
@@ -23589,13 +22256,13 @@ async function withProvider(ctx, fn) {
     }
   };
   if (ctx.provider)
-    return run2(ctx.provider);
+    return run(ctx.provider);
   if (!jiraConfigured()) {
     throw new PraxisOpError(OP_CODES.JIRA_CONFIG_UNAVAILABLE, jiraConfigUnavailableMessage());
   }
   try {
     const config4 = loadJiraConfig();
-    return await run2(createJiraProvider({
+    return await run(createJiraProvider({
       config: config4,
       signal: ctx.signal
     }));
@@ -23666,92 +22333,54 @@ function requireConfirm(confirmation, what) {
     throw new PraxisOpError(OP_CODES.CONFIRMATION_REQUIRED, `${what} requires confirmation=YES`);
   }
 }
-function replayResult(result) {
-  if (result && typeof result === "object")
-    return { ...result, replayed: true };
-  return { replayed: true, result };
-}
 function asApprovalError(err) {
-  if (err instanceof WorkflowError && err.code in OP_CODES) {
-    throw new PraxisOpError(err.code, err.message);
+  if ((err instanceof WorkflowError || err instanceof ApprovalError) && err.code in OP_CODES) {
+    const details = err instanceof ApprovalError && Object.keys(err.details).length ? { details: err.details } : void 0;
+    throw new PraxisOpError(err.code, err.message, details);
   }
   throw err;
 }
 async function guardWrite(ctx, spec, write) {
-  if (spec.requireYes)
+  if (spec.requireYes && ctx.confirmation !== "NO")
     requireConfirm(ctx.confirmation, spec.what);
-  const repo = (0, import_node_path32.resolve)(spec.repository);
-  if (spec.git && securityMode() === "secure" && !hasMutationLease() && SERVICE_OPERATIONS.includes(spec.operation) && serviceDelegationActive()) {
-    const executionId = executionIdFor({ operation: spec.operation, repository: repo, workItemId: spec.workItemId ?? "", previewFingerprint: ctx.previewFingerprint ?? "" });
-    const recorded = await recordedExecution(executionId);
-    if (recorded) {
-      return { ok: true, writeSucceeded: false, verificationStatus: "ok", partial: false, completed: true, replayed: true, executedBy: "approval-service", executionId, serviceResult: recorded };
-    }
-    try {
-      return await runWorkflowRecordWrite(() => withGitExecutorDelegate(approvalServiceDelegate(void 0, executionId), write));
-    } catch (err) {
-      if (err instanceof GitApprovalRequired) {
-        throw new PraxisOpError(err.code, err.message, { details: err.details });
-      }
-      asApprovalError(err);
-    }
-  }
-  if (spec.git && securityMode() === "secure" && !hasMutationLease()) {
-    try {
-      return await authorizeGitOperation({
-        repo,
-        key: {
-          operation: spec.operation,
-          action: spec.action,
-          repository: repo,
-          workItemId: spec.workItemId ?? "",
-          previewFingerprint: ctx.previewFingerprint ?? ""
-        },
-        describe: spec.git.describe,
-        write
-      });
-    } catch (err) {
-      if (err instanceof GitApprovalRequired) {
-        throw new PraxisOpError(err.code, err.message, { details: err.details });
-      }
-      asApprovalError(err);
-    }
-  }
-  let inspection;
+  if (hasMutationLease())
+    return write();
+  const repo = (0, import_node_path24.resolve)(spec.repository);
   try {
-    inspection = inspectMutation({
-      repo,
-      planId: ctx.planId,
-      planFingerprint: ctx.planFingerprint,
+    const described = await (spec.git?.describe ?? spec.describe)?.();
+    if (described?.previewFingerprint && ctx.previewFingerprint && described.previewFingerprint !== ctx.previewFingerprint) {
+      throw new PraxisOpError(OP_CODES.APPROVAL_FINGERPRINT_MISMATCH, `${spec.what} previewFingerprint mismatch (stale preview or state drift); preview again before asking the user`);
+    }
+    const subject = JSON.stringify(canonicalize({
+      action: spec.action,
       operation: spec.operation,
       provider: spec.provider,
-      instanceId: spec.provider === "local" ? void 0 : ctx.instanceId ?? process.env.PRAXIS_JIRA_BASE_URL,
-      workItemId: spec.workItemId,
       repository: repo,
-      previewFingerprint: ctx.previewFingerprint,
+      workItemId: spec.workItemId ?? "",
+      previewFingerprint: described?.previewFingerprint ?? ctx.previewFingerprint ?? "",
+      targets: described?.targets ?? [],
+      revision: described?.revision ?? ""
+    }));
+    const summary = described?.summary ?? `Apply ${spec.what}${spec.workItemId ? ` for ${spec.workItemId}` : ""}`;
+    const description = described?.description ?? [
+      `Action: ${spec.action}`,
+      `Provider: ${spec.provider}`,
+      spec.workItemId ? `Work item: ${spec.workItemId}` : void 0,
+      `Repository: ${repo}`,
+      ctx.previewFingerprint ? `Preview fingerprint: ${ctx.previewFingerprint}` : void 0
+    ].filter(Boolean).join("\n");
+    const approval = await obtainUserApproval({
       action: spec.action,
-      resumeInFlight: Boolean(ctx.approvalConsumed)
-    });
+      kind: decisionKindFor(spec.operation, spec.action),
+      summary,
+      description,
+      subject,
+      ...described?.risks?.length ? { risks: described.risks } : {}
+    }, { confirmation: ctx.confirmation, repo });
+    return await runApprovedMutation(approval, write);
   } catch (err) {
-    asApprovalError(err);
-  }
-  if (inspection.kind === "replay")
-    return replayResult(inspection.result);
-  try {
-    return await runAuthorizedMutation({
-      repo,
-      planId: ctx.planId,
-      planFingerprint: ctx.planFingerprint,
-      operation: spec.operation,
-      provider: spec.provider,
-      instanceId: spec.provider === "local" ? void 0 : ctx.instanceId ?? process.env.PRAXIS_JIRA_BASE_URL,
-      workItemId: spec.workItemId,
-      repository: repo,
-      previewFingerprint: ctx.previewFingerprint,
-      action: spec.action,
-      resumeInFlight: true
-    }, write);
-  } catch (err) {
+    if (err instanceof PraxisOpError)
+      throw err;
     asApprovalError(err);
   }
 }
@@ -23775,24 +22404,10 @@ async function tracedFingerprint(trace, plan) {
   });
   return fp;
 }
-async function approvalServiceDiagnostics() {
-  const assessment = await assessApprovalService({ timeoutMs: 3e3 });
-  const health = assessment.health;
-  const compatible = health ? health.protocol === APPROVAL_SERVICE_PROTOCOL : void 0;
-  return {
-    endpoint: assessment.endpoint,
-    reachable: assessment.reachable,
-    isolated: assessment.isolated && compatible === true,
-    delegating: serviceDelegationActive(),
-    reasons: assessment.reasons,
-    ...health ? { version: health.version, protocol: health.protocol, protocolCompatible: compatible, mode: health.mode, platform: health.platform, operatorChannel: health.operatorChannel, pending: health.pending, auditChain: health.auditChain, selfReportedIsolation: health.isolation } : {},
-    note: assessment.reachable ? assessment.isolated ? "The service answers, runs in production mode, and its endpoint belongs to another principal." : "The service answers but OS-level isolation is NOT established; see reasons." : "No approval service is reachable. Installing the Desktop extension alone does not provide OS-level isolation; install the native Approval Service (docs/approval-service/INSTALL.md)."
-  };
-}
 async function doctorOp(ctx, version4) {
   loadPraxisDotenv(ctx.repo);
-  const resolved = (0, import_node_path32.resolve)(ctx.repo);
-  const repoExists = (0, import_node_fs28.existsSync)(resolved);
+  const resolved = (0, import_node_path24.resolve)(ctx.repo);
+  const repoExists = (0, import_node_fs21.existsSync)(resolved);
   const git2 = repoExists ? gitRoot(resolved) : void 0;
   const project = repoExists ? loadProjectConfig(git2 ?? resolved) : { status: "missing", suggestedPath: resolved };
   const jiraFlags = jiraConfigFlags();
@@ -23820,8 +22435,7 @@ async function doctorOp(ctx, version4) {
     valid: github.apiUrlValid !== false,
     issue: github.apiUrlIssue
   });
-  const security = securityDiagnostics(process.env, git2 ?? resolved);
-  const approvalService = await approvalServiceDiagnostics();
+  const approval = approvalDiagnostics(process.env);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? git2 ? "ok" : "no-git" : "unavailable",
@@ -23845,8 +22459,7 @@ async function doctorOp(ctx, version4) {
     hostPlaceholdersIgnored,
     dotenvRejected,
     providers,
-    security,
-    approvalService,
+    approval,
     nextSteps: [
       ...doctorNextSteps({
         repoExists,
@@ -23854,10 +22467,9 @@ async function doctorOp(ctx, version4) {
         project: project.status,
         quality: { status: qualityProbe.status, logPath: qualityProbe.logPath },
         providers,
-        security,
+        approval,
         dotenvRejected
-      }),
-      ...approvalService.reachable ? [] : ["No Approval Service is running: OS-level approval isolation is not in place. Install the native service (docs/approval-service/INSTALL.md); the Desktop extension alone makes no isolation claim."]
+      })
     ],
     codes: {
       repository: capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : void 0,
@@ -23981,7 +22593,16 @@ async function baApplyOp(ctx) {
     provider: "jira",
     repository: repo,
     workItemId: ctx.epic,
-    requireYes: true
+    requireYes: true,
+    // What the user approves is the plan this dry run produces, shown in full.
+    describe: () => withProvider({ ...ctx, repo }, async (p) => {
+      const dry = await baAnalyzeEpic({ provider: p, epicKey: ctx.epic, repo, dryRun: true });
+      return {
+        summary: `Write the BA plan for ${ctx.epic} to Jira`,
+        description: dry.planText,
+        previewFingerprint: previewFingerprint(dry.plan)
+      };
+    })
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     const preview = await baAnalyzeEpic({
       provider: p,
@@ -24067,7 +22688,21 @@ async function architectApplyOp(ctx) {
     provider: "jira",
     repository: repo,
     workItemId: ctx.epic,
-    requireYes: true
+    requireYes: true,
+    describe: () => withProvider({ ...ctx, repo }, async (p) => {
+      try {
+        const dry = await architectPlanEpic({ provider: p, epicKey: ctx.epic, repo, dryRun: true, workPackageId: ctx.wp });
+        return {
+          summary: `Write the architecture plan for ${ctx.epic} to Jira`,
+          description: dry.planText ?? JSON.stringify(dry.plan, null, 2),
+          previewFingerprint: previewFingerprint(dry.plan)
+        };
+      } catch (e) {
+        if (e instanceof WorkPackageScopeError)
+          mapArchitectWpError(e);
+        throw e;
+      }
+    })
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     try {
       const preview = await architectPlanEpic({
@@ -24352,7 +22987,7 @@ async function qualityApplyStatusOp(ctx) {
   const repo = requireRepo(ctx.repo);
   const local = resolveLocalWorkPackage(repo, ctx.wp);
   const workPackageId = local?.id ?? ctx.wp;
-  const run2 = async (provider) => {
+  const run = async (provider) => {
     const lifecycle = await collectQualityLifecycleSnapshot({
       provider,
       repo,
@@ -24375,11 +23010,11 @@ async function qualityApplyStatusOp(ctx) {
     };
   };
   if (!ctx.provider && !jiraConfigured())
-    return run2();
+    return run();
   const jiraIssueKey = resolveRemoteWpKey(repo, workPackageId);
   if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(jiraIssueKey))
-    return run2();
-  return withProvider({ ...ctx, repo }, (p) => run2(p));
+    return run();
+  return withProvider({ ...ctx, repo }, (p) => run(p));
 }
 async function qualityReviewShowOp(ctx) {
   if (!ctx.wp) {
@@ -24783,13 +23418,13 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto18, import_node_child_process6, import_node_fs28, import_node_path32, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto13, import_node_child_process6, import_node_fs21, import_node_path24, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
-    import_node_crypto18 = require("node:crypto");
+    import_node_crypto13 = require("node:crypto");
     import_node_child_process6 = require("node:child_process");
-    import_node_fs28 = require("node:fs");
-    import_node_path32 = require("node:path");
+    import_node_fs21 = require("node:fs");
+    import_node_path24 = require("node:path");
     init_dist2();
     init_dist3();
     init_workflows();
@@ -24861,6 +23496,7 @@ var init_operations = __esm({
       APPROVAL_EXPIRED: "APPROVAL_EXPIRED",
       APPROVAL_REVOKED: "APPROVAL_REVOKED",
       APPROVAL_REJECTED: "APPROVAL_REJECTED",
+      APPROVAL_CLIENT_UI_REQUIRED: "APPROVAL_CLIENT_UI_REQUIRED",
       APPROVAL_RECONCILIATION_REQUIRED: "APPROVAL_RECONCILIATION_REQUIRED",
       APPROVAL_SELF_GRANT_FORBIDDEN: "APPROVAL_SELF_GRANT_FORBIDDEN",
       APPROVAL_AMBIGUOUS: "APPROVAL_AMBIGUOUS",
@@ -24906,10 +23542,7 @@ var init_operations = __esm({
     HOST_PLACEHOLDER_RE = /^\$\{[^}]*\}$/;
     hostPlaceholdersIgnored = [];
     DOTENV_FORBIDDEN_PREFIXES = [
-      "PRAXIS_SECURITY_",
       "PRAXIS_APPROVAL_",
-      "PRAXIS_BROKER_",
-      "PRAXIS_DEPLOYMENT_",
       "PRAXIS_ALLOW_",
       "PRAXIS_FIXTURE_",
       "PRAXIS_TEST_"
@@ -25739,21 +24372,21 @@ var require_int3 = __commonJS({
       return /^(:[0-5]?[0-9])+$/.test(data.slice(index));
     }
     function constructYamlInteger(data) {
-      var value = data, sign2 = 1, ch, base, digits = [];
+      var value = data, sign = 1, ch, base, digits = [];
       if (value.indexOf("_") !== -1) {
         value = value.replace(/_/g, "");
       }
       ch = value[0];
       if (ch === "-" || ch === "+") {
-        if (ch === "-") sign2 = -1;
+        if (ch === "-") sign = -1;
         value = value.slice(1);
         ch = value[0];
       }
       if (value === "0") return 0;
       if (ch === "0") {
-        if (value[1] === "b") return sign2 * parseInt(value.slice(2), 2);
-        if (value[1] === "x") return sign2 * parseInt(value, 16);
-        return sign2 * parseInt(value, 8);
+        if (value[1] === "b") return sign * parseInt(value.slice(2), 2);
+        if (value[1] === "x") return sign * parseInt(value, 16);
+        return sign * parseInt(value, 8);
       }
       if (value.indexOf(":") !== -1) {
         value.split(":").forEach(function(v) {
@@ -25765,9 +24398,9 @@ var require_int3 = __commonJS({
           value += d * base;
           base *= 60;
         });
-        return sign2 * value;
+        return sign * value;
       }
-      return sign2 * parseInt(value, 10);
+      return sign * parseInt(value, 10);
     }
     function isInteger(object4) {
       return Object.prototype.toString.call(object4) === "[object Number]" && (object4 % 1 === 0 && !common.isNegativeZero(object4));
@@ -25823,15 +24456,15 @@ var require_float3 = __commonJS({
       return true;
     }
     function constructYamlFloat(data) {
-      var value, sign2, base, digits;
+      var value, sign, base, digits;
       value = data.replace(/_/g, "").toLowerCase();
-      sign2 = value[0] === "-" ? -1 : 1;
+      sign = value[0] === "-" ? -1 : 1;
       digits = [];
       if ("+-".indexOf(value[0]) >= 0) {
         value = value.slice(1);
       }
       if (value === ".inf") {
-        return sign2 === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+        return sign === 1 ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
       } else if (value === ".nan") {
         return NaN;
       } else if (value.indexOf(":") >= 0) {
@@ -25844,9 +24477,9 @@ var require_float3 = __commonJS({
           value += d * base;
           base *= 60;
         });
-        return sign2 * value;
+        return sign * value;
       }
-      return sign2 * parseFloat(value, 10);
+      return sign * parseFloat(value, 10);
     }
     var SCIENTIFIC_WITHOUT_DOT = /^[-+]?[0-9]+e/;
     function representYamlFloat(object4, style) {
@@ -31922,7 +30555,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve19) {
+function isRecursive(inst, stack, resolve13) {
   const cached4 = recursive.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN : NONE;
@@ -31932,7 +30565,7 @@ function isRecursive(inst, stack, resolve19) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve19);
+      const answer = isRecursive(child, stack, resolve13);
       if (answer > result)
         result = answer;
     }
@@ -31943,7 +30576,7 @@ function isRecursive(inst, stack, resolve19) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve19) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve13) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -32006,7 +30639,7 @@ function isRecursive(inst, stack, resolve19) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve13 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -39408,7 +38041,7 @@ var recursive2 = /* @__PURE__ */ new WeakMap();
 var NONE2 = 0;
 var ASSUMED2 = 1;
 var PROVEN2 = 2;
-function isRecursive2(inst, stack, resolve19) {
+function isRecursive2(inst, stack, resolve13) {
   const cached4 = recursive2.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN2 : NONE2;
@@ -39418,7 +38051,7 @@ function isRecursive2(inst, stack, resolve19) {
   let result = NONE2;
   const check2 = (child) => {
     if (result !== PROVEN2 && child?._zod) {
-      const answer = isRecursive2(child, stack, resolve19);
+      const answer = isRecursive2(child, stack, resolve13);
       if (answer > result)
         result = answer;
     }
@@ -39429,7 +38062,7 @@ function isRecursive2(inst, stack, resolve19) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve19) : NONE2;
+      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve13) : NONE2;
       if (child > answer)
         answer = child;
     }
@@ -39492,7 +38125,7 @@ function isRecursive2(inst, stack, resolve19) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve13 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive2(inner, stack, false) : ASSUMED2);
       break;
     }
@@ -46074,14 +44707,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve19, reject) => {
+  return new Promise((resolve13, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve19();
+      resolve13();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -46875,7 +45508,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve19, reject) => {
+    return new Promise((resolve13, reject) => {
       const earlyReject = (error64) => {
         reject(error64);
       };
@@ -46943,7 +45576,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options2?.allowInputRequired === true) return resolve19(manualInputRequiredValue(decoded));
+          if (options2?.allowInputRequired === true) return resolve13(manualInputRequiredValue(decoded));
           const flow = {
             codec: codec2,
             request,
@@ -46955,11 +45588,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve19(this._resolveNonCompleteResult(decoded, flow));
+          return resolve13(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve19(parseResult.data);
+          if (parseResult.success) resolve13(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -47679,9 +46312,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       const rhs = this.rhs === void 0 ? "" : ` = ${this.rhs}`;
       return `${varKind} ${this.name}${rhs};` + _n;
     }
-    optimizeNames(names, constants5) {
+    optimizeNames(names, constants) {
       if (!names[this.name.str]) return;
-      if (this.rhs) this.rhs = optimizeExpr(this.rhs, names, constants5);
+      if (this.rhs) this.rhs = optimizeExpr(this.rhs, names, constants);
       return this;
     }
     get names() {
@@ -47698,9 +46331,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
     render({ _n }) {
       return `${this.lhs} = ${this.rhs};` + _n;
     }
-    optimizeNames(names, constants5) {
+    optimizeNames(names, constants) {
       if (this.lhs instanceof code_1.Name && !names[this.lhs.str] && !this.sideEffects) return;
-      this.rhs = optimizeExpr(this.rhs, names, constants5);
+      this.rhs = optimizeExpr(this.rhs, names, constants);
       return this;
     }
     get names() {
@@ -47759,8 +46392,8 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
     optimizeNodes() {
       return `${this.code}` ? this : void 0;
     }
-    optimizeNames(names, constants5) {
-      this.code = optimizeExpr(this.code, names, constants5);
+    optimizeNames(names, constants) {
+      this.code = optimizeExpr(this.code, names, constants);
       return this;
     }
     get names() {
@@ -47786,12 +46419,12 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       }
       return nodes.length > 0 ? this : void 0;
     }
-    optimizeNames(names, constants5) {
+    optimizeNames(names, constants) {
       const { nodes } = this;
       let i = nodes.length;
       while (i--) {
         const n = nodes[i];
-        if (n.optimizeNames(names, constants5)) continue;
+        if (n.optimizeNames(names, constants)) continue;
         subtractNames(names, n.names);
         nodes.splice(i, 1);
       }
@@ -47838,11 +46471,11 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       if (cond === false || !this.nodes.length) return void 0;
       return this;
     }
-    optimizeNames(names, constants5) {
+    optimizeNames(names, constants) {
       var _a7;
-      this.else = (_a7 = this.else) === null || _a7 === void 0 ? void 0 : _a7.optimizeNames(names, constants5);
-      if (!(super.optimizeNames(names, constants5) || this.else)) return;
-      this.condition = optimizeExpr(this.condition, names, constants5);
+      this.else = (_a7 = this.else) === null || _a7 === void 0 ? void 0 : _a7.optimizeNames(names, constants);
+      if (!(super.optimizeNames(names, constants) || this.else)) return;
+      this.condition = optimizeExpr(this.condition, names, constants);
       return this;
     }
     get names() {
@@ -47864,9 +46497,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
     render(opts) {
       return `for(${this.iteration})` + super.render(opts);
     }
-    optimizeNames(names, constants5) {
-      if (!super.optimizeNames(names, constants5)) return;
-      this.iteration = optimizeExpr(this.iteration, names, constants5);
+    optimizeNames(names, constants) {
+      if (!super.optimizeNames(names, constants)) return;
+      this.iteration = optimizeExpr(this.iteration, names, constants);
       return this;
     }
     get names() {
@@ -47901,9 +46534,9 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
     render(opts) {
       return `for(${this.varKind} ${this.name} ${this.loop} ${this.iterable})` + super.render(opts);
     }
-    optimizeNames(names, constants5) {
-      if (!super.optimizeNames(names, constants5)) return;
-      this.iterable = optimizeExpr(this.iterable, names, constants5);
+    optimizeNames(names, constants) {
+      if (!super.optimizeNames(names, constants)) return;
+      this.iterable = optimizeExpr(this.iterable, names, constants);
       return this;
     }
     get names() {
@@ -47942,11 +46575,11 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       (_b = this.finally) === null || _b === void 0 || _b.optimizeNodes();
       return this;
     }
-    optimizeNames(names, constants5) {
+    optimizeNames(names, constants) {
       var _a7, _b;
-      super.optimizeNames(names, constants5);
-      (_a7 = this.catch) === null || _a7 === void 0 || _a7.optimizeNames(names, constants5);
-      (_b = this.finally) === null || _b === void 0 || _b.optimizeNames(names, constants5);
+      super.optimizeNames(names, constants);
+      (_a7 = this.catch) === null || _a7 === void 0 || _a7.optimizeNames(names, constants);
+      (_b = this.finally) === null || _b === void 0 || _b.optimizeNames(names, constants);
       return this;
     }
     get names() {
@@ -48195,7 +46828,7 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
   function addExprNames(names, from) {
     return from instanceof code_1._CodeOrName ? addNames(names, from.names) : names;
   }
-  function optimizeExpr(expr, names, constants5) {
+  function optimizeExpr(expr, names, constants) {
     if (expr instanceof code_1.Name) return replaceName(expr);
     if (!canOptimize(expr)) return expr;
     return new code_1._Code(expr._items.reduce((items, c) => {
@@ -48205,13 +46838,13 @@ var require_codegen = /* @__PURE__ */ __commonJSMin((exports2) => {
       return items;
     }, []));
     function replaceName(n) {
-      const c = constants5[n.str];
+      const c = constants[n.str];
       if (c === void 0 || names[n.str] !== 1) return n;
       delete names[n.str];
       return c;
     }
     function canOptimize(e) {
-      return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants5[c.str] !== void 0);
+      return e instanceof code_1._Code && e._items.some((c) => c instanceof code_1.Name && names[c.str] === 1 && constants[c.str] !== void 0);
     }
   }
   function subtractNames(names, from) {
@@ -49871,7 +48504,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve19.call(this, root, ref);
+    let _sch = resolve13.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a7 = root.localRefs) === null || _a7 === void 0 ? void 0 : _a7[ref];
       const { schemaId } = this.opts;
@@ -49897,7 +48530,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve19(root, ref) {
+  function resolve13(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -50347,47 +48980,47 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     else if (typeof uri === "object") uri = parse6(serialize(uri, options2), options2);
     return uri;
   }
-  function resolve19(baseURI, relativeURI, options2) {
+  function resolve13(baseURI, relativeURI, options2) {
     const schemelessOptions = options2 ? Object.assign({ scheme: "null" }, options2) : { scheme: "null" };
     const resolved = resolveComponent(parse6(baseURI, schemelessOptions), parse6(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
-  function resolveComponent(base, relative7, options2, skipNormalization) {
+  function resolveComponent(base, relative5, options2, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
       base = parse6(serialize(base, options2), options2);
-      relative7 = parse6(serialize(relative7, options2), options2);
+      relative5 = parse6(serialize(relative5, options2), options2);
     }
     options2 = options2 || {};
-    if (!options2.tolerant && relative7.scheme) {
-      target.scheme = relative7.scheme;
-      target.userinfo = relative7.userinfo;
-      target.host = relative7.host;
-      target.port = relative7.port;
-      target.path = removeDotSegments(relative7.path || "");
-      target.query = relative7.query;
+    if (!options2.tolerant && relative5.scheme) {
+      target.scheme = relative5.scheme;
+      target.userinfo = relative5.userinfo;
+      target.host = relative5.host;
+      target.port = relative5.port;
+      target.path = removeDotSegments(relative5.path || "");
+      target.query = relative5.query;
     } else {
-      if (relative7.userinfo !== void 0 || relative7.host !== void 0 || relative7.port !== void 0) {
-        target.userinfo = relative7.userinfo;
-        target.host = relative7.host;
-        target.port = relative7.port;
-        target.path = removeDotSegments(relative7.path || "");
-        target.query = relative7.query;
+      if (relative5.userinfo !== void 0 || relative5.host !== void 0 || relative5.port !== void 0) {
+        target.userinfo = relative5.userinfo;
+        target.host = relative5.host;
+        target.port = relative5.port;
+        target.path = removeDotSegments(relative5.path || "");
+        target.query = relative5.query;
       } else {
-        if (!relative7.path) {
+        if (!relative5.path) {
           target.path = base.path;
-          if (relative7.query !== void 0) target.query = relative7.query;
+          if (relative5.query !== void 0) target.query = relative5.query;
           else target.query = base.query;
         } else {
-          if (relative7.path[0] === "/") target.path = removeDotSegments(relative7.path);
+          if (relative5.path[0] === "/") target.path = removeDotSegments(relative5.path);
           else {
-            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative7.path;
-            else if (!base.path) target.path = relative7.path;
-            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative7.path;
+            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative5.path;
+            else if (!base.path) target.path = relative5.path;
+            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative5.path;
             target.path = removeDotSegments(target.path);
           }
-          target.query = relative7.query;
+          target.query = relative5.query;
         }
         target.userinfo = base.userinfo;
         target.host = base.host;
@@ -50395,7 +49028,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
       }
       target.scheme = base.scheme;
     }
-    target.fragment = relative7.fragment;
+    target.fragment = relative5.fragment;
     return target;
   }
   function equal(uriA, uriB, options2) {
@@ -50521,7 +49154,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
   const fastUri = {
     SCHEMES,
     normalize,
-    resolve: resolve19,
+    resolve: resolve13,
     resolveComponent,
     equal,
     serialize,
@@ -55894,7 +54527,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve19, reject) => {
+    return new Promise((resolve13, reject) => {
       const json2 = serializeMessage(message);
       let settled = false;
       const onError = (error64) => {
@@ -55909,14 +54542,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve19();
+        resolve13();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json2)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve19();
+        resolve13();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -55970,14 +54603,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve19) => {
+    return await new Promise((resolve13) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve19(true);
+        resolve13(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve19(false);
+        resolve13(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -56325,8 +54958,8 @@ var wpProp = {
 };
 var confirmProp = {
   type: "string",
-  enum: ["YES"],
-  description: "Compatibility check. Must be YES. Does not authorize a mutation by itself."
+  enum: ["YES", "NO"],
+  description: "YES applies what was previewed. The user then approves it in the client's own dialog; a client without a dialog cannot ask, so ask the user in chat first and pass YES only after they said yes (recorded as unverified). NO means the user rejected it: it is recorded and nothing runs."
 };
 var fingerprintProp = {
   type: "string",
@@ -57101,39 +55734,16 @@ var TOOLS = [
     },
     roles: ["ba", "architect", "developer", "quality"],
     kind: "read"
-  },
-  {
-    name: "praxis_approval_confirm",
-    description: "READ-ONLY display of a stored proposal for the host permission dialog. Does not approve the plan and does not mutate Jira, Git, or the local workflow. Approval is recorded only by the host hook after the person allows this tool.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        repo: repoProp,
-        planId: { type: "string", description: "Stored proposal id" }
-      },
-      required: ["planId"],
-      additionalProperties: false
-    },
-    roles: ["ba", "architect", "developer", "quality"],
-    kind: "read"
   }
 ];
 for (const tool of TOOLS) {
   if (tool.kind !== "apply")
     continue;
-  tool.inputSchema.properties.planId = {
-    type: "string",
-    description: "Persisted approval id. Required when more than one approval could match."
-  };
-  tool.inputSchema.properties.planFingerprint = {
-    type: "string",
-    description: "Fingerprint of the approved plan revision. A mismatch fails closed."
-  };
   tool.inputSchema.properties.instanceId = {
     type: "string",
-    description: "External instance. Must match the approved plan for Jira."
+    description: "External instance (Jira base URL). Defaults to the configured one."
   };
-  tool.description += " confirmation=YES does not authorize this write; a persisted host approval for the exact plan is required.";
+  tool.description += " The user approves this exact action before it runs: in the client's own dialog when the client has one; otherwise ask the user in chat and pass confirmation=YES only after they said yes. A rejection runs nothing.";
 }
 function toolsForRole(role) {
   if (role === "runtime")
@@ -57158,6 +55768,64 @@ function parseRole(raw) {
 function parseRoleArgv(argv) {
   const i = argv.indexOf("--role");
   return parseRole(i >= 0 ? argv[i + 1] : void 0);
+}
+
+// packages/mcp/dist/approval-channel.js
+var MAX_MESSAGE = 12e3;
+function approvalMessage(request) {
+  const lines = [
+    "Praxis asks you to approve this action. Nothing runs until you do.",
+    "",
+    request.summary,
+    "",
+    request.description,
+    ...request.risks?.length ? ["", "Risks:", ...request.risks.map((risk) => `- ${risk}`)] : [],
+    "",
+    "Choose Approve to run exactly this. Choose Reject (or decline) to stop it."
+  ];
+  const text = lines.join("\n");
+  return text.length <= MAX_MESSAGE ? text : `${text.slice(0, MAX_MESSAGE)}
+\u2026 (truncated: ask the agent to show the full preview before you approve)`;
+}
+var UNAVAILABLE = /elicit|capabilit|not supported|unsupported|era\b|input_required|method not found/i;
+function elicitationChannel(input2) {
+  if (!input2.supported)
+    return void 0;
+  return {
+    kind: "client-elicitation",
+    async ask(request) {
+      let result;
+      try {
+        result = await input2.elicitInput({
+          mode: "form",
+          message: approvalMessage(request),
+          requestedSchema: {
+            type: "object",
+            properties: {
+              decision: {
+                type: "string",
+                title: "Your decision",
+                description: "Approve runs exactly the action above. Reject stops it.",
+                enum: ["approve", "reject"]
+              },
+              reason: { type: "string", title: "Reason (optional)" }
+            },
+            required: ["decision"]
+          }
+        }, { timeout: input2.timeoutMs ?? 10 * 6e4 });
+      } catch (error64) {
+        if (error64 instanceof Error && UNAVAILABLE.test(error64.message))
+          return { answer: "unavailable", reason: error64.message };
+        throw error64;
+      }
+      const reason = typeof result.content?.reason === "string" && result.content.reason.trim() ? result.content.reason.trim() : void 0;
+      if (result.action === "cancel")
+        return { answer: "dismiss", ...reason ? { reason } : {} };
+      if (result.action === "decline")
+        return { answer: "reject", ...reason ? { reason } : {} };
+      return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...reason ? { reason } : {} };
+    }
+  };
 }
 
 // packages/mcp/dist/protocol.js
@@ -62207,7 +60875,7 @@ var recursive3 = /* @__PURE__ */ new WeakMap();
 var NONE3 = 0;
 var ASSUMED3 = 1;
 var PROVEN3 = 2;
-function isRecursive3(inst, stack, resolve19) {
+function isRecursive3(inst, stack, resolve13) {
   const cached4 = recursive3.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN3 : NONE3;
@@ -62217,7 +60885,7 @@ function isRecursive3(inst, stack, resolve19) {
   let result = NONE3;
   const check2 = (child) => {
     if (result !== PROVEN3 && child?._zod) {
-      const answer = isRecursive3(child, stack, resolve19);
+      const answer = isRecursive3(child, stack, resolve13);
       if (answer > result)
         result = answer;
     }
@@ -62228,7 +60896,7 @@ function isRecursive3(inst, stack, resolve19) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve19) : NONE3;
+      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve13) : NONE3;
       if (child > answer)
         answer = child;
     }
@@ -62291,7 +60959,7 @@ function isRecursive3(inst, stack, resolve19) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve13 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive3(inner, stack, false) : ASSUMED3);
       break;
     }
@@ -76626,7 +75294,7 @@ function visit(schema, fnOrHandlers) {
     return h ? h(node4, rewritten) : node4;
   };
   const cache = /* @__PURE__ */ new Map();
-  function run2(s) {
+  function run(s) {
     const cached4 = cache.get(s);
     if (cached4 === RESOLVING) {
       return new $ZodLazy3({
@@ -76652,21 +75320,21 @@ function visit(schema, fnOrHandlers) {
         let changed = false;
         const newShape = {};
         for (const k of keys) {
-          const mapped = run2(oldShape[k]);
+          const mapped = run(oldShape[k]);
           if (mapped !== oldShape[k])
             changed = true;
           newShape[k] = mapped;
         }
         let newCatchall = def.catchall;
         if (def.catchall) {
-          newCatchall = run2(def.catchall);
+          newCatchall = run(def.catchall);
           if (newCatchall !== def.catchall)
             changed = true;
         }
         return changed ? clone3(s, { ...def, shape: newShape, catchall: newCatchall }) : s;
       }
       case "array": {
-        const mapped = run2(def.element);
+        const mapped = run(def.element);
         return mapped === def.element ? s : clone3(s, { ...def, element: mapped });
       }
       case "tuple": {
@@ -76674,14 +75342,14 @@ function visit(schema, fnOrHandlers) {
         let changed = false;
         const newItems = [];
         for (const item of oldItems) {
-          const mapped = run2(item);
+          const mapped = run(item);
           if (mapped !== item)
             changed = true;
           newItems.push(mapped);
         }
         let newRest = def.rest;
         if (def.rest) {
-          newRest = run2(def.rest);
+          newRest = run(def.rest);
           if (newRest !== def.rest)
             changed = true;
         }
@@ -76689,12 +75357,12 @@ function visit(schema, fnOrHandlers) {
       }
       case "record":
       case "map": {
-        const newKey = run2(def.keyType);
-        const newVal = run2(def.valueType);
+        const newKey = run(def.keyType);
+        const newVal = run(def.valueType);
         return newKey === def.keyType && newVal === def.valueType ? s : clone3(s, { ...def, keyType: newKey, valueType: newVal });
       }
       case "set": {
-        const newVal = run2(def.valueType);
+        const newVal = run(def.valueType);
         return newVal === def.valueType ? s : clone3(s, { ...def, valueType: newVal });
       }
       case "union": {
@@ -76702,7 +75370,7 @@ function visit(schema, fnOrHandlers) {
         let changed = false;
         const newOptions = [];
         for (const opt of oldOptions) {
-          const mapped = run2(opt);
+          const mapped = run(opt);
           if (mapped !== opt)
             changed = true;
           newOptions.push(mapped);
@@ -76710,8 +75378,8 @@ function visit(schema, fnOrHandlers) {
         return changed ? clone3(s, { ...def, options: newOptions }) : s;
       }
       case "intersection": {
-        const newLeft = run2(def.left);
-        const newRight = run2(def.right);
+        const newLeft = run(def.left);
+        const newRight = run(def.right);
         return newLeft === def.left && newRight === def.right ? s : clone3(s, { ...def, left: newLeft, right: newRight });
       }
       case "optional":
@@ -76723,23 +75391,23 @@ function visit(schema, fnOrHandlers) {
       case "nonoptional":
       case "promise":
       case "success": {
-        const newInner = run2(def.innerType);
+        const newInner = run(def.innerType);
         return newInner === def.innerType ? s : clone3(s, { ...def, innerType: newInner });
       }
       case "pipe": {
-        const newIn = run2(def.in);
-        const newOut = run2(def.out);
+        const newIn = run(def.in);
+        const newOut = run(def.out);
         return newIn === def.in && newOut === def.out ? s : clone3(s, { ...def, in: newIn, out: newOut });
       }
       case "function": {
-        const newInput = run2(def.input);
-        const newOutput = run2(def.output);
+        const newInput = run(def.input);
+        const newOutput = run(def.output);
         return newInput === def.input && newOutput === def.output ? s : clone3(s, { ...def, input: newInput, output: newOutput });
       }
       case "lazy": {
         const original = def.getter;
         const { _cachedInner, ...rest } = def;
-        return clone3(s, { ...rest, getter: () => run2(original()) });
+        return clone3(s, { ...rest, getter: () => run(original()) });
       }
       case "template_literal":
       case "string":
@@ -76768,7 +75436,7 @@ function visit(schema, fnOrHandlers) {
       }
     }
   }
-  return run2(schema);
+  return run(schema);
 }
 
 // packages/mcp/node_modules/zod/v4/classic/deep-partial.js
@@ -76868,17 +75536,17 @@ function jsonSchemaToZod(schema) {
 }
 
 // packages/mcp/dist/tools.js
-var import_node_fs31 = require("node:fs");
-var import_node_path37 = require("node:path");
+var import_node_fs24 = require("node:fs");
+var import_node_path29 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/build-info.js
-var import_node_crypto9 = require("node:crypto");
-var import_node_fs7 = require("node:fs");
+var import_node_crypto4 = require("node:crypto");
+var import_node_fs2 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"4334f133c5f10bed1095763194aa7229708c9fa5084724e2de792ddbf577afeb","coreBaseline":"0d21b07ec775d0f5bb44e54e745d538f3526e452","inputs":23}';
+    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"cf9f152a3b2e83026d27871b66e3852fe6bff68a1c3bbde456896dc4a9228c22","coreBaseline":"fddfd71be1222280d8467376703946bf46c9a6a0","inputs":24}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -76889,7 +75557,7 @@ function runtimeBuildInfo(version4) {
   const entry = process.argv[1];
   if (embedded && entry && /\.cjs$/.test(entry)) {
     try {
-      bundleSha256 = (0, import_node_crypto9.createHash)("sha256").update((0, import_node_fs7.readFileSync)(entry)).digest("hex");
+      bundleSha256 = (0, import_node_crypto4.createHash)("sha256").update((0, import_node_fs2.readFileSync)(entry)).digest("hex");
       bundlePath = entry;
     } catch {
       bundleSha256 = null;
@@ -76907,7 +75575,7 @@ function runtimeBuildInfo(version4) {
 }
 function toolOrigin(role) {
   const names = toolsForRole(role).map((tool) => tool.name).sort();
-  return { role, count: names.length, digest: (0, import_node_crypto9.createHash)("sha256").update(names.join("\n")).digest("hex"), names };
+  return { role, count: names.length, digest: (0, import_node_crypto4.createHash)("sha256").update(names.join("\n")).digest("hex"), names };
 }
 
 // packages/mcp/dist/envelope.js
@@ -76929,25 +75597,25 @@ function mcpEnvelope(opts) {
 
 // packages/mcp/dist/story-engine.js
 var import_node_child_process2 = require("node:child_process");
-var import_node_fs12 = require("node:fs");
-var import_node_path12 = require("node:path");
+var import_node_fs6 = require("node:fs");
+var import_node_path5 = require("node:path");
 var import_node_url2 = require("node:url");
 init_dist();
 
 // packages/mcp/dist/generic-verification.js
 var import_node_child_process = require("node:child_process");
-var import_node_fs8 = require("node:fs");
-var import_node_path8 = require("node:path");
+var import_node_fs3 = require("node:fs");
+var import_node_path2 = require("node:path");
 var import_node_url = require("node:url");
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
-function safeFile(root, relative7) {
-  if (!relative7 || relative7.startsWith("/") || relative7.includes("\0") || relative7.split(/[/\\]/).includes("..")) {
+function safeFile(root, relative5) {
+  if (!relative5 || relative5.startsWith("/") || relative5.includes("\0") || relative5.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
-  const absolute = (0, import_node_path8.resolve)(root, relative7);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path8.sep}`))
+  const absolute = (0, import_node_path2.resolve)(root, relative5);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path2.sep}`))
     throw new Error("UNSAFE_PATH");
   return absolute;
 }
@@ -76962,7 +75630,7 @@ print(json.dumps(result))
 `;
 async function runSteps(root, modulePath, steps) {
   const file2 = safeFile(root, modulePath);
-  if (!(0, import_node_fs8.existsSync)(file2))
+  if (!(0, import_node_fs3.existsSync)(file2))
     throw new Error(`MODULE_MISSING:${modulePath}`);
   if (file2.endsWith(".py")) {
     const result = (0, import_node_child_process.spawnSync)("python3", ["-c", PYTHON, file2, JSON.stringify(steps)], {
@@ -76985,11 +75653,11 @@ async function runSteps(root, modulePath, steps) {
   return value;
 }
 function readChecks(workflowRepo, workItemId) {
-  const scoped = workItemId ? (0, import_node_path8.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
-  const file2 = scoped && (0, import_node_fs8.existsSync)(scoped) ? scoped : (0, import_node_path8.join)(workflowRepo, ".praxis", "quality", "checks.json");
-  if (!(0, import_node_fs8.existsSync)(file2))
+  const scoped = workItemId ? (0, import_node_path2.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
+  const file2 = scoped && (0, import_node_fs3.existsSync)(scoped) ? scoped : (0, import_node_path2.join)(workflowRepo, ".praxis", "quality", "checks.json");
+  if (!(0, import_node_fs3.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs8.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs3.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.checks) || parsed.checks.length === 0)
     throw new Error("CHECKS_INVALID");
   return parsed.checks;
@@ -77201,25 +75869,25 @@ function inspectionPlan(input2) {
 }
 
 // packages/mcp/dist/project-profile.js
-var import_node_fs9 = require("node:fs");
-var import_node_path9 = require("node:path");
+var import_node_fs4 = require("node:fs");
+var import_node_path3 = require("node:path");
 var SKIP = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", "coverage"]);
 function walk(root, dir, out, depth) {
   if (depth > 4 || out.length >= 200)
     return;
   let entries = [];
   try {
-    entries = (0, import_node_fs9.readdirSync)(dir);
+    entries = (0, import_node_fs4.readdirSync)(dir);
   } catch {
     return;
   }
   for (const name of entries) {
     if (SKIP.has(name))
       continue;
-    const absolute = (0, import_node_path9.join)(dir, name);
+    const absolute = (0, import_node_path3.join)(dir, name);
     let info;
     try {
-      info = (0, import_node_fs9.statSync)(absolute);
+      info = (0, import_node_fs4.statSync)(absolute);
     } catch {
       continue;
     }
@@ -77231,14 +75899,14 @@ function walk(root, dir, out, depth) {
 }
 function readJson(file2) {
   try {
-    return JSON.parse((0, import_node_fs9.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs4.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function inspectService(service) {
   const repository = service.repository ?? service.id;
-  if (!service.localPath || !(0, import_node_fs9.existsSync)(service.localPath)) {
+  if (!service.localPath || !(0, import_node_fs4.existsSync)(service.localPath)) {
     return {
       serviceId: service.id,
       repository,
@@ -77258,7 +75926,7 @@ function inspectService(service) {
   const languages = [];
   const frameworks = [];
   const testRunners = [];
-  const packageJson = names.has("package.json") ? readJson((0, import_node_path9.join)(service.localPath, "package.json")) : void 0;
+  const packageJson = names.has("package.json") ? readJson((0, import_node_path3.join)(service.localPath, "package.json")) : void 0;
   const deps = {
     ...packageJson?.dependencies,
     ...packageJson?.devDependencies
@@ -77288,7 +75956,7 @@ function inspectService(service) {
   for (const file2 of pythonTests.slice(0, 20)) {
     let text = "";
     try {
-      text = (0, import_node_fs9.readFileSync)((0, import_node_path9.join)(service.localPath, file2), "utf8");
+      text = (0, import_node_fs4.readFileSync)((0, import_node_path3.join)(service.localPath, file2), "utf8");
     } catch {
       continue;
     }
@@ -77341,129 +76009,34 @@ function inspectService(service) {
 }
 
 // packages/mcp/dist/workflow-store.js
-var import_node_fs11 = require("node:fs");
-var import_node_path11 = require("node:path");
-var import_node_crypto10 = require("node:crypto");
+var import_node_fs5 = require("node:fs");
+var import_node_path4 = require("node:path");
+var import_node_crypto5 = require("node:crypto");
 
 // packages/mcp/dist/human-approval.js
-var import_node_fs10 = require("node:fs");
-var import_node_path10 = require("node:path");
 init_dist();
-var PLAN_ID2 = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-var PLAN_LIFETIME_MS = 24 * 36e5;
-function recordPolicy() {
-  return process.env.PRAXIS_WORKFLOW_RECORDS?.trim() === "approval" ? "approval" : "unsigned";
-}
-var sharedDir = () => {
-  const dir = process.env.PRAXIS_BROKER_SHARED_DIR?.trim();
-  return dir ? (0, import_node_path10.resolve)(dir) : void 0;
-};
-var operatorUrl = () => process.env.PRAXIS_OPERATOR_URL?.trim() || "http://localhost:8780";
-var HumanApprovalRequired = class extends Error {
-  code = "APPROVAL_REQUIRED";
-  details;
-  constructor(message, details) {
-    super(`APPROVAL_REQUIRED: ${message}`);
-    this.name = "HumanApprovalRequired";
-    this.details = details;
-  }
-};
-function pathFor(kind, planId, ext = "json") {
-  const dir = sharedDir();
-  if (!dir || !PLAN_ID2.test(planId))
-    return void 0;
-  return (0, import_node_path10.join)(dir, kind, `${planId}.${ext}`);
-}
-function readGrantToken(planId) {
-  const path = pathFor("authorizations", planId, "token");
-  if (!path || !(0, import_node_fs10.existsSync)(path))
-    return void 0;
-  const token = (0, import_node_fs10.readFileSync)(path, "utf8").trim();
-  return token || void 0;
-}
-function grantStatus(planId) {
-  if (!sharedDir())
-    return "broker-not-configured";
-  if (readGrantToken(planId))
-    return "approved";
-  const rejected = pathFor("rejected", planId);
-  if (rejected && (0, import_node_fs10.existsSync)(rejected))
-    return "rejected";
-  return "awaiting-operator";
-}
-function buildGrantPlan(repo, state2, request, now = /* @__PURE__ */ new Date()) {
-  return buildActionPlan({
-    planId: request.planId,
-    role: request.role,
-    decisionKind: HUMAN_GRANT_KIND[request.action],
-    summary: request.summary,
-    provider: "local",
-    instanceId: "local",
-    operations: ["repository_edit"],
-    workItemIds: [state2.workItem.id],
-    storyIds: request.action === "confirm-story" ? [request.targetId] : [],
-    decisionIds: request.action === "confirm-decision" ? [request.targetId] : [],
-    repositories: [(0, import_node_path10.resolve)(repo)],
-    actions: [
-      {
-        action: request.action,
-        description: request.description,
-        targets: [request.targetId],
-        content: request.content
-      }
-    ],
-    risks: request.risks,
-    sideEffects: [`Records the outcome in .praxis/workflow/items/${state2.workItem.id}.json of ${(0, import_node_path10.resolve)(repo)}.`],
-    createdAt: now.toISOString(),
-    expiresAt: new Date(now.getTime() + PLAN_LIFETIME_MS).toISOString()
-  });
-}
-function humanApprovalView(repo, state2, command) {
+function humanApprovalView(state2, command) {
   if (!state2)
     return null;
-  const request = humanGrantRequest(state2, command);
+  const request = humanActRequest(state2, command);
   if (!request)
     return null;
-  const plan = buildGrantPlan(repo, state2, request);
-  const status = grantStatus(request.planId);
   return {
     required: true,
-    kind: HUMAN_GRANT_KIND[request.action],
+    kind: HUMAN_ACT_KIND[request.action],
     action: request.action,
     summary: request.summary,
-    planId: request.planId,
-    status,
-    operatorUrl: status === "broker-not-configured" ? void 0 : `${operatorUrl()}/plan/${encodeURIComponent(request.planId)}`,
-    contentFingerprint: plan.fingerprint,
-    explanation: status === "approved" ? "The owner has approved exactly this. Apply will record it." : status === "rejected" ? "The owner rejected this plan. A changed subject proposes a new plan." : status === "broker-not-configured" ? "No approval broker is configured (PRAXIS_BROKER_SHARED_DIR), so this cannot be confirmed from here. Apply will be refused." : "Apply will put this plan in the owner's approval inbox. The owner approves it with an authenticator; then apply again."
+    description: request.description,
+    risks: request.risks,
+    contentDigest: subjectDigest(request.content),
+    explanation: "Applying this asks the user to approve or reject exactly this, in the client's own dialog. A client without a dialog cannot ask: show the user this text, and apply with confirmation=YES only after they said yes (recorded as unverified). Reject or dismiss stops it; nothing is recorded."
   };
 }
-function requireGrantToken(repo, state2, command) {
-  const request = humanGrantRequest(state2, command);
+async function requireUserApproval(repo, state2, command, confirmation) {
+  const request = humanActRequest(state2, command);
   if (!request)
     return void 0;
-  const planId = request.planId;
-  const token = readGrantToken(planId);
-  if (token)
-    return token;
-  if (!sharedDir()) {
-    throw new HumanApprovalRequired(`${request.summary} needs the owner's approval, and no approval broker is configured for this Runtime (PRAXIS_BROKER_SHARED_DIR). Nothing was recorded.`, { planId, status: "broker-not-configured" });
-  }
-  const rejected = pathFor("rejected", planId);
-  if (rejected && (0, import_node_fs10.existsSync)(rejected)) {
-    throw new HumanApprovalRequired(`the owner rejected ${request.summary}. Nothing was recorded; change the subject to propose a new plan.`, { planId, status: "rejected" });
-  }
-  const pending = pathFor("pending", planId);
-  if (!(0, import_node_fs10.existsSync)(pending)) {
-    const plan = buildGrantPlan(repo, state2, request);
-    (0, import_node_fs10.mkdirSync)((0, import_node_path10.join)(sharedDir(), "pending"), { recursive: true });
-    const tmp = `${pending}.${process.pid}.tmp`;
-    (0, import_node_fs10.writeFileSync)(tmp, `${JSON.stringify(plan, null, 2)}
-`);
-    (0, import_node_fs10.renameSync)(tmp, pending);
-  }
-  const url4 = `${operatorUrl()}/plan/${encodeURIComponent(planId)}`;
-  throw new HumanApprovalRequired(`${request.summary} is waiting for the owner. Plan ${planId} is in the approval inbox; the owner reviews it and approves with an authenticator at ${url4}. Then apply this same command again. Nothing was recorded.`, { planId, status: "awaiting-operator", operatorUrl: url4 });
+  return obtainUserApproval(humanActApprovalRequest(request), { confirmation, repo });
 }
 
 // packages/mcp/dist/workflow-store.js
@@ -77544,10 +76117,10 @@ var WorkItemError = class extends Error {
   }
 };
 function workflowDir(repo) {
-  return (0, import_node_path11.join)(repo, ".praxis", "workflow");
+  return (0, import_node_path4.join)(repo, ".praxis", "workflow");
 }
-var legacyPath = (repo) => (0, import_node_path11.join)(workflowDir(repo), "state.json");
-var indexPath = (repo) => (0, import_node_path11.join)(workflowDir(repo), "index.json");
+var legacyPath = (repo) => (0, import_node_path4.join)(workflowDir(repo), "state.json");
+var indexPath = (repo) => (0, import_node_path4.join)(workflowDir(repo), "index.json");
 function assertWorkItemId(id) {
   if (!WORK_ITEM_ID_RE.test(id) || id.includes("..")) {
     throw new WorkItemError("WORK_ITEM_INVALID", "work item ids use letters, digits, '.', '_' and '-' only");
@@ -77555,10 +76128,10 @@ function assertWorkItemId(id) {
   return id;
 }
 function itemPath(repo, id) {
-  return (0, import_node_path11.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
+  return (0, import_node_path4.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
 }
 function readJson2(path) {
-  return JSON.parse((0, import_node_fs11.readFileSync)(path, "utf8"));
+  return JSON.parse((0, import_node_fs5.readFileSync)(path, "utf8"));
 }
 function summarize(state2) {
   return {
@@ -77574,25 +76147,25 @@ function summarize(state2) {
   };
 }
 function toPortable(repo, state2) {
-  const root = (0, import_node_path11.resolve)(repo);
+  const root = (0, import_node_path4.resolve)(repo);
   return {
     ...state2,
     services: state2.services.map((service) => {
-      if (!service.localPath || !(0, import_node_path11.isAbsolute)(service.localPath))
+      if (!service.localPath || !(0, import_node_path4.isAbsolute)(service.localPath))
         return service;
-      const rel2 = (0, import_node_path11.relative)(root, service.localPath);
-      const ups = rel2.split(import_node_path11.sep).filter((part) => part === "..").length;
+      const rel2 = (0, import_node_path4.relative)(root, service.localPath);
+      const ups = rel2.split(import_node_path4.sep).filter((part) => part === "..").length;
       if (ups > 2)
         return service;
-      return { ...service, localPath: (rel2 === "" ? "." : rel2).split(import_node_path11.sep).join("/") };
+      return { ...service, localPath: (rel2 === "" ? "." : rel2).split(import_node_path4.sep).join("/") };
     })
   };
 }
 function toAbsolute(repo, state2) {
-  const root = (0, import_node_path11.resolve)(repo);
+  const root = (0, import_node_path4.resolve)(repo);
   return {
     ...state2,
-    services: state2.services.map((service) => service.localPath && !(0, import_node_path11.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path11.resolve)(root, service.localPath) } : service)
+    services: state2.services.map((service) => service.localPath && !(0, import_node_path4.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path4.resolve)(root, service.localPath) } : service)
   };
 }
 function readLegacy(repo) {
@@ -77609,15 +76182,15 @@ function readLegacy(repo) {
   return toAbsolute(repo, WorkflowStateSchema.parse(raw));
 }
 function itemFiles(repo) {
-  const dir = (0, import_node_path11.join)(workflowDir(repo), "items");
+  const dir = (0, import_node_path4.join)(workflowDir(repo), "items");
   try {
-    return (0, import_node_fs11.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
+    return (0, import_node_fs5.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
   } catch {
     return [];
   }
 }
 function rebuildIndex(repo, files) {
-  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson2((0, import_node_path11.join)(workflowDir(repo), "items", name))))));
+  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson2((0, import_node_path4.join)(workflowDir(repo), "items", name))))));
   return {
     legacy: false,
     index: {
@@ -77649,7 +76222,7 @@ function readLayout(repo) {
     }
     if (files.length > 0)
       return rebuildIndex(repo, files);
-    if ((0, import_node_fs11.existsSync)(legacyPath(repo))) {
+    if ((0, import_node_fs5.existsSync)(legacyPath(repo))) {
       throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but there are no items to rebuild the index from");
     }
     return null;
@@ -77675,7 +76248,7 @@ function fingerprintFor(repo, command, workItemId) {
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state2 = loadWorkflow(repo, workItemId);
-    token = state2 ? `state:${(0, import_node_crypto10.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
+    token = state2 ? `state:${(0, import_node_crypto5.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token });
 }
@@ -77753,10 +76326,10 @@ function pause(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function lockIsStale(dir) {
-  if (!(0, import_node_fs11.existsSync)(dir))
+  if (!(0, import_node_fs5.existsSync)(dir))
     return false;
   try {
-    const owner = readJson2((0, import_node_path11.join)(dir, "owner"));
+    const owner = readJson2((0, import_node_path4.join)(dir, "owner"));
     if (typeof owner.at === "number" && Date.now() - owner.at > LOCK_STALE_MS)
       return true;
     if (typeof owner.pid === "number") {
@@ -77769,20 +76342,20 @@ function lockIsStale(dir) {
     return false;
   } catch {
     try {
-      return Date.now() - (0, import_node_fs11.statSync)(dir).mtimeMs > LOCK_STALE_MS;
+      return Date.now() - (0, import_node_fs5.statSync)(dir).mtimeMs > LOCK_STALE_MS;
     } catch {
       return false;
     }
   }
 }
 function withWorkflowLock(repo, fn) {
-  (0, import_node_fs11.mkdirSync)(workflowDir(repo), { recursive: true });
-  const dir = (0, import_node_path11.join)(workflowDir(repo), ".lock");
+  (0, import_node_fs5.mkdirSync)(workflowDir(repo), { recursive: true });
+  const dir = (0, import_node_path4.join)(workflowDir(repo), ".lock");
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (; ; ) {
     try {
-      (0, import_node_fs11.mkdirSync)(dir);
-      (0, import_node_fs11.writeFileSync)((0, import_node_path11.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
+      (0, import_node_fs5.mkdirSync)(dir);
+      (0, import_node_fs5.writeFileSync)((0, import_node_path4.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
       break;
     } catch (err) {
       if (err.code !== "EEXIST")
@@ -77790,8 +76363,8 @@ function withWorkflowLock(repo, fn) {
       if (lockIsStale(dir)) {
         const claimed = `${dir}.stale-${process.pid}-${Date.now()}`;
         try {
-          (0, import_node_fs11.renameSync)(dir, claimed);
-          (0, import_node_fs11.rmSync)(claimed, { recursive: true, force: true });
+          (0, import_node_fs5.renameSync)(dir, claimed);
+          (0, import_node_fs5.rmSync)(claimed, { recursive: true, force: true });
         } catch {
         }
         continue;
@@ -77805,15 +76378,15 @@ function withWorkflowLock(repo, fn) {
   try {
     return fn();
   } finally {
-    (0, import_node_fs11.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs5.rmSync)(dir, { recursive: true, force: true });
   }
 }
 function writeAtomic(path, value) {
-  (0, import_node_fs11.mkdirSync)((0, import_node_path11.dirname)(path), { recursive: true });
+  (0, import_node_fs5.mkdirSync)((0, import_node_path4.dirname)(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  (0, import_node_fs11.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs5.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs11.renameSync)(tmp, path);
+  (0, import_node_fs5.renameSync)(tmp, path);
 }
 function writeIndex(repo, index) {
   requireMutationLease();
@@ -77884,12 +76457,12 @@ function previewWorkflow(repo, raw, workItemId) {
       currentWorkItemId: resolved.reopen.workItem.id
     };
   }
-  const humanApproval = humanApprovalView(repo, resolved.state, resolved.command);
+  const humanApproval = humanApprovalView(resolved.state, resolved.command);
   if (humanApproval && resolved.state) {
     return {
       fingerprint: fingerprint2,
       duplicate: false,
-      result: { awaitingHumanApproval: humanApproval.planId },
+      result: { awaitingUserApproval: humanApproval.action },
       resume: resumeWorkflow(resolved.state),
       currentWorkItemId: workItemId ?? current,
       humanApproval
@@ -77904,22 +76477,7 @@ function previewWorkflow(repo, raw, workItemId) {
     currentWorkItemId: command.action === "open" ? applied.state.workItem.id : workItemId ?? current
   };
 }
-function localWriteRequest(repo, fingerprint2) {
-  const root = (0, import_node_path11.resolve)(repo);
-  return {
-    repo: root,
-    operation: "repository_edit",
-    provider: "local",
-    repository: root,
-    previewFingerprint: fingerprint2,
-    action: "praxis_workflow_apply"
-  };
-}
-function withGrant(repo, state2, command) {
-  const token = requireGrantToken(repo, state2, command);
-  return token ? { ...command, authorization: token } : command;
-}
-function writeCommand(repo, planned, final, workItemId) {
+function writeCommand(repo, planned, final, workItemId, userApproval) {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
     const finalCommand = WorkflowCommandSchema.parse(final);
@@ -77954,8 +76512,7 @@ function writeCommand(repo, planned, final, workItemId) {
         currentWorkItemId: resolved.reopen.workItem.id
       };
     }
-    const command = resolved.state && !resolved.command.authorization ? withGrant(repo, resolved.state, resolved.command) : resolved.command;
-    const applied = applyWorkflowCommand(resolved.state, command);
+    const applied = applyWorkflowCommand(resolved.state, resolved.command, userApproval ? { userApproval } : void 0);
     const path = writeItem(repo, applied.state);
     const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1, current: null, items: [] };
     const entry = summarize(applied.state);
@@ -77974,27 +76531,28 @@ function writeCommand(repo, planned, final, workItemId) {
     };
   });
 }
-function guarded(repo, fingerprint2, planned, final, workItemId) {
+function guarded(repo, fingerprint2, planned, final, workItemId, userApproval) {
   const command = WorkflowCommandSchema.parse(planned);
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint2 !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
-  if (recordPolicy() === "unsigned") {
-    return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId));
-  }
-  const request = localWriteRequest(repo, fingerprint2);
-  const inspection = inspectMutation(request);
-  if (inspection.kind === "replay") {
-    return { ...inspection.result, replayed: true };
-  }
-  return runAuthorizedMutation(request, () => writeCommand(repo, command, final, workItemId));
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval));
 }
 function applyResolved(repo, fingerprint2, planned, final, workItemId) {
   return guarded(repo, fingerprint2, planned, final, workItemId);
 }
-function applyWorkflow(repo, raw, fingerprint2, workItemId) {
-  return guarded(repo, fingerprint2, raw, raw, workItemId);
+function applyWorkflow(repo, raw, fingerprint2, workItemId, userApproval) {
+  return guarded(repo, fingerprint2, raw, raw, workItemId, userApproval);
+}
+async function applyWorkflowApproved(repo, raw, fingerprint2, workItemId, confirmation) {
+  const command = WorkflowCommandSchema.parse(raw);
+  const expected = fingerprintFor(repo, command, workItemId);
+  if (fingerprint2 !== expected)
+    throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
+  const resolved = resolveCommand(repo, command, workItemId);
+  const userApproval = resolved.state ? await requireUserApproval(repo, resolved.state, resolved.command, confirmation) : void 0;
+  return guarded(repo, fingerprint2, raw, raw, workItemId, userApproval);
 }
 function capabilityRoute(input2) {
   return routeCapabilities({
@@ -78014,27 +76572,27 @@ function git(repo, args, input2) {
   }
   return result.stdout.trim();
 }
-function safeFile2(root, relative7) {
-  if (!relative7 || relative7.startsWith("/") || relative7.includes("\0") || relative7.split(/[/\\]/).includes("..")) {
+function safeFile2(root, relative5) {
+  if (!relative5 || relative5.startsWith("/") || relative5.includes("\0") || relative5.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
-  const absolute = (0, import_node_path12.resolve)(root, relative7);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path12.sep}`))
+  const absolute = (0, import_node_path5.resolve)(root, relative5);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path5.sep}`))
     throw new Error("UNSAFE_PATH");
   return absolute;
 }
 async function loadAdapter(workflowRepo) {
-  const file2 = (0, import_node_path12.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
-  if (!(0, import_node_fs12.existsSync)(file2))
+  const file2 = (0, import_node_path5.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
+  if (!(0, import_node_fs6.existsSync)(file2))
     return void 0;
   return import(`${(0, import_node_url2.pathToFileURL)(file2).href}?v=${Date.now()}-${Math.random()}`);
 }
-async function loadModule(service, relative7) {
+async function loadModule(service, relative5) {
   if (!service.localPath) {
-    return { missingLocation: true, repository: service.repository, file: relative7 };
+    return { missingLocation: true, repository: service.repository, file: relative5 };
   }
-  const file2 = safeFile2(service.localPath, relative7);
-  if (!(0, import_node_fs12.existsSync)(file2))
+  const file2 = safeFile2(service.localPath, relative5);
+  if (!(0, import_node_fs6.existsSync)(file2))
     return { missingModule: true, repository: service.repository, file: file2 };
   const mod = await import(`${(0, import_node_url2.pathToFileURL)(file2).href}?v=${Date.now()}-${Math.random()}`);
   return { mod, repository: service.repository, file: file2 };
@@ -78042,14 +76600,14 @@ async function loadModule(service, relative7) {
 function testsAreGreen(services) {
   let saw = false;
   for (const service of services) {
-    if (!service.localPath || !(0, import_node_fs12.existsSync)(service.localPath))
+    if (!service.localPath || !(0, import_node_fs6.existsSync)(service.localPath))
       continue;
-    const src = (0, import_node_path12.join)(service.localPath, "src");
-    if ((0, import_node_fs12.existsSync)(src)) {
-      const tests = (0, import_node_fs12.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
+    const src = (0, import_node_path5.join)(service.localPath, "src");
+    if ((0, import_node_fs6.existsSync)(src)) {
+      const tests = (0, import_node_fs6.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
       if (tests.length) {
         saw = true;
-        const result = (0, import_node_child_process2.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path12.join)("src", name))], {
+        const result = (0, import_node_child_process2.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path5.join)("src", name))], {
           cwd: service.localPath,
           encoding: "utf8"
         });
@@ -78057,8 +76615,8 @@ function testsAreGreen(services) {
           return false;
       }
     }
-    const testsDir = (0, import_node_path12.join)(service.localPath, "tests");
-    const pytests = (0, import_node_fs12.existsSync)(testsDir) ? (0, import_node_fs12.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
+    const testsDir = (0, import_node_path5.join)(service.localPath, "tests");
+    const pytests = (0, import_node_fs6.existsSync)(testsDir) ? (0, import_node_fs6.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
     if (pytests.length) {
       saw = true;
       const result = (0, import_node_child_process2.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
@@ -78084,10 +76642,10 @@ function serviceVerdicts(scenarios) {
   });
 }
 function readHostProposal(workflowRepo, serviceId) {
-  const file2 = (0, import_node_path12.join)(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
-  if (!(0, import_node_fs12.existsSync)(file2))
+  const file2 = (0, import_node_path5.join)(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
+  if (!(0, import_node_fs6.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs12.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs6.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.files) || parsed.files.length === 0)
     throw new Error("PROPOSAL_INVALID");
   return parsed;
@@ -78221,11 +76779,11 @@ function applyProposal(root, proposal) {
     }
     if (typeof file2.after !== "string")
       throw new Error("PROPOSAL_INVALID");
-    (0, import_node_fs12.mkdirSync)((0, import_node_path12.dirname)(absolute), { recursive: true });
-    (0, import_node_fs12.writeFileSync)(absolute, file2.after);
+    (0, import_node_fs6.mkdirSync)((0, import_node_path5.dirname)(absolute), { recursive: true });
+    (0, import_node_fs6.writeFileSync)(absolute, file2.after);
   }
 }
-function commitServiceFix(workflowRepo, planned, workflowItemId) {
+async function commitServiceFix(workflowRepo, planned, workflowItemId, confirmation) {
   const change = planned.change;
   if (change.commitSha !== "PLANNED")
     return planned;
@@ -78234,26 +76792,40 @@ function commitServiceFix(workflowRepo, planned, workflowItemId) {
   const root = service?.localPath;
   if (!root)
     throw new Error("REPOSITORY_LOCATION_MISSING");
-  const repository = (0, import_node_path12.resolve)(root);
+  const repository = (0, import_node_path5.resolve)(root);
   const workItemId = change.storyIds[0] ?? change.serviceId;
-  if (change.remote) {
-    inspectMutation({
-      repo: repository,
-      operation: "git_push",
-      provider: "local",
-      repository,
-      workItemId,
-      action: "praxis_developer_git_publish"
-    });
+  const subject = JSON.stringify({ serviceId: change.serviceId, findingId: change.findingId, branch: change.branch, baseSha: change.baseSha, files: change.files, remote: change.remote ?? null });
+  const commitApproval = await obtainUserApproval({
+    action: "praxis_quality_service_fix",
+    kind: "git_operation",
+    summary: `Commit a Quality fix for ${change.findingId} on branch ${change.branch}`,
+    description: [
+      `Repository: ${repository}`,
+      `Work item: ${workItemId}`,
+      `Branch: ${change.branch} (from ${change.baseSha})`,
+      `Files: ${change.files.join(", ")}`,
+      change.remote ? `The branch is pushed to ${change.remote} afterwards, with its own approval.` : "No push."
+    ].join("\n"),
+    subject
+  }, { confirmation, repo: workflowRepo });
+  const committed = runApprovedMutation(commitApproval, () => commitServiceFixBody(root, planned));
+  if (!change.remote)
+    return committed;
+  let pushApproval;
+  try {
+    pushApproval = await obtainUserApproval({
+      action: "praxis_developer_git_publish",
+      kind: "git_operation",
+      summary: `Push branch ${change.branch} to ${change.remote}`,
+      description: [`Repository: ${repository}`, `Branch: ${change.branch}`, `Commit: ${committed.change.commitSha}`, `Remote: ${change.remote}`].join("\n"),
+      subject: JSON.stringify({ branch: change.branch, commit: committed.change.commitSha, remote: change.remote })
+    }, { confirmation, repo: workflowRepo });
+  } catch (error64) {
+    if (error64 instanceof ApprovalError)
+      return { ...committed, change: { ...committed.change, mrStatus: "blocked" } };
+    throw error64;
   }
-  return runAuthorizedMutation({
-    repo: repository,
-    operation: "git_commit",
-    provider: "local",
-    repository,
-    workItemId,
-    action: "praxis_quality_service_fix"
-  }, () => commitServiceFixBody(root, planned));
+  return runApprovedMutation(pushApproval, () => pushServiceFix(root, committed));
 }
 function commitServiceFixBody(root, planned) {
   const change = planned.change;
@@ -78280,26 +76852,35 @@ function commitServiceFixBody(root, planned) {
   const ancestor = git(root, ["merge-base", change.baseSha, commitSha]);
   if (ancestor !== change.baseSha)
     throw new Error("HISTORY_REWRITTEN");
-  let mrStatus = change.remote ? "opened" : "not_requested";
-  let changeRequest;
-  if (change.remote) {
-    const remotes = (0, import_node_child_process2.spawnSync)("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
-    if (!remotes.split(/\s+/).includes("origin"))
-      git(root, ["remote", "add", "origin", change.remote]);
-    const pushed = (0, import_node_child_process2.spawnSync)("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
-      cwd: root,
-      encoding: "utf8"
-    });
-    if ((pushed.status ?? 1) !== 0)
-      mrStatus = "blocked";
-    else
-      changeRequest = `mr:${change.branch}`;
-  }
+  const mrStatus = change.remote ? "blocked" : "not_requested";
   return {
     ...planned,
     change: {
       ...change,
       commitSha,
+      mrStatus
+    }
+  };
+}
+function pushServiceFix(root, committed) {
+  const change = committed.change;
+  let mrStatus = "opened";
+  let changeRequest;
+  const remotes = (0, import_node_child_process2.spawnSync)("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
+  if (!remotes.split(/\s+/).includes("origin"))
+    git(root, ["remote", "add", "origin", change.remote]);
+  const pushed = (0, import_node_child_process2.spawnSync)("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  if ((pushed.status ?? 1) !== 0)
+    mrStatus = "blocked";
+  else
+    changeRequest = `mr:${change.branch}`;
+  return {
+    ...committed,
+    change: {
+      ...change,
       mrStatus,
       ...changeRequest ? { changeRequest } : {}
     }
@@ -78307,7 +76888,7 @@ function commitServiceFixBody(root, planned) {
 }
 
 // packages/mcp/dist/workflow-inspect.js
-var import_node_path33 = require("node:path");
+var import_node_path25 = require("node:path");
 init_dist();
 var INSPECT_SCHEMA = "praxis.workflow.inspect.v1";
 var INSPECT_VIEWS = [
@@ -78324,7 +76905,7 @@ var INSPECT_VIEWS = [
 ];
 var SECRET_VALUE = /\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
 function scrub(repo, value) {
-  const root = (0, import_node_path33.resolve)(repo);
+  const root = (0, import_node_path25.resolve)(repo);
   const clean = (input2) => {
     if (typeof input2 === "string") {
       return input2.split(`${root}/`).join("").split(root).join(".").replace(SECRET_VALUE, "[redacted]");
@@ -78415,6 +76996,8 @@ function requirements(state2) {
 function stories(state2) {
   return state2.stories.map((story) => ({
     ...story,
+    /** What confirm-story must carry: the digest of exactly this revision. The user is shown this content before approving. */
+    contentFingerprint: storyContentFingerprint(story),
     confirmation: storyConfirmation(story),
     coverage: state2.coverage.filter((entry) => entry.storyId === story.id).map((entry) => ({
       scenarioId: entry.scenarioId,
@@ -78429,7 +77012,7 @@ function stories(state2) {
 }
 function decisions(state2) {
   return {
-    decisions: state2.decisions,
+    decisions: state2.decisions.map((decision) => ({ ...decision, contentFingerprint: decisionContentFingerprint(decision) })),
     assumptions: state2.assumptions,
     openQuestions: state2.openQuestions,
     unresolvedByStory: state2.stories.filter((story) => story.status !== "superseded" && story.unresolvedDecisionIds.length > 0).map((story) => ({ storyId: story.id, decisionIds: story.unresolvedDecisionIds }))
@@ -78498,7 +77081,7 @@ function quality(state2) {
   };
 }
 function isLocalRepository(repo, name) {
-  return name === "." || name === (0, import_node_path33.basename)((0, import_node_path33.resolve)(repo)) || (0, import_node_path33.resolve)(name) === (0, import_node_path33.resolve)(repo);
+  return name === "." || name === (0, import_node_path25.basename)((0, import_node_path25.resolve)(repo)) || (0, import_node_path25.resolve)(name) === (0, import_node_path25.resolve)(repo);
 }
 function links(state2, repo) {
   const { items } = listWorkItems(repo);
@@ -78613,13 +77196,13 @@ function developerWorkItemStatus(repo, workItemId) {
 }
 
 // packages/mcp/dist/session-start.js
-var import_node_path35 = require("node:path");
-var import_node_fs30 = require("node:fs");
-var import_node_path36 = require("node:path");
+var import_node_path27 = require("node:path");
+var import_node_fs23 = require("node:fs");
+var import_node_path28 = require("node:path");
 
 // node_modules/@praxis/knowledge/dist/index.js
-var import_node_fs29 = require("node:fs");
-var import_node_path34 = require("node:path");
+var import_node_fs22 = require("node:fs");
+var import_node_path26 = require("node:path");
 var import_gray_matter = __toESM(require_gray_matter(), 1);
 init_zod();
 var ObsoleteToolBindingSchema = external_exports2.object({
@@ -78656,15 +77239,15 @@ var LEVEL_DIRS = [
   { level: "service", dir: "service" }
 ];
 function walkMarkdown(root) {
-  if (!(0, import_node_fs29.existsSync)(root))
+  if (!(0, import_node_fs22.existsSync)(root))
     return [];
   const out = [];
   const stack = [root];
   while (stack.length) {
     const cur = stack.pop();
-    for (const name of (0, import_node_fs29.readdirSync)(cur)) {
-      const p = (0, import_node_path34.join)(cur, name);
-      const st = (0, import_node_fs29.statSync)(p);
+    for (const name of (0, import_node_fs22.readdirSync)(cur)) {
+      const p = (0, import_node_path26.join)(cur, name);
+      const st = (0, import_node_fs22.statSync)(p);
       if (st.isDirectory())
         stack.push(p);
       else if (name.endsWith(".md"))
@@ -78674,7 +77257,7 @@ function walkMarkdown(root) {
   return out;
 }
 function parseRuleFile(path, level) {
-  const raw = (0, import_node_fs29.readFileSync)(path, "utf8");
+  const raw = (0, import_node_fs22.readFileSync)(path, "utf8");
   const parsed = (0, import_gray_matter.default)(raw);
   const fm = RuleFrontmatterSchema.safeParse(parsed.data);
   if (!fm.success) {
@@ -78713,17 +77296,17 @@ function loadApplicableSlice(opts) {
   const byId = /* @__PURE__ */ new Map();
   const precedentsById = /* @__PURE__ */ new Map();
   for (const { level, dir } of LEVEL_DIRS) {
-    let base = (0, import_node_path34.join)(knowledgeRoot, dir);
+    let base = (0, import_node_path26.join)(knowledgeRoot, dir);
     if (level === "product" && product)
-      base = (0, import_node_path34.join)(base, product);
+      base = (0, import_node_path26.join)(base, product);
     if (level === "service" && service)
-      base = (0, import_node_path34.join)(base, service);
-    if (level !== "company" && !(0, import_node_fs29.existsSync)(base))
+      base = (0, import_node_path26.join)(base, service);
+    if (level !== "company" && !(0, import_node_fs22.existsSync)(base))
       continue;
-    for (const file2 of walkMarkdown((0, import_node_path34.join)(base, "rules"))) {
+    for (const file2 of walkMarkdown((0, import_node_path26.join)(base, "rules"))) {
       const result = parseRuleFile(file2, level);
       if ("error" in result) {
-        errors.push(`${(0, import_node_path34.relative)(knowledgeRoot, file2)}: ${result.error}`);
+        errors.push(`${(0, import_node_path26.relative)(knowledgeRoot, file2)}: ${result.error}`);
         continue;
       }
       const { roles, stages, id } = result.frontmatter;
@@ -78736,10 +77319,10 @@ function loadApplicableSlice(opts) {
       }
       byId.set(id, result);
     }
-    for (const file2 of walkMarkdown((0, import_node_path34.join)(base, "precedents"))) {
+    for (const file2 of walkMarkdown((0, import_node_path26.join)(base, "precedents"))) {
       const result = parseScopedPrecedentFile(file2, level);
       if ("error" in result) {
-        errors.push(`${(0, import_node_path34.relative)(knowledgeRoot, file2)}: ${result.error}`);
+        errors.push(`${(0, import_node_path26.relative)(knowledgeRoot, file2)}: ${result.error}`);
         continue;
       }
       const { roles, stages, id } = result.frontmatter;
@@ -78763,7 +77346,7 @@ function loadApplicableSlice(opts) {
   };
 }
 function parseScopedPrecedentFile(path, level) {
-  const raw = (0, import_node_fs29.readFileSync)(path, "utf8");
+  const raw = (0, import_node_fs22.readFileSync)(path, "utf8");
   const parsed = (0, import_gray_matter.default)(raw);
   const fm = PrecedentFrontmatterSchema.safeParse(parsed.data);
   if (!fm.success) {
@@ -78795,8 +77378,8 @@ var DEFAULT_STAGE = {
 };
 var KNOWLEDGE_ROLE = { ba: "ba", architect: "architect", developer: "developer", quality: "qa" };
 var rel = (root, path) => {
-  const r = (0, import_node_path35.relative)(root, path);
-  return r === "" ? "." : r.split(import_node_path35.sep).join("/");
+  const r = (0, import_node_path27.relative)(root, path);
+  return r === "" ? "." : r.split(import_node_path27.sep).join("/");
 };
 function sessionStart(repo, args, version4) {
   if (!SESSION_ROLES.includes(args.role ?? "")) {
@@ -78804,15 +77387,15 @@ function sessionStart(repo, args, version4) {
   }
   const role = args.role;
   const stage = role === "quality" ? DEFAULT_STAGE.quality : args.stage ?? DEFAULT_STAGE[role];
-  const root = (0, import_node_path35.resolve)(repo);
+  const root = (0, import_node_path27.resolve)(repo);
   const project = loadProjectConfig(root);
   let knowledge;
   if (!project.config.knowledge.path) {
     knowledge = { status: "skipped", message: "knowledge.path unset; rules not applied" };
   } else {
     try {
-      const knowledgeRoot = (0, import_node_path36.isAbsolute)(project.config.knowledge.path) ? project.config.knowledge.path : (0, import_node_path35.resolve)(root, project.config.knowledge.path);
-      if (!(0, import_node_fs30.existsSync)(knowledgeRoot))
+      const knowledgeRoot = (0, import_node_path28.isAbsolute)(project.config.knowledge.path) ? project.config.knowledge.path : (0, import_node_path27.resolve)(root, project.config.knowledge.path);
+      if (!(0, import_node_fs23.existsSync)(knowledgeRoot))
         throw new Error("path does not exist");
       const slice = loadApplicableSlice({
         knowledgeRoot,
@@ -78902,7 +77485,7 @@ function ctxFromArgs(args, extra) {
     deadlineMs: extra?.deadlineMs
   };
 }
-var YES_BEFORE_APPROVAL = /* @__PURE__ */ new Set([
+var PROTECTED_TOOLS = /* @__PURE__ */ new Set([
   "praxis_project_init_apply",
   "praxis_ba_apply",
   "praxis_architect_apply",
@@ -78919,91 +77502,57 @@ var YES_BEFORE_APPROVAL = /* @__PURE__ */ new Set([
   "praxis_developer_git_link_jira_apply",
   "praxis_workflow_apply"
 ]);
-var BROKER_INBOX_TOOLS = /* @__PURE__ */ new Set([
-  "praxis_developer_git_connect_apply",
-  "praxis_developer_git_identity_apply",
-  "praxis_developer_git_commit",
-  "praxis_developer_git_publish",
-  "praxis_developer_git_merge_request"
-]);
-var MCP_MUTATIONS = {
-  praxis_project_init_apply: { operation: "repository_edit", provider: "local", workItem: "none" },
-  praxis_ba_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
-  praxis_architect_apply: { operation: "external_record_update", provider: "jira", workItem: "epic" },
-  praxis_developer_claim: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_developer_release: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_developer_complete: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_developer_complete_recovery_apply: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_quality_apply: { operation: "external_state_change", provider: "jira", workItem: "wp" },
-  praxis_developer_git_connect_apply: { operation: "repository_edit", provider: "local", workItem: "wp" },
-  praxis_developer_git_identity_apply: { operation: "repository_edit", provider: "local", workItem: "wp" },
-  praxis_developer_git_commit: { operation: "git_commit", provider: "local", workItem: "wp" },
-  praxis_developer_git_publish: { operation: "git_push", provider: "local", workItem: "wp" },
-  praxis_developer_git_merge_request: { operation: "merge_request", provider: "local", workItem: "wp" },
-  praxis_developer_git_link_jira_apply: { operation: "external_record_update", provider: "jira", workItem: "wp" }
-};
-function openMcpGate(name, args, ctx, version4) {
-  if (YES_BEFORE_APPROVAL.has(name) && ctx.confirmation !== "YES") {
-    return {
-      envelope: mcpEnvelope({
-        ok: false,
-        operation: name,
-        version: version4,
-        code: "CONFIRMATION_REQUIRED",
-        errors: [`${name} requires confirmation=YES`]
-      })
-    };
-  }
-  const spec = MCP_MUTATIONS[name];
-  if (!spec)
-    return {};
-  if (BROKER_INBOX_TOOLS.has(name) && securityMode() === "secure")
-    return {};
-  const repo = (0, import_node_path37.resolve)(ctx.repo);
-  const workItemId = spec.workItem === "epic" ? str2(args.epic) : spec.workItem === "wp" ? str2(args.workPackage) ?? str2(args.wp) ?? str2(args.workPackageId) : void 0;
-  try {
-    const inspection = inspectMutation({
-      repo,
-      planId: ctx.planId,
-      planFingerprint: ctx.planFingerprint,
-      operation: spec.operation,
-      provider: spec.provider,
-      instanceId: spec.provider === "local" ? void 0 : ctx.instanceId,
-      workItemId,
-      repository: repo,
-      previewFingerprint: ctx.previewFingerprint,
-      action: name
+function withApprovalNote(name, data) {
+  if (!PROTECTED_TOOLS.has(name))
+    return { data };
+  const given = approvalsGivenInThisCall();
+  if (given.length === 0)
+    return { data };
+  const approval = given.map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
+  const unverified = given.filter((item) => item.assurance === "unverified");
+  const enriched = data && typeof data === "object" && !Array.isArray(data) ? { ...data, approval } : { result: data, approval };
+  return {
+    data: enriched,
+    ...unverified.length ? { warnings: [`approval unverified: ${name} ran on the agent's confirmation=YES; this client cannot show an approval dialog, so Praxis cannot verify that a person was asked`] } : {}
+  };
+}
+function preflight(name, args, ctx, version4) {
+  if (!PROTECTED_TOOLS.has(name))
+    return void 0;
+  if (ctx.confirmation === "NO") {
+    logDecision(ctx.repo, {
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      action: name,
+      summary: `${name} declined`,
+      subjectDigest: subjectDigest(JSON.stringify({ name, previewFingerprint: str2(args.previewFingerprint) ?? "" })),
+      decision: "rejected",
+      channel: "confirmation-flag",
+      assurance: "unverified",
+      reason: "the user declined (reported by the agent)"
     });
-    if (inspection.kind === "replay") {
-      const result = inspection.result && typeof inspection.result === "object" ? { ...inspection.result, replayed: true } : { replayed: true, result: inspection.result };
-      return { envelope: mcpEnvelope({ ok: true, operation: name, version: version4, data: result }) };
-    }
-    if (inspection.kind === "ready")
-      beginConsumption(repo, inspection.planId, inspection.key, name);
-    ctx.approvalConsumed = true;
-    return {
-      finish: (data) => completeConsumption(repo, inspection.planId, inspection.key, name, data),
-      abort: () => {
-        try {
-          abortConsumption(repo, inspection.planId, inspection.key, name);
-        } catch {
-        }
-      }
-    };
-  } catch (error64) {
-    const code = error64 && typeof error64 === "object" && "code" in error64 && typeof error64.code === "string" ? error64.code : "APPROVAL_REQUIRED";
-    return {
-      envelope: mcpEnvelope({
-        ok: false,
-        operation: name,
-        version: version4,
-        code,
-        errors: [error64 instanceof Error ? error64.message : String(error64)]
-      })
-    };
+    return mcpEnvelope({
+      ok: false,
+      operation: name,
+      version: version4,
+      code: "APPROVAL_REJECTED",
+      errors: [`${name} was rejected by the user. Nothing was changed.`]
+    });
   }
+  if (ctx.confirmation !== "YES") {
+    return mcpEnvelope({
+      ok: false,
+      operation: name,
+      version: version4,
+      code: "CONFIRMATION_REQUIRED",
+      errors: [`${name} requires confirmation=YES after the preview was shown to the user`]
+    });
+  }
+  return void 0;
 }
 async function callTool(name, rawArgs, opts) {
+  return withApprovalChannel(opts.approvalChannel, () => callToolInner(name, rawArgs, opts));
+}
+async function callToolInner(name, rawArgs, opts) {
   const ops = await loadOperations();
   const allowed = toolsForRole(opts.role);
   const def = allowed.find((t) => t.name === name);
@@ -79020,10 +77569,7 @@ async function callTool(name, rawArgs, opts) {
   const ctx = ctxFromArgs(args, {
     ...opts.extra
   });
-  const bound = ctx;
-  bound.planId = str2(args.planId);
-  bound.planFingerprint = str2(args.planFingerprint);
-  bound.instanceId = str2(args.instanceId) ?? process.env.PRAXIS_JIRA_BASE_URL;
+  ctx.instanceId = str2(args.instanceId) ?? process.env.PRAXIS_JIRA_BASE_URL;
   ops.loadPraxisDotenv(ctx.repo);
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
@@ -79031,39 +77577,16 @@ async function callTool(name, rawArgs, opts) {
   if (name === "praxis_quality_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_merge_request") {
     ctx.requirePreviewFingerprint = true;
   }
-  const gate = openMcpGate(name, args, bound, opts.version);
-  if (gate.envelope)
-    return gate.envelope;
+  const refused = preflight(name, args, ctx, opts.version);
+  if (refused)
+    return refused;
   try {
-    if (name === "praxis_approval_confirm") {
-      const planId = str2(args.planId);
-      if (!planId) {
-        return mcpEnvelope({
-          ok: false,
-          operation: name,
-          version: opts.version,
-          code: "INVALID_INPUT",
-          errors: ["praxis_approval_confirm requires planId"]
-        });
-      }
-      const record5 = readApproval(ctx.repo, planId);
-      return mcpEnvelope({
-        ok: true,
-        operation: name,
-        version: opts.version,
-        data: {
-          approved: false,
-          state: record5.plan.state,
-          summary: approvalSummary(record5.plan)
-        }
-      });
-    }
     if (name === "praxis_workflow_status" || name === "praxis_workflow_inspect" || name === "praxis_session_start" || name === "praxis_workflow_preview" || name === "praxis_workflow_apply" || name === "praxis_capabilities") {
       return mcpEnvelope({
         ok: true,
         operation: name,
         version: opts.version,
-        data: await runWorkflowTool(name, args, ctx.repo, opts.version)
+        ...withApprovalNote(name, await runWorkflowTool(name, args, ctx.repo, opts.version))
       });
     }
     if (name === "praxis_developer_status" && str2(args.workItemId)) {
@@ -79086,8 +77609,6 @@ async function callTool(name, rawArgs, opts) {
     const data = await dispatchTool(ops, name, ctx, opts.version, opts.role);
     if ((name === "praxis_quality_apply" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_merge_request" || name === "praxis_developer_git_identity_apply") && data && typeof data === "object" && "ok" in data && data.ok === false) {
       const rec = data;
-      if (gate.abort)
-        gate.abort();
       return mcpEnvelope({
         ok: false,
         operation: name,
@@ -79098,12 +77619,8 @@ async function callTool(name, rawArgs, opts) {
         code: rec.code ?? (name === "praxis_quality_apply" ? "QUALITY_APPLY_INCOMPLETE" : "GIT_TRANSPORT_FAILED")
       });
     }
-    if (gate.finish)
-      gate.finish(data);
-    return mcpEnvelope({ ok: true, operation: name, version: opts.version, data });
+    return mcpEnvelope({ ok: true, operation: name, version: opts.version, ...withApprovalNote(name, data) });
   } catch (err) {
-    if (gate.abort)
-      gate.abort();
     const message = ops.redact(err instanceof Error ? err.message : String(err));
     const coded = err;
     const code = err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
@@ -79126,15 +77643,15 @@ function hydrateWorkflowCommand(repo, raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     return raw;
   const command = { ...raw };
-  const relative7 = command.implementationPath;
-  if (typeof relative7 !== "string" || relative7.length === 0)
+  const relative5 = command.implementationPath;
+  if (typeof relative5 !== "string" || relative5.length === 0)
     return command;
-  const root = (0, import_node_path37.resolve)(repo);
-  const absolute = (0, import_node_path37.resolve)(root, relative7);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path37.sep}`)) {
+  const root = (0, import_node_path29.resolve)(repo);
+  const absolute = (0, import_node_path29.resolve)(root, relative5);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path29.sep}`)) {
     throw new Error("implementation path escapes the repository");
   }
-  command.implementationSource = (0, import_node_fs31.readFileSync)(absolute, "utf8");
+  command.implementationSource = (0, import_node_fs24.readFileSync)(absolute, "utf8");
   delete command.implementationPath;
   return command;
 }
@@ -79170,12 +77687,12 @@ async function runWorkflowTool(name, args, repo, version4) {
     const planned = await planServiceFix(repo, String(parsed.serviceId ?? ""), typeof parsed.existingBranch === "string" ? parsed.existingBranch : void 0, workItemId);
     if (name === "praxis_workflow_preview")
       return previewWorkflow(repo, planned, workItemId);
-    const committed = commitServiceFix(repo, planned, workItemId);
+    const committed = await commitServiceFix(repo, planned, workItemId, str2(args.confirmation));
     return applyResolved(repo, str2(args.previewFingerprint) ?? "", planned, committed, workItemId);
   }
   if (name === "praxis_workflow_preview")
     return previewWorkflow(repo, parsed, workItemId);
-  return applyWorkflow(repo, parsed, str2(args.previewFingerprint) ?? "", workItemId);
+  return applyWorkflowApproved(repo, parsed, str2(args.previewFingerprint) ?? "", workItemId, str2(args.confirmation));
 }
 function withBuild(result, version4, role) {
   const build2 = { ...runtimeBuildInfo(version4), tools: toolOrigin(role) };
@@ -79286,18 +77803,45 @@ async function dispatchTool(ops, name, ctx, version4, role) {
 function logStderr(line) {
   console.error(line);
 }
+function annotationsFor(tool) {
+  const applies = tool.kind === "apply";
+  return {
+    title: tool.name,
+    readOnlyHint: !applies,
+    destructiveHint: applies,
+    idempotentHint: false,
+    openWorldHint: applies || tool.name.includes("jira") || tool.name.includes("git")
+  };
+}
+function clientApprovalChannel(server, extra) {
+  const elicit = extra?.mcpReq?.elicitInput;
+  const capabilities = server.server.getClientCapabilities?.();
+  const declared = capabilities?.elicitation;
+  const form = declared !== void 0 && (Object.keys(declared).length === 0 || "form" in declared);
+  if (!elicit)
+    return void 0;
+  const negotiated = server.server.getNegotiatedProtocolVersion?.();
+  if (negotiated && negotiated >= PRAXIS_MCP_SDK.modernRevision)
+    return void 0;
+  return elicitationChannel({
+    supported: form,
+    elicitInput: (params, options2) => elicit(params, options2)
+  });
+}
 function createPraxisMcpServer(opts) {
   const server = new McpServer({ name: "praxis", version: opts.version }, { capabilities: { tools: { listChanged: false } } });
   for (const tool of toolsForRole(opts.role)) {
     server.registerTool(tool.name, {
       description: tool.description,
-      inputSchema: jsonSchemaToZod(tool.inputSchema)
+      inputSchema: jsonSchemaToZod(tool.inputSchema),
+      annotations: annotationsFor(tool)
     }, async (args, extra) => {
       const signal = extra && typeof extra === "object" && "signal" in extra ? extra.signal : void 0;
       const envelope = await callTool(tool.name, args ?? {}, {
         role: opts.role,
         version: opts.version,
-        extra: { signal }
+        extra: { signal },
+        approvalChannel: clientApprovalChannel(server, extra)
       });
       return {
         content: [{ type: "text", text: JSON.stringify(envelope) }],

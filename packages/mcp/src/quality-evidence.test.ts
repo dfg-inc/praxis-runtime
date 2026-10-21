@@ -1,8 +1,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { installHostApproval } from "@praxis/contracts";
 import { callTool } from "./tools.js";
 import { readPersistedState } from "./workflow-test-helpers.js";
 
@@ -23,19 +22,6 @@ async function step(repo: string, command: object, role: string): Promise<Envelo
   const previewed = await preview(repo, command, role);
   expect(previewed.ok, JSON.stringify(previewed.errors)).toBe(true);
   const fingerprint = previewed.data.fingerprint as string;
-  installHostApproval(repo, {
-    planId: `wf-${fingerprint.slice(-12)}`,
-    role: role as "ba",
-    provider: "local",
-    workItemIds: ["local-workflow"],
-    repositories: [resolve(repo)],
-    operations: ["repository_edit"],
-    inScope: ["praxis_workflow_apply"],
-    outOfScope: [],
-    assumptions: [],
-    risks: ["writes the local workflow file"],
-    previewFingerprint: fingerprint,
-  });
   const applied = (await callTool(
     "praxis_workflow_apply",
     { repo, command: JSON.stringify(command), confirmation: "YES", previewFingerprint: fingerprint },

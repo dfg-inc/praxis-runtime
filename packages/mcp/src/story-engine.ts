@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { inspectMutation, rollupStoryVerdict, runAuthorizedMutation } from "@praxis/contracts";
+import { ApprovalError, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
 import { inspectionPlan, runProjectChecks, type Finding, type Scenario } from "./generic-verification.js";
 import { inspectService, type ProjectProfile, type ServiceLocation } from "./project-profile.js";
 import { loadWorkflow } from "./workflow-store.js";
@@ -289,11 +289,17 @@ function applyProposal(root: string, proposal: Proposal): void {
   }
 }
 
-export function commitServiceFix(
+/**
+ * Applies a Quality fix patch on its own branch and, when the service has a remote, pushes that branch. The user
+ * approves the commit and, separately, the push (a commit approval is not a push approval); the first Reject stops
+ * everything after it. Throws APPROVAL_REJECTED / APPROVAL_REQUIRED before anything is changed.
+ */
+export async function commitServiceFix(
   workflowRepo: string,
   planned: Awaited<ReturnType<typeof planServiceFix>>,
   workflowItemId?: string,
-): Awaited<ReturnType<typeof planServiceFix>> {
+  confirmation?: string,
+): Promise<Awaited<ReturnType<typeof planServiceFix>>> {
   const change = planned.change;
   if (change.commitSha !== "PLANNED") return planned;
   const state = loadWorkflow(workflowRepo, workflowItemId);
@@ -302,24 +308,43 @@ export function commitServiceFix(
   if (!root) throw new Error("REPOSITORY_LOCATION_MISSING");
   const repository = resolve(root);
   const workItemId = change.storyIds[0] ?? change.serviceId;
-  if (change.remote) {
-    inspectMutation({
-      repo: repository,
-      operation: "git_push",
-      provider: "local",
-      repository,
-      workItemId,
-      action: "praxis_developer_git_publish",
-    });
+  const subject = JSON.stringify({ serviceId: change.serviceId, findingId: change.findingId, branch: change.branch, baseSha: change.baseSha, files: change.files, remote: change.remote ?? null });
+  const commitApproval = await obtainUserApproval(
+    {
+      action: "praxis_quality_service_fix",
+      kind: "git_operation",
+      summary: `Commit a Quality fix for ${change.findingId} on branch ${change.branch}`,
+      description: [
+        `Repository: ${repository}`,
+        `Work item: ${workItemId}`,
+        `Branch: ${change.branch} (from ${change.baseSha})`,
+        `Files: ${change.files.join(", ")}`,
+        change.remote ? `The branch is pushed to ${change.remote} afterwards, with its own approval.` : "No push.",
+      ].join("\n"),
+      subject,
+    },
+    { confirmation, repo: workflowRepo },
+  );
+  const committed = runApprovedMutation(commitApproval, () => commitServiceFixBody(root, planned));
+  if (!change.remote) return committed;
+  let pushApproval: UserApproval;
+  try {
+    pushApproval = await obtainUserApproval(
+      {
+        action: "praxis_developer_git_publish",
+        kind: "git_operation",
+        summary: `Push branch ${change.branch} to ${change.remote}`,
+        description: [`Repository: ${repository}`, `Branch: ${change.branch}`, `Commit: ${committed.change.commitSha}`, `Remote: ${change.remote}`].join("\n"),
+        subject: JSON.stringify({ branch: change.branch, commit: committed.change.commitSha, remote: change.remote }),
+      },
+      { confirmation, repo: workflowRepo },
+    );
+  } catch (error) {
+    // The commit exists on the local branch; the record says the push did not happen instead of pretending it did.
+    if (error instanceof ApprovalError) return { ...committed, change: { ...committed.change, mrStatus: "blocked" } };
+    throw error;
   }
-  return runAuthorizedMutation({
-    repo: repository,
-    operation: "git_commit",
-    provider: "local",
-    repository,
-    workItemId,
-    action: "praxis_quality_service_fix",
-  }, () => commitServiceFixBody(root, planned));
+  return runApprovedMutation(pushApproval, () => pushServiceFix(root, committed));
 }
 
 function commitServiceFixBody(
@@ -347,23 +372,37 @@ function commitServiceFixBody(
   const commitSha = git(root, ["rev-parse", "HEAD"]);
   const ancestor = git(root, ["merge-base", change.baseSha, commitSha]);
   if (ancestor !== change.baseSha) throw new Error("HISTORY_REWRITTEN");
-  let mrStatus: "opened" | "blocked" | "not_requested" = change.remote ? "opened" : "not_requested";
-  let changeRequest: string | undefined;
-  if (change.remote) {
-    const remotes = spawnSync("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
-    if (!remotes.split(/\s+/).includes("origin")) git(root, ["remote", "add", "origin", change.remote]);
-    const pushed = spawnSync("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
-      cwd: root,
-      encoding: "utf8",
-    });
-    if ((pushed.status ?? 1) !== 0) mrStatus = "blocked";
-    else changeRequest = `mr:${change.branch}`;
-  }
+  const mrStatus: "opened" | "blocked" | "not_requested" = change.remote ? "blocked" : "not_requested";
   return {
     ...planned,
     change: {
       ...change,
       commitSha,
+      mrStatus,
+    },
+  };
+}
+
+/** Pushes the fix branch to the service's remote; only after the user's approval of this push. */
+function pushServiceFix(
+  root: string,
+  committed: Awaited<ReturnType<typeof planServiceFix>>,
+): Awaited<ReturnType<typeof planServiceFix>> {
+  const change = committed.change;
+  let mrStatus: "opened" | "blocked" | "not_requested" = "opened";
+  let changeRequest: string | undefined;
+  const remotes = spawnSync("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
+  if (!remotes.split(/\s+/).includes("origin")) git(root, ["remote", "add", "origin", change.remote as string]);
+  const pushed = spawnSync("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  if ((pushed.status ?? 1) !== 0) mrStatus = "blocked";
+  else changeRequest = `mr:${change.branch}`;
+  return {
+    ...committed,
+    change: {
+      ...change,
       mrStatus,
       ...(changeRequest ? { changeRequest } : {}),
     },

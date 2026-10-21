@@ -37,7 +37,7 @@ import {
   VCS_CODES,
   verifyCommittedReproducibility,
 } from "@praxis/vcs";
-import { installTestBroker } from "./test-broker.mjs";
+import { installTestApprovals } from "./test-approval.mjs";
 import {
   attachSshLikeRemote,
   BASELINE_COUNTER,
@@ -53,12 +53,12 @@ import {
   writeFile,
 } from "./git-fixtures.mjs";
 
-// Protected Git writes run under real signed authorizations from an in-process test signer (see test-broker.mjs).
-// The Runtime stays in secure mode; this script does not switch to compatibility mode.
-const testBroker = installTestBroker({ acknowledgeUnisolated: true });
-process.on("exit", () => testBroker.close());
+// Protected Git writes run as if the user had approved them (scripted, see test-approval.mjs); nothing here proves that a
+// person approved anything. The packaged MCPB is exercised separately, with approvals refused or answered by an MCP client.
+const testApprovals = installTestApprovals();
+process.on("exit", () => testApprovals.close());
 const guarded = (action, operation, fn) => (input, ...rest) =>
-  testBroker.authorized({ repo: input.repo, action, operation, workItemId: input.workPackageId ?? "acceptance" }, () => fn(input, ...rest));
+  testApprovals.authorized({ repo: input.repo, action, operation, workItemId: input.workPackageId ?? "acceptance" }, () => fn(input, ...rest));
 
 const applyCommit = guarded("applyCommit", "git_commit", rawApplyCommit);
 const applyMergeRequest = guarded("applyMergeRequest", "merge_request", rawApplyMergeRequest);
@@ -377,7 +377,7 @@ const consumerBefore = consumerSnapshot();
 {
   const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
   const { extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
-  const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationModern } = await import(
+  const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationLegacy, versionNegotiationModern } = await import(
     "./official-mcp-client.mjs"
   );
   const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
@@ -403,6 +403,8 @@ const consumerBefore = consumerSnapshot();
       PRAXIS_GITHUB_TOKEN: "test-token-not-a-real-pat",
       PRAXIS_GITHUB_API_URL: mock.apiUrl,
       PRAXIS_GIT_PROVIDER: "github",
+      // No approval dialog in this client: strict mode refuses every protected call, so nothing can reach the remote.
+      PRAXIS_APPROVAL_STRICT: "1",
       GIT_TERMINAL_PROMPT: "0",
       GIT_SSH_COMMAND: "false",
     },
@@ -422,10 +424,12 @@ const consumerBefore = consumerSnapshot();
     });
     if (!bp?.ok || bp.data?.targetRemoteBranch !== "main") fail(`MCPB baseline preview ${JSON.stringify(bp)}`);
     if (bp.data?.refspec !== `${fixture.baselineSha}:refs/heads/main`) fail("MCPB refspec");
-    // Secure mode, no broker: every protected call must be refused and nothing may reach the remote.
-    const refused = async (name, args, label) => {
+    // Strict approval and a client with no approval dialog: every protected call must be refused and nothing may reach the remote.
+    // A call is refused either by the approval gate or, when the preview it describes cannot even be built (nothing was
+    // pushed, so there is no pull request to describe), by the operation itself. Either way nothing runs.
+    const refused = async (name, args, label, alsoRefusedBy = []) => {
       const result = await call(name, args);
-      if (result?.ok !== false || !/^APPROVAL_/.test(result.code ?? "")) fail(`MCPB ${label} was not refused: ${JSON.stringify(result)}`);
+      if (result?.ok !== false || !(/^APPROVAL_/.test(result.code ?? "") || alsoRefusedBy.includes(result.code))) fail(`MCPB ${label} was not refused: ${JSON.stringify(result)}`);
       return result;
     };
     const headBefore = git(fixture.repo, ["rev-parse", "HEAD"]).stdout;
@@ -444,13 +448,46 @@ const consumerBefore = consumerSnapshot();
     if (mrp?.ok !== false || mrp.code !== "GIT_PUSH_BLOCKED") fail(`MCPB merge request preview ${JSON.stringify(mrp)}`);
     const mr = await refused("praxis_developer_git_merge_request", {
       workPackage: WP, repo: fixture.repo, confirmation: "YES", previewFingerprint: `sha256:${"0".repeat(64)}`, provider: "github",
-    }, "merge request");
+    }, "merge request", ["GIT_PUSH_BLOCKED"]);
     const ds = await call("praxis_developer_git_delivery_status", { workPackage: WP, repo: fixture.repo });
     if (ds.data?.journal?.ciStatus === "success") fail("MCPB fake CI");
     const dump = JSON.stringify({ st, bp, ba, fp, fc, mrp, mr, ds });
     if (/github_pat_|ghp_[A-Za-z0-9]{10,}|ATATT3x/.test(dump)) fail("MCPB leaked token");
-    prove("P+. signed MCPB publish, commit, push and PR: covered by accept:git-authorization (real broker)");
-    prove("P. Extracted MCPB: read-only Git tools work, every unsigned protected call is refused, remote and HEAD unchanged");
+    // The same fixture, now with a client that can show the approval dialog: Reject pushes nothing, Approve pushes exactly
+    // the previewed baseline.
+    const dialogEnv = { ...hostedCleanEnv(extracted.dest), PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/local/bin`, PRAXIS_SKIP_DOTENV: "1", PRAXIS_GITHUB_TOKEN: "test-token-not-a-real-pat", PRAXIS_GITHUB_API_URL: mock.apiUrl, PRAXIS_GIT_PROVIDER: "github", GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "false" };
+    let answerNext = { action: "decline" };
+    const dialogSession = await connectOfficialMcp({
+      command: process.execPath,
+      args: extracted.args,
+      cwd: extracted.dest,
+      env: dialogEnv,
+      versionNegotiation: versionNegotiationLegacy(),
+      elicit: async () => answerNext,
+      timeoutMs: 20_000,
+      clientVersion: version,
+    });
+    try {
+      const dcall = async (name, args) => parseDoctorEnvelope(await dialogSession.client.callTool({ name, arguments: args }));
+      const baseline = { workPackage: WP, repo: fixture.repo, mode: "baseline", provider: "github" };
+      const dpreview = await dcall("praxis_developer_git_publish_preview", baseline);
+      if (!dpreview?.ok) fail(`MCPB dialog baseline preview ${JSON.stringify(dpreview)}`);
+      answerNext = { action: "decline" };
+      const declined = await dcall("praxis_developer_git_publish", { ...baseline, confirmation: "YES", previewFingerprint: dpreview.data.previewFingerprint });
+      if (declined?.ok !== false || declined.code !== "APPROVAL_REJECTED") fail(`MCPB declined publish: ${JSON.stringify(declined)}`);
+      if (git(bare, ["for-each-ref"]).stdout.trim() !== "") fail("a declined baseline publish still reached the remote");
+      if (dialogSession.elicited.length !== 1 || !/main/.test(dialogSession.elicited[0].message)) fail(`the dialog did not show the publish: ${JSON.stringify(dialogSession.elicited)}`);
+      answerNext = { action: "accept", content: { decision: "approve" } };
+      const approved = await dcall("praxis_developer_git_publish", { ...baseline, confirmation: "YES", previewFingerprint: dpreview.data.previewFingerprint });
+      if (approved?.ok !== true) fail(`MCPB approved publish: ${JSON.stringify(approved)}`);
+      const refs = git(bare, ["for-each-ref", "--format=%(refname)"]).stdout.trim().split("\n").filter(Boolean);
+      if (refs.join() !== "refs/heads/main") fail(`approved baseline publish pushed ${JSON.stringify(refs)}`);
+      if (approved.data?.approval?.[0]?.assurance !== "client-ui") fail(`approval note ${JSON.stringify(approved.data?.approval)}`);
+      prove("P+. through the client dialog: Reject pushes nothing; Approve pushes exactly the previewed baseline (refs/heads/main only)");
+    } finally {
+      await dialogSession.close();
+    }
+    prove("P. Extracted MCPB: read-only Git tools work, every protected call is refused without a client dialog (strict approval), remote and HEAD unchanged");
   } finally {
     await session.close();
     mock.close();

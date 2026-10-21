@@ -5,9 +5,6 @@
       "${CLAUDE_PLUGIN_ROOT}/server/praxis-mcp.cjs",
       "--role",
       "runtime"
-    ],
-    "env": {
-      "PRAXIS_SECURITY_MODE": "${PRAXIS_SECURITY_MODE:-secure}"
-    }
+    ]
   }
 }
