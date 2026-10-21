@@ -9,18 +9,17 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { decisionContentFingerprint, storyContentFingerprint, withApprovalChannel, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
+import { decisionContentFingerprint, decisionLogPath, storyContentFingerprint, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
 import { createFixtureJiraProvider, createMockFetch, createMockJiraState, type JiraConfig } from "@praxis/jira";
 import { elicitationChannel } from "./approval-channel.js";
 import { callTool } from "./tools.js";
 import { readPersistedState, type McpEnvelope } from "./workflow-test-helpers.js";
 
 const VERSION = "test";
-const ENV = ["PRAXIS_APPROVAL_STRICT", "PRAXIS_JIRA_BASE_URL"] as const;
+const ENV = ["PRAXIS_JIRA_BASE_URL"] as const;
 let saved: Record<string, string | undefined>;
 beforeEach(() => {
   saved = Object.fromEntries(ENV.map((k) => [k, process.env[k]]));
-  delete process.env.PRAXIS_APPROVAL_STRICT;
 });
 afterEach(() => {
   for (const k of ENV) {
@@ -159,7 +158,7 @@ describe("confirming a Story: only the user can do it, and only the Story they w
     expect(applied.code).toBe("APPROVAL_REJECTED");
     expect(seen).toHaveLength(0);
     expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
-    const log = readFileSync(join(repo, ".praxis", "approvals", "decisions.jsonl"), "utf8");
+    const log = readFileSync(decisionLogPath(repo), "utf8");
     expect(log).toMatch(/"decision":"rejected"/);
   });
 
@@ -221,17 +220,33 @@ describe("confirming a Story: only the user can do it, and only the Story they w
   });
 });
 
-describe("a client that cannot show an approval dialog: an explicit, unverified fallback", () => {
-  it("confirmation=YES confirms, and the result says plainly that nobody could verify a person was asked", async () => {
+describe("a client that cannot show an approval dialog: nothing protected runs, read-only keeps working", () => {
+  it("confirmation=YES confirms nothing; the refusal carries the preview and says it was not executed", async () => {
     const repo = await setup();
     const applied = await apply(repo, confirmStory(repo, "US-FLW-001"));
-    expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
-    expect(applied.data.approval).toEqual([expect.objectContaining({ channel: "confirmation-flag", assurance: "unverified" })]);
-    expect(applied.warnings.join(" ")).toMatch(/approval unverified.*cannot verify that a person was asked/);
-    expect(readFileSync(join(repo, ".praxis", "approvals", "decisions.jsonl"), "utf8")).toMatch(/"assurance":"unverified"/);
+    expect(applied.ok).toBe(false);
+    expect(applied.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    expect(applied.errors.join(" ")).toMatch(/NOT executed/);
+    expect(applied.data).toMatchObject({ executed: false, preview: { action: "confirm-story" } });
+    expect((applied.data.preview as { description: string }).description).toContain("story 1 confirmed");
+    expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
+    expect(readFileSync(decisionLogPath(repo), "utf8")).toMatch(/"decision":"refused"/);
+    expect(existsSync(join(repo, ".praxis", "approvals"))).toBe(false);
   });
 
-  it("without confirmation=YES nothing is confirmed", async () => {
+  it("text cannot stand in for the dialog: no phrasing of confirmation, command fields or arguments changes the outcome", async () => {
+    const repo = await setup();
+    const command = confirmStory(repo, "US-FLW-001");
+    const fingerprint = (await preview(repo, command)).data.fingerprint as string;
+    for (const confirmation of ["YES", "yes", "APPROVED", "the user said yes"]) {
+      const result = await call("praxis_workflow_apply", repo, { command: JSON.stringify({ ...command, userApproval: { decision: "approved" }, authorization: "x" }), confirmation, previewFingerprint: fingerprint, approved: true, approvedBy: "user", userSaidYes: true });
+      expect(result.ok, confirmation).toBe(false);
+      expect(["APPROVAL_CLIENT_UI_REQUIRED", "CONFIRMATION_REQUIRED", "INVALID_INPUT"], confirmation).toContain(result.code);
+    }
+    expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
+  });
+
+  it("without confirmation nothing is confirmed either", async () => {
     const repo = await setup();
     const fingerprint = (await preview(repo, confirmStory(repo, "US-FLW-001"))).data.fingerprint as string;
     const applied = await call("praxis_workflow_apply", repo, { command: JSON.stringify(confirmStory(repo, "US-FLW-001")), previewFingerprint: fingerprint });
@@ -239,25 +254,23 @@ describe("a client that cannot show an approval dialog: an explicit, unverified 
     expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
   });
 
-  it("PRAXIS_APPROVAL_STRICT=1 refuses the fallback; the dialog still works", async () => {
-    process.env.PRAXIS_APPROVAL_STRICT = "1";
+  it("read-only tools, previews and the agent's own records keep working", async () => {
     const repo = await setup();
-    const refused = await apply(repo, confirmStory(repo, "US-FLW-001"));
-    expect(refused.ok).toBe(false);
-    expect(refused.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
-    expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
-    const { channel } = dialog({ answer: "approve" });
-    const approved = await apply(repo, confirmStory(repo, "US-FLW-001"), { channel });
-    expect(approved.ok, JSON.stringify(approved.errors)).toBe(true);
+    expect((await call("praxis_workflow_status", repo, {})).ok).toBe(true);
+    expect((await call("praxis_workflow_inspect", repo, { view: "stories" })).ok).toBe(true);
+    const preview1 = await preview(repo, confirmStory(repo, "US-FLW-001"));
+    expect((preview1.data.humanApproval as { explanation: string }).explanation).toMatch(/NOT executed/);
+    const record = await apply(repo, { action: "add-requirement", id: "REQ-FLW-104", statement: "Agent notes.", acceptanceCriteria: ["x"] });
+    expect(record.ok, JSON.stringify(record.errors)).toBe(true);
   });
 
-  it("the doctor says which mode this session is in", async () => {
+  it("the doctor says protected actions are not executed in this session", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-flow-doc-"));
-    const fallback = await call("praxis_doctor", repo, {});
-    expect(fallback.data.approval).toMatchObject({ mode: "unverified-fallback", strict: false });
-    expect(fallback.data.nextSteps.join(" ")).toMatch(/cannot show an approval dialog/);
+    const none = await call("praxis_doctor", repo, {});
+    expect(none.data.approval).toMatchObject({ mode: "no-dialog" });
+    expect(none.data.nextSteps.join(" ")).toMatch(/NOT executed/);
+    expect(String((none.data.approval as { decisionLog: string }).decisionLog).startsWith(repo)).toBe(false);
     const { channel } = dialog({ answer: "approve" });
-    // the doctor reads the mode of the call it is served in
     const viaDialog = await call("praxis_doctor", repo, {}, "ba", channel);
     expect(viaDialog.data.approval).toMatchObject({ mode: "client-ui" });
   });
@@ -436,7 +449,7 @@ describe("running under the MCP server", () => {
       apply(repoB, confirmStory(repoB, "US-FLW-001")),
     ]);
     expect((withDialog.data.approval as Array<{ assurance: string }>)[0]!.assurance).toBe("client-ui");
-    expect((without.data.approval as Array<{ assurance: string }>)[0]!.assurance).toBe("unverified");
+    expect(without.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
     expect(seen).toHaveLength(1);
   });
 });

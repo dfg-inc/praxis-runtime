@@ -8,9 +8,14 @@ import {
   createMockJiraState,
   type JiraConfig,
 } from "@praxis/jira";
-import { callTool, toolsForRole, TOOLS } from "./tools.js";
+import { callTool as rawCallTool, toolsForRole, TOOLS } from "./tools.js";
+import type { UserApprovalChannel } from "@praxis/contracts";
 import { parseRoleArgv, PraxisMcpRoleError } from "./server.js";
 import { PRAXIS_MCP_SDK } from "./protocol.js";
+
+// These tests exercise the tools behind the approval: the user's answer is a scripted dialog that approves.
+const approver: UserApprovalChannel = { kind: "client-elicitation", ask: async () => ({ answer: "approve" }) };
+const callTool = (name: string, args: unknown, opts: Parameters<typeof rawCallTool>[2]) => rawCallTool(name, args, { approvalChannel: approver, ...opts });
 
 const VERSION = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 

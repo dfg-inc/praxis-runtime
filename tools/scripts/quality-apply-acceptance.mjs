@@ -545,15 +545,13 @@ proven.push("O-P failed review bugs / no Done / dedupe");
   });
   const nPreview = await qualityApplyPreviewOp({ repo: nRepo, wp: WP, provider: nProvider });
   nState.transitionPostStatus = 400;
-  // A client with no approval dialog cannot ask the user. Under PRAXIS_APPROVAL_STRICT=1 the same call is refused, whatever
+  // A client with no approval dialog cannot ask the user. The same call is refused, whatever
   // confirmation says, and Jira is not touched.
-  process.env.PRAXIS_APPROVAL_STRICT = "1";
   const unsigned = await callTool(
     "praxis_quality_apply",
     { workPackage: WP, repo: nRepo, confirmation: "YES", previewFingerprint: nPreview.previewFingerprint },
     { role: "runtime", version, extra: { provider: nProvider } },
   );
-  delete process.env.PRAXIS_APPROVAL_STRICT;
   if (unsigned.ok !== false || unsigned.code !== "APPROVAL_CLIENT_UI_REQUIRED") fail(`N: strict apply without a dialog was not refused ${JSON.stringify(unsigned)}`);
   const declined = await callTool(
     "praxis_quality_apply",
@@ -561,16 +559,12 @@ proven.push("O-P failed review bugs / no Done / dedupe");
     { role: "runtime", version, extra: { provider: nProvider } },
   );
   if (declined.ok !== false || declined.code !== "APPROVAL_REJECTED") fail(`N: a declined apply was not rejected ${JSON.stringify(declined)}`);
-  proven.push("N MCP apply refused without a client dialog under strict approval, and rejected on confirmation=NO; Jira untouched");
-  // With the user's approval (the unverified fallback: confirmation=YES) the apply runs; Jira's transition fails (400).
-  const nEnv = await testApprovals.approvedToolCall(
-    {},
-    () =>
-      callTool(
-        "praxis_quality_apply",
-        { workPackage: WP, repo: nRepo, confirmation: "YES", previewFingerprint: nPreview.previewFingerprint },
-        { role: "runtime", version, extra: { provider: nProvider } },
-      ),
+  proven.push("N MCP apply refused without a client dialog, and rejected on confirmation=NO; Jira untouched");
+  // With the user's approval (a scripted dialog) the apply runs; Jira's transition fails (400).
+  const nEnv = await callTool(
+    "praxis_quality_apply",
+    { workPackage: WP, repo: nRepo, confirmation: "YES", previewFingerprint: nPreview.previewFingerprint },
+    { role: "runtime", version, extra: { provider: nProvider }, approvalChannel: { kind: "client-elicitation", ask: async () => ({ answer: "approve" }) } },
   );
   if (nEnv.ok !== false) fail(`N: MCP envelope ok=${nEnv.ok} ${JSON.stringify(nEnv)}`);
   if (nEnv.data?.ok !== false) fail(`N: data.ok not false ${JSON.stringify(nEnv)}`);

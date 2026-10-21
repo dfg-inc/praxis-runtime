@@ -590,7 +590,6 @@ void applyMergeRequest;
     env: {
       ...hostedCleanEnv(extracted.dest),
       PRAXIS_SKIP_DOTENV: "1",
-      PRAXIS_APPROVAL_STRICT: "1",
       GIT_TERMINAL_PROMPT: "0",
       GIT_SSH_COMMAND: "false",
     },
@@ -620,7 +619,7 @@ void applyMergeRequest;
     );
     if (!preview?.ok || !preview.data?.previewFingerprint) fail("MCPB connect preview");
     const approved = preview.data.previewFingerprint;
-    // Strict approval and a client with no approval dialog: confirmation=YES must not write anything.
+    // A client with no approval dialog: confirmation=YES must not write anything.
     const applied = parseDoctorEnvelope(
       await session.client.callTool({
         name: "praxis_developer_git_connect_apply",
@@ -635,7 +634,7 @@ void applyMergeRequest;
       }),
     );
     if (applied?.ok !== false || !/^APPROVAL_/.test(applied.code ?? "")) {
-      fail(`MCPB connect apply was not refused under strict approval: ${JSON.stringify(applied)}`);
+      fail(`MCPB connect apply was not refused without a dialog: ${JSON.stringify(applied)}`);
     }
     const origin = spawnSync("git", ["remote", "get-url", "origin"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
     if (origin !== "https://github.com/hisagedru/praxis-acceptance-test") {
@@ -643,7 +642,7 @@ void applyMergeRequest;
     }
     const branches = spawnSync("git", ["branch", "-r"], { cwd: fixture, encoding: "utf8" }).stdout.trim();
     if (branches) fail("MCPB connect pushed unexpectedly");
-    proven.push(`extracted MCPB refuses a connect without a client dialog under strict approval (${applied.code}); origin unchanged`);
+    proven.push(`extracted MCPB refuses a connect without a client dialog without a dialog (${applied.code}); origin unchanged`);
     proven.push("approving through the client dialog: covered by accept:git-delivery-e2e (baseline publish) and accept:approval-ux");
     proven.push("no unintended push");
     proven.push("no unintended baseline publication");

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
 import {
+  ApprovalError,
   approvalsGivenInThisCall,
   logDecision,
   subjectDigest,
@@ -99,24 +100,13 @@ const PROTECTED_TOOLS = new Set([
 
 export const isProtectedTool = (name: string): boolean => PROTECTED_TOOLS.has(name);
 
-/**
- * Says in the result how the user's approval was obtained, so nobody has to guess: client-ui (asked in the client's own
- * dialog; the agent cannot write that answer) or unverified (the agent relayed confirmation=YES; Praxis cannot tell
- * whether a person was asked).
- */
-function withApprovalNote(name: string, data: unknown): { data: unknown; warnings?: string[] } {
+/** Says in the result how the user's approval was obtained: always in the client's own dialog (the agent cannot write that answer). */
+function withApprovalNote(name: string, data: unknown): { data: unknown } {
   if (!PROTECTED_TOOLS.has(name)) return { data };
   const given = approvalsGivenInThisCall();
   if (given.length === 0) return { data };
   const approval = given.map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
-  const unverified = given.filter((item) => item.assurance === "unverified");
-  const enriched = data && typeof data === "object" && !Array.isArray(data) ? { ...(data as object), approval } : { result: data, approval };
-  return {
-    data: enriched,
-    ...(unverified.length
-      ? { warnings: [`approval unverified: ${name} ran on the agent's confirmation=YES; this client cannot show an approval dialog, so Praxis cannot verify that a person was asked`] }
-      : {}),
-  };
+  return { data: data && typeof data === "object" && !Array.isArray(data) ? { ...(data as object), approval } : { result: data, approval } };
 }
 
 function preflight(name: string, args: Record<string, unknown>, ctx: OpContext, version: string): McpEnvelope | undefined {
@@ -128,8 +118,7 @@ function preflight(name: string, args: Record<string, unknown>, ctx: OpContext, 
       summary: `${name} declined`,
       subjectDigest: subjectDigest(JSON.stringify({ name, previewFingerprint: str(args.previewFingerprint) ?? "" })),
       decision: "rejected",
-      channel: "confirmation-flag",
-      assurance: "unverified",
+      channel: "none",
       reason: "the user declined (reported by the agent)",
     });
     return mcpEnvelope({
@@ -159,7 +148,7 @@ export async function callTool(
     role: PraxisRole;
     version: string;
     extra?: Partial<OpContext>;
-    /** How to ask the user in the MCP client's own dialog. Absent when the client cannot (the unverified fallback). */
+    /** How to ask the user in the MCP client's own dialog. Absent when the client cannot: protected actions are then refused with the preview. */
     approvalChannel?: UserApprovalChannel;
   },
 ): Promise<McpEnvelope> {
@@ -281,7 +270,9 @@ async function callToolInner(
             ...(typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {}),
             ...(err.details ? err.details : {}),
           }
-        : {};
+        : err instanceof ApprovalError
+          ? err.details
+          : {};
     return mcpEnvelope({
       ok: false,
       operation: name,

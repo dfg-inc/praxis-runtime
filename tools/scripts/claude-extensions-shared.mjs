@@ -33,13 +33,6 @@ export const JIRA_USER_CONFIG = {
     required: false,
     sensitive: true,
   },
-  approval_strict: {
-    type: "string",
-    title: "Require approval in the client dialog",
-    description:
-      "Optional. Set to 1 to refuse every protected action (Git, Jira, confirming a Story) unless you approved it in the client's own approval dialog. Leave blank otherwise: a client without a dialog then runs a protected action on the agent's confirmation after you said yes in chat, and Praxis records that approval as unverified. Praxis Doctor reports which mode is in force.",
-    required: false,
-  },
   github_token: {
     type: "string",
     title: "GitHub Token",
@@ -73,7 +66,6 @@ export const JIRA_ENV_MAP = {
   PRAXIS_JIRA_EMAIL: "${user_config.jira_email}",
   PRAXIS_JIRA_PROJECT_KEY: "${user_config.jira_project_key}",
   PRAXIS_JIRA_TOKEN: "${user_config.jira_token}",
-  PRAXIS_APPROVAL_STRICT: "${user_config.approval_strict}",
   PRAXIS_GITHUB_TOKEN: "${user_config.github_token}",
   PRAXIS_GITHUB_API_URL: "${user_config.github_api_url}",
   PRAXIS_GITLAB_TOKEN: "${user_config.gitlab_token}",
@@ -90,7 +82,7 @@ export function praxisRuntimeManifest(version) {
     description:
       "Shared Praxis MCP runtime for Claude Desktop. Local workflows need no tracker; Jira, GitHub and GitLab are optional. Role plugins use these tools.",
     long_description:
-      "Praxis Runtime is the single local MCP server for Praxis BA, Architect, Developer, and Quality.\n\nEverything in this extension's settings is optional: local, no-Jira workflows work out of the box. Configure Jira only to sync with a Jira project, and optionally a GitHub token (MVP Git Delivery) or GitLab token. Run Praxis Doctor to see which providers are available and how approvals are obtained. Tokens are marked sensitive and stored in OS secure storage. Role plugins contain Skills only and do not launch duplicate MCP servers.\n\nYou approve what Praxis changes: before a commit, push, merge request, Jira write or Story confirmation runs, Praxis shows you the exact action in the client's own approval dialog and runs it only if you approve. If your client cannot show that dialog, Praxis says so (Praxis Doctor reports the mode) and runs a protected action on the agent's confirmation after you said yes in chat, recording the approval as unverified. Nothing else needs installing: no service, no account, no administrator rights.\n\nCLI and CI continue to use `PRAXIS_JIRA_*` / `PRAXIS_GITHUB_*` / `PRAXIS_GITLAB_*`. Desktop injected env wins over repository `.env` files; approval settings are never read from repository files.",
+      "Praxis Runtime is the single local MCP server for Praxis BA, Architect, Developer, and Quality.\n\nEverything in this extension's settings is optional: local, no-Jira workflows work out of the box. Configure Jira only to sync with a Jira project, and optionally a GitHub token (MVP Git Delivery) or GitLab token. Run Praxis Doctor to see which providers are available and how approvals are obtained. Tokens are marked sensitive and stored in OS secure storage. Role plugins contain Skills only and do not launch duplicate MCP servers.\n\nYou approve what Praxis changes: before a commit, push, merge request, Jira write or Story confirmation runs, Praxis shows you the exact action in the client's own approval dialog and runs it only if you approve. If your client cannot show that dialog, the protected action is NOT executed (Praxis shows the preview and says why; read-only tools keep working): what the agent says you said is never accepted as approval. Nothing else needs installing: no service, no system account, no administrator rights.\n\nCLI and CI continue to use `PRAXIS_JIRA_*` / `PRAXIS_GITHUB_*` / `PRAXIS_GITLAB_*`. Desktop injected env wins over repository `.env` files; approval settings are never read from repository files.",
     author: { name: "dfuture-co" },
     license: "Apache-2.0",
     keywords: ["praxis", "jira", "mcp", "runtime"],

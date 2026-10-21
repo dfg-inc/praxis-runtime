@@ -38,10 +38,6 @@ export function installTestApprovals() {
         },
       });
     },
-    /** A protected MCP tool call needs nothing extra: no channel means the unverified fallback, which confirmation=YES satisfies. */
-    async approvedToolCall(_spec, call) {
-      return call({});
-    },
     close() {
       rmSync(scratch, { recursive: true, force: true });
     },

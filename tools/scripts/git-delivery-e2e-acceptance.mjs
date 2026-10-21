@@ -403,8 +403,7 @@ const consumerBefore = consumerSnapshot();
       PRAXIS_GITHUB_TOKEN: "test-token-not-a-real-pat",
       PRAXIS_GITHUB_API_URL: mock.apiUrl,
       PRAXIS_GIT_PROVIDER: "github",
-      // No approval dialog in this client: strict mode refuses every protected call, so nothing can reach the remote.
-      PRAXIS_APPROVAL_STRICT: "1",
+      // No approval dialog in this client: every protected call is refused, so nothing can reach the remote.
       GIT_TERMINAL_PROMPT: "0",
       GIT_SSH_COMMAND: "false",
     },
@@ -424,7 +423,7 @@ const consumerBefore = consumerSnapshot();
     });
     if (!bp?.ok || bp.data?.targetRemoteBranch !== "main") fail(`MCPB baseline preview ${JSON.stringify(bp)}`);
     if (bp.data?.refspec !== `${fixture.baselineSha}:refs/heads/main`) fail("MCPB refspec");
-    // Strict approval and a client with no approval dialog: every protected call must be refused and nothing may reach the remote.
+    // A client with no approval dialog: every protected call must be refused and nothing may reach the remote.
     // A call is refused either by the approval gate or, when the preview it describes cannot even be built (nothing was
     // pushed, so there is no pull request to describe), by the operation itself. Either way nothing runs.
     const refused = async (name, args, label, alsoRefusedBy = []) => {
@@ -487,7 +486,7 @@ const consumerBefore = consumerSnapshot();
     } finally {
       await dialogSession.close();
     }
-    prove("P. Extracted MCPB: read-only Git tools work, every protected call is refused without a client dialog (strict approval), remote and HEAD unchanged");
+    prove("P. Extracted MCPB: read-only Git tools work, every protected call is refused without a client dialog , remote and HEAD unchanged");
   } finally {
     await session.close();
     mock.close();

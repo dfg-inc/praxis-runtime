@@ -12,7 +12,7 @@ Uninstall first rather than relying on an in-place upgrade.
 
 | Area | Older installed build | This build |
 | --- | --- | --- |
-| Protected writes (Git, Jira, confirming a Story) | Accepted a bare `confirmation=YES`, or demanded a broker | You approve or reject the exact action in the client's approval dialog; `confirmation=YES` alone is the agent's request, and a client without the dialog is reported as an unverified fallback |
+| Protected writes (Git, Jira, confirming a Story) | Accepted a bare `confirmation=YES`, or demanded a broker | You approve or reject the exact action in the client's approval dialog; `confirmation=YES` alone is only the agent's request, and a client without the dialog gets the preview and a refusal (nothing is executed) |
 | Work items per repository | One; a second `open` silently resumes the first | Many; `workItemId`, `select-work-item`, `link-work-item` |
 | Handoffs | Drop `risks`/notes, lose context after one hop | Context carried to every later handoff |
 | Blank optional settings | Passed through as the text `${user_config.…}` | Treated as unset |
@@ -21,12 +21,11 @@ Uninstall first rather than relying on an in-place upgrade.
 
 Approvals are yours, in the client: before a commit, push, merge request, Jira write or Story confirmation runs,
 Praxis shows you the exact action in the client's own approval dialog (MCP elicitation) and runs it only if you
-approve. If your client cannot show that dialog, `praxis_doctor` says so (`approval.mode: unverified-fallback`) and a
-protected action runs on the agent's `confirmation=YES` after you said yes in chat, recorded as **unverified**. The
-optional setting *Require approval in the client dialog* (`PRAXIS_APPROVAL_STRICT=1`) refuses that fallback. Nothing
-else needs installing: no service, no system account, no administrator rights. See
-`praxis-core/docs/user-approval.md`. If you ever started installing the removed native Approval Service, see
-`praxis-core/docs/cleanup-native-approval-service.md`.
+approve. If your client cannot show that dialog, `praxis_doctor` says so (`approval.mode: no-dialog`) and the
+protected action is **not executed**: Praxis returns the preview and a clear message, and nothing the agent says
+counts as your approval. Read-only tools keep working. Nothing else needs installing: no service, no system account, no
+administrator rights. See `praxis-core/docs/user-approval.md`. If you ever started installing the removed native
+Approval Service, see `praxis-core/docs/cleanup-native-approval-service.md`.
 
 ## 1. Verify the artifact
 
@@ -77,7 +76,7 @@ In a new chat run **praxis_doctor** for a repository and confirm:
 
 - `providers.jira.state` is `unconfigured` (or your real state), never `configured` for blank settings;
 - `hostPlaceholdersIgnored` lists the settings you left blank;
-- `approval.mode` is `client-ui` when your client can show the approval dialog, otherwise `unverified-fallback` (and `approval.strict` shows whether you required the dialog);
+- `approval.mode` is `client-ui` when your client can show the approval dialog, otherwise `no-dialog` (protected actions are then refused);
 - `nextSteps` names concrete actions, if any.
 
 Then call **praxis_workflow_status** and confirm the result contains `workItems`. If it does not, the
@@ -117,7 +116,7 @@ Mismatching `bundleSha256` means an older extension is still loaded: fully quit 
 
 ## Approvals
 
-The only approval setting is *Require approval in the client dialog* (optional). With a client that supports elicitation, `praxis_doctor` → `approval.mode` is `client-ui` and every protected action is approved or rejected by you in the dialog; the result of the call says how (`data.approval`). With a client that does not, the mode is `unverified-fallback`: say yes in chat, and the result carries a warning that Praxis could not verify a person was asked. Every decision is logged in `.praxis/approvals/decisions.jsonl` of the repository. `npm run accept:approval-ux` drives the packaged extension with an MCP client that plays a host with a dialog; it cannot show how Claude Desktop itself renders the dialog.
+There is no approval setting. With a client that supports elicitation, `praxis_doctor` → `approval.mode` is `client-ui` and every protected action is approved or rejected by you in the dialog; the result of the call says so (`data.approval`). With a client that does not, the mode is `no-dialog`: protected actions return `APPROVAL_CLIENT_UI_REQUIRED` with the preview and are not executed. Decisions are journaled outside the repository (`~/.praxis/decisions/`; the path is in `approval.decisionLog`). `npm run accept:approval-ux` drives the packaged extension with an MCP client that plays a host with a dialog and one without; it cannot show how Claude Desktop itself renders the dialog (see the Desktop Chat check in `desktop-install/INSTALL.md`).
 
 ## This build: 51 tools, inspection, role initialisation
 

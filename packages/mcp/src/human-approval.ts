@@ -33,7 +33,7 @@ export function humanApprovalView(state: WorkflowState | null, command: Workflow
     risks: request.risks,
     contentDigest: subjectDigest(request.content),
     explanation:
-      "Applying this asks the user to approve or reject exactly this, in the client's own dialog. A client without a dialog cannot ask: show the user this text, and apply with confirmation=YES only after they said yes (recorded as unverified). Reject or dismiss stops it; nothing is recorded.",
+      "Applying this asks the user to approve or reject exactly this, in the client's own dialog. A client without a dialog cannot ask: the act is then NOT executed (the agent's or the user's words in chat are not accepted as approval). Reject or dismiss stops it; nothing is recorded.",
   };
 }
 

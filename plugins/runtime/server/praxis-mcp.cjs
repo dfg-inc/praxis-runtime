@@ -4206,9 +4206,6 @@ var init_human_acts = __esm({
 });
 
 // node_modules/@praxis/contracts/dist/user-approval.js
-function strict() {
-  return process.env.PRAXIS_APPROVAL_STRICT?.trim() === "1";
-}
 function createUserApproval(input2) {
   if (input2.channel === "test" && process.env.PRAXIS_TEST_APPROVALS !== "1") {
     throw new ApprovalError("APPROVAL_REQUIRED", "a test approval is only accepted under the test harness");
@@ -4222,7 +4219,7 @@ function createUserApproval(input2) {
     subjectDigest: subjectDigest(input2.request.subject),
     decision: "approved",
     channel: input2.channel,
-    assurance: input2.channel === "client-elicitation" || input2.channel === "test" ? "client-ui" : "unverified",
+    assurance: "client-ui",
     decidedAt: (input2.now ?? /* @__PURE__ */ new Date()).toISOString(),
     ...input2.reason ? { reason: input2.reason } : {}
   });
@@ -4239,32 +4236,35 @@ function approvalsGivenInThisCall() {
   return channelStore.getStore()?.approvals ?? [];
 }
 function approvalModeReport() {
-  const channel = currentApprovalChannel();
-  const isStrict = strict();
-  if (channel) {
-    return { mode: "client-ui", strict: isStrict, note: "Approvals are asked in the MCP client's own dialog; the answer cannot be written by the agent." };
+  if (currentApprovalChannel()) {
+    return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
   }
   return {
-    mode: "unverified-fallback",
-    strict: isStrict,
-    note: isStrict ? "This client cannot ask for approval (no elicitation support) and PRAXIS_APPROVAL_STRICT=1 refuses unverified approvals, so protected actions will be refused." : "This client cannot ask for approval (no elicitation support). Protected actions run on the agent's confirmation=YES after you said yes in chat; Praxis cannot verify that a person was asked and records the approval as unverified."
+    mode: "no-dialog",
+    note: "This client cannot show an approval dialog (no MCP elicitation support). Read-only tools and previews work; protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed, because nothing the agent says can stand in for the user's approval. Use a client that supports elicitation."
   };
+}
+function decisionLogPath(repo) {
+  const root = (0, import_node_path.resolve)(repo);
+  const home = process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path.join)((0, import_node_os.homedir)(), ".praxis");
+  const id = (0, import_node_crypto.createHash)("sha256").update(root).digest("hex").slice(0, 16);
+  return (0, import_node_path.join)(home, "decisions", `${id}.jsonl`);
 }
 function logDecision(repo, entry) {
   if (!repo)
     return;
   try {
-    const dir = (0, import_node_path.join)((0, import_node_path.resolve)(repo), ".praxis", "approvals");
-    (0, import_node_fs.mkdirSync)(dir, { recursive: true });
-    (0, import_node_fs.appendFileSync)((0, import_node_path.join)(dir, "decisions.jsonl"), `${JSON.stringify(entry)}
-`);
+    const path = decisionLogPath(repo);
+    (0, import_node_fs.mkdirSync)((0, import_node_path.dirname)(path), { recursive: true, mode: 448 });
+    (0, import_node_fs.appendFileSync)(path, `${JSON.stringify({ ...entry, repository: (0, import_node_path.resolve)(repo) })}
+`, { mode: 384 });
   } catch {
   }
 }
 async function obtainUserApproval(request, options2 = {}) {
   const base = { at: (/* @__PURE__ */ new Date()).toISOString(), action: request.action, summary: request.summary, subjectDigest: subjectDigest(request.subject) };
   if (options2.confirmation === "NO") {
-    logDecision(options2.repo, { ...base, decision: "rejected", channel: "confirmation-flag", assurance: "unverified", reason: "the person declined (reported by the agent)" });
+    logDecision(options2.repo, { ...base, decision: "rejected", channel: "none", reason: "the user declined (reported by the agent)" });
     throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected. Nothing was changed.`, { rejected: true });
   }
   const channel = currentApprovalChannel();
@@ -4273,32 +4273,26 @@ async function obtainUserApproval(request, options2 = {}) {
     try {
       answer = await channel.ask(request);
     } catch (error64) {
-      logDecision(options2.repo, { ...base, decision: "refused", channel: "client-elicitation", assurance: "client-ui", reason: error64 instanceof Error ? error64.message : String(error64) });
-      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error64 instanceof Error ? error64.message : String(error64)}. Nothing was changed.`);
+      logDecision(options2.repo, { ...base, decision: "refused", channel: channel.kind, reason: error64 instanceof Error ? error64.message : String(error64) });
+      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error64 instanceof Error ? error64.message : String(error64)}. Nothing was changed.`, previewDetails(request));
     }
   }
-  if (answer && answer.answer !== "unavailable") {
+  if (channel && answer && answer.answer !== "unavailable") {
     if (answer.answer === "approve") {
-      const approval2 = createUserApproval({ request, channel: "client-elicitation", reason: answer.reason });
-      channelStore.getStore()?.approvals.push(approval2);
-      logDecision(options2.repo, { ...base, decision: "approved", channel: "client-elicitation", assurance: "client-ui", ...answer.reason ? { reason: answer.reason } : {} });
-      return approval2;
+      const approval = createUserApproval({ request, channel: channel.kind });
+      channelStore.getStore()?.approvals.push(approval);
+      logDecision(options2.repo, { ...base, decision: "approved", channel: channel.kind, ...answer.reason ? { reason: answer.reason } : {} });
+      return approval;
     }
     const dismissed = answer.answer === "dismiss";
-    logDecision(options2.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", channel: "client-elicitation", assurance: "client-ui", ...answer.reason ? { reason: answer.reason } : {} });
+    logDecision(options2.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", channel: channel.kind, ...answer.reason ? { reason: answer.reason } : {} });
     throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was ${dismissed ? "dismissed" : "rejected"} by the user. Nothing was changed.`, { rejected: !dismissed, dismissed });
   }
-  if (strict()) {
-    logDecision(options2.repo, { ...base, decision: "refused", channel: "none", assurance: "none", reason: "strict mode, no client approval dialog" });
-    throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} needs approval in the client's own dialog, and this client cannot ask (PRAXIS_APPROVAL_STRICT=1). Nothing was changed.`);
-  }
-  if (options2.confirmation !== "YES") {
-    throw new ApprovalError("APPROVAL_REQUIRED", `${request.summary} needs the user's approval. Show the preview, ask the user, then apply with confirmation=YES. Nothing was changed.`);
-  }
-  const approval = createUserApproval({ request, channel: "confirmation-flag" });
-  channelStore.getStore()?.approvals.push(approval);
-  logDecision(options2.repo, { ...base, decision: "approved", channel: "confirmation-flag", assurance: "unverified", reason: "agent-relayed confirmation=YES; Praxis cannot verify that a person was asked" });
-  return approval;
+  logDecision(options2.repo, { ...base, decision: "refused", channel: "none", reason: "no approval dialog in this client" });
+  throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. It needs the user's approval in the client's own dialog, and this client cannot show one (no MCP elicitation support). Show the user the preview below and tell them it can only be applied from a client that supports approval dialogs; the agent's or the user's text in chat is not accepted as approval. Read-only tools still work.`, previewDetails(request));
+}
+function previewDetails(request) {
+  return { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, ...request.risks?.length ? { risks: request.risks } : {} } };
 }
 function verifyUserApproval(approval, expected) {
   if (!approval || typeof approval !== "object" || !issued.has(approval)) {
@@ -4315,9 +4309,6 @@ function verifyUserApproval(approval, expected) {
   const age = (expected.now ?? /* @__PURE__ */ new Date()).getTime() - Date.parse(approval.decidedAt);
   if (!Number.isFinite(age) || age > USER_APPROVAL_TTL_MS || age < -6e4) {
     throw new ApprovalError("APPROVAL_EXPIRED", "the user's approval is too old; ask again");
-  }
-  if (strict() && approval.assurance !== "client-ui") {
-    throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", "strict mode accepts only approvals given in the client's own dialog");
   }
   return approval;
 }
@@ -4338,12 +4329,13 @@ function runApprovedMutation(approval, write) {
   }
   return lease.run({ action: approval.action, approval }, write);
 }
-var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, ApprovalError, channelStore, lease;
+var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, ApprovalError, channelStore, lease;
 var init_user_approval = __esm({
   "node_modules/@praxis/contracts/dist/user-approval.js"() {
     import_node_async_hooks = require("node:async_hooks");
     import_node_crypto = require("node:crypto");
     import_node_fs = require("node:fs");
+    import_node_os = require("node:os");
     import_node_path = require("node:path");
     USER_APPROVAL_CONTRACT = "praxis.approval.user";
     USER_APPROVAL_VERSION = 1;
@@ -11065,7 +11057,7 @@ var require_resolve_block_scalar = __commonJS({
       const end = start + header.length + scalar.source.length;
       return { value, type, comment: header.comment, range: [start, end, end] };
     }
-    function parseBlockScalarHeader({ offset, props }, strict2, onError) {
+    function parseBlockScalarHeader({ offset, props }, strict, onError) {
       if (props[0].type !== "block-scalar-header") {
         onError(props[0], "IMPOSSIBLE", "Block scalar header not found");
         return null;
@@ -11101,7 +11093,7 @@ var require_resolve_block_scalar = __commonJS({
             length += token.source.length;
             break;
           case "comment":
-            if (strict2 && !hasSpace) {
+            if (strict && !hasSpace) {
               const message = "Comments must be separated from other tokens by white space characters";
               onError(token, "MISSING_CHAR", message);
             }
@@ -11143,7 +11135,7 @@ var require_resolve_flow_scalar = __commonJS({
     "use strict";
     var Scalar = require_Scalar();
     var resolveEnd = require_resolve_end();
-    function resolveFlowScalar(scalar, strict2, onError) {
+    function resolveFlowScalar(scalar, strict, onError) {
       const { offset, type, source, end } = scalar;
       let _type;
       let value;
@@ -11171,7 +11163,7 @@ var require_resolve_flow_scalar = __commonJS({
           };
       }
       const valueEnd = offset + source.length;
-      const re = resolveEnd.resolveEnd(end, valueEnd, strict2, onError);
+      const re = resolveEnd.resolveEnd(end, valueEnd, strict, onError);
       return {
         value,
         type: _type,
@@ -11832,7 +11824,7 @@ var require_cst_scalar = __commonJS({
     var resolveFlowScalar = require_resolve_flow_scalar();
     var errors = require_errors2();
     var stringifyString = require_stringifyString();
-    function resolveAsScalar(token, strict2 = true, onError) {
+    function resolveAsScalar(token, strict = true, onError) {
       if (token) {
         const _onError = (pos, code, message) => {
           const offset = typeof pos === "number" ? pos : Array.isArray(pos) ? pos[0] : pos.offset;
@@ -11845,9 +11837,9 @@ var require_cst_scalar = __commonJS({
           case "scalar":
           case "single-quoted-scalar":
           case "double-quoted-scalar":
-            return resolveFlowScalar.resolveFlowScalar(token, strict2, _onError);
+            return resolveFlowScalar.resolveFlowScalar(token, strict, _onError);
           case "block-scalar":
-            return resolveBlockScalar.resolveBlockScalar({ options: { strict: strict2 } }, token, _onError);
+            return resolveBlockScalar.resolveBlockScalar({ options: { strict } }, token, _onError);
         }
       }
       return null;
@@ -18554,9 +18546,9 @@ function providerDiagnostics(env, githubApiUrl) {
   };
   return { jira, github, gitlab };
 }
-function approvalDiagnostics(env) {
+function approvalDiagnostics(_env, repo) {
   const report = approvalModeReport();
-  return { mode: report.mode, strict: (env.PRAXIS_APPROVAL_STRICT ?? "").trim() === "1" || report.strict, note: report.note, decisionLog: ".praxis/approvals/decisions.jsonl" };
+  return { mode: report.mode, note: report.note, decisionLog: repo ? decisionLogPath(repo) : "~/.praxis/decisions/<repository id>.jsonl" };
 }
 function doctorNextSteps(input2) {
   const steps = [];
@@ -18592,8 +18584,8 @@ function doctorNextSteps(input2) {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
   }
-  if (input2.approval.mode === "unverified-fallback") {
-    steps.push(input2.approval.strict ? "This MCP client cannot show an approval dialog and PRAXIS_APPROVAL_STRICT=1 refuses unverified approvals: protected actions (Git, Jira, confirming a Story) will be refused. Use a client that supports elicitation, or unset PRAXIS_APPROVAL_STRICT." : "This MCP client cannot show an approval dialog, so protected actions run on the agent's confirmation=YES after you say yes in chat. Praxis cannot verify that a person was asked; each approval is recorded as unverified in .praxis/approvals/decisions.jsonl. Set PRAXIS_APPROVAL_STRICT=1 to refuse such approvals.");
+  if (input2.approval.mode === "no-dialog") {
+    steps.push("This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them.");
   }
   if (input2.dotenvRejected?.length) {
     steps.push(`A repository .env file tried to set ${input2.dotenvRejected.join(", ")}. Approval settings are only read from the real environment, so they were ignored. Remove them from the file.`);
@@ -22435,7 +22427,7 @@ async function doctorOp(ctx, version4) {
     valid: github.apiUrlValid !== false,
     issue: github.apiUrlIssue
   });
-  const approval = approvalDiagnostics(process.env);
+  const approval = approvalDiagnostics(process.env, git2 ?? resolved);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? git2 ? "ok" : "no-git" : "unavailable",
@@ -54959,7 +54951,7 @@ var wpProp = {
 var confirmProp = {
   type: "string",
   enum: ["YES", "NO"],
-  description: "YES applies what was previewed. The user then approves it in the client's own dialog; a client without a dialog cannot ask, so ask the user in chat first and pass YES only after they said yes (recorded as unverified). NO means the user rejected it: it is recorded and nothing runs."
+  description: "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user in the client's own approval dialog, and runs the action only if they approve. A client without a dialog gets the preview and a refusal (APPROVAL_CLIENT_UI_REQUIRED, nothing executed). NO means the user rejected it: it is recorded and nothing runs."
 };
 var fingerprintProp = {
   type: "string",
@@ -55743,7 +55735,7 @@ for (const tool of TOOLS) {
     type: "string",
     description: "External instance (Jira base URL). Defaults to the configured one."
   };
-  tool.description += " The user approves this exact action before it runs: in the client's own dialog when the client has one; otherwise ask the user in chat and pass confirmation=YES only after they said yes. A rejection runs nothing.";
+  tool.description += " The user approves this exact action in the client's own approval dialog before it runs; without a dialog it is not executed, and a rejection runs nothing.";
 }
 function toolsForRole(role) {
   if (role === "runtime")
@@ -75546,7 +75538,7 @@ var import_node_fs2 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"cf9f152a3b2e83026d27871b66e3852fe6bff68a1c3bbde456896dc4a9228c22","coreBaseline":"fddfd71be1222280d8467376703946bf46c9a6a0","inputs":24}';
+    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"8797d36bc79c5beca69986e11d76a8ee82b86afc6f0c660fa982085346f8af6a","coreBaseline":"a0b2763a8756878dd63c6119c745f7e46776b45b","inputs":24}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -76029,7 +76021,7 @@ function humanApprovalView(state2, command) {
     description: request.description,
     risks: request.risks,
     contentDigest: subjectDigest(request.content),
-    explanation: "Applying this asks the user to approve or reject exactly this, in the client's own dialog. A client without a dialog cannot ask: show the user this text, and apply with confirmation=YES only after they said yes (recorded as unverified). Reject or dismiss stops it; nothing is recorded."
+    explanation: "Applying this asks the user to approve or reject exactly this, in the client's own dialog. A client without a dialog cannot ask: the act is then NOT executed (the agent's or the user's words in chat are not accepted as approval). Reject or dismiss stops it; nothing is recorded."
   };
 }
 async function requireUserApproval(repo, state2, command, confirmation) {
@@ -77509,12 +77501,7 @@ function withApprovalNote(name, data) {
   if (given.length === 0)
     return { data };
   const approval = given.map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
-  const unverified = given.filter((item) => item.assurance === "unverified");
-  const enriched = data && typeof data === "object" && !Array.isArray(data) ? { ...data, approval } : { result: data, approval };
-  return {
-    data: enriched,
-    ...unverified.length ? { warnings: [`approval unverified: ${name} ran on the agent's confirmation=YES; this client cannot show an approval dialog, so Praxis cannot verify that a person was asked`] } : {}
-  };
+  return { data: data && typeof data === "object" && !Array.isArray(data) ? { ...data, approval } : { result: data, approval } };
 }
 function preflight(name, args, ctx, version4) {
   if (!PROTECTED_TOOLS.has(name))
@@ -77526,8 +77513,7 @@ function preflight(name, args, ctx, version4) {
       summary: `${name} declined`,
       subjectDigest: subjectDigest(JSON.stringify({ name, previewFingerprint: str2(args.previewFingerprint) ?? "" })),
       decision: "rejected",
-      channel: "confirmation-flag",
-      assurance: "unverified",
+      channel: "none",
       reason: "the user declined (reported by the agent)"
     });
     return mcpEnvelope({
@@ -77628,7 +77614,7 @@ async function callToolInner(name, rawArgs, opts) {
       ...err.stage ? { stage: err.stage } : {},
       ...typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {},
       ...err.details ? err.details : {}
-    } : {};
+    } : err instanceof ApprovalError ? err.details : {};
     return mcpEnvelope({
       ok: false,
       operation: name,

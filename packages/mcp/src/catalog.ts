@@ -28,7 +28,7 @@ const confirmProp = {
   type: "string",
   enum: ["YES", "NO"],
   description:
-    "YES applies what was previewed. The user then approves it in the client's own dialog; a client without a dialog cannot ask, so ask the user in chat first and pass YES only after they said yes (recorded as unverified). NO means the user rejected it: it is recorded and nothing runs.",
+    "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user in the client's own approval dialog, and runs the action only if they approve. A client without a dialog gets the preview and a refusal (APPROVAL_CLIENT_UI_REQUIRED, nothing executed). NO means the user rejected it: it is recorded and nothing runs.",
 };
 const fingerprintProp = {
   type: "string",
@@ -855,7 +855,7 @@ for (const tool of TOOLS) {
     description: "External instance (Jira base URL). Defaults to the configured one.",
   };
   tool.description +=
-    " The user approves this exact action before it runs: in the client's own dialog when the client has one; otherwise ask the user in chat and pass confirmation=YES only after they said yes. A rejection runs nothing.";
+    " The user approves this exact action in the client's own approval dialog before it runs; without a dialog it is not executed, and a rejection runs nothing.";
 }
 
 export function toolsForRole(role: PraxisRole): ToolDef[] {

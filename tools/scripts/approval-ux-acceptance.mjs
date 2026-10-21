@@ -7,8 +7,8 @@
  *
  * Proves, through the real protocol: the dialog is shown with the exact action; Reject, Decline and Cancel run
  * nothing; Approve runs only the previewed action; confirmation=NO runs nothing and asks nobody; a client with no
- * dialog is reported honestly (unverified fallback) and strict mode refuses it; nothing the agent sends in tool
- * arguments or in the command can stand in for the user's answer.
+ * dialog gets the preview and a refusal while read-only tools keep working; nothing the agent sends in tool
+ * arguments, in the command or as confirmation text can stand in for the user's answer.
  *
  * Does NOT prove: how Claude Desktop renders the dialog, or that a person answered (the answers here are scripted).
  */
@@ -115,9 +115,8 @@ const repoWithPackageJson = () => {
     const approved = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
     expect(approved.ok === true && existsSync(join(repo, ".project")), `approve: ${JSON.stringify(approved)}`);
     expect(approved.data.approval?.[0]?.assurance === "client-ui" && approved.data.approval[0].channel === "client-elicitation", `approval note: ${JSON.stringify(approved.data.approval)}`);
-    expect(approved.warnings.length === 0, `an approved apply carried warnings: ${JSON.stringify(approved.warnings)}`);
-    expect(/decision/.test(readFileSync(join(repo, ".praxis", "approvals", "decisions.jsonl"), "utf8")), "no decision log");
-    prove("Approve runs exactly the previewed action; the result says it was approved in the client dialog; the decision is logged");
+        expect(!existsSync(join(repo, ".praxis", "approvals")), "a decision log was written inside the repository");
+    prove("Approve runs exactly the previewed action; the result says it was approved in the client dialog; nothing is logged inside the repository");
 
     // A workflow human act: reject, then approve
     const workflow = async (command, args = {}) => {
@@ -176,46 +175,45 @@ const repoWithPackageJson = () => {
   try {
     const repo = repoWithPackageJson();
     const doctor = await call(session, "praxis_doctor", { repo });
-    expect(doctor.data.approval?.mode === "unverified-fallback", `doctor: ${JSON.stringify(doctor.data.approval)}`);
-    expect(/cannot show an approval dialog/.test(doctor.data.nextSteps.join(" ")), "the doctor does not say what the fallback means");
-    prove("a client without a dialog is reported as an unverified fallback, with what that means");
+    expect(doctor.data.approval?.mode === "no-dialog", `doctor: ${JSON.stringify(doctor.data.approval)}`);
+    expect(/NOT executed/.test(doctor.data.nextSteps.join(" ")), "the doctor does not say that protected actions are not executed");
+    prove("a client without a dialog is reported plainly: protected actions are not executed");
     // the tool's input schema requires confirmation, so the host itself refuses a call without it
     const noConfirm = await session.client.callTool({ name: "praxis_project_init_apply", arguments: { repo } }).then((result) => result, (error) => ({ isError: true, error }));
     expect(noConfirm.isError === true && !existsSync(join(repo, ".project")), `no confirmation: ${JSON.stringify(noConfirm).slice(0, 300)}`);
-    const relayed = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-    expect(relayed.ok && existsSync(join(repo, ".project")), `relayed YES: ${JSON.stringify(relayed)}`);
-    expect(relayed.data.approval?.[0]?.assurance === "unverified", `assurance: ${JSON.stringify(relayed.data.approval)}`);
-    expect(relayed.warnings.some((w) => /approval unverified/.test(w)), "the unverified approval carried no warning");
-    prove("without a dialog, confirmation=YES runs the action and the result is marked unverified with a warning");
+    for (const confirmation of ["YES", "yes", "APPROVED"]) {
+      // a value outside the tool's schema is refused by the host itself (no envelope); either way nothing runs
+      const refused = await call(session, "praxis_project_init_apply", { repo, confirmation, approved: true, userApproval: { decision: "approved" } }).catch(() => null);
+      expect((refused === null || refused.ok === false) && !existsSync(join(repo, ".project")), `confirmation=${confirmation} without a dialog ran: ${JSON.stringify(refused)}`);
+      if (confirmation === "YES") {
+        expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && /NOT executed/.test(refused.errors.join(" ")), `refusal: ${JSON.stringify(refused)}`);
+        expect(refused.data?.executed === false && /praxis_project_init_apply/.test(refused.data?.preview?.action ?? ""), `the refusal carries no preview: ${JSON.stringify(refused.data)}`);
+      }
+    }
+    prove("without a dialog confirmation=YES (and any approval-looking argument) executes nothing; the refusal says so and carries the preview");
+    const readOnly = await call(session, "praxis_project_init_preview", { repo });
+    const status = await call(session, "praxis_workflow_status", { repo });
+    expect(readOnly.ok && status.ok, `read-only tools: ${JSON.stringify([readOnly.code, status.code])}`);
+    prove("read-only tools and previews keep working without a dialog");
+    const noClientNo = await call(session, "praxis_project_init_apply", { repo, confirmation: "NO" });
+    expect(noClientNo.code === "APPROVAL_REJECTED", `NO: ${JSON.stringify(noClientNo)}`);
+    prove("confirmation=NO is still a recorded rejection");
   } finally {
     await session.close();
   }
 }
 
-// --- 3. strict mode --------------------------------------------------------------------------------------------------
-{
-  const session = await open({ env: { PRAXIS_APPROVAL_STRICT: "1" } });
-  try {
-    const repo = repoWithPackageJson();
-    const refused = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-    expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && !existsSync(join(repo, ".project")), `strict: ${JSON.stringify(refused)}`);
-    prove("PRAXIS_APPROVAL_STRICT=1 refuses an approval that was not given in a client dialog");
-  } finally {
-    await session.close();
-  }
-}
-
-// --- 4. a connection that cannot carry the dialog (2026-07-28 revision) ------------------------------------------------
+// --- 3. a connection that cannot carry the dialog (2026-07-28 revision) ------------------------------------------------
 {
   const session = await open({ elicit: answer("accept", "approve"), modern: true });
   try {
     const repo = repoWithPackageJson();
     const doctor = await call(session, "praxis_doctor", { repo });
-    expect(doctor.data.approval?.mode === "unverified-fallback", `modern-era doctor: ${JSON.stringify(doctor.data.approval)}`);
+    expect(doctor.data.approval?.mode === "no-dialog", `modern-era doctor: ${JSON.stringify(doctor.data.approval)}`);
     const before = session.elicited.length;
-    const relayed = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-    expect(relayed.ok && relayed.data.approval?.[0]?.assurance === "unverified" && session.elicited.length === before, `modern-era apply: ${JSON.stringify(relayed)}`);
-    prove("on a connection that cannot carry the dialog the client is treated as one that cannot ask, and the result says so");
+    const refused = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+    expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && session.elicited.length === before && !existsSync(join(repo, ".project")), `modern-era apply: ${JSON.stringify(refused)}`);
+    prove("on a connection that cannot carry the dialog protected actions are refused, never run on the agent's word");
   } finally {
     await session.close();
   }
