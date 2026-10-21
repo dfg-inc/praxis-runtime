@@ -123,7 +123,7 @@ const post = async (path, body) => {
 };
 {
   const enroll = spawnSync(process.execPath, [serviceCli, "enroll-code", "--config", configFile], { encoding: "utf8" });
-  const code = /: ([a-f0-9]{16})\n/.exec(enroll.stdout)?.[1];
+  const code = /: ([a-f0-9]{20})\n/.exec(enroll.stdout)?.[1];
   expect(code, `enrollment code: ${enroll.stdout}${enroll.stderr}`);
   const c = await post("/api/enroll/challenge", { secret: code, label: "acceptance" });
   const reg = device.register({ challenge: c.json.publicKey.challenge });
@@ -214,11 +214,11 @@ try {
   // 3. replay: the same request again changes nothing
   const afterCommit = snapshot();
   const replay = await call("praxis_developer_git_commit", commitArgs);
-  // The service replays a completed request idempotently (core tests 10, 15). Through the Runtime the same call arrives with
-  // a preview fingerprint of a repository that has since moved on, so it is refused as stale: it can never run twice.
-  expect(replay.ok === false && /GIT_PREVIEW_STALE/.test(replay.code ?? ""), `replay ${JSON.stringify(replay).slice(0, 300)}`);
+  // The same logical operation asked again after it completed returns what the service recorded: HEAD has moved, nothing runs twice.
+  expect(replay.ok === true && replay.data?.replayed === true && replay.data?.executedBy === "approval-service", `replay ${JSON.stringify(replay).slice(0, 400)}`);
   expect(snapshot() === afterCommit, "replaying a completed commit changed something");
-  ok("3. replay of the completed commit: refused as stale (HEAD moved), nothing changed, no second commit");
+  expect(replay.data.serviceResult?.commit === git(fixture.repo, ["rev-parse", "HEAD"]).stdout, "the replay must return the recorded commit");
+  ok("3. replay of the completed commit by execution id: the recorded result, HEAD had moved, nothing changed, no second commit")
 
   // 4. a commit approval does not authorize a push
   const pushPreview = await call("praxis_developer_git_publish_preview", { workPackage: WP, repo: fixture.repo, mode: "branch", provider: "github" });
@@ -239,6 +239,11 @@ try {
   expect(git(bare, ["rev-parse", `refs/heads/${featureBranch}`]).stdout === git(fixture.repo, ["rev-parse", "HEAD"]).stdout, "the remote branch must equal the approved commit");
   const mrPreview = await call("praxis_developer_git_merge_request_preview", { workPackage: WP, repo: fixture.repo, provider: "github" });
   expect(mrPreview.ok, `mr preview ${JSON.stringify(mrPreview).slice(0, 400)}`);
+  // push replay: the same push again returns the recorded result even though the remote and local history have moved on
+  const remoteAfterPush = git(bare, ["for-each-ref", "refs/heads"]).stdout;
+  const pushReplay = await call("praxis_developer_git_publish", pushArgs);
+  expect(pushReplay.ok && pushReplay.data?.replayed === true, `push replay ${JSON.stringify(pushReplay).slice(0, 300)}`);
+  expect(git(bare, ["for-each-ref", "refs/heads"]).stdout === remoteAfterPush, "a push replay changed the remote");
   const mrArgs = { workPackage: WP, repo: fixture.repo, confirmation: "YES", previewFingerprint: mrPreview.data.previewFingerprint, provider: "github" };
   const mrProposal = await call("praxis_developer_git_merge_request", mrArgs);
   codeIs(mrProposal, "APPROVAL_REQUIRED", "merge request proposal");
@@ -246,7 +251,9 @@ try {
   await decide(mrId);
   const mr = await call("praxis_developer_git_merge_request", mrArgs);
   expect(mr.ok && mr.data?.ok !== false && /^fixture:\/\//.test(mr.data?.mergeRequestUrl ?? mr.data?.pullRequestUrl ?? ""), `merge request ${JSON.stringify(mr).slice(0, 500)}`);
-  ok("5. approved push (remote branch = approved commit) and approved merge request through the provider interface, each its own approval");
+  const mrReplay = await call("praxis_developer_git_merge_request", mrArgs);
+  expect(mrReplay.ok && mrReplay.data?.replayed === true, `merge request replay ${JSON.stringify(mrReplay).slice(0, 300)}`);
+  ok("5. approved push (remote branch = approved commit) and approved merge request through the provider interface, each its own approval; replays of the push and the merge request return the recorded results");
 
   // 6. a rejection leaves everything untouched (a second repository with its own work to commit)
   const p2 = await call("praxis_developer_git_preview", { workPackage: WP, repo: second.repo });

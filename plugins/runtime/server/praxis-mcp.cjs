@@ -7404,7 +7404,7 @@ async function assessApprovalService(opts = {}) {
   }
   return { endpoint, reachable: true, isolated: reasons.length === 0, reasons, health };
 }
-var import_node_net, import_node_fs6, import_node_path6, import_node_os, APPROVAL_SERVICE_PROTOCOL, SERVICE_OPERATIONS, MAX_MESSAGE_BYTES, RepoPath, Ref, RelPath, RemoteName, CommitParams, PushParams, MergeRequestParams, Common, SubmitRequestSchema, StatusRequestSchema, ExecuteRequestSchema, HealthRequestSchema, ApprovalServiceError;
+var import_node_net, import_node_fs6, import_node_path6, import_node_os, APPROVAL_SERVICE_PROTOCOL, SERVICE_OPERATIONS, MAX_MESSAGE_BYTES, RepoPath, Ref, RelPath, RemoteName, WorkItem, CommitParams, PushParams, MergeRequestParams, Id, Common, SubmitRequestSchema, StatusRequestSchema, ExecuteRequestSchema, HealthRequestSchema, ApprovalServiceError;
 var init_approval_service = __esm({
   "node_modules/@praxis/contracts/dist/approval-service.js"() {
     import_node_net = require("node:net");
@@ -7418,7 +7418,8 @@ var init_approval_service = __esm({
     RepoPath = external_exports2.string().min(1).max(4096);
     Ref = external_exports2.string().min(1).max(200).regex(/^[A-Za-z0-9._\/-]+$/, "unsupported characters in a ref name").refine((ref) => !ref.startsWith("-") && !ref.startsWith("/") && !ref.endsWith("/") && !ref.endsWith(".lock") && !ref.endsWith(".") && !ref.includes("..") && !ref.includes("//") && !ref.includes("@{"), "not a valid branch name");
     RelPath = external_exports2.string().min(1).max(1024);
-    RemoteName = external_exports2.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/);
+    RemoteName = external_exports2.string().min(1).max(64).regex(/^[A-Za-z0-9._-]+$/).refine((n) => !["__proto__", "constructor", "prototype"].includes(n), "reserved name");
+    WorkItem = external_exports2.string().min(1).max(200).regex(/^[A-Za-z0-9][A-Za-z0-9._:\/-]*$/, "work item ids use letters, digits and . _ : / -");
     CommitParams = external_exports2.object({ message: external_exports2.string().min(1).max(8e3), branch: Ref.optional(), paths: external_exports2.array(RelPath).min(1).max(500).optional() }).strict();
     PushParams = external_exports2.object({ remote: RemoteName, branch: Ref }).strict();
     MergeRequestParams = external_exports2.object({
@@ -7428,17 +7429,24 @@ var init_approval_service = __esm({
       title: external_exports2.string().min(1).max(300),
       body: external_exports2.string().max(8e3).optional()
     }).strict();
+    Id = external_exports2.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/);
     Common = {
       protocol: external_exports2.literal(APPROVAL_SERVICE_PROTOCOL),
+      /**
+       * Chosen by the caller, stable for one logical operation. The service binds it to the first request it was used for:
+       * the same id returns that request's recorded state or result (even after the repository has moved on), and the same
+       * id with different parameters is refused as a changed plan.
+       */
+      executionId: Id.optional(),
       /** Opaque correlation id echoed in the reply; never trusted for anything. */
       id: external_exports2.string().max(64).optional()
     };
     SubmitRequestSchema = external_exports2.discriminatedUnion("operation", [
-      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("git_commit"), repository: RepoPath, workItemId: external_exports2.string().min(1).max(200), params: CommitParams }).strict(),
-      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("git_push"), repository: RepoPath, workItemId: external_exports2.string().min(1).max(200), params: PushParams }).strict(),
-      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("merge_request"), repository: RepoPath, workItemId: external_exports2.string().min(1).max(200), params: MergeRequestParams }).strict()
+      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("git_commit"), repository: RepoPath, workItemId: WorkItem, params: CommitParams }).strict(),
+      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("git_push"), repository: RepoPath, workItemId: WorkItem, params: PushParams }).strict(),
+      external_exports2.object({ ...Common, op: external_exports2.literal("submit"), operation: external_exports2.literal("merge_request"), repository: RepoPath, workItemId: WorkItem, params: MergeRequestParams }).strict()
     ]);
-    StatusRequestSchema = external_exports2.object({ ...Common, op: external_exports2.literal("status"), requestId: external_exports2.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) }).strict();
+    StatusRequestSchema = external_exports2.object({ ...Common, op: external_exports2.literal("status"), requestId: Id.optional() }).strict().refine((r) => Boolean(r.requestId) !== Boolean(r.executionId), "give exactly one of requestId or executionId");
     ExecuteRequestSchema = external_exports2.object({ ...Common, op: external_exports2.literal("execute"), requestId: external_exports2.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/) }).strict();
     HealthRequestSchema = external_exports2.object({ ...Common, op: external_exports2.literal("health") }).strict();
     ApprovalServiceError = class extends Error {
@@ -7500,26 +7508,39 @@ async function run(what, submit, endpoint) {
     refuse(executed, what);
   return executed.result ?? {};
 }
-function approvalServiceDelegate(endpoint) {
+function executionIdFor(parts) {
+  return `ex-${(0, import_node_crypto8.createHash)("sha256").update(JSON.stringify([parts.operation, (0, import_node_path7.resolve)(parts.repository), parts.workItemId, parts.previewFingerprint])).digest("hex").slice(0, 40)}`;
+}
+async function recordedExecution(executionId, endpoint) {
+  try {
+    const reply = await callApprovalService({ op: "status", executionId }, { endpoint, timeoutMs: 5e3 });
+    if (reply.ok && reply.state === "completed")
+      return reply.result ?? {};
+  } catch {
+  }
+  return void 0;
+}
+function approvalServiceDelegate(endpoint, executionId) {
   return {
     async commit(i) {
-      const result = await run("git commit", { op: "submit", operation: "git_commit", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { message: i.message, branch: i.branch, paths: i.paths } }, endpoint);
+      const result = await run("git commit", { op: "submit", operation: "git_commit", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { message: i.message, branch: i.branch, paths: i.paths }, ...executionId ? { executionId } : {} }, endpoint);
       return { commitSha: String(result.commit), treeSha: String(result.tree) };
     },
     async push(i) {
-      const result = await run("git push", { op: "submit", operation: "git_push", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, branch: i.branch } }, endpoint);
+      const result = await run("git push", { op: "submit", operation: "git_push", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, branch: i.branch }, ...executionId ? { executionId } : {} }, endpoint);
       return { pushedSha: String(result.pushed) };
     },
     async mergeRequest(i) {
-      const result = await run("opening the merge request", { op: "submit", operation: "merge_request", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, sourceBranch: i.sourceBranch, targetBranch: i.targetBranch, title: i.title, body: i.body } }, endpoint);
+      const result = await run("opening the merge request", { op: "submit", operation: "merge_request", repository: (0, import_node_path7.resolve)(i.repo), workItemId: i.workItemId, params: { remote: i.remoteName, sourceBranch: i.sourceBranch, targetBranch: i.targetBranch, title: i.title, body: i.body }, ...executionId ? { executionId } : {} }, endpoint);
       return { id: String(result.id), url: String(result.url) };
     }
   };
 }
-var import_node_async_hooks2, import_node_path7, store, gitExecutorDelegate, withGitExecutorDelegate;
+var import_node_async_hooks2, import_node_crypto8, import_node_path7, store, gitExecutorDelegate, withGitExecutorDelegate;
 var init_git_executor_delegate = __esm({
   "node_modules/@praxis/contracts/dist/git-executor-delegate.js"() {
     import_node_async_hooks2 = require("node:async_hooks");
+    import_node_crypto8 = require("node:crypto");
     import_node_path7 = require("node:path");
     init_git_authorization();
     init_approval_service();
@@ -17475,7 +17496,7 @@ var init_artifact_id = __esm({
 
 // node_modules/@praxis/jira/dist/ba-write.js
 function contentFingerprint(spec) {
-  return (0, import_node_crypto10.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto11.createHash)("sha256").update(JSON.stringify({
     summary: spec.summary,
     userStory: spec.userStory,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -17704,10 +17725,10 @@ async function planAndApplyBaStories(opts) {
     flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey)
   };
 }
-var import_node_crypto10;
+var import_node_crypto11;
 var init_ba_write = __esm({
   "node_modules/@praxis/jira/dist/ba-write.js"() {
-    import_node_crypto10 = require("node:crypto");
+    import_node_crypto11 = require("node:crypto");
     init_artifact_id();
     init_managed_scope();
     init_write_journal();
@@ -18137,7 +18158,7 @@ ${paths.qualityHandoffPath}`
   };
 }
 function fingerprint(value) {
-  return `sha256:${(0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 async function previewDeveloperCompleteRecovery(opts) {
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
@@ -18238,10 +18259,10 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto11, import_node_fs18, import_node_path20, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto12, import_node_fs18, import_node_path20, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
-    import_node_crypto11 = require("node:crypto");
+    import_node_crypto12 = require("node:crypto");
     import_node_fs18 = require("node:fs");
     import_node_path20 = require("node:path");
     import_node_child_process3 = require("node:child_process");
@@ -18268,10 +18289,10 @@ var init_developer_complete = __esm({
 
 // node_modules/@praxis/jira/dist/quality-apply.js
 function digest(value) {
-  return (0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
+  return (0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sha256Text(text) {
-  return (0, import_node_crypto12.createHash)("sha256").update(text).digest("hex");
+  return (0, import_node_crypto13.createHash)("sha256").update(text).digest("hex");
 }
 function qualityApplyFingerprint(plan) {
   return `sha256:${digest({
@@ -18945,10 +18966,10 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto12, import_node_fs19, import_node_path21, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto13, import_node_fs19, import_node_path21, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
-    import_node_crypto12 = require("node:crypto");
+    import_node_crypto13 = require("node:crypto");
     import_node_fs19 = require("node:fs");
     import_node_path21 = require("node:path");
     init_mutation_auth();
@@ -19474,7 +19495,7 @@ async function claimWorkPackage(opts) {
       workItemId: opts.wpKey
     }), () => claimWorkPackage(opts));
   }
-  const token = (0, import_node_crypto13.randomUUID)();
+  const token = (0, import_node_crypto14.randomUUID)();
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
     ...manifest?.storyKeys ?? [],
@@ -19617,10 +19638,10 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto13, import_node_fs20, import_node_path22, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto14, import_node_fs20, import_node_path22, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
-    import_node_crypto13 = require("node:crypto");
+    import_node_crypto14 = require("node:crypto");
     import_node_fs20 = require("node:fs");
     import_node_path22 = require("node:path");
     init_dist();
@@ -20184,13 +20205,13 @@ function fileSha256(repo, rel2) {
   const abs = (0, import_node_path25.join)(repo, rel2);
   if (!(0, import_node_fs23.existsSync)(abs) || !(0, import_node_fs23.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto14.createHash)("sha256").update((0, import_node_fs23.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto15.createHash)("sha256").update((0, import_node_fs23.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel2) {
   const r = runGit(repo, ["show", `${rev}:${rel2}`]);
   if (r.status !== 0)
     return null;
-  return (0, import_node_crypto14.createHash)("sha256").update(r.stdout).digest("hex");
+  return (0, import_node_crypto15.createHash)("sha256").update(r.stdout).digest("hex");
 }
 function listCommitFiles(repo, rev) {
   const r = runGit(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]);
@@ -20351,10 +20372,10 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto14, import_node_fs23, import_node_path25, import_node_child_process4;
+var import_node_crypto15, import_node_fs23, import_node_path25, import_node_child_process4;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
-    import_node_crypto14 = require("node:crypto");
+    import_node_crypto15 = require("node:crypto");
     import_node_fs23 = require("node:fs");
     import_node_path25 = require("node:path");
     import_node_child_process4 = require("node:child_process");
@@ -20505,7 +20526,7 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
       consistency = "mismatch";
     return { path, liveSha256, snapshotSha256, consistency };
   });
-  const liveDigest = (0, import_node_crypto15.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
+  const liveDigest = (0, import_node_crypto16.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
     const live = liveFileHash(repo, path);
     return live ? { path, sha256: live } : { path, missing: true };
   }))).digest("hex");
@@ -20515,12 +20536,12 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
     liveDigest
   };
 }
-var import_node_fs25, import_node_path27, import_node_crypto15;
+var import_node_fs25, import_node_path27, import_node_crypto16;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
     import_node_fs25 = require("node:fs");
     import_node_path27 = require("node:path");
-    import_node_crypto15 = require("node:crypto");
+    import_node_crypto16 = require("node:crypto");
     init_git_local();
   }
 });
@@ -20935,12 +20956,12 @@ var init_journal = __esm({
 
 // node_modules/@praxis/vcs/dist/fingerprint.js
 function deliveryFingerprint(value) {
-  return `sha256:${(0, import_node_crypto16.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto17.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
 }
-var import_node_crypto16;
+var import_node_crypto17;
 var init_fingerprint = __esm({
   "node_modules/@praxis/vcs/dist/fingerprint.js"() {
-    import_node_crypto16 = require("node:crypto");
+    import_node_crypto17 = require("node:crypto");
   }
 });
 
@@ -23429,7 +23450,7 @@ __export(operations_exports, {
   workPackageShowOp: () => workPackageShowOp
 });
 function previewFingerprint(plan) {
-  return `sha256:${(0, import_node_crypto17.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto18.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 function redact(text) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
@@ -23661,8 +23682,13 @@ async function guardWrite(ctx, spec, write) {
     requireConfirm(ctx.confirmation, spec.what);
   const repo = (0, import_node_path32.resolve)(spec.repository);
   if (spec.git && securityMode() === "secure" && !hasMutationLease() && SERVICE_OPERATIONS.includes(spec.operation) && serviceDelegationActive()) {
+    const executionId = executionIdFor({ operation: spec.operation, repository: repo, workItemId: spec.workItemId ?? "", previewFingerprint: ctx.previewFingerprint ?? "" });
+    const recorded = await recordedExecution(executionId);
+    if (recorded) {
+      return { ok: true, writeSucceeded: false, verificationStatus: "ok", partial: false, completed: true, replayed: true, executedBy: "approval-service", executionId, serviceResult: recorded };
+    }
     try {
-      return await runWorkflowRecordWrite(() => withGitExecutorDelegate(approvalServiceDelegate(), write));
+      return await runWorkflowRecordWrite(() => withGitExecutorDelegate(approvalServiceDelegate(void 0, executionId), write));
     } catch (err) {
       if (err instanceof GitApprovalRequired) {
         throw new PraxisOpError(err.code, err.message, { details: err.details });
@@ -24757,10 +24783,10 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto17, import_node_child_process6, import_node_fs28, import_node_path32, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto18, import_node_child_process6, import_node_fs28, import_node_path32, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
-    import_node_crypto17 = require("node:crypto");
+    import_node_crypto18 = require("node:crypto");
     import_node_child_process6 = require("node:child_process");
     import_node_fs28 = require("node:fs");
     import_node_path32 = require("node:path");
@@ -76847,12 +76873,12 @@ var import_node_path37 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/build-info.js
-var import_node_crypto8 = require("node:crypto");
+var import_node_crypto9 = require("node:crypto");
 var import_node_fs7 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"ecdd0d443c23bfed4c7d351e2c75f1d2ae7a566b95cbc449ce5e5589019308e5","coreBaseline":"4ecbc07adb085b2dd2809027bbd8bad1e2f5924a","inputs":23}';
+    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"4334f133c5f10bed1095763194aa7229708c9fa5084724e2de792ddbf577afeb","coreBaseline":"0d21b07ec775d0f5bb44e54e745d538f3526e452","inputs":23}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -76863,7 +76889,7 @@ function runtimeBuildInfo(version4) {
   const entry = process.argv[1];
   if (embedded && entry && /\.cjs$/.test(entry)) {
     try {
-      bundleSha256 = (0, import_node_crypto8.createHash)("sha256").update((0, import_node_fs7.readFileSync)(entry)).digest("hex");
+      bundleSha256 = (0, import_node_crypto9.createHash)("sha256").update((0, import_node_fs7.readFileSync)(entry)).digest("hex");
       bundlePath = entry;
     } catch {
       bundleSha256 = null;
@@ -76881,7 +76907,7 @@ function runtimeBuildInfo(version4) {
 }
 function toolOrigin(role) {
   const names = toolsForRole(role).map((tool) => tool.name).sort();
-  return { role, count: names.length, digest: (0, import_node_crypto8.createHash)("sha256").update(names.join("\n")).digest("hex"), names };
+  return { role, count: names.length, digest: (0, import_node_crypto9.createHash)("sha256").update(names.join("\n")).digest("hex"), names };
 }
 
 // packages/mcp/dist/envelope.js
@@ -77317,7 +77343,7 @@ function inspectService(service) {
 // packages/mcp/dist/workflow-store.js
 var import_node_fs11 = require("node:fs");
 var import_node_path11 = require("node:path");
-var import_node_crypto9 = require("node:crypto");
+var import_node_crypto10 = require("node:crypto");
 
 // packages/mcp/dist/human-approval.js
 var import_node_fs10 = require("node:fs");
@@ -77649,7 +77675,7 @@ function fingerprintFor(repo, command, workItemId) {
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state2 = loadWorkflow(repo, workItemId);
-    token = state2 ? `state:${(0, import_node_crypto9.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
+    token = state2 ? `state:${(0, import_node_crypto10.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token });
 }
