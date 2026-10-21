@@ -75682,7 +75682,7 @@ var import_node_fs2 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"5e25b1ee789c28d177df2aed3fa4cfba3820d1595289461883076061fe8a120a","coreBaseline":"93a4053369da311a5392d7fd6ad6500d73f385f2","inputs":24}';
+    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"9cd0ecec11dd61a10a7cbf1a2ba599c1a7aa9762e8a518bc7827e23cd37c5e6f","coreBaseline":"b2edcf3d833b6f082c1371aef067dd65b10e9596","inputs":24}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

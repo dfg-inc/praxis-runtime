@@ -68,7 +68,7 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect b5f05e5a8a1ddb4b0c89fdbae2856d97480177dbc587459755548de8f367fe56
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect cb31297b43051c49b9dd8ea62e1b0e2684c9d55158e50678dc06861e1e45d82a
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -100,7 +100,7 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `b5f05e5a8a1ddb4b0c89fdbae2856d97480177dbc587459755548de8f367fe56`, byte-identical to the file inside the `.mcpb`). Claude Code shows its own permission prompt per tool call; Praxis marks previews read-only and applies destructive so that prompt can appear.
+(sha256 `cb31297b43051c49b9dd8ea62e1b0e2684c9d55158e50678dc06861e1e45d82a`, byte-identical to the file inside the `.mcpb`). Claude Code shows its own permission prompt per tool call; Praxis marks previews read-only and applies destructive so that prompt can appear.
 
 ## Verify the loaded build, not the version string
 
@@ -109,23 +109,25 @@ The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-
 | field | expect |
 | --- | --- |
 | `origin` | `bundle` |
-| `bundleSha256` | `b5f05e5a8a1ddb4b0c89fdbae2856d97480177dbc587459755548de8f367fe56` (the file Desktop is running) |
-| `coreBaseline` | `a0b2763a8756878dd63c6119c745f7e46776b45b` |
+| `bundleSha256` | `cb31297b43051c49b9dd8ea62e1b0e2684c9d55158e50678dc06861e1e45d82a` (the file Desktop is running) |
+| `coreBaseline` | `b2edcf3d833b6f082c1371aef067dd65b10e9596` |
 
 Mismatching `bundleSha256` means an older extension is still loaded: fully quit Claude Desktop and reopen.
 
 ## Approvals
 
-There is no approval setting. With a client that supports elicitation, `praxis_doctor` → `approval.mode` is `client-ui` and every protected action is approved or rejected by you in the dialog; the result of the call says so (`data.approval`). With a client that does not, the mode is `no-dialog`: protected actions return `APPROVAL_CLIENT_UI_REQUIRED` with the preview and are not executed. Decisions are journaled outside the repository (`~/.praxis/decisions/`; the path is in `approval.decisionLog`). `npm run accept:approval-ux` drives the packaged extension with an MCP client that plays a host with a dialog and one without; it cannot show how Claude Desktop itself renders the dialog (see the Desktop Chat check in `desktop-install/INSTALL.md`).
+With a client that supports elicitation, `praxis_doctor` → `approval.mode` is `client-ui` and every protected action is approved or rejected by you in the dialog; the result of the call says so (`data.approval`). `approval.client` shows what your client declared (name, version, protocol, elicitation) and, if there is no dialog, why. With a client that has none, the mode is `no-dialog`: protected actions return `APPROVAL_CLIENT_UI_REQUIRED` with the preview and are not executed. Decisions are journaled outside the repository (`~/.praxis/decisions/`). `npm run accept:approval-ux` (scripted MCP client, both protocol eras) and `npm run accept:claude-code-approval` (the real Claude Code CLI as the client) prove the protocol; neither shows how Claude Desktop renders the dialog (see the Desktop Chat check in `desktop-install/INSTALL.md`).
+
+An optional, weaker mode exists for a host with no dialog (extension setting *Approval without a client dialog*, `host-permission`): see `praxis-core/docs/user-approval.md`. Leave it blank if your client has the dialog.
 
 ## This build: 51 tools, inspection, role initialisation
 
 Expected after install (Desktop → ask Praxis Doctor, then list tools):
 
-- **51 MCP tools** (52 in the previous build, which still had `praxis_approval_confirm`): new read-only `praxis_workflow_inspect` (requirements, Stories, decisions, work, handoffs, open items, Quality evidence, links) and `praxis_session_start` (role initialisation without a local script).
+- **52 MCP tools** (the installed previous build also has 52, but includes `praxis_approval_confirm`; this build removes it and adds the read-only `praxis_approval_plan`): new read-only `praxis_workflow_inspect` (requirements, Stories, decisions, work, handoffs, open items, Quality evidence, links) and `praxis_session_start` (role initialisation without a local script).
 - `praxis_developer_status` takes `workItemId` for a local Work Item; `workPackage` accepts only a Work Package id or a Jira key and refuses a Work Item id.
 - Role plugins: install the four `praxis-<role>.zip` files from `desktop-install/` (skills: BA 23, Architect 25, Developer 30, Quality 7). Their `session-start` skills call `praxis_session_start`.
-- `.mcpb` sha256 `148df8198e8eeb26bb5efed89f36d767fe94518ba9a09aa48a9bc5a9cfe07ba3`.
+- `.mcpb` sha256 `892085e8e125e3608d14e432e886b628f14dc5cca52386fce7ff4ebb2e81a1e4`.
 
 Desktop acceptance is **not** claimed for this build until it has been installed and re-tested on the real Desktop host.
 
@@ -135,7 +137,7 @@ A Claude session takes its tool list when it starts. After the extension is upda
 the old list (50 tools) while its calls already reach the new server (the doctor reports the new bundle). Claude
 Desktop has one Praxis Runtime server (the MCPB extension); Chat and Code use the same one. `npm run report:tool-origins`
 starts every local build and prints bundle sha, build kind, tool count and a digest of the tool names; all of them
-offer the same tool set (51 tools in this build). `praxis_doctor` now reports `build.tools` (count, digest, names) and
+offer the same tool set (52 tools in this build; the tool-name digest differs from the installed build). `praxis_doctor` now reports `build.tools` (count, digest, names) and
 `build.kind` (`production` for shipped bundles). If a session shows fewer tools than `build.tools.count`, start a
 new session; do not reinstall.
 
