@@ -34,7 +34,7 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 
 // node_modules/zod/v3/helpers/util.js
-var util, objectUtil, ZodParsedType, getParsedType4;
+var util, objectUtil, ZodParsedType, getParsedType3;
 var init_util = __esm({
   "node_modules/zod/v3/helpers/util.js"() {
     (function(util2) {
@@ -126,7 +126,7 @@ var init_util = __esm({
       "map",
       "set"
     ]);
-    getParsedType4 = (data) => {
+    getParsedType3 = (data) => {
       const t = typeof data;
       switch (t) {
         case "undefined":
@@ -171,11 +171,11 @@ var init_util = __esm({
 });
 
 // node_modules/zod/v3/ZodError.js
-var ZodIssueCode3, quotelessJson, ZodError2;
+var ZodIssueCode2, quotelessJson, ZodError;
 var init_ZodError = __esm({
   "node_modules/zod/v3/ZodError.js"() {
     init_util();
-    ZodIssueCode3 = util.arrayToEnum([
+    ZodIssueCode2 = util.arrayToEnum([
       "invalid_type",
       "invalid_literal",
       "custom",
@@ -197,7 +197,7 @@ var init_ZodError = __esm({
       const json2 = JSON.stringify(obj, null, 2);
       return json2.replace(/"([^"]+)":/g, "$1:");
     };
-    ZodError2 = class _ZodError extends Error {
+    ZodError = class _ZodError extends Error {
       get errors() {
         return this.issues;
       }
@@ -287,15 +287,15 @@ var init_ZodError = __esm({
         return this.flatten();
       }
     };
-    ZodError2.create = (issues) => {
-      const error64 = new ZodError2(issues);
+    ZodError.create = (issues) => {
+      const error64 = new ZodError(issues);
       return error64;
     };
   }
 });
 
 // node_modules/zod/v3/locales/en.js
-var errorMap, en_default4;
+var errorMap, en_default3;
 var init_en = __esm({
   "node_modules/zod/v3/locales/en.js"() {
     init_ZodError();
@@ -303,38 +303,38 @@ var init_en = __esm({
     errorMap = (issue4, _ctx) => {
       let message;
       switch (issue4.code) {
-        case ZodIssueCode3.invalid_type:
+        case ZodIssueCode2.invalid_type:
           if (issue4.received === ZodParsedType.undefined) {
             message = "Required";
           } else {
             message = `Expected ${issue4.expected}, received ${issue4.received}`;
           }
           break;
-        case ZodIssueCode3.invalid_literal:
+        case ZodIssueCode2.invalid_literal:
           message = `Invalid literal value, expected ${JSON.stringify(issue4.expected, util.jsonStringifyReplacer)}`;
           break;
-        case ZodIssueCode3.unrecognized_keys:
+        case ZodIssueCode2.unrecognized_keys:
           message = `Unrecognized key(s) in object: ${util.joinValues(issue4.keys, ", ")}`;
           break;
-        case ZodIssueCode3.invalid_union:
+        case ZodIssueCode2.invalid_union:
           message = `Invalid input`;
           break;
-        case ZodIssueCode3.invalid_union_discriminator:
+        case ZodIssueCode2.invalid_union_discriminator:
           message = `Invalid discriminator value. Expected ${util.joinValues(issue4.options)}`;
           break;
-        case ZodIssueCode3.invalid_enum_value:
+        case ZodIssueCode2.invalid_enum_value:
           message = `Invalid enum value. Expected ${util.joinValues(issue4.options)}, received '${issue4.received}'`;
           break;
-        case ZodIssueCode3.invalid_arguments:
+        case ZodIssueCode2.invalid_arguments:
           message = `Invalid function arguments`;
           break;
-        case ZodIssueCode3.invalid_return_type:
+        case ZodIssueCode2.invalid_return_type:
           message = `Invalid function return type`;
           break;
-        case ZodIssueCode3.invalid_date:
+        case ZodIssueCode2.invalid_date:
           message = `Invalid date`;
           break;
-        case ZodIssueCode3.invalid_string:
+        case ZodIssueCode2.invalid_string:
           if (typeof issue4.validation === "object") {
             if ("includes" in issue4.validation) {
               message = `Invalid input: must include "${issue4.validation.includes}"`;
@@ -354,7 +354,7 @@ var init_en = __esm({
             message = "Invalid";
           }
           break;
-        case ZodIssueCode3.too_small:
+        case ZodIssueCode2.too_small:
           if (issue4.type === "array")
             message = `Array must contain ${issue4.exact ? "exactly" : issue4.inclusive ? `at least` : `more than`} ${issue4.minimum} element(s)`;
           else if (issue4.type === "string")
@@ -368,7 +368,7 @@ var init_en = __esm({
           else
             message = "Invalid input";
           break;
-        case ZodIssueCode3.too_big:
+        case ZodIssueCode2.too_big:
           if (issue4.type === "array")
             message = `Array must contain ${issue4.exact ? `exactly` : issue4.inclusive ? `at most` : `less than`} ${issue4.maximum} element(s)`;
           else if (issue4.type === "string")
@@ -382,16 +382,16 @@ var init_en = __esm({
           else
             message = "Invalid input";
           break;
-        case ZodIssueCode3.custom:
+        case ZodIssueCode2.custom:
           message = `Invalid input`;
           break;
-        case ZodIssueCode3.invalid_intersection_types:
+        case ZodIssueCode2.invalid_intersection_types:
           message = `Intersection results could not be merged`;
           break;
-        case ZodIssueCode3.not_multiple_of:
+        case ZodIssueCode2.not_multiple_of:
           message = `Number must be a multiple of ${issue4.multipleOf}`;
           break;
-        case ZodIssueCode3.not_finite:
+        case ZodIssueCode2.not_finite:
           message = "Number must be finite";
           break;
         default:
@@ -400,28 +400,28 @@ var init_en = __esm({
       }
       return { message };
     };
-    en_default4 = errorMap;
+    en_default3 = errorMap;
   }
 });
 
 // node_modules/zod/v3/errors.js
-function setErrorMap2(map2) {
+function setErrorMap(map2) {
   overrideErrorMap = map2;
 }
-function getErrorMap2() {
+function getErrorMap() {
   return overrideErrorMap;
 }
 var overrideErrorMap;
 var init_errors = __esm({
   "node_modules/zod/v3/errors.js"() {
     init_en();
-    overrideErrorMap = en_default4;
+    overrideErrorMap = en_default3;
   }
 });
 
 // node_modules/zod/v3/helpers/parseUtil.js
 function addIssueToContext(ctx, issueData) {
-  const overrideMap = getErrorMap2();
+  const overrideMap = getErrorMap();
   const issue4 = makeIssue({
     issueData,
     data: ctx.data,
@@ -433,13 +433,13 @@ function addIssueToContext(ctx, issueData) {
       // then schema-bound map if available
       overrideMap,
       // then global override map
-      overrideMap === en_default4 ? void 0 : en_default4
+      overrideMap === en_default3 ? void 0 : en_default3
       // then global default map
     ].filter((x) => !!x)
   });
   ctx.common.issues.push(issue4);
 }
-var makeIssue, EMPTY_PATH, ParseStatus, INVALID3, DIRTY, OK, isAborted, isDirty, isValid, isAsync;
+var makeIssue, EMPTY_PATH, ParseStatus, INVALID2, DIRTY, OK, isAborted, isDirty, isValid, isAsync;
 var init_parseUtil = __esm({
   "node_modules/zod/v3/helpers/parseUtil.js"() {
     init_errors();
@@ -486,7 +486,7 @@ var init_parseUtil = __esm({
         const arrayValue = [];
         for (const s of results) {
           if (s.status === "aborted")
-            return INVALID3;
+            return INVALID2;
           if (s.status === "dirty")
             status.dirty();
           arrayValue.push(s.value);
@@ -510,9 +510,9 @@ var init_parseUtil = __esm({
         for (const pair of pairs) {
           const { key, value } = pair;
           if (key.status === "aborted")
-            return INVALID3;
+            return INVALID2;
           if (value.status === "aborted")
-            return INVALID3;
+            return INVALID2;
           if (key.status === "dirty")
             status.dirty();
           if (value.status === "dirty")
@@ -524,7 +524,7 @@ var init_parseUtil = __esm({
         return { status: status.value, value: finalObject };
       }
     };
-    INVALID3 = Object.freeze({
+    INVALID2 = Object.freeze({
       status: "aborted"
     });
     DIRTY = (value) => ({ status: "dirty", value });
@@ -608,7 +608,7 @@ function isValidIP(ip, version4) {
   }
   return false;
 }
-function isValidJWT4(jwt2, alg) {
+function isValidJWT3(jwt2, alg) {
   if (!jwtRegex.test(jwt2))
     return false;
   try {
@@ -639,7 +639,7 @@ function isValidCidr(ip, version4) {
   }
   return false;
 }
-function floatSafeRemainder4(val, step) {
+function floatSafeRemainder3(val, step) {
   const valDecCount = (val.toString().split(".")[1] || "").length;
   const stepDecCount = (step.toString().split(".")[1] || "").length;
   const decCount = valDecCount > stepDecCount ? valDecCount : stepDecCount;
@@ -648,34 +648,34 @@ function floatSafeRemainder4(val, step) {
   return valInt % stepInt / 10 ** decCount;
 }
 function deepPartialify(schema) {
-  if (schema instanceof ZodObject4) {
+  if (schema instanceof ZodObject3) {
     const newShape = {};
     for (const key in schema.shape) {
       const fieldSchema = schema.shape[key];
-      newShape[key] = ZodOptional4.create(deepPartialify(fieldSchema));
+      newShape[key] = ZodOptional3.create(deepPartialify(fieldSchema));
     }
-    return new ZodObject4({
+    return new ZodObject3({
       ...schema._def,
       shape: () => newShape
     });
-  } else if (schema instanceof ZodArray4) {
-    return new ZodArray4({
+  } else if (schema instanceof ZodArray3) {
+    return new ZodArray3({
       ...schema._def,
       type: deepPartialify(schema.element)
     });
-  } else if (schema instanceof ZodOptional4) {
-    return ZodOptional4.create(deepPartialify(schema.unwrap()));
-  } else if (schema instanceof ZodNullable4) {
-    return ZodNullable4.create(deepPartialify(schema.unwrap()));
-  } else if (schema instanceof ZodTuple2) {
-    return ZodTuple2.create(schema.items.map((item) => deepPartialify(item)));
+  } else if (schema instanceof ZodOptional3) {
+    return ZodOptional3.create(deepPartialify(schema.unwrap()));
+  } else if (schema instanceof ZodNullable3) {
+    return ZodNullable3.create(deepPartialify(schema.unwrap()));
+  } else if (schema instanceof ZodTuple) {
+    return ZodTuple.create(schema.items.map((item) => deepPartialify(item)));
   } else {
     return schema;
   }
 }
-function mergeValues4(a, b) {
-  const aType = getParsedType4(a);
-  const bType = getParsedType4(b);
+function mergeValues3(a, b) {
+  const aType = getParsedType3(a);
+  const bType = getParsedType3(b);
   if (a === b) {
     return { valid: true, data: a };
   } else if (aType === ZodParsedType.object && bType === ZodParsedType.object) {
@@ -683,7 +683,7 @@ function mergeValues4(a, b) {
     const sharedKeys = util.objectKeys(a).filter((key) => bKeys.indexOf(key) !== -1);
     const newObj = { ...a, ...b };
     for (const key of sharedKeys) {
-      const sharedValue = mergeValues4(a[key], b[key]);
+      const sharedValue = mergeValues3(a[key], b[key]);
       if (!sharedValue.valid) {
         return { valid: false };
       }
@@ -698,7 +698,7 @@ function mergeValues4(a, b) {
     for (let index = 0; index < a.length; index++) {
       const itemA = a[index];
       const itemB = b[index];
-      const sharedValue = mergeValues4(itemA, itemB);
+      const sharedValue = mergeValues3(itemA, itemB);
       if (!sharedValue.valid) {
         return { valid: false };
       }
@@ -712,9 +712,9 @@ function mergeValues4(a, b) {
   }
 }
 function createZodEnum(values, params) {
-  return new ZodEnum4({
+  return new ZodEnum3({
     values,
-    typeName: ZodFirstPartyTypeKind3.ZodEnum,
+    typeName: ZodFirstPartyTypeKind2.ZodEnum,
     ...processCreateParams(params)
   });
 }
@@ -723,9 +723,9 @@ function cleanParams(params, data) {
   const p2 = typeof p === "string" ? { message: p } : p;
   return p2;
 }
-function custom2(check2, _params = {}, fatal) {
+function custom(check2, _params = {}, fatal) {
   if (check2)
-    return ZodAny3.create().superRefine((data, ctx) => {
+    return ZodAny2.create().superRefine((data, ctx) => {
       const r = check2(data);
       if (r instanceof Promise) {
         return r.then((r2) => {
@@ -743,9 +743,9 @@ function custom2(check2, _params = {}, fatal) {
       }
       return;
     });
-  return ZodAny3.create();
+  return ZodAny2.create();
 }
-var ParseInputLazyPath, handleResult, ZodType4, cuidRegex, cuid2Regex, ulidRegex, uuidRegex, nanoidRegex, jwtRegex, durationRegex, emailRegex, _emojiRegex, emojiRegex, ipv4Regex, ipv4CidrRegex, ipv6Regex, ipv6CidrRegex, base64Regex, base64urlRegex, dateRegexSource, dateRegex, ZodString4, ZodNumber4, ZodBigInt3, ZodBoolean4, ZodDate3, ZodSymbol2, ZodUndefined2, ZodNull4, ZodAny3, ZodUnknown4, ZodNever4, ZodVoid2, ZodArray4, ZodObject4, ZodUnion4, getDiscriminator, ZodDiscriminatedUnion4, ZodIntersection4, ZodTuple2, ZodRecord4, ZodMap2, ZodSet2, ZodFunction2, ZodLazy4, ZodLiteral4, ZodEnum4, ZodNativeEnum, ZodPromise2, ZodEffects, ZodOptional4, ZodNullable4, ZodDefault4, ZodCatch4, ZodNaN2, BRAND, ZodBranded, ZodPipeline, ZodReadonly4, late, ZodFirstPartyTypeKind3, instanceOfType, stringType, numberType, nanType, bigIntType, booleanType, dateType, symbolType, undefinedType, nullType, anyType, unknownType, neverType, voidType, arrayType, objectType, strictObjectType, unionType, discriminatedUnionType, intersectionType, tupleType, recordType, mapType, setType, functionType, lazyType, literalType, enumType, nativeEnumType, promiseType, effectsType, optionalType, nullableType, preprocessType, pipelineType, ostring, onumber, oboolean, coerce, NEVER3;
+var ParseInputLazyPath, handleResult, ZodType3, cuidRegex, cuid2Regex, ulidRegex, uuidRegex, nanoidRegex, jwtRegex, durationRegex, emailRegex, _emojiRegex, emojiRegex, ipv4Regex, ipv4CidrRegex, ipv6Regex, ipv6CidrRegex, base64Regex, base64urlRegex, dateRegexSource, dateRegex, ZodString3, ZodNumber3, ZodBigInt2, ZodBoolean3, ZodDate2, ZodSymbol, ZodUndefined, ZodNull3, ZodAny2, ZodUnknown3, ZodNever3, ZodVoid, ZodArray3, ZodObject3, ZodUnion3, getDiscriminator, ZodDiscriminatedUnion3, ZodIntersection3, ZodTuple, ZodRecord3, ZodMap, ZodSet, ZodFunction, ZodLazy3, ZodLiteral3, ZodEnum3, ZodNativeEnum, ZodPromise, ZodEffects, ZodOptional3, ZodNullable3, ZodDefault3, ZodCatch3, ZodNaN, BRAND, ZodBranded, ZodPipeline, ZodReadonly3, late, ZodFirstPartyTypeKind2, instanceOfType, stringType, numberType, nanType, bigIntType, booleanType, dateType, symbolType, undefinedType, nullType, anyType, unknownType, neverType, voidType, arrayType, objectType, strictObjectType, unionType, discriminatedUnionType, intersectionType, tupleType, recordType, mapType, setType, functionType, lazyType, literalType, enumType, nativeEnumType, promiseType, effectsType, optionalType, nullableType, preprocessType, pipelineType, ostring, onumber, oboolean, coerce, NEVER2;
 var init_types = __esm({
   "node_modules/zod/v3/types.js"() {
     init_ZodError();
@@ -784,25 +784,25 @@ var init_types = __esm({
           get error() {
             if (this._error)
               return this._error;
-            const error64 = new ZodError2(ctx.common.issues);
+            const error64 = new ZodError(ctx.common.issues);
             this._error = error64;
             return this._error;
           }
         };
       }
     };
-    ZodType4 = class {
+    ZodType3 = class {
       get description() {
         return this._def.description;
       }
       _getType(input2) {
-        return getParsedType4(input2.data);
+        return getParsedType3(input2.data);
       }
       _getOrReturnCtx(input2, ctx) {
         return ctx || {
           common: input2.parent.common,
           data: input2.data,
-          parsedType: getParsedType4(input2.data),
+          parsedType: getParsedType3(input2.data),
           schemaErrorMap: this._def.errorMap,
           path: input2.path,
           parent: input2.parent
@@ -814,7 +814,7 @@ var init_types = __esm({
           ctx: {
             common: input2.parent.common,
             data: input2.data,
-            parsedType: getParsedType4(input2.data),
+            parsedType: getParsedType3(input2.data),
             schemaErrorMap: this._def.errorMap,
             path: input2.path,
             parent: input2.parent
@@ -849,7 +849,7 @@ var init_types = __esm({
           schemaErrorMap: this._def.errorMap,
           parent: null,
           data,
-          parsedType: getParsedType4(data)
+          parsedType: getParsedType3(data)
         };
         const result = this._parseSync({ data, path: ctx.path, parent: ctx });
         return handleResult(ctx, result);
@@ -864,7 +864,7 @@ var init_types = __esm({
           schemaErrorMap: this._def.errorMap,
           parent: null,
           data,
-          parsedType: getParsedType4(data)
+          parsedType: getParsedType3(data)
         };
         if (!this["~standard"].async) {
           try {
@@ -907,7 +907,7 @@ var init_types = __esm({
           schemaErrorMap: this._def.errorMap,
           parent: null,
           data,
-          parsedType: getParsedType4(data)
+          parsedType: getParsedType3(data)
         };
         const maybeAsyncResult = this._parse({ data, path: ctx.path, parent: ctx });
         const result = await (isAsync(maybeAsyncResult) ? maybeAsyncResult : Promise.resolve(maybeAsyncResult));
@@ -926,7 +926,7 @@ var init_types = __esm({
         return this._refinement((val, ctx) => {
           const result = check2(val);
           const setError = () => ctx.addIssue({
-            code: ZodIssueCode3.custom,
+            code: ZodIssueCode2.custom,
             ...getIssueProperties(val)
           });
           if (typeof Promise !== "undefined" && result instanceof Promise) {
@@ -960,7 +960,7 @@ var init_types = __esm({
       _refinement(refinement) {
         return new ZodEffects({
           schema: this,
-          typeName: ZodFirstPartyTypeKind3.ZodEffects,
+          typeName: ZodFirstPartyTypeKind2.ZodEffects,
           effect: { type: "refinement", refinement }
         });
       }
@@ -1001,57 +1001,57 @@ var init_types = __esm({
         };
       }
       optional() {
-        return ZodOptional4.create(this, this._def);
+        return ZodOptional3.create(this, this._def);
       }
       nullable() {
-        return ZodNullable4.create(this, this._def);
+        return ZodNullable3.create(this, this._def);
       }
       nullish() {
         return this.nullable().optional();
       }
       array() {
-        return ZodArray4.create(this);
+        return ZodArray3.create(this);
       }
       promise() {
-        return ZodPromise2.create(this, this._def);
+        return ZodPromise.create(this, this._def);
       }
       or(option) {
-        return ZodUnion4.create([this, option], this._def);
+        return ZodUnion3.create([this, option], this._def);
       }
       and(incoming) {
-        return ZodIntersection4.create(this, incoming, this._def);
+        return ZodIntersection3.create(this, incoming, this._def);
       }
       transform(transform4) {
         return new ZodEffects({
           ...processCreateParams(this._def),
           schema: this,
-          typeName: ZodFirstPartyTypeKind3.ZodEffects,
+          typeName: ZodFirstPartyTypeKind2.ZodEffects,
           effect: { type: "transform", transform: transform4 }
         });
       }
       default(def) {
         const defaultValueFunc = typeof def === "function" ? def : () => def;
-        return new ZodDefault4({
+        return new ZodDefault3({
           ...processCreateParams(this._def),
           innerType: this,
           defaultValue: defaultValueFunc,
-          typeName: ZodFirstPartyTypeKind3.ZodDefault
+          typeName: ZodFirstPartyTypeKind2.ZodDefault
         });
       }
       brand() {
         return new ZodBranded({
-          typeName: ZodFirstPartyTypeKind3.ZodBranded,
+          typeName: ZodFirstPartyTypeKind2.ZodBranded,
           type: this,
           ...processCreateParams(this._def)
         });
       }
       catch(def) {
         const catchValueFunc = typeof def === "function" ? def : () => def;
-        return new ZodCatch4({
+        return new ZodCatch3({
           ...processCreateParams(this._def),
           innerType: this,
           catchValue: catchValueFunc,
-          typeName: ZodFirstPartyTypeKind3.ZodCatch
+          typeName: ZodFirstPartyTypeKind2.ZodCatch
         });
       }
       describe(description) {
@@ -1065,7 +1065,7 @@ var init_types = __esm({
         return ZodPipeline.create(this, target);
       }
       readonly() {
-        return ZodReadonly4.create(this);
+        return ZodReadonly3.create(this);
       }
       isOptional() {
         return this.safeParse(void 0).success;
@@ -1091,7 +1091,7 @@ var init_types = __esm({
     base64urlRegex = /^([0-9a-zA-Z-_]{4})*(([0-9a-zA-Z-_]{2}(==)?)|([0-9a-zA-Z-_]{3}(=)?))?$/;
     dateRegexSource = `((\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-((0[13578]|1[02])-(0[1-9]|[12]\\d|3[01])|(0[469]|11)-(0[1-9]|[12]\\d|30)|(02)-(0[1-9]|1\\d|2[0-8])))`;
     dateRegex = new RegExp(`^${dateRegexSource}$`);
-    ZodString4 = class _ZodString4 extends ZodType4 {
+    ZodString3 = class _ZodString4 extends ZodType3 {
       _parse(input2) {
         if (this._def.coerce) {
           input2.data = String(input2.data);
@@ -1100,11 +1100,11 @@ var init_types = __esm({
         if (parsedType4 !== ZodParsedType.string) {
           const ctx2 = this._getOrReturnCtx(input2);
           addIssueToContext(ctx2, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.string,
             received: ctx2.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         const status = new ParseStatus();
         let ctx = void 0;
@@ -1113,7 +1113,7 @@ var init_types = __esm({
             if (input2.data.length < check2.value) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.too_small,
+                code: ZodIssueCode2.too_small,
                 minimum: check2.value,
                 type: "string",
                 inclusive: true,
@@ -1126,7 +1126,7 @@ var init_types = __esm({
             if (input2.data.length > check2.value) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.too_big,
+                code: ZodIssueCode2.too_big,
                 maximum: check2.value,
                 type: "string",
                 inclusive: true,
@@ -1142,7 +1142,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               if (tooBig) {
                 addIssueToContext(ctx, {
-                  code: ZodIssueCode3.too_big,
+                  code: ZodIssueCode2.too_big,
                   maximum: check2.value,
                   type: "string",
                   inclusive: true,
@@ -1151,7 +1151,7 @@ var init_types = __esm({
                 });
               } else if (tooSmall) {
                 addIssueToContext(ctx, {
-                  code: ZodIssueCode3.too_small,
+                  code: ZodIssueCode2.too_small,
                   minimum: check2.value,
                   type: "string",
                   inclusive: true,
@@ -1166,7 +1166,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "email",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1179,7 +1179,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "emoji",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1189,7 +1189,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "uuid",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1199,7 +1199,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "nanoid",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1209,7 +1209,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "cuid",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1219,7 +1219,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "cuid2",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1229,7 +1229,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "ulid",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1241,7 +1241,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "url",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1253,7 +1253,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "regex",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1264,7 +1264,7 @@ var init_types = __esm({
             if (!input2.data.includes(check2.value, check2.position)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 validation: { includes: check2.value, position: check2.position },
                 message: check2.message
               });
@@ -1278,7 +1278,7 @@ var init_types = __esm({
             if (!input2.data.startsWith(check2.value)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 validation: { startsWith: check2.value },
                 message: check2.message
               });
@@ -1288,7 +1288,7 @@ var init_types = __esm({
             if (!input2.data.endsWith(check2.value)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 validation: { endsWith: check2.value },
                 message: check2.message
               });
@@ -1299,7 +1299,7 @@ var init_types = __esm({
             if (!regex.test(input2.data)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 validation: "datetime",
                 message: check2.message
               });
@@ -1310,7 +1310,7 @@ var init_types = __esm({
             if (!regex.test(input2.data)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 validation: "date",
                 message: check2.message
               });
@@ -1321,7 +1321,7 @@ var init_types = __esm({
             if (!regex.test(input2.data)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 validation: "time",
                 message: check2.message
               });
@@ -1332,7 +1332,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "duration",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1342,17 +1342,17 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "ip",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
             }
           } else if (check2.kind === "jwt") {
-            if (!isValidJWT4(input2.data, check2.alg)) {
+            if (!isValidJWT3(input2.data, check2.alg)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "jwt",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1362,7 +1362,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "cidr",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1372,7 +1372,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "base64",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1382,7 +1382,7 @@ var init_types = __esm({
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
                 validation: "base64url",
-                code: ZodIssueCode3.invalid_string,
+                code: ZodIssueCode2.invalid_string,
                 message: check2.message
               });
               status.dirty();
@@ -1396,7 +1396,7 @@ var init_types = __esm({
       _regex(regex, validation, message) {
         return this.refinement((data) => regex.test(data), {
           validation,
-          code: ZodIssueCode3.invalid_string,
+          code: ZodIssueCode2.invalid_string,
           ...errorUtil.errToObj(message)
         });
       }
@@ -1629,15 +1629,15 @@ var init_types = __esm({
         return max;
       }
     };
-    ZodString4.create = (params) => {
-      return new ZodString4({
+    ZodString3.create = (params) => {
+      return new ZodString3({
         checks: [],
-        typeName: ZodFirstPartyTypeKind3.ZodString,
+        typeName: ZodFirstPartyTypeKind2.ZodString,
         coerce: params?.coerce ?? false,
         ...processCreateParams(params)
       });
     };
-    ZodNumber4 = class _ZodNumber extends ZodType4 {
+    ZodNumber3 = class _ZodNumber extends ZodType3 {
       constructor() {
         super(...arguments);
         this.min = this.gte;
@@ -1652,11 +1652,11 @@ var init_types = __esm({
         if (parsedType4 !== ZodParsedType.number) {
           const ctx2 = this._getOrReturnCtx(input2);
           addIssueToContext(ctx2, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.number,
             received: ctx2.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         let ctx = void 0;
         const status = new ParseStatus();
@@ -1665,7 +1665,7 @@ var init_types = __esm({
             if (!util.isInteger(input2.data)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.invalid_type,
+                code: ZodIssueCode2.invalid_type,
                 expected: "integer",
                 received: "float",
                 message: check2.message
@@ -1677,7 +1677,7 @@ var init_types = __esm({
             if (tooSmall) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.too_small,
+                code: ZodIssueCode2.too_small,
                 minimum: check2.value,
                 type: "number",
                 inclusive: check2.inclusive,
@@ -1691,7 +1691,7 @@ var init_types = __esm({
             if (tooBig) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.too_big,
+                code: ZodIssueCode2.too_big,
                 maximum: check2.value,
                 type: "number",
                 inclusive: check2.inclusive,
@@ -1701,10 +1701,10 @@ var init_types = __esm({
               status.dirty();
             }
           } else if (check2.kind === "multipleOf") {
-            if (floatSafeRemainder4(input2.data, check2.value) !== 0) {
+            if (floatSafeRemainder3(input2.data, check2.value) !== 0) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.not_multiple_of,
+                code: ZodIssueCode2.not_multiple_of,
                 multipleOf: check2.value,
                 message: check2.message
               });
@@ -1714,7 +1714,7 @@ var init_types = __esm({
             if (!Number.isFinite(input2.data)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.not_finite,
+                code: ZodIssueCode2.not_finite,
                 message: check2.message
               });
               status.dirty();
@@ -1861,15 +1861,15 @@ var init_types = __esm({
         return Number.isFinite(min) && Number.isFinite(max);
       }
     };
-    ZodNumber4.create = (params) => {
-      return new ZodNumber4({
+    ZodNumber3.create = (params) => {
+      return new ZodNumber3({
         checks: [],
-        typeName: ZodFirstPartyTypeKind3.ZodNumber,
+        typeName: ZodFirstPartyTypeKind2.ZodNumber,
         coerce: params?.coerce || false,
         ...processCreateParams(params)
       });
     };
-    ZodBigInt3 = class _ZodBigInt extends ZodType4 {
+    ZodBigInt2 = class _ZodBigInt extends ZodType3 {
       constructor() {
         super(...arguments);
         this.min = this.gte;
@@ -1895,7 +1895,7 @@ var init_types = __esm({
             if (tooSmall) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.too_small,
+                code: ZodIssueCode2.too_small,
                 type: "bigint",
                 minimum: check2.value,
                 inclusive: check2.inclusive,
@@ -1908,7 +1908,7 @@ var init_types = __esm({
             if (tooBig) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.too_big,
+                code: ZodIssueCode2.too_big,
                 type: "bigint",
                 maximum: check2.value,
                 inclusive: check2.inclusive,
@@ -1920,7 +1920,7 @@ var init_types = __esm({
             if (input2.data % check2.value !== BigInt(0)) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.not_multiple_of,
+                code: ZodIssueCode2.not_multiple_of,
                 multipleOf: check2.value,
                 message: check2.message
               });
@@ -1935,11 +1935,11 @@ var init_types = __esm({
       _getInvalidInput(input2) {
         const ctx = this._getOrReturnCtx(input2);
         addIssueToContext(ctx, {
-          code: ZodIssueCode3.invalid_type,
+          code: ZodIssueCode2.invalid_type,
           expected: ZodParsedType.bigint,
           received: ctx.parsedType
         });
-        return INVALID3;
+        return INVALID2;
       }
       gte(value, message) {
         return this.setLimit("min", value, true, errorUtil.toString(message));
@@ -2033,15 +2033,15 @@ var init_types = __esm({
         return max;
       }
     };
-    ZodBigInt3.create = (params) => {
-      return new ZodBigInt3({
+    ZodBigInt2.create = (params) => {
+      return new ZodBigInt2({
         checks: [],
-        typeName: ZodFirstPartyTypeKind3.ZodBigInt,
+        typeName: ZodFirstPartyTypeKind2.ZodBigInt,
         coerce: params?.coerce ?? false,
         ...processCreateParams(params)
       });
     };
-    ZodBoolean4 = class extends ZodType4 {
+    ZodBoolean3 = class extends ZodType3 {
       _parse(input2) {
         if (this._def.coerce) {
           input2.data = Boolean(input2.data);
@@ -2050,23 +2050,23 @@ var init_types = __esm({
         if (parsedType4 !== ZodParsedType.boolean) {
           const ctx = this._getOrReturnCtx(input2);
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.boolean,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         return OK(input2.data);
       }
     };
-    ZodBoolean4.create = (params) => {
-      return new ZodBoolean4({
-        typeName: ZodFirstPartyTypeKind3.ZodBoolean,
+    ZodBoolean3.create = (params) => {
+      return new ZodBoolean3({
+        typeName: ZodFirstPartyTypeKind2.ZodBoolean,
         coerce: params?.coerce || false,
         ...processCreateParams(params)
       });
     };
-    ZodDate3 = class _ZodDate extends ZodType4 {
+    ZodDate2 = class _ZodDate extends ZodType3 {
       _parse(input2) {
         if (this._def.coerce) {
           input2.data = new Date(input2.data);
@@ -2075,18 +2075,18 @@ var init_types = __esm({
         if (parsedType4 !== ZodParsedType.date) {
           const ctx2 = this._getOrReturnCtx(input2);
           addIssueToContext(ctx2, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.date,
             received: ctx2.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         if (Number.isNaN(input2.data.getTime())) {
           const ctx2 = this._getOrReturnCtx(input2);
           addIssueToContext(ctx2, {
-            code: ZodIssueCode3.invalid_date
+            code: ZodIssueCode2.invalid_date
           });
-          return INVALID3;
+          return INVALID2;
         }
         const status = new ParseStatus();
         let ctx = void 0;
@@ -2095,7 +2095,7 @@ var init_types = __esm({
             if (input2.data.getTime() < check2.value) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.too_small,
+                code: ZodIssueCode2.too_small,
                 message: check2.message,
                 inclusive: true,
                 exact: false,
@@ -2108,7 +2108,7 @@ var init_types = __esm({
             if (input2.data.getTime() > check2.value) {
               ctx = this._getOrReturnCtx(input2, ctx);
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.too_big,
+                code: ZodIssueCode2.too_big,
                 message: check2.message,
                 inclusive: true,
                 exact: false,
@@ -2167,78 +2167,78 @@ var init_types = __esm({
         return max != null ? new Date(max) : null;
       }
     };
-    ZodDate3.create = (params) => {
-      return new ZodDate3({
+    ZodDate2.create = (params) => {
+      return new ZodDate2({
         checks: [],
         coerce: params?.coerce || false,
-        typeName: ZodFirstPartyTypeKind3.ZodDate,
+        typeName: ZodFirstPartyTypeKind2.ZodDate,
         ...processCreateParams(params)
       });
     };
-    ZodSymbol2 = class extends ZodType4 {
+    ZodSymbol = class extends ZodType3 {
       _parse(input2) {
         const parsedType4 = this._getType(input2);
         if (parsedType4 !== ZodParsedType.symbol) {
           const ctx = this._getOrReturnCtx(input2);
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.symbol,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         return OK(input2.data);
       }
     };
-    ZodSymbol2.create = (params) => {
-      return new ZodSymbol2({
-        typeName: ZodFirstPartyTypeKind3.ZodSymbol,
+    ZodSymbol.create = (params) => {
+      return new ZodSymbol({
+        typeName: ZodFirstPartyTypeKind2.ZodSymbol,
         ...processCreateParams(params)
       });
     };
-    ZodUndefined2 = class extends ZodType4 {
+    ZodUndefined = class extends ZodType3 {
       _parse(input2) {
         const parsedType4 = this._getType(input2);
         if (parsedType4 !== ZodParsedType.undefined) {
           const ctx = this._getOrReturnCtx(input2);
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.undefined,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         return OK(input2.data);
       }
     };
-    ZodUndefined2.create = (params) => {
-      return new ZodUndefined2({
-        typeName: ZodFirstPartyTypeKind3.ZodUndefined,
+    ZodUndefined.create = (params) => {
+      return new ZodUndefined({
+        typeName: ZodFirstPartyTypeKind2.ZodUndefined,
         ...processCreateParams(params)
       });
     };
-    ZodNull4 = class extends ZodType4 {
+    ZodNull3 = class extends ZodType3 {
       _parse(input2) {
         const parsedType4 = this._getType(input2);
         if (parsedType4 !== ZodParsedType.null) {
           const ctx = this._getOrReturnCtx(input2);
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.null,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         return OK(input2.data);
       }
     };
-    ZodNull4.create = (params) => {
-      return new ZodNull4({
-        typeName: ZodFirstPartyTypeKind3.ZodNull,
+    ZodNull3.create = (params) => {
+      return new ZodNull3({
+        typeName: ZodFirstPartyTypeKind2.ZodNull,
         ...processCreateParams(params)
       });
     };
-    ZodAny3 = class extends ZodType4 {
+    ZodAny2 = class extends ZodType3 {
       constructor() {
         super(...arguments);
         this._any = true;
@@ -2247,13 +2247,13 @@ var init_types = __esm({
         return OK(input2.data);
       }
     };
-    ZodAny3.create = (params) => {
-      return new ZodAny3({
-        typeName: ZodFirstPartyTypeKind3.ZodAny,
+    ZodAny2.create = (params) => {
+      return new ZodAny2({
+        typeName: ZodFirstPartyTypeKind2.ZodAny,
         ...processCreateParams(params)
       });
     };
-    ZodUnknown4 = class extends ZodType4 {
+    ZodUnknown3 = class extends ZodType3 {
       constructor() {
         super(...arguments);
         this._unknown = true;
@@ -2262,68 +2262,68 @@ var init_types = __esm({
         return OK(input2.data);
       }
     };
-    ZodUnknown4.create = (params) => {
-      return new ZodUnknown4({
-        typeName: ZodFirstPartyTypeKind3.ZodUnknown,
+    ZodUnknown3.create = (params) => {
+      return new ZodUnknown3({
+        typeName: ZodFirstPartyTypeKind2.ZodUnknown,
         ...processCreateParams(params)
       });
     };
-    ZodNever4 = class extends ZodType4 {
+    ZodNever3 = class extends ZodType3 {
       _parse(input2) {
         const ctx = this._getOrReturnCtx(input2);
         addIssueToContext(ctx, {
-          code: ZodIssueCode3.invalid_type,
+          code: ZodIssueCode2.invalid_type,
           expected: ZodParsedType.never,
           received: ctx.parsedType
         });
-        return INVALID3;
+        return INVALID2;
       }
     };
-    ZodNever4.create = (params) => {
-      return new ZodNever4({
-        typeName: ZodFirstPartyTypeKind3.ZodNever,
+    ZodNever3.create = (params) => {
+      return new ZodNever3({
+        typeName: ZodFirstPartyTypeKind2.ZodNever,
         ...processCreateParams(params)
       });
     };
-    ZodVoid2 = class extends ZodType4 {
+    ZodVoid = class extends ZodType3 {
       _parse(input2) {
         const parsedType4 = this._getType(input2);
         if (parsedType4 !== ZodParsedType.undefined) {
           const ctx = this._getOrReturnCtx(input2);
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.void,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         return OK(input2.data);
       }
     };
-    ZodVoid2.create = (params) => {
-      return new ZodVoid2({
-        typeName: ZodFirstPartyTypeKind3.ZodVoid,
+    ZodVoid.create = (params) => {
+      return new ZodVoid({
+        typeName: ZodFirstPartyTypeKind2.ZodVoid,
         ...processCreateParams(params)
       });
     };
-    ZodArray4 = class _ZodArray extends ZodType4 {
+    ZodArray3 = class _ZodArray extends ZodType3 {
       _parse(input2) {
         const { ctx, status } = this._processInputParams(input2);
         const def = this._def;
         if (ctx.parsedType !== ZodParsedType.array) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.array,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         if (def.exactLength !== null) {
           const tooBig = ctx.data.length > def.exactLength.value;
           const tooSmall = ctx.data.length < def.exactLength.value;
           if (tooBig || tooSmall) {
             addIssueToContext(ctx, {
-              code: tooBig ? ZodIssueCode3.too_big : ZodIssueCode3.too_small,
+              code: tooBig ? ZodIssueCode2.too_big : ZodIssueCode2.too_small,
               minimum: tooSmall ? def.exactLength.value : void 0,
               maximum: tooBig ? def.exactLength.value : void 0,
               type: "array",
@@ -2337,7 +2337,7 @@ var init_types = __esm({
         if (def.minLength !== null) {
           if (ctx.data.length < def.minLength.value) {
             addIssueToContext(ctx, {
-              code: ZodIssueCode3.too_small,
+              code: ZodIssueCode2.too_small,
               minimum: def.minLength.value,
               type: "array",
               inclusive: true,
@@ -2350,7 +2350,7 @@ var init_types = __esm({
         if (def.maxLength !== null) {
           if (ctx.data.length > def.maxLength.value) {
             addIssueToContext(ctx, {
-              code: ZodIssueCode3.too_big,
+              code: ZodIssueCode2.too_big,
               maximum: def.maxLength.value,
               type: "array",
               inclusive: true,
@@ -2397,17 +2397,17 @@ var init_types = __esm({
         return this.min(1, message);
       }
     };
-    ZodArray4.create = (schema, params) => {
-      return new ZodArray4({
+    ZodArray3.create = (schema, params) => {
+      return new ZodArray3({
         type: schema,
         minLength: null,
         maxLength: null,
         exactLength: null,
-        typeName: ZodFirstPartyTypeKind3.ZodArray,
+        typeName: ZodFirstPartyTypeKind2.ZodArray,
         ...processCreateParams(params)
       });
     };
-    ZodObject4 = class _ZodObject extends ZodType4 {
+    ZodObject3 = class _ZodObject extends ZodType3 {
       constructor() {
         super(...arguments);
         this._cached = null;
@@ -2427,16 +2427,16 @@ var init_types = __esm({
         if (parsedType4 !== ZodParsedType.object) {
           const ctx2 = this._getOrReturnCtx(input2);
           addIssueToContext(ctx2, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.object,
             received: ctx2.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         const { status, ctx } = this._processInputParams(input2);
         const { shape, keys: shapeKeys2 } = this._getCached();
         const extraKeys = [];
-        if (!(this._def.catchall instanceof ZodNever4 && this._def.unknownKeys === "strip")) {
+        if (!(this._def.catchall instanceof ZodNever3 && this._def.unknownKeys === "strip")) {
           for (const key in ctx.data) {
             if (!shapeKeys2.includes(key)) {
               extraKeys.push(key);
@@ -2453,7 +2453,7 @@ var init_types = __esm({
             alwaysSet: key in ctx.data
           });
         }
-        if (this._def.catchall instanceof ZodNever4) {
+        if (this._def.catchall instanceof ZodNever3) {
           const unknownKeys = this._def.unknownKeys;
           if (unknownKeys === "passthrough") {
             for (const key of extraKeys) {
@@ -2465,7 +2465,7 @@ var init_types = __esm({
           } else if (unknownKeys === "strict") {
             if (extraKeys.length > 0) {
               addIssueToContext(ctx, {
-                code: ZodIssueCode3.unrecognized_keys,
+                code: ZodIssueCode2.unrecognized_keys,
                 keys: extraKeys
               });
               status.dirty();
@@ -2581,7 +2581,7 @@ var init_types = __esm({
             ...this._def.shape(),
             ...merging._def.shape()
           }),
-          typeName: ZodFirstPartyTypeKind3.ZodObject
+          typeName: ZodFirstPartyTypeKind2.ZodObject
         });
         return merged;
       }
@@ -2703,7 +2703,7 @@ var init_types = __esm({
           } else {
             const fieldSchema = this.shape[key];
             let newField = fieldSchema;
-            while (newField instanceof ZodOptional4) {
+            while (newField instanceof ZodOptional3) {
               newField = newField._def.innerType;
             }
             newShape[key] = newField;
@@ -2718,34 +2718,34 @@ var init_types = __esm({
         return createZodEnum(util.objectKeys(this.shape));
       }
     };
-    ZodObject4.create = (shape, params) => {
-      return new ZodObject4({
+    ZodObject3.create = (shape, params) => {
+      return new ZodObject3({
         shape: () => shape,
         unknownKeys: "strip",
-        catchall: ZodNever4.create(),
-        typeName: ZodFirstPartyTypeKind3.ZodObject,
+        catchall: ZodNever3.create(),
+        typeName: ZodFirstPartyTypeKind2.ZodObject,
         ...processCreateParams(params)
       });
     };
-    ZodObject4.strictCreate = (shape, params) => {
-      return new ZodObject4({
+    ZodObject3.strictCreate = (shape, params) => {
+      return new ZodObject3({
         shape: () => shape,
         unknownKeys: "strict",
-        catchall: ZodNever4.create(),
-        typeName: ZodFirstPartyTypeKind3.ZodObject,
+        catchall: ZodNever3.create(),
+        typeName: ZodFirstPartyTypeKind2.ZodObject,
         ...processCreateParams(params)
       });
     };
-    ZodObject4.lazycreate = (shape, params) => {
-      return new ZodObject4({
+    ZodObject3.lazycreate = (shape, params) => {
+      return new ZodObject3({
         shape,
         unknownKeys: "strip",
-        catchall: ZodNever4.create(),
-        typeName: ZodFirstPartyTypeKind3.ZodObject,
+        catchall: ZodNever3.create(),
+        typeName: ZodFirstPartyTypeKind2.ZodObject,
         ...processCreateParams(params)
       });
     };
-    ZodUnion4 = class extends ZodType4 {
+    ZodUnion3 = class extends ZodType3 {
       _parse(input2) {
         const { ctx } = this._processInputParams(input2);
         const options2 = this._def.options;
@@ -2761,12 +2761,12 @@ var init_types = __esm({
               return result.result;
             }
           }
-          const unionErrors = results.map((result) => new ZodError2(result.ctx.common.issues));
+          const unionErrors = results.map((result) => new ZodError(result.ctx.common.issues));
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_union,
+            code: ZodIssueCode2.invalid_union,
             unionErrors
           });
-          return INVALID3;
+          return INVALID2;
         }
         if (ctx.common.async) {
           return Promise.all(options2.map(async (option) => {
@@ -2817,77 +2817,77 @@ var init_types = __esm({
             ctx.common.issues.push(...dirty.ctx.common.issues);
             return dirty.result;
           }
-          const unionErrors = issues.map((issues2) => new ZodError2(issues2));
+          const unionErrors = issues.map((issues2) => new ZodError(issues2));
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_union,
+            code: ZodIssueCode2.invalid_union,
             unionErrors
           });
-          return INVALID3;
+          return INVALID2;
         }
       }
       get options() {
         return this._def.options;
       }
     };
-    ZodUnion4.create = (types, params) => {
-      return new ZodUnion4({
+    ZodUnion3.create = (types, params) => {
+      return new ZodUnion3({
         options: types,
-        typeName: ZodFirstPartyTypeKind3.ZodUnion,
+        typeName: ZodFirstPartyTypeKind2.ZodUnion,
         ...processCreateParams(params)
       });
     };
     getDiscriminator = (type) => {
-      if (type instanceof ZodLazy4) {
+      if (type instanceof ZodLazy3) {
         return getDiscriminator(type.schema);
       } else if (type instanceof ZodEffects) {
         return getDiscriminator(type.innerType());
-      } else if (type instanceof ZodLiteral4) {
+      } else if (type instanceof ZodLiteral3) {
         return [type.value];
-      } else if (type instanceof ZodEnum4) {
+      } else if (type instanceof ZodEnum3) {
         return type.options;
       } else if (type instanceof ZodNativeEnum) {
         return util.objectValues(type.enum);
-      } else if (type instanceof ZodDefault4) {
+      } else if (type instanceof ZodDefault3) {
         return getDiscriminator(type._def.innerType);
-      } else if (type instanceof ZodUndefined2) {
+      } else if (type instanceof ZodUndefined) {
         return [void 0];
-      } else if (type instanceof ZodNull4) {
+      } else if (type instanceof ZodNull3) {
         return [null];
-      } else if (type instanceof ZodOptional4) {
+      } else if (type instanceof ZodOptional3) {
         return [void 0, ...getDiscriminator(type.unwrap())];
-      } else if (type instanceof ZodNullable4) {
+      } else if (type instanceof ZodNullable3) {
         return [null, ...getDiscriminator(type.unwrap())];
       } else if (type instanceof ZodBranded) {
         return getDiscriminator(type.unwrap());
-      } else if (type instanceof ZodReadonly4) {
+      } else if (type instanceof ZodReadonly3) {
         return getDiscriminator(type.unwrap());
-      } else if (type instanceof ZodCatch4) {
+      } else if (type instanceof ZodCatch3) {
         return getDiscriminator(type._def.innerType);
       } else {
         return [];
       }
     };
-    ZodDiscriminatedUnion4 = class _ZodDiscriminatedUnion extends ZodType4 {
+    ZodDiscriminatedUnion3 = class _ZodDiscriminatedUnion extends ZodType3 {
       _parse(input2) {
         const { ctx } = this._processInputParams(input2);
         if (ctx.parsedType !== ZodParsedType.object) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.object,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         const discriminator = this.discriminator;
         const discriminatorValue = ctx.data[discriminator];
         const option = this.optionsMap.get(discriminatorValue);
         if (!option) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_union_discriminator,
+            code: ZodIssueCode2.invalid_union_discriminator,
             options: Array.from(this.optionsMap.keys()),
             path: [discriminator]
           });
-          return INVALID3;
+          return INVALID2;
         }
         if (ctx.common.async) {
           return option._parseAsync({
@@ -2935,7 +2935,7 @@ var init_types = __esm({
           }
         }
         return new _ZodDiscriminatedUnion({
-          typeName: ZodFirstPartyTypeKind3.ZodDiscriminatedUnion,
+          typeName: ZodFirstPartyTypeKind2.ZodDiscriminatedUnion,
           discriminator,
           options: options2,
           optionsMap,
@@ -2943,19 +2943,19 @@ var init_types = __esm({
         });
       }
     };
-    ZodIntersection4 = class extends ZodType4 {
+    ZodIntersection3 = class extends ZodType3 {
       _parse(input2) {
         const { status, ctx } = this._processInputParams(input2);
         const handleParsed = (parsedLeft, parsedRight) => {
           if (isAborted(parsedLeft) || isAborted(parsedRight)) {
-            return INVALID3;
+            return INVALID2;
           }
-          const merged = mergeValues4(parsedLeft.value, parsedRight.value);
+          const merged = mergeValues3(parsedLeft.value, parsedRight.value);
           if (!merged.valid) {
             addIssueToContext(ctx, {
-              code: ZodIssueCode3.invalid_intersection_types
+              code: ZodIssueCode2.invalid_intersection_types
             });
-            return INVALID3;
+            return INVALID2;
           }
           if (isDirty(parsedLeft) || isDirty(parsedRight)) {
             status.dirty();
@@ -2988,39 +2988,39 @@ var init_types = __esm({
         }
       }
     };
-    ZodIntersection4.create = (left, right, params) => {
-      return new ZodIntersection4({
+    ZodIntersection3.create = (left, right, params) => {
+      return new ZodIntersection3({
         left,
         right,
-        typeName: ZodFirstPartyTypeKind3.ZodIntersection,
+        typeName: ZodFirstPartyTypeKind2.ZodIntersection,
         ...processCreateParams(params)
       });
     };
-    ZodTuple2 = class _ZodTuple extends ZodType4 {
+    ZodTuple = class _ZodTuple extends ZodType3 {
       _parse(input2) {
         const { status, ctx } = this._processInputParams(input2);
         if (ctx.parsedType !== ZodParsedType.array) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.array,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         if (ctx.data.length < this._def.items.length) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.too_small,
+            code: ZodIssueCode2.too_small,
             minimum: this._def.items.length,
             inclusive: true,
             exact: false,
             type: "array"
           });
-          return INVALID3;
+          return INVALID2;
         }
         const rest = this._def.rest;
         if (!rest && ctx.data.length > this._def.items.length) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.too_big,
+            code: ZodIssueCode2.too_big,
             maximum: this._def.items.length,
             inclusive: true,
             exact: false,
@@ -3052,18 +3052,18 @@ var init_types = __esm({
         });
       }
     };
-    ZodTuple2.create = (schemas, params) => {
+    ZodTuple.create = (schemas, params) => {
       if (!Array.isArray(schemas)) {
         throw new Error("You must pass an array of schemas to z.tuple([ ... ])");
       }
-      return new ZodTuple2({
+      return new ZodTuple({
         items: schemas,
-        typeName: ZodFirstPartyTypeKind3.ZodTuple,
+        typeName: ZodFirstPartyTypeKind2.ZodTuple,
         rest: null,
         ...processCreateParams(params)
       });
     };
-    ZodRecord4 = class _ZodRecord extends ZodType4 {
+    ZodRecord3 = class _ZodRecord extends ZodType3 {
       get keySchema() {
         return this._def.keyType;
       }
@@ -3074,11 +3074,11 @@ var init_types = __esm({
         const { status, ctx } = this._processInputParams(input2);
         if (ctx.parsedType !== ZodParsedType.object) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.object,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         const pairs = [];
         const keyType = this._def.keyType;
@@ -3100,23 +3100,23 @@ var init_types = __esm({
         return this._def.valueType;
       }
       static create(first, second, third) {
-        if (second instanceof ZodType4) {
+        if (second instanceof ZodType3) {
           return new _ZodRecord({
             keyType: first,
             valueType: second,
-            typeName: ZodFirstPartyTypeKind3.ZodRecord,
+            typeName: ZodFirstPartyTypeKind2.ZodRecord,
             ...processCreateParams(third)
           });
         }
         return new _ZodRecord({
-          keyType: ZodString4.create(),
+          keyType: ZodString3.create(),
           valueType: first,
-          typeName: ZodFirstPartyTypeKind3.ZodRecord,
+          typeName: ZodFirstPartyTypeKind2.ZodRecord,
           ...processCreateParams(second)
         });
       }
     };
-    ZodMap2 = class extends ZodType4 {
+    ZodMap = class extends ZodType3 {
       get keySchema() {
         return this._def.keyType;
       }
@@ -3127,11 +3127,11 @@ var init_types = __esm({
         const { status, ctx } = this._processInputParams(input2);
         if (ctx.parsedType !== ZodParsedType.map) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.map,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         const keyType = this._def.keyType;
         const valueType = this._def.valueType;
@@ -3148,7 +3148,7 @@ var init_types = __esm({
               const key = await pair.key;
               const value = await pair.value;
               if (key.status === "aborted" || value.status === "aborted") {
-                return INVALID3;
+                return INVALID2;
               }
               if (key.status === "dirty" || value.status === "dirty") {
                 status.dirty();
@@ -3163,7 +3163,7 @@ var init_types = __esm({
             const key = pair.key;
             const value = pair.value;
             if (key.status === "aborted" || value.status === "aborted") {
-              return INVALID3;
+              return INVALID2;
             }
             if (key.status === "dirty" || value.status === "dirty") {
               status.dirty();
@@ -3174,30 +3174,30 @@ var init_types = __esm({
         }
       }
     };
-    ZodMap2.create = (keyType, valueType, params) => {
-      return new ZodMap2({
+    ZodMap.create = (keyType, valueType, params) => {
+      return new ZodMap({
         valueType,
         keyType,
-        typeName: ZodFirstPartyTypeKind3.ZodMap,
+        typeName: ZodFirstPartyTypeKind2.ZodMap,
         ...processCreateParams(params)
       });
     };
-    ZodSet2 = class _ZodSet extends ZodType4 {
+    ZodSet = class _ZodSet extends ZodType3 {
       _parse(input2) {
         const { status, ctx } = this._processInputParams(input2);
         if (ctx.parsedType !== ZodParsedType.set) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.set,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         const def = this._def;
         if (def.minSize !== null) {
           if (ctx.data.size < def.minSize.value) {
             addIssueToContext(ctx, {
-              code: ZodIssueCode3.too_small,
+              code: ZodIssueCode2.too_small,
               minimum: def.minSize.value,
               type: "set",
               inclusive: true,
@@ -3210,7 +3210,7 @@ var init_types = __esm({
         if (def.maxSize !== null) {
           if (ctx.data.size > def.maxSize.value) {
             addIssueToContext(ctx, {
-              code: ZodIssueCode3.too_big,
+              code: ZodIssueCode2.too_big,
               maximum: def.maxSize.value,
               type: "set",
               inclusive: true,
@@ -3225,7 +3225,7 @@ var init_types = __esm({
           const parsedSet = /* @__PURE__ */ new Set();
           for (const element of elements2) {
             if (element.status === "aborted")
-              return INVALID3;
+              return INVALID2;
             if (element.status === "dirty")
               status.dirty();
             parsedSet.add(element.value);
@@ -3258,16 +3258,16 @@ var init_types = __esm({
         return this.min(1, message);
       }
     };
-    ZodSet2.create = (valueType, params) => {
-      return new ZodSet2({
+    ZodSet.create = (valueType, params) => {
+      return new ZodSet({
         valueType,
         minSize: null,
         maxSize: null,
-        typeName: ZodFirstPartyTypeKind3.ZodSet,
+        typeName: ZodFirstPartyTypeKind2.ZodSet,
         ...processCreateParams(params)
       });
     };
-    ZodFunction2 = class _ZodFunction extends ZodType4 {
+    ZodFunction = class _ZodFunction extends ZodType3 {
       constructor() {
         super(...arguments);
         this.validate = this.implement;
@@ -3276,19 +3276,19 @@ var init_types = __esm({
         const { ctx } = this._processInputParams(input2);
         if (ctx.parsedType !== ZodParsedType.function) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.function,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         function makeArgsIssue(args, error64) {
           return makeIssue({
             data: args,
             path: ctx.path,
-            errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap2(), en_default4].filter((x) => !!x),
+            errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap(), en_default3].filter((x) => !!x),
             issueData: {
-              code: ZodIssueCode3.invalid_arguments,
+              code: ZodIssueCode2.invalid_arguments,
               argumentsError: error64
             }
           });
@@ -3297,19 +3297,19 @@ var init_types = __esm({
           return makeIssue({
             data: returns,
             path: ctx.path,
-            errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap2(), en_default4].filter((x) => !!x),
+            errorMaps: [ctx.common.contextualErrorMap, ctx.schemaErrorMap, getErrorMap(), en_default3].filter((x) => !!x),
             issueData: {
-              code: ZodIssueCode3.invalid_return_type,
+              code: ZodIssueCode2.invalid_return_type,
               returnTypeError: error64
             }
           });
         }
         const params = { errorMap: ctx.common.contextualErrorMap };
         const fn = ctx.data;
-        if (this._def.returns instanceof ZodPromise2) {
+        if (this._def.returns instanceof ZodPromise) {
           const me = this;
           return OK(async function(...args) {
-            const error64 = new ZodError2([]);
+            const error64 = new ZodError([]);
             const parsedArgs = await me._def.args.parseAsync(args, params).catch((e) => {
               error64.addIssue(makeArgsIssue(args, e));
               throw error64;
@@ -3326,12 +3326,12 @@ var init_types = __esm({
           return OK(function(...args) {
             const parsedArgs = me._def.args.safeParse(args, params);
             if (!parsedArgs.success) {
-              throw new ZodError2([makeArgsIssue(args, parsedArgs.error)]);
+              throw new ZodError([makeArgsIssue(args, parsedArgs.error)]);
             }
             const result = Reflect.apply(fn, this, parsedArgs.data);
             const parsedReturns = me._def.returns.safeParse(result, params);
             if (!parsedReturns.success) {
-              throw new ZodError2([makeReturnsIssue(result, parsedReturns.error)]);
+              throw new ZodError([makeReturnsIssue(result, parsedReturns.error)]);
             }
             return parsedReturns.data;
           });
@@ -3346,7 +3346,7 @@ var init_types = __esm({
       args(...items) {
         return new _ZodFunction({
           ...this._def,
-          args: ZodTuple2.create(items).rest(ZodUnknown4.create())
+          args: ZodTuple.create(items).rest(ZodUnknown3.create())
         });
       }
       returns(returnType) {
@@ -3365,14 +3365,14 @@ var init_types = __esm({
       }
       static create(args, returns, params) {
         return new _ZodFunction({
-          args: args ? args : ZodTuple2.create([]).rest(ZodUnknown4.create()),
-          returns: returns || ZodUnknown4.create(),
-          typeName: ZodFirstPartyTypeKind3.ZodFunction,
+          args: args ? args : ZodTuple.create([]).rest(ZodUnknown3.create()),
+          returns: returns || ZodUnknown3.create(),
+          typeName: ZodFirstPartyTypeKind2.ZodFunction,
           ...processCreateParams(params)
         });
       }
     };
-    ZodLazy4 = class extends ZodType4 {
+    ZodLazy3 = class extends ZodType3 {
       get schema() {
         return this._def.getter();
       }
@@ -3382,23 +3382,23 @@ var init_types = __esm({
         return lazySchema._parse({ data: ctx.data, path: ctx.path, parent: ctx });
       }
     };
-    ZodLazy4.create = (getter, params) => {
-      return new ZodLazy4({
+    ZodLazy3.create = (getter, params) => {
+      return new ZodLazy3({
         getter,
-        typeName: ZodFirstPartyTypeKind3.ZodLazy,
+        typeName: ZodFirstPartyTypeKind2.ZodLazy,
         ...processCreateParams(params)
       });
     };
-    ZodLiteral4 = class extends ZodType4 {
+    ZodLiteral3 = class extends ZodType3 {
       _parse(input2) {
         if (input2.data !== this._def.value) {
           const ctx = this._getOrReturnCtx(input2);
           addIssueToContext(ctx, {
             received: ctx.data,
-            code: ZodIssueCode3.invalid_literal,
+            code: ZodIssueCode2.invalid_literal,
             expected: this._def.value
           });
-          return INVALID3;
+          return INVALID2;
         }
         return { status: "valid", value: input2.data };
       }
@@ -3406,14 +3406,14 @@ var init_types = __esm({
         return this._def.value;
       }
     };
-    ZodLiteral4.create = (value, params) => {
-      return new ZodLiteral4({
+    ZodLiteral3.create = (value, params) => {
+      return new ZodLiteral3({
         value,
-        typeName: ZodFirstPartyTypeKind3.ZodLiteral,
+        typeName: ZodFirstPartyTypeKind2.ZodLiteral,
         ...processCreateParams(params)
       });
     };
-    ZodEnum4 = class _ZodEnum extends ZodType4 {
+    ZodEnum3 = class _ZodEnum extends ZodType3 {
       _parse(input2) {
         if (typeof input2.data !== "string") {
           const ctx = this._getOrReturnCtx(input2);
@@ -3421,9 +3421,9 @@ var init_types = __esm({
           addIssueToContext(ctx, {
             expected: util.joinValues(expectedValues),
             received: ctx.parsedType,
-            code: ZodIssueCode3.invalid_type
+            code: ZodIssueCode2.invalid_type
           });
-          return INVALID3;
+          return INVALID2;
         }
         if (!this._cache) {
           this._cache = new Set(this._def.values);
@@ -3433,10 +3433,10 @@ var init_types = __esm({
           const expectedValues = this._def.values;
           addIssueToContext(ctx, {
             received: ctx.data,
-            code: ZodIssueCode3.invalid_enum_value,
+            code: ZodIssueCode2.invalid_enum_value,
             options: expectedValues
           });
-          return INVALID3;
+          return INVALID2;
         }
         return OK(input2.data);
       }
@@ -3477,8 +3477,8 @@ var init_types = __esm({
         });
       }
     };
-    ZodEnum4.create = createZodEnum;
-    ZodNativeEnum = class extends ZodType4 {
+    ZodEnum3.create = createZodEnum;
+    ZodNativeEnum = class extends ZodType3 {
       _parse(input2) {
         const nativeEnumValues = util.getValidEnumValues(this._def.values);
         const ctx = this._getOrReturnCtx(input2);
@@ -3487,9 +3487,9 @@ var init_types = __esm({
           addIssueToContext(ctx, {
             expected: util.joinValues(expectedValues),
             received: ctx.parsedType,
-            code: ZodIssueCode3.invalid_type
+            code: ZodIssueCode2.invalid_type
           });
-          return INVALID3;
+          return INVALID2;
         }
         if (!this._cache) {
           this._cache = new Set(util.getValidEnumValues(this._def.values));
@@ -3498,10 +3498,10 @@ var init_types = __esm({
           const expectedValues = util.objectValues(nativeEnumValues);
           addIssueToContext(ctx, {
             received: ctx.data,
-            code: ZodIssueCode3.invalid_enum_value,
+            code: ZodIssueCode2.invalid_enum_value,
             options: expectedValues
           });
-          return INVALID3;
+          return INVALID2;
         }
         return OK(input2.data);
       }
@@ -3512,11 +3512,11 @@ var init_types = __esm({
     ZodNativeEnum.create = (values, params) => {
       return new ZodNativeEnum({
         values,
-        typeName: ZodFirstPartyTypeKind3.ZodNativeEnum,
+        typeName: ZodFirstPartyTypeKind2.ZodNativeEnum,
         ...processCreateParams(params)
       });
     };
-    ZodPromise2 = class extends ZodType4 {
+    ZodPromise = class extends ZodType3 {
       unwrap() {
         return this._def.type;
       }
@@ -3524,11 +3524,11 @@ var init_types = __esm({
         const { ctx } = this._processInputParams(input2);
         if (ctx.parsedType !== ZodParsedType.promise && ctx.common.async === false) {
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.promise,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         const promisified = ctx.parsedType === ZodParsedType.promise ? ctx.data : Promise.resolve(ctx.data);
         return OK(promisified.then((data) => {
@@ -3539,19 +3539,19 @@ var init_types = __esm({
         }));
       }
     };
-    ZodPromise2.create = (schema, params) => {
-      return new ZodPromise2({
+    ZodPromise.create = (schema, params) => {
+      return new ZodPromise({
         type: schema,
-        typeName: ZodFirstPartyTypeKind3.ZodPromise,
+        typeName: ZodFirstPartyTypeKind2.ZodPromise,
         ...processCreateParams(params)
       });
     };
-    ZodEffects = class extends ZodType4 {
+    ZodEffects = class extends ZodType3 {
       innerType() {
         return this._def.schema;
       }
       sourceType() {
-        return this._def.schema._def.typeName === ZodFirstPartyTypeKind3.ZodEffects ? this._def.schema.sourceType() : this._def.schema;
+        return this._def.schema._def.typeName === ZodFirstPartyTypeKind2.ZodEffects ? this._def.schema.sourceType() : this._def.schema;
       }
       _parse(input2) {
         const { status, ctx } = this._processInputParams(input2);
@@ -3575,14 +3575,14 @@ var init_types = __esm({
           if (ctx.common.async) {
             return Promise.resolve(processed).then(async (processed2) => {
               if (status.value === "aborted")
-                return INVALID3;
+                return INVALID2;
               const result = await this._def.schema._parseAsync({
                 data: processed2,
                 path: ctx.path,
                 parent: ctx
               });
               if (result.status === "aborted")
-                return INVALID3;
+                return INVALID2;
               if (result.status === "dirty")
                 return DIRTY(result.value);
               if (status.value === "dirty")
@@ -3591,14 +3591,14 @@ var init_types = __esm({
             });
           } else {
             if (status.value === "aborted")
-              return INVALID3;
+              return INVALID2;
             const result = this._def.schema._parseSync({
               data: processed,
               path: ctx.path,
               parent: ctx
             });
             if (result.status === "aborted")
-              return INVALID3;
+              return INVALID2;
             if (result.status === "dirty")
               return DIRTY(result.value);
             if (status.value === "dirty")
@@ -3624,7 +3624,7 @@ var init_types = __esm({
               parent: ctx
             });
             if (inner.status === "aborted")
-              return INVALID3;
+              return INVALID2;
             if (inner.status === "dirty")
               status.dirty();
             executeRefinement(inner.value);
@@ -3632,7 +3632,7 @@ var init_types = __esm({
           } else {
             return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((inner) => {
               if (inner.status === "aborted")
-                return INVALID3;
+                return INVALID2;
               if (inner.status === "dirty")
                 status.dirty();
               return executeRefinement(inner.value).then(() => {
@@ -3649,7 +3649,7 @@ var init_types = __esm({
               parent: ctx
             });
             if (!isValid(base))
-              return INVALID3;
+              return INVALID2;
             const result = effect.transform(base.value, checkCtx);
             if (result instanceof Promise) {
               throw new Error(`Asynchronous transform encountered during synchronous parse operation. Use .parseAsync instead.`);
@@ -3658,7 +3658,7 @@ var init_types = __esm({
           } else {
             return this._def.schema._parseAsync({ data: ctx.data, path: ctx.path, parent: ctx }).then((base) => {
               if (!isValid(base))
-                return INVALID3;
+                return INVALID2;
               return Promise.resolve(effect.transform(base.value, checkCtx)).then((result) => ({
                 status: status.value,
                 value: result
@@ -3672,7 +3672,7 @@ var init_types = __esm({
     ZodEffects.create = (schema, effect, params) => {
       return new ZodEffects({
         schema,
-        typeName: ZodFirstPartyTypeKind3.ZodEffects,
+        typeName: ZodFirstPartyTypeKind2.ZodEffects,
         effect,
         ...processCreateParams(params)
       });
@@ -3681,11 +3681,11 @@ var init_types = __esm({
       return new ZodEffects({
         schema,
         effect: { type: "preprocess", transform: preprocess4 },
-        typeName: ZodFirstPartyTypeKind3.ZodEffects,
+        typeName: ZodFirstPartyTypeKind2.ZodEffects,
         ...processCreateParams(params)
       });
     };
-    ZodOptional4 = class extends ZodType4 {
+    ZodOptional3 = class extends ZodType3 {
       _parse(input2) {
         const parsedType4 = this._getType(input2);
         if (parsedType4 === ZodParsedType.undefined) {
@@ -3697,14 +3697,14 @@ var init_types = __esm({
         return this._def.innerType;
       }
     };
-    ZodOptional4.create = (type, params) => {
-      return new ZodOptional4({
+    ZodOptional3.create = (type, params) => {
+      return new ZodOptional3({
         innerType: type,
-        typeName: ZodFirstPartyTypeKind3.ZodOptional,
+        typeName: ZodFirstPartyTypeKind2.ZodOptional,
         ...processCreateParams(params)
       });
     };
-    ZodNullable4 = class extends ZodType4 {
+    ZodNullable3 = class extends ZodType3 {
       _parse(input2) {
         const parsedType4 = this._getType(input2);
         if (parsedType4 === ZodParsedType.null) {
@@ -3716,14 +3716,14 @@ var init_types = __esm({
         return this._def.innerType;
       }
     };
-    ZodNullable4.create = (type, params) => {
-      return new ZodNullable4({
+    ZodNullable3.create = (type, params) => {
+      return new ZodNullable3({
         innerType: type,
-        typeName: ZodFirstPartyTypeKind3.ZodNullable,
+        typeName: ZodFirstPartyTypeKind2.ZodNullable,
         ...processCreateParams(params)
       });
     };
-    ZodDefault4 = class extends ZodType4 {
+    ZodDefault3 = class extends ZodType3 {
       _parse(input2) {
         const { ctx } = this._processInputParams(input2);
         let data = ctx.data;
@@ -3740,15 +3740,15 @@ var init_types = __esm({
         return this._def.innerType;
       }
     };
-    ZodDefault4.create = (type, params) => {
-      return new ZodDefault4({
+    ZodDefault3.create = (type, params) => {
+      return new ZodDefault3({
         innerType: type,
-        typeName: ZodFirstPartyTypeKind3.ZodDefault,
+        typeName: ZodFirstPartyTypeKind2.ZodDefault,
         defaultValue: typeof params.default === "function" ? params.default : () => params.default,
         ...processCreateParams(params)
       });
     };
-    ZodCatch4 = class extends ZodType4 {
+    ZodCatch3 = class extends ZodType3 {
       _parse(input2) {
         const { ctx } = this._processInputParams(input2);
         const newCtx = {
@@ -3771,7 +3771,7 @@ var init_types = __esm({
               status: "valid",
               value: result2.status === "valid" ? result2.value : this._def.catchValue({
                 get error() {
-                  return new ZodError2(newCtx.common.issues);
+                  return new ZodError(newCtx.common.issues);
                 },
                 input: newCtx.data
               })
@@ -3782,7 +3782,7 @@ var init_types = __esm({
             status: "valid",
             value: result.status === "valid" ? result.value : this._def.catchValue({
               get error() {
-                return new ZodError2(newCtx.common.issues);
+                return new ZodError(newCtx.common.issues);
               },
               input: newCtx.data
             })
@@ -3793,37 +3793,37 @@ var init_types = __esm({
         return this._def.innerType;
       }
     };
-    ZodCatch4.create = (type, params) => {
-      return new ZodCatch4({
+    ZodCatch3.create = (type, params) => {
+      return new ZodCatch3({
         innerType: type,
-        typeName: ZodFirstPartyTypeKind3.ZodCatch,
+        typeName: ZodFirstPartyTypeKind2.ZodCatch,
         catchValue: typeof params.catch === "function" ? params.catch : () => params.catch,
         ...processCreateParams(params)
       });
     };
-    ZodNaN2 = class extends ZodType4 {
+    ZodNaN = class extends ZodType3 {
       _parse(input2) {
         const parsedType4 = this._getType(input2);
         if (parsedType4 !== ZodParsedType.nan) {
           const ctx = this._getOrReturnCtx(input2);
           addIssueToContext(ctx, {
-            code: ZodIssueCode3.invalid_type,
+            code: ZodIssueCode2.invalid_type,
             expected: ZodParsedType.nan,
             received: ctx.parsedType
           });
-          return INVALID3;
+          return INVALID2;
         }
         return { status: "valid", value: input2.data };
       }
     };
-    ZodNaN2.create = (params) => {
-      return new ZodNaN2({
-        typeName: ZodFirstPartyTypeKind3.ZodNaN,
+    ZodNaN.create = (params) => {
+      return new ZodNaN({
+        typeName: ZodFirstPartyTypeKind2.ZodNaN,
         ...processCreateParams(params)
       });
     };
     BRAND = Symbol("zod_brand");
-    ZodBranded = class extends ZodType4 {
+    ZodBranded = class extends ZodType3 {
       _parse(input2) {
         const { ctx } = this._processInputParams(input2);
         const data = ctx.data;
@@ -3837,7 +3837,7 @@ var init_types = __esm({
         return this._def.type;
       }
     };
-    ZodPipeline = class _ZodPipeline extends ZodType4 {
+    ZodPipeline = class _ZodPipeline extends ZodType3 {
       _parse(input2) {
         const { status, ctx } = this._processInputParams(input2);
         if (ctx.common.async) {
@@ -3848,7 +3848,7 @@ var init_types = __esm({
               parent: ctx
             });
             if (inResult.status === "aborted")
-              return INVALID3;
+              return INVALID2;
             if (inResult.status === "dirty") {
               status.dirty();
               return DIRTY(inResult.value);
@@ -3868,7 +3868,7 @@ var init_types = __esm({
             parent: ctx
           });
           if (inResult.status === "aborted")
-            return INVALID3;
+            return INVALID2;
           if (inResult.status === "dirty") {
             status.dirty();
             return {
@@ -3888,11 +3888,11 @@ var init_types = __esm({
         return new _ZodPipeline({
           in: a,
           out: b,
-          typeName: ZodFirstPartyTypeKind3.ZodPipeline
+          typeName: ZodFirstPartyTypeKind2.ZodPipeline
         });
       }
     };
-    ZodReadonly4 = class extends ZodType4 {
+    ZodReadonly3 = class extends ZodType3 {
       _parse(input2) {
         const result = this._def.innerType._parse(input2);
         const freeze = (data) => {
@@ -3907,15 +3907,15 @@ var init_types = __esm({
         return this._def.innerType;
       }
     };
-    ZodReadonly4.create = (type, params) => {
-      return new ZodReadonly4({
+    ZodReadonly3.create = (type, params) => {
+      return new ZodReadonly3({
         innerType: type,
-        typeName: ZodFirstPartyTypeKind3.ZodReadonly,
+        typeName: ZodFirstPartyTypeKind2.ZodReadonly,
         ...processCreateParams(params)
       });
     };
     late = {
-      object: ZodObject4.lazycreate
+      object: ZodObject3.lazycreate
     };
     (function(ZodFirstPartyTypeKind4) {
       ZodFirstPartyTypeKind4["ZodString"] = "ZodString";
@@ -3954,131 +3954,131 @@ var init_types = __esm({
       ZodFirstPartyTypeKind4["ZodBranded"] = "ZodBranded";
       ZodFirstPartyTypeKind4["ZodPipeline"] = "ZodPipeline";
       ZodFirstPartyTypeKind4["ZodReadonly"] = "ZodReadonly";
-    })(ZodFirstPartyTypeKind3 || (ZodFirstPartyTypeKind3 = {}));
+    })(ZodFirstPartyTypeKind2 || (ZodFirstPartyTypeKind2 = {}));
     instanceOfType = (cls, params = {
       message: `Input not instance of ${cls.name}`
-    }) => custom2((data) => data instanceof cls, params);
-    stringType = ZodString4.create;
-    numberType = ZodNumber4.create;
-    nanType = ZodNaN2.create;
-    bigIntType = ZodBigInt3.create;
-    booleanType = ZodBoolean4.create;
-    dateType = ZodDate3.create;
-    symbolType = ZodSymbol2.create;
-    undefinedType = ZodUndefined2.create;
-    nullType = ZodNull4.create;
-    anyType = ZodAny3.create;
-    unknownType = ZodUnknown4.create;
-    neverType = ZodNever4.create;
-    voidType = ZodVoid2.create;
-    arrayType = ZodArray4.create;
-    objectType = ZodObject4.create;
-    strictObjectType = ZodObject4.strictCreate;
-    unionType = ZodUnion4.create;
-    discriminatedUnionType = ZodDiscriminatedUnion4.create;
-    intersectionType = ZodIntersection4.create;
-    tupleType = ZodTuple2.create;
-    recordType = ZodRecord4.create;
-    mapType = ZodMap2.create;
-    setType = ZodSet2.create;
-    functionType = ZodFunction2.create;
-    lazyType = ZodLazy4.create;
-    literalType = ZodLiteral4.create;
-    enumType = ZodEnum4.create;
+    }) => custom((data) => data instanceof cls, params);
+    stringType = ZodString3.create;
+    numberType = ZodNumber3.create;
+    nanType = ZodNaN.create;
+    bigIntType = ZodBigInt2.create;
+    booleanType = ZodBoolean3.create;
+    dateType = ZodDate2.create;
+    symbolType = ZodSymbol.create;
+    undefinedType = ZodUndefined.create;
+    nullType = ZodNull3.create;
+    anyType = ZodAny2.create;
+    unknownType = ZodUnknown3.create;
+    neverType = ZodNever3.create;
+    voidType = ZodVoid.create;
+    arrayType = ZodArray3.create;
+    objectType = ZodObject3.create;
+    strictObjectType = ZodObject3.strictCreate;
+    unionType = ZodUnion3.create;
+    discriminatedUnionType = ZodDiscriminatedUnion3.create;
+    intersectionType = ZodIntersection3.create;
+    tupleType = ZodTuple.create;
+    recordType = ZodRecord3.create;
+    mapType = ZodMap.create;
+    setType = ZodSet.create;
+    functionType = ZodFunction.create;
+    lazyType = ZodLazy3.create;
+    literalType = ZodLiteral3.create;
+    enumType = ZodEnum3.create;
     nativeEnumType = ZodNativeEnum.create;
-    promiseType = ZodPromise2.create;
+    promiseType = ZodPromise.create;
     effectsType = ZodEffects.create;
-    optionalType = ZodOptional4.create;
-    nullableType = ZodNullable4.create;
+    optionalType = ZodOptional3.create;
+    nullableType = ZodNullable3.create;
     preprocessType = ZodEffects.createWithPreprocess;
     pipelineType = ZodPipeline.create;
     ostring = () => stringType().optional();
     onumber = () => numberType().optional();
     oboolean = () => booleanType().optional();
     coerce = {
-      string: (arg) => ZodString4.create({ ...arg, coerce: true }),
-      number: (arg) => ZodNumber4.create({ ...arg, coerce: true }),
-      boolean: (arg) => ZodBoolean4.create({
+      string: (arg) => ZodString3.create({ ...arg, coerce: true }),
+      number: (arg) => ZodNumber3.create({ ...arg, coerce: true }),
+      boolean: (arg) => ZodBoolean3.create({
         ...arg,
         coerce: true
       }),
-      bigint: (arg) => ZodBigInt3.create({ ...arg, coerce: true }),
-      date: (arg) => ZodDate3.create({ ...arg, coerce: true })
+      bigint: (arg) => ZodBigInt2.create({ ...arg, coerce: true }),
+      date: (arg) => ZodDate2.create({ ...arg, coerce: true })
     };
-    NEVER3 = INVALID3;
+    NEVER2 = INVALID2;
   }
 });
 
 // node_modules/zod/v3/external.js
-var external_exports2 = {};
-__export(external_exports2, {
+var external_exports = {};
+__export(external_exports, {
   BRAND: () => BRAND,
   DIRTY: () => DIRTY,
   EMPTY_PATH: () => EMPTY_PATH,
-  INVALID: () => INVALID3,
-  NEVER: () => NEVER3,
+  INVALID: () => INVALID2,
+  NEVER: () => NEVER2,
   OK: () => OK,
   ParseStatus: () => ParseStatus,
-  Schema: () => ZodType4,
-  ZodAny: () => ZodAny3,
-  ZodArray: () => ZodArray4,
-  ZodBigInt: () => ZodBigInt3,
-  ZodBoolean: () => ZodBoolean4,
+  Schema: () => ZodType3,
+  ZodAny: () => ZodAny2,
+  ZodArray: () => ZodArray3,
+  ZodBigInt: () => ZodBigInt2,
+  ZodBoolean: () => ZodBoolean3,
   ZodBranded: () => ZodBranded,
-  ZodCatch: () => ZodCatch4,
-  ZodDate: () => ZodDate3,
-  ZodDefault: () => ZodDefault4,
-  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion4,
+  ZodCatch: () => ZodCatch3,
+  ZodDate: () => ZodDate2,
+  ZodDefault: () => ZodDefault3,
+  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion3,
   ZodEffects: () => ZodEffects,
-  ZodEnum: () => ZodEnum4,
-  ZodError: () => ZodError2,
-  ZodFirstPartyTypeKind: () => ZodFirstPartyTypeKind3,
-  ZodFunction: () => ZodFunction2,
-  ZodIntersection: () => ZodIntersection4,
-  ZodIssueCode: () => ZodIssueCode3,
-  ZodLazy: () => ZodLazy4,
-  ZodLiteral: () => ZodLiteral4,
-  ZodMap: () => ZodMap2,
-  ZodNaN: () => ZodNaN2,
+  ZodEnum: () => ZodEnum3,
+  ZodError: () => ZodError,
+  ZodFirstPartyTypeKind: () => ZodFirstPartyTypeKind2,
+  ZodFunction: () => ZodFunction,
+  ZodIntersection: () => ZodIntersection3,
+  ZodIssueCode: () => ZodIssueCode2,
+  ZodLazy: () => ZodLazy3,
+  ZodLiteral: () => ZodLiteral3,
+  ZodMap: () => ZodMap,
+  ZodNaN: () => ZodNaN,
   ZodNativeEnum: () => ZodNativeEnum,
-  ZodNever: () => ZodNever4,
-  ZodNull: () => ZodNull4,
-  ZodNullable: () => ZodNullable4,
-  ZodNumber: () => ZodNumber4,
-  ZodObject: () => ZodObject4,
-  ZodOptional: () => ZodOptional4,
+  ZodNever: () => ZodNever3,
+  ZodNull: () => ZodNull3,
+  ZodNullable: () => ZodNullable3,
+  ZodNumber: () => ZodNumber3,
+  ZodObject: () => ZodObject3,
+  ZodOptional: () => ZodOptional3,
   ZodParsedType: () => ZodParsedType,
   ZodPipeline: () => ZodPipeline,
-  ZodPromise: () => ZodPromise2,
-  ZodReadonly: () => ZodReadonly4,
-  ZodRecord: () => ZodRecord4,
-  ZodSchema: () => ZodType4,
-  ZodSet: () => ZodSet2,
-  ZodString: () => ZodString4,
-  ZodSymbol: () => ZodSymbol2,
+  ZodPromise: () => ZodPromise,
+  ZodReadonly: () => ZodReadonly3,
+  ZodRecord: () => ZodRecord3,
+  ZodSchema: () => ZodType3,
+  ZodSet: () => ZodSet,
+  ZodString: () => ZodString3,
+  ZodSymbol: () => ZodSymbol,
   ZodTransformer: () => ZodEffects,
-  ZodTuple: () => ZodTuple2,
-  ZodType: () => ZodType4,
-  ZodUndefined: () => ZodUndefined2,
-  ZodUnion: () => ZodUnion4,
-  ZodUnknown: () => ZodUnknown4,
-  ZodVoid: () => ZodVoid2,
+  ZodTuple: () => ZodTuple,
+  ZodType: () => ZodType3,
+  ZodUndefined: () => ZodUndefined,
+  ZodUnion: () => ZodUnion3,
+  ZodUnknown: () => ZodUnknown3,
+  ZodVoid: () => ZodVoid,
   addIssueToContext: () => addIssueToContext,
   any: () => anyType,
   array: () => arrayType,
   bigint: () => bigIntType,
   boolean: () => booleanType,
   coerce: () => coerce,
-  custom: () => custom2,
+  custom: () => custom,
   date: () => dateType,
   datetimeRegex: () => datetimeRegex,
-  defaultErrorMap: () => en_default4,
+  defaultErrorMap: () => en_default3,
   discriminatedUnion: () => discriminatedUnionType,
   effect: () => effectsType,
   enum: () => enumType,
   function: () => functionType,
-  getErrorMap: () => getErrorMap2,
-  getParsedType: () => getParsedType4,
+  getErrorMap: () => getErrorMap,
+  getParsedType: () => getParsedType3,
   instanceof: () => instanceOfType,
   intersection: () => intersectionType,
   isAborted: () => isAborted,
@@ -4108,7 +4108,7 @@ __export(external_exports2, {
   quotelessJson: () => quotelessJson,
   record: () => recordType,
   set: () => setType,
-  setErrorMap: () => setErrorMap2,
+  setErrorMap: () => setErrorMap,
   strictObject: () => strictObjectType,
   string: () => stringType,
   symbol: () => symbolType,
@@ -4144,30 +4144,30 @@ var GitHostProviderSchema, CreateMergeRequestRequestSchema, CiProviderPreviewSch
 var init_git_host = __esm({
   "node_modules/@praxis/contracts/dist/git-host.js"() {
     init_zod();
-    GitHostProviderSchema = external_exports2.enum(["gitlab", "github"]);
-    CreateMergeRequestRequestSchema = external_exports2.object({
-      contract: external_exports2.literal("developer.merge-request.remote-preview"),
-      version: external_exports2.literal("0.1.0"),
+    GitHostProviderSchema = external_exports.enum(["gitlab", "github"]);
+    CreateMergeRequestRequestSchema = external_exports.object({
+      contract: external_exports.literal("developer.merge-request.remote-preview"),
+      version: external_exports.literal("0.1.0"),
       provider: GitHostProviderSchema,
-      method: external_exports2.literal("POST"),
-      url: external_exports2.string().url(),
-      headers: external_exports2.record(external_exports2.string()),
-      body: external_exports2.record(external_exports2.unknown()),
-      dryRun: external_exports2.literal(true),
-      wouldWrite: external_exports2.literal(false),
-      missingCredentials: external_exports2.boolean(),
-      blockedReason: external_exports2.string().optional()
+      method: external_exports.literal("POST"),
+      url: external_exports.string().url(),
+      headers: external_exports.record(external_exports.string()),
+      body: external_exports.record(external_exports.unknown()),
+      dryRun: external_exports.literal(true),
+      wouldWrite: external_exports.literal(false),
+      missingCredentials: external_exports.boolean(),
+      blockedReason: external_exports.string().optional()
     });
-    CiProviderPreviewSchema = external_exports2.object({
-      contract: external_exports2.literal("quality.ci.provider-preview"),
-      version: external_exports2.literal("0.1.0"),
+    CiProviderPreviewSchema = external_exports.object({
+      contract: external_exports.literal("quality.ci.provider-preview"),
+      version: external_exports.literal("0.1.0"),
       provider: GitHostProviderSchema,
-      method: external_exports2.literal("GET"),
-      url: external_exports2.string().url(),
-      dryRun: external_exports2.literal(true),
-      wouldWrite: external_exports2.literal(false),
-      missingCredentials: external_exports2.boolean(),
-      blockedReason: external_exports2.string().optional()
+      method: external_exports.literal("GET"),
+      url: external_exports.string().url(),
+      dryRun: external_exports.literal(true),
+      wouldWrite: external_exports.literal(false),
+      missingCredentials: external_exports.boolean(),
+      blockedReason: external_exports.string().optional()
     });
   }
 });
@@ -4219,7 +4219,7 @@ function createUserApproval(input2) {
     subjectDigest: subjectDigest(input2.request.subject),
     decision: "approved",
     channel: input2.channel,
-    assurance: "client-ui",
+    assurance: input2.channel === "host-permission" ? "host-prompt" : "client-ui",
     decidedAt: (input2.now ?? /* @__PURE__ */ new Date()).toISOString(),
     ...input2.reason ? { reason: input2.reason } : {}
   });
@@ -4236,7 +4236,8 @@ function approvalsGivenInThisCall() {
   return channelStore.getStore()?.approvals ?? [];
 }
 function approvalModeReport() {
-  if (currentApprovalChannel()) {
+  const channel = currentApprovalChannel();
+  if (channel && channel.kind !== "host-permission") {
     return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
   }
   return {
@@ -4273,6 +4274,12 @@ async function obtainUserApproval(request, options2 = {}) {
     try {
       answer = await channel.ask(request);
     } catch (error64) {
+      if (error64 instanceof ApprovalNeedsInput)
+        throw error64;
+      if (error64 instanceof ApprovalError) {
+        logDecision(options2.repo, { ...base, decision: "refused", channel: channel.kind, reason: error64.message.slice(0, 200) });
+        throw error64;
+      }
       logDecision(options2.repo, { ...base, decision: "refused", channel: channel.kind, reason: error64 instanceof Error ? error64.message : String(error64) });
       throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error64 instanceof Error ? error64.message : String(error64)}. Nothing was changed.`, previewDetails(request));
     }
@@ -4329,7 +4336,7 @@ function runApprovedMutation(approval, write) {
   }
   return lease.run({ action: approval.action, approval }, write);
 }
-var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, ApprovalError, channelStore, lease;
+var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, ApprovalError, ApprovalNeedsInput, channelStore, lease;
 var init_user_approval = __esm({
   "node_modules/@praxis/contracts/dist/user-approval.js"() {
     import_node_async_hooks = require("node:async_hooks");
@@ -4350,6 +4357,14 @@ var init_user_approval = __esm({
         this.name = "ApprovalError";
         this.code = code;
         this.details = details;
+      }
+    };
+    ApprovalNeedsInput = class extends Error {
+      request;
+      constructor(request) {
+        super(`approval needed: ${request.summary}`);
+        this.name = "ApprovalNeedsInput";
+        this.request = request;
       }
     };
     channelStore = new import_node_async_hooks.AsyncLocalStorage();
@@ -4405,79 +4420,79 @@ var RequirementIdSchema, StoryIdSchema, STORY_NARRATIVE, CoverageStatusSchema, S
 var init_story = __esm({
   "node_modules/@praxis/contracts/dist/story.js"() {
     init_zod();
-    RequirementIdSchema = external_exports2.string().regex(/^(REQ-[A-Z][A-Z0-9]*-\d{3,}|[A-Z][A-Z0-9]*-(?:FR|NFR|BR)\d+)$/);
-    StoryIdSchema = external_exports2.string().regex(/^US-[A-Z][A-Z0-9]*-\d{3,}$/);
+    RequirementIdSchema = external_exports.string().regex(/^(REQ-[A-Z][A-Z0-9]*-\d{3,}|[A-Z][A-Z0-9]*-(?:FR|NFR|BR)\d+)$/);
+    StoryIdSchema = external_exports.string().regex(/^US-[A-Z][A-Z0-9]*-\d{3,}$/);
     STORY_NARRATIVE = /^As a [^,]+, I want [^,]+, so that .+/i;
-    CoverageStatusSchema = external_exports2.enum([
+    CoverageStatusSchema = external_exports.enum([
       "PASS",
       "FAIL",
       "PASS_WITH_RISKS",
       "BLOCKED",
       "NOT_VERIFIED"
     ]);
-    StoryCriterionSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      given: external_exports2.string().min(1),
-      when: external_exports2.string().min(1),
-      then: external_exports2.string().min(1)
+    StoryCriterionSchema = external_exports.object({
+      id: external_exports.string().min(1),
+      given: external_exports.string().min(1),
+      when: external_exports.string().min(1),
+      then: external_exports.string().min(1)
     });
-    UserStorySchema = external_exports2.object({
+    UserStorySchema = external_exports.object({
       id: StoryIdSchema,
-      requirementIds: external_exports2.array(RequirementIdSchema).min(1),
-      actor: external_exports2.string().min(1),
-      narrative: external_exports2.string().min(1),
-      objective: external_exports2.string().min(1),
-      userValue: external_exports2.string().min(1),
-      preconditions: external_exports2.array(external_exports2.string()).default([]),
-      happyPath: external_exports2.array(external_exports2.string()).min(1),
-      alternatives: external_exports2.array(external_exports2.string()).default([]),
-      negative: external_exports2.array(external_exports2.string()).default([]),
-      edgeCases: external_exports2.array(external_exports2.string()).default([]),
-      businessRules: external_exports2.array(external_exports2.string()).default([]),
-      acceptanceCriteria: external_exports2.array(StoryCriterionSchema).min(1),
-      expectedResults: external_exports2.array(external_exports2.string()).min(1),
-      dependencies: external_exports2.array(external_exports2.string()).default([]),
-      assumptionIds: external_exports2.array(external_exports2.string()).default([]),
-      unresolvedDecisionIds: external_exports2.array(external_exports2.string()).default([]),
-      serviceIds: external_exports2.array(external_exports2.string()).default([]),
-      revision: external_exports2.number().int().positive(),
-      status: external_exports2.enum(["proposed", "confirmed", "superseded"]),
-      confirmedBehavior: external_exports2.boolean(),
-      stale: external_exports2.boolean().default(false)
+      requirementIds: external_exports.array(RequirementIdSchema).min(1),
+      actor: external_exports.string().min(1),
+      narrative: external_exports.string().min(1),
+      objective: external_exports.string().min(1),
+      userValue: external_exports.string().min(1),
+      preconditions: external_exports.array(external_exports.string()).default([]),
+      happyPath: external_exports.array(external_exports.string()).min(1),
+      alternatives: external_exports.array(external_exports.string()).default([]),
+      negative: external_exports.array(external_exports.string()).default([]),
+      edgeCases: external_exports.array(external_exports.string()).default([]),
+      businessRules: external_exports.array(external_exports.string()).default([]),
+      acceptanceCriteria: external_exports.array(StoryCriterionSchema).min(1),
+      expectedResults: external_exports.array(external_exports.string()).min(1),
+      dependencies: external_exports.array(external_exports.string()).default([]),
+      assumptionIds: external_exports.array(external_exports.string()).default([]),
+      unresolvedDecisionIds: external_exports.array(external_exports.string()).default([]),
+      serviceIds: external_exports.array(external_exports.string()).default([]),
+      revision: external_exports.number().int().positive(),
+      status: external_exports.enum(["proposed", "confirmed", "superseded"]),
+      confirmedBehavior: external_exports.boolean(),
+      stale: external_exports.boolean().default(false)
     });
-    CoverageEntrySchema = external_exports2.object({
+    CoverageEntrySchema = external_exports.object({
       /** Absent for requirement-only evidence: a work item verified without a Story. */
       storyId: StoryIdSchema.optional(),
       /** Story revision this scenario verified. Older revisions are not evidence for the current one. */
-      storyRevision: external_exports2.number().int().positive().optional(),
+      storyRevision: external_exports.number().int().positive().optional(),
       requirementId: RequirementIdSchema,
-      acceptanceCriterionId: external_exports2.string().min(1),
-      scenarioId: external_exports2.string().min(1),
-      kind: external_exports2.enum(["happy", "alternative", "negative", "edge", "contract", "security"]),
-      serviceId: external_exports2.string().min(1),
-      repository: external_exports2.string().default(""),
-      implementationPath: external_exports2.string().default(""),
-      testRef: external_exports2.string().default(""),
-      evidence: external_exports2.array(external_exports2.string()).default([]),
-      findingId: external_exports2.string().optional(),
+      acceptanceCriterionId: external_exports.string().min(1),
+      scenarioId: external_exports.string().min(1),
+      kind: external_exports.enum(["happy", "alternative", "negative", "edge", "contract", "security"]),
+      serviceId: external_exports.string().min(1),
+      repository: external_exports.string().default(""),
+      implementationPath: external_exports.string().default(""),
+      testRef: external_exports.string().default(""),
+      evidence: external_exports.array(external_exports.string()).default([]),
+      findingId: external_exports.string().optional(),
       status: CoverageStatusSchema,
-      critical: external_exports2.boolean().default(false)
+      critical: external_exports.boolean().default(false)
     });
-    ChangeRecordSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      findingId: external_exports2.string().min(1),
-      storyIds: external_exports2.array(StoryIdSchema).default([]),
-      requirementIds: external_exports2.array(RequirementIdSchema).default([]),
-      serviceId: external_exports2.string().min(1),
-      repository: external_exports2.string().min(1),
-      branch: external_exports2.string().min(1),
-      baseSha: external_exports2.string().min(1),
-      commitSha: external_exports2.string().min(1),
-      files: external_exports2.array(external_exports2.string()).default([]),
-      remote: external_exports2.string().optional(),
-      changeRequest: external_exports2.string().optional(),
-      mrStatus: external_exports2.enum(["opened", "blocked", "not_requested"]),
-      authorRole: external_exports2.literal("quality")
+    ChangeRecordSchema = external_exports.object({
+      id: external_exports.string().min(1),
+      findingId: external_exports.string().min(1),
+      storyIds: external_exports.array(StoryIdSchema).default([]),
+      requirementIds: external_exports.array(RequirementIdSchema).default([]),
+      serviceId: external_exports.string().min(1),
+      repository: external_exports.string().min(1),
+      branch: external_exports.string().min(1),
+      baseSha: external_exports.string().min(1),
+      commitSha: external_exports.string().min(1),
+      files: external_exports.array(external_exports.string()).default([]),
+      remote: external_exports.string().optional(),
+      changeRequest: external_exports.string().optional(),
+      mrStatus: external_exports.enum(["opened", "blocked", "not_requested"]),
+      authorRole: external_exports.literal("quality")
     });
   }
 });
@@ -5455,7 +5470,7 @@ var init_workflow = __esm({
     init_user_approval();
     init_story();
     WORKFLOW_CONTRACT_VERSION = "1.0.0";
-    WorkflowStageSchema = external_exports2.enum([
+    WorkflowStageSchema = external_exports.enum([
       "draft",
       "clarification_required",
       "ready",
@@ -5466,38 +5481,38 @@ var init_workflow = __esm({
       "approved",
       "completed"
     ]);
-    WorkflowRoleSchema = external_exports2.enum([
+    WorkflowRoleSchema = external_exports.enum([
       "user",
       "ba",
       "architect",
       "developer",
       "quality"
     ]);
-    ClarificationClassSchema = external_exports2.enum([
+    ClarificationClassSchema = external_exports.enum([
       "blocking",
       "non_blocking",
       "recommendation",
       "informational"
     ]);
-    SideEffectSchema = external_exports2.enum([
+    SideEffectSchema = external_exports.enum([
       "read",
       "local_write",
       "external_mutate",
       "destructive"
     ]);
-    QualityVerdictSchema = external_exports2.enum([
+    QualityVerdictSchema = external_exports.enum([
       "PASS",
       "PASS_WITH_RISKS",
       "FAIL"
     ]);
-    RequirementIdSchema2 = external_exports2.string().regex(/^(REQ-[A-Z][A-Z0-9]*-\d{3,}|[A-Z][A-Z0-9]*-(?:FR|NFR|BR)\d+)$/);
-    WorkItemSourceSchema = external_exports2.enum([
+    RequirementIdSchema2 = external_exports.string().regex(/^(REQ-[A-Z][A-Z0-9]*-\d{3,}|[A-Z][A-Z0-9]*-(?:FR|NFR|BR)\d+)$/);
+    WorkItemSourceSchema = external_exports.enum([
       "local",
       "markdown",
       "repository",
       "jira"
     ]);
-    WorkTrackingProviderSchema = external_exports2.enum(["local", "jira"]);
+    WorkTrackingProviderSchema = external_exports.enum(["local", "jira"]);
     TRANSITIONS = {
       draft: ["clarification_required", "ready", "blocked"],
       clarification_required: ["draft", "ready", "blocked"],
@@ -5517,50 +5532,50 @@ var init_workflow = __esm({
         this.code = code;
       }
     };
-    WorkItemRelationSchema = external_exports2.enum(["depends-on", "blocks", "relates-to", "derived-from"]);
-    WorkItemLinkSchema = external_exports2.object({
-      repository: external_exports2.string().min(1),
-      workItemId: external_exports2.string().min(1),
+    WorkItemRelationSchema = external_exports.enum(["depends-on", "blocks", "relates-to", "derived-from"]);
+    WorkItemLinkSchema = external_exports.object({
+      repository: external_exports.string().min(1),
+      workItemId: external_exports.string().min(1),
       relation: WorkItemRelationSchema
     });
-    WorkItemSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      projectId: external_exports2.string().min(1),
-      title: external_exports2.string().min(1),
+    WorkItemSchema = external_exports.object({
+      id: external_exports.string().min(1),
+      projectId: external_exports.string().min(1),
+      title: external_exports.string().min(1),
       source: WorkItemSourceSchema,
       /** Optional external key. Never the work item's identity. */
-      jiraIssueKey: external_exports2.string().min(1).optional(),
+      jiraIssueKey: external_exports.string().min(1).optional(),
       /** Tracker that owns the external record. Local work leaves this unset. */
       provider: WorkTrackingProviderSchema.optional(),
       /** External record id (Jira id). Not the Praxis id. */
-      externalId: external_exports2.string().min(1).optional(),
+      externalId: external_exports.string().min(1).optional(),
       /** Human-facing external number (PROJ-1, STR0001234). */
-      externalNumber: external_exports2.string().min(1).optional(),
+      externalNumber: external_exports.string().min(1).optional(),
       /** Instance base URL or tenant id. Distinguishes two trackers of the same kind. */
-      instanceId: external_exports2.string().min(1).optional(),
+      instanceId: external_exports.string().min(1).optional(),
       status: WorkflowStageSchema,
-      revision: external_exports2.number().int().nonnegative(),
-      links: external_exports2.array(WorkItemLinkSchema).optional()
+      revision: external_exports.number().int().nonnegative(),
+      links: external_exports.array(WorkItemLinkSchema).optional()
     });
-    AcceptanceCriterionSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
+    AcceptanceCriterionSchema = external_exports.object({
+      id: external_exports.string().min(1),
       requirementId: RequirementIdSchema2,
-      statement: external_exports2.string().min(1),
-      revision: external_exports2.number().int().positive()
+      statement: external_exports.string().min(1),
+      revision: external_exports.number().int().positive()
     });
-    RequirementSchema = external_exports2.object({
+    RequirementSchema = external_exports.object({
       id: RequirementIdSchema2,
-      statement: external_exports2.string().min(1),
-      revision: external_exports2.number().int().positive(),
-      status: external_exports2.enum(["proposed", "approved", "superseded"]),
-      acceptanceCriteria: external_exports2.array(AcceptanceCriterionSchema),
-      serviceIds: external_exports2.array(external_exports2.string()),
-      assumptionIds: external_exports2.array(external_exports2.string())
+      statement: external_exports.string().min(1),
+      revision: external_exports.number().int().positive(),
+      status: external_exports.enum(["proposed", "approved", "superseded"]),
+      acceptanceCriteria: external_exports.array(AcceptanceCriterionSchema),
+      serviceIds: external_exports.array(external_exports.string()),
+      assumptionIds: external_exports.array(external_exports.string())
     });
-    ServiceSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      name: external_exports2.string().min(1),
-      kind: external_exports2.enum([
+    ServiceSchema = external_exports.object({
+      id: external_exports.string().min(1),
+      name: external_exports.string().min(1),
+      kind: external_exports.enum([
         "application",
         "module",
         "api",
@@ -5569,316 +5584,316 @@ var init_workflow = __esm({
         "persistence",
         "external"
       ]),
-      repository: external_exports2.string().optional(),
-      localPath: external_exports2.string().optional(),
-      remoteUrl: external_exports2.string().optional(),
-      branch: external_exports2.string().optional(),
-      commitSha: external_exports2.string().optional(),
-      changeRequest: external_exports2.string().optional(),
-      responsibilities: external_exports2.array(external_exports2.string()),
-      requirementIds: external_exports2.array(RequirementIdSchema2),
-      dependsOn: external_exports2.array(external_exports2.string()),
+      repository: external_exports.string().optional(),
+      localPath: external_exports.string().optional(),
+      remoteUrl: external_exports.string().optional(),
+      branch: external_exports.string().optional(),
+      commitSha: external_exports.string().optional(),
+      changeRequest: external_exports.string().optional(),
+      responsibilities: external_exports.array(external_exports.string()),
+      requirementIds: external_exports.array(RequirementIdSchema2),
+      dependsOn: external_exports.array(external_exports.string()),
       status: WorkflowStageSchema
     });
-    ArtifactRefSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      path: external_exports2.string().min(1),
-      revision: external_exports2.number().int().positive(),
+    ArtifactRefSchema = external_exports.object({
+      id: external_exports.string().min(1),
+      path: external_exports.string().min(1),
+      revision: external_exports.number().int().positive(),
       role: WorkflowRoleSchema
     });
-    RoleHandoffSchema = external_exports2.object({
-      contract: external_exports2.literal("praxis.role.handoff"),
-      version: external_exports2.literal(WORKFLOW_CONTRACT_VERSION),
-      workflowId: external_exports2.string().min(1),
-      workItemId: external_exports2.string().min(1),
-      handoffId: external_exports2.string().min(1),
+    RoleHandoffSchema = external_exports.object({
+      contract: external_exports.literal("praxis.role.handoff"),
+      version: external_exports.literal(WORKFLOW_CONTRACT_VERSION),
+      workflowId: external_exports.string().min(1),
+      workItemId: external_exports.string().min(1),
+      handoffId: external_exports.string().min(1),
       sourceRole: WorkflowRoleSchema,
       targetRole: WorkflowRoleSchema,
-      serviceIds: external_exports2.array(external_exports2.string()),
-      requirementIds: external_exports2.array(RequirementIdSchema2),
-      acceptanceCriterionIds: external_exports2.array(external_exports2.string()),
-      storyIds: external_exports2.array(external_exports2.string()).default([]),
-      artifactRefs: external_exports2.array(ArtifactRefSchema),
-      decisions: external_exports2.array(external_exports2.string()),
-      assumptions: external_exports2.array(external_exports2.string()),
-      openQuestions: external_exports2.array(external_exports2.string()),
-      risks: external_exports2.array(external_exports2.string()),
-      blockers: external_exports2.array(external_exports2.string()),
-      decisionRecords: external_exports2.array(external_exports2.object({
-        id: external_exports2.string(),
-        statement: external_exports2.string(),
-        confirmed: external_exports2.boolean(),
-        revision: external_exports2.number().int().positive(),
-        rationale: external_exports2.string().optional(),
-        notes: external_exports2.string().optional()
+      serviceIds: external_exports.array(external_exports.string()),
+      requirementIds: external_exports.array(RequirementIdSchema2),
+      acceptanceCriterionIds: external_exports.array(external_exports.string()),
+      storyIds: external_exports.array(external_exports.string()).default([]),
+      artifactRefs: external_exports.array(ArtifactRefSchema),
+      decisions: external_exports.array(external_exports.string()),
+      assumptions: external_exports.array(external_exports.string()),
+      openQuestions: external_exports.array(external_exports.string()),
+      risks: external_exports.array(external_exports.string()),
+      blockers: external_exports.array(external_exports.string()),
+      decisionRecords: external_exports.array(external_exports.object({
+        id: external_exports.string(),
+        statement: external_exports.string(),
+        confirmed: external_exports.boolean(),
+        revision: external_exports.number().int().positive(),
+        rationale: external_exports.string().optional(),
+        notes: external_exports.string().optional()
       })).default([]),
-      notes: external_exports2.string().optional(),
+      notes: external_exports.string().optional(),
       /** Carried-forward items this handoff declares resolved (exact text). Audit only. */
-      resolved: external_exports2.array(external_exports2.string()).default([]),
-      nextActions: external_exports2.array(external_exports2.string()),
-      readiness: external_exports2.enum(["ready", "partial", "blocked"]),
-      evidenceRefs: external_exports2.array(external_exports2.string()),
-      revision: external_exports2.number().int().positive(),
-      supersedes: external_exports2.string().optional(),
-      fingerprint: external_exports2.string().min(1)
+      resolved: external_exports.array(external_exports.string()).default([]),
+      nextActions: external_exports.array(external_exports.string()),
+      readiness: external_exports.enum(["ready", "partial", "blocked"]),
+      evidenceRefs: external_exports.array(external_exports.string()),
+      revision: external_exports.number().int().positive(),
+      supersedes: external_exports.string().optional(),
+      fingerprint: external_exports.string().min(1)
     });
-    FindingSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      requirementIds: external_exports2.array(RequirementIdSchema2).min(1),
-      serviceIds: external_exports2.array(external_exports2.string()),
+    FindingSchema = external_exports.object({
+      id: external_exports.string().min(1),
+      requirementIds: external_exports.array(RequirementIdSchema2).min(1),
+      serviceIds: external_exports.array(external_exports.string()),
       owner: WorkflowRoleSchema,
-      summary: external_exports2.string().min(1),
-      evidence: external_exports2.array(external_exports2.string()).min(1),
-      status: external_exports2.enum(["open", "resolved"]),
-      severity: external_exports2.enum(["critical", "high", "medium", "low"]).optional(),
-      storyIds: external_exports2.array(external_exports2.string()).optional(),
-      acceptanceCriterionIds: external_exports2.array(external_exports2.string()).optional(),
-      repository: external_exports2.string().optional(),
-      file: external_exports2.string().optional(),
-      expected: external_exports2.string().optional(),
-      observed: external_exports2.string().optional(),
-      reproduction: external_exports2.array(external_exports2.string()).optional(),
-      suggestion: external_exports2.string().optional()
+      summary: external_exports.string().min(1),
+      evidence: external_exports.array(external_exports.string()).min(1),
+      status: external_exports.enum(["open", "resolved"]),
+      severity: external_exports.enum(["critical", "high", "medium", "low"]).optional(),
+      storyIds: external_exports.array(external_exports.string()).optional(),
+      acceptanceCriterionIds: external_exports.array(external_exports.string()).optional(),
+      repository: external_exports.string().optional(),
+      file: external_exports.string().optional(),
+      expected: external_exports.string().optional(),
+      observed: external_exports.string().optional(),
+      reproduction: external_exports.array(external_exports.string()).optional(),
+      suggestion: external_exports.string().optional()
     });
-    VerdictRecordSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      scope: external_exports2.enum(["requirement", "service", "feature"]),
-      scopeId: external_exports2.string().min(1),
+    VerdictRecordSchema = external_exports.object({
+      id: external_exports.string().min(1),
+      scope: external_exports.enum(["requirement", "service", "feature"]),
+      scopeId: external_exports.string().min(1),
       verdict: QualityVerdictSchema,
-      evidenceRefs: external_exports2.array(external_exports2.string()),
-      requirementIds: external_exports2.array(RequirementIdSchema2),
-      stale: external_exports2.boolean(),
-      invalidatedBy: external_exports2.string().optional()
+      evidenceRefs: external_exports.array(external_exports.string()),
+      requirementIds: external_exports.array(RequirementIdSchema2),
+      stale: external_exports.boolean(),
+      invalidatedBy: external_exports.string().optional()
     });
-    CapabilitySchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      plugin: external_exports2.string().min(1),
-      description: external_exports2.string().min(1),
-      intents: external_exports2.array(external_exports2.string()),
-      stages: external_exports2.array(WorkflowStageSchema),
-      roles: external_exports2.array(WorkflowRoleSchema),
-      inputs: external_exports2.array(external_exports2.string()),
-      outputs: external_exports2.array(external_exports2.string()),
-      dependencies: external_exports2.array(external_exports2.string()),
+    CapabilitySchema = external_exports.object({
+      id: external_exports.string().min(1),
+      plugin: external_exports.string().min(1),
+      description: external_exports.string().min(1),
+      intents: external_exports.array(external_exports.string()),
+      stages: external_exports.array(WorkflowStageSchema),
+      roles: external_exports.array(WorkflowRoleSchema),
+      inputs: external_exports.array(external_exports.string()),
+      outputs: external_exports.array(external_exports.string()),
+      dependencies: external_exports.array(external_exports.string()),
       sideEffect: SideEffectSchema,
-      activation: external_exports2.enum(["guidance", "suggested", "explicit"]),
-      version: external_exports2.string().min(1),
-      installed: external_exports2.boolean()
+      activation: external_exports.enum(["guidance", "suggested", "explicit"]),
+      version: external_exports.string().min(1),
+      installed: external_exports.boolean()
     });
-    WorkflowStateSchema = external_exports2.object({
-      contract: external_exports2.literal("praxis.workflow.state"),
-      version: external_exports2.literal(WORKFLOW_CONTRACT_VERSION),
-      workflowId: external_exports2.string().min(1),
-      projectId: external_exports2.string().min(1),
+    WorkflowStateSchema = external_exports.object({
+      contract: external_exports.literal("praxis.workflow.state"),
+      version: external_exports.literal(WORKFLOW_CONTRACT_VERSION),
+      workflowId: external_exports.string().min(1),
+      projectId: external_exports.string().min(1),
       workItem: WorkItemSchema,
-      requirements: external_exports2.array(RequirementSchema),
-      services: external_exports2.array(ServiceSchema),
-      handoffs: external_exports2.array(RoleHandoffSchema),
-      findings: external_exports2.array(FindingSchema),
-      verdicts: external_exports2.array(VerdictRecordSchema),
-      decisions: external_exports2.array(external_exports2.object({
-        id: external_exports2.string(),
-        statement: external_exports2.string(),
-        confirmed: external_exports2.boolean(),
-        revision: external_exports2.number().int().positive(),
-        rationale: external_exports2.string().optional(),
-        notes: external_exports2.string().optional()
+      requirements: external_exports.array(RequirementSchema),
+      services: external_exports.array(ServiceSchema),
+      handoffs: external_exports.array(RoleHandoffSchema),
+      findings: external_exports.array(FindingSchema),
+      verdicts: external_exports.array(VerdictRecordSchema),
+      decisions: external_exports.array(external_exports.object({
+        id: external_exports.string(),
+        statement: external_exports.string(),
+        confirmed: external_exports.boolean(),
+        revision: external_exports.number().int().positive(),
+        rationale: external_exports.string().optional(),
+        notes: external_exports.string().optional()
       })),
-      openQuestions: external_exports2.array(external_exports2.string()).default([]),
-      risks: external_exports2.array(external_exports2.string()).default([]),
-      blockers: external_exports2.array(external_exports2.string()).default([]),
-      notes: external_exports2.string().optional(),
-      assumptions: external_exports2.array(external_exports2.object({
-        id: external_exports2.string(),
-        statement: external_exports2.string(),
-        requirementIds: external_exports2.array(RequirementIdSchema2)
+      openQuestions: external_exports.array(external_exports.string()).default([]),
+      risks: external_exports.array(external_exports.string()).default([]),
+      blockers: external_exports.array(external_exports.string()).default([]),
+      notes: external_exports.string().optional(),
+      assumptions: external_exports.array(external_exports.object({
+        id: external_exports.string(),
+        statement: external_exports.string(),
+        requirementIds: external_exports.array(RequirementIdSchema2)
       })),
-      implementationUnits: external_exports2.array(external_exports2.object({
-        id: external_exports2.string().min(1),
-        serviceId: external_exports2.string().min(1),
-        requirementIds: external_exports2.array(RequirementIdSchema2),
-        path: external_exports2.string().min(1),
-        summary: external_exports2.string().min(1),
-        contractRef: external_exports2.string().optional(),
-        stale: external_exports2.boolean()
+      implementationUnits: external_exports.array(external_exports.object({
+        id: external_exports.string().min(1),
+        serviceId: external_exports.string().min(1),
+        requirementIds: external_exports.array(RequirementIdSchema2),
+        path: external_exports.string().min(1),
+        summary: external_exports.string().min(1),
+        contractRef: external_exports.string().optional(),
+        stale: external_exports.boolean()
       })).default([]),
-      stories: external_exports2.array(UserStorySchema).default([]),
-      coverage: external_exports2.array(CoverageEntrySchema).default([]),
-      changes: external_exports2.array(ChangeRecordSchema).default([]),
+      stories: external_exports.array(UserStorySchema).default([]),
+      coverage: external_exports.array(CoverageEntrySchema).default([]),
+      changes: external_exports.array(ChangeRecordSchema).default([]),
       stage: WorkflowStageSchema,
-      history: external_exports2.array(external_exports2.object({
-        revision: external_exports2.number().int().positive(),
+      history: external_exports.array(external_exports.object({
+        revision: external_exports.number().int().positive(),
         stage: WorkflowStageSchema,
-        note: external_exports2.string()
+        note: external_exports.string()
       }))
     });
     SECRET_KEY = /token|secret|password|authorization|api[_-]?key|private[_-]?key/i;
     bullet = (items) => items.length ? items.map((item) => `  - ${item}`).join("\n") : "  (none)";
     PARTIAL_SUCCESS = /invalid[^.]*must not (?:prevent|block)[^.]*valid|never prevent valid rows|not all-or-nothing|each row has its own outcome/i;
-    WorkflowCommandSchema = external_exports2.discriminatedUnion("action", [
-      external_exports2.object({
-        action: external_exports2.literal("open"),
-        projectId: external_exports2.string().min(1),
-        title: external_exports2.string().min(1),
-        request: external_exports2.string().min(1),
+    WorkflowCommandSchema = external_exports.discriminatedUnion("action", [
+      external_exports.object({
+        action: external_exports.literal("open"),
+        projectId: external_exports.string().min(1),
+        title: external_exports.string().min(1),
+        request: external_exports.string().min(1),
         source: WorkItemSourceSchema.optional(),
-        jiraIssueKey: external_exports2.string().min(1).optional(),
-        sequence: external_exports2.number().int().positive().optional()
+        jiraIssueKey: external_exports.string().min(1).optional(),
+        sequence: external_exports.number().int().positive().optional()
       }),
-      external_exports2.object({
+      external_exports.object({
         // Resolved by the workflow store, which owns the index of work items.
-        action: external_exports2.literal("select-work-item"),
-        workItemId: external_exports2.string().min(1)
+        action: external_exports.literal("select-work-item"),
+        workItemId: external_exports.string().min(1)
       }),
-      external_exports2.object({
-        action: external_exports2.literal("link-work-item"),
+      external_exports.object({
+        action: external_exports.literal("link-work-item"),
         target: WorkItemLinkSchema,
-        remove: external_exports2.boolean().optional()
+        remove: external_exports.boolean().optional()
       }),
-      external_exports2.object({
-        action: external_exports2.literal("add-requirement"),
+      external_exports.object({
+        action: external_exports.literal("add-requirement"),
         id: RequirementIdSchema2,
-        statement: external_exports2.string().min(1),
-        acceptanceCriteria: external_exports2.array(external_exports2.string().min(1)).min(1),
-        serviceIds: external_exports2.array(external_exports2.string()).optional()
+        statement: external_exports.string().min(1),
+        acceptanceCriteria: external_exports.array(external_exports.string().min(1)).min(1),
+        serviceIds: external_exports.array(external_exports.string()).optional()
       }),
-      external_exports2.object({
-        action: external_exports2.literal("handoff"),
+      external_exports.object({
+        action: external_exports.literal("handoff"),
         sourceRole: WorkflowRoleSchema,
         targetRole: WorkflowRoleSchema,
-        requirementIds: external_exports2.array(RequirementIdSchema2).min(1),
-        serviceIds: external_exports2.array(external_exports2.string()).default([]),
-        nextActions: external_exports2.array(external_exports2.string()).default([]),
-        openQuestions: external_exports2.array(external_exports2.string()).default([]),
-        assumptions: external_exports2.array(external_exports2.string()).default([]),
-        blockers: external_exports2.array(external_exports2.string()).default([]),
-        risks: external_exports2.array(external_exports2.string()).optional(),
-        notes: external_exports2.string().optional(),
-        resolved: external_exports2.array(external_exports2.string()).default([]),
-        readiness: external_exports2.enum(["ready", "partial", "blocked"])
+        requirementIds: external_exports.array(RequirementIdSchema2).min(1),
+        serviceIds: external_exports.array(external_exports.string()).default([]),
+        nextActions: external_exports.array(external_exports.string()).default([]),
+        openQuestions: external_exports.array(external_exports.string()).default([]),
+        assumptions: external_exports.array(external_exports.string()).default([]),
+        blockers: external_exports.array(external_exports.string()).default([]),
+        risks: external_exports.array(external_exports.string()).optional(),
+        notes: external_exports.string().optional(),
+        resolved: external_exports.array(external_exports.string()).default([]),
+        readiness: external_exports.enum(["ready", "partial", "blocked"])
       }),
-      external_exports2.object({
-        action: external_exports2.literal("revise-requirement"),
+      external_exports.object({
+        action: external_exports.literal("revise-requirement"),
         id: RequirementIdSchema2,
-        statement: external_exports2.string().min(1)
+        statement: external_exports.string().min(1)
       }),
-      external_exports2.object({
-        action: external_exports2.literal("set-service"),
+      external_exports.object({
+        action: external_exports.literal("set-service"),
         service: ServiceSchema
       }),
-      external_exports2.object({
-        action: external_exports2.literal("clarify"),
+      external_exports.object({
+        action: external_exports.literal("clarify"),
         role: WorkflowRoleSchema,
-        known: external_exports2.array(external_exports2.string()).default([]),
-        questions: external_exports2.array(external_exports2.object({
-          id: external_exports2.string().min(1),
-          prompt: external_exports2.string().min(1),
-          alreadyKnown: external_exports2.boolean().optional(),
-          contradictsApproved: external_exports2.boolean().optional(),
-          safeAssumption: external_exports2.boolean().optional(),
-          assumption: external_exports2.string().min(1).optional(),
-          changesBehavior: external_exports2.boolean().optional()
+        known: external_exports.array(external_exports.string()).default([]),
+        questions: external_exports.array(external_exports.object({
+          id: external_exports.string().min(1),
+          prompt: external_exports.string().min(1),
+          alreadyKnown: external_exports.boolean().optional(),
+          contradictsApproved: external_exports.boolean().optional(),
+          safeAssumption: external_exports.boolean().optional(),
+          assumption: external_exports.string().min(1).optional(),
+          changesBehavior: external_exports.boolean().optional()
         })).default([])
       }),
-      external_exports2.object({
-        action: external_exports2.literal("record-decision"),
-        id: external_exports2.string().min(1),
-        statement: external_exports2.string().min(1),
+      external_exports.object({
+        action: external_exports.literal("record-decision"),
+        id: external_exports.string().min(1),
+        statement: external_exports.string().min(1),
         /** Recording a decision never confirms it; confirmation is a human act (confirm-decision) that needs the user's approval. */
-        confirmed: external_exports2.boolean().default(false),
-        rationale: external_exports2.string().optional(),
-        notes: external_exports2.string().optional()
+        confirmed: external_exports.boolean().default(false),
+        rationale: external_exports.string().optional(),
+        notes: external_exports.string().optional()
       }),
-      external_exports2.object({
-        action: external_exports2.literal("confirm-decision"),
-        id: external_exports2.string().min(1),
-        revision: external_exports2.number().int().positive(),
-        contentFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/)
+      external_exports.object({
+        action: external_exports.literal("confirm-decision"),
+        id: external_exports.string().min(1),
+        revision: external_exports.number().int().positive(),
+        contentFingerprint: external_exports.string().regex(/^sha256:[a-f0-9]{64}$/)
       }),
-      external_exports2.object({
-        action: external_exports2.literal("record-context"),
-        openQuestions: external_exports2.array(external_exports2.string()).optional(),
-        risks: external_exports2.array(external_exports2.string()).optional(),
-        blockers: external_exports2.array(external_exports2.string()).optional(),
-        notes: external_exports2.string().optional()
+      external_exports.object({
+        action: external_exports.literal("record-context"),
+        openQuestions: external_exports.array(external_exports.string()).optional(),
+        risks: external_exports.array(external_exports.string()).optional(),
+        blockers: external_exports.array(external_exports.string()).optional(),
+        notes: external_exports.string().optional()
       }),
-      external_exports2.object({
-        action: external_exports2.literal("confirm-story"),
+      external_exports.object({
+        action: external_exports.literal("confirm-story"),
         id: StoryIdSchema,
-        revision: external_exports2.number().int().positive(),
-        contentFingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/)
+        revision: external_exports.number().int().positive(),
+        contentFingerprint: external_exports.string().regex(/^sha256:[a-f0-9]{64}$/)
       }),
-      external_exports2.object({
-        action: external_exports2.literal("record-implementation"),
-        id: external_exports2.string().min(1),
-        serviceId: external_exports2.string().min(1),
-        requirementIds: external_exports2.array(RequirementIdSchema2).min(1),
-        path: external_exports2.string().min(1),
-        summary: external_exports2.string().min(1),
-        contractRef: external_exports2.string().optional()
+      external_exports.object({
+        action: external_exports.literal("record-implementation"),
+        id: external_exports.string().min(1),
+        serviceId: external_exports.string().min(1),
+        requirementIds: external_exports.array(RequirementIdSchema2).min(1),
+        path: external_exports.string().min(1),
+        summary: external_exports.string().min(1),
+        contractRef: external_exports.string().optional()
       }),
-      external_exports2.object({
-        action: external_exports2.literal("feature-verdict")
+      external_exports.object({
+        action: external_exports.literal("feature-verdict")
       }),
-      external_exports2.object({
-        action: external_exports2.literal("add-story"),
+      external_exports.object({
+        action: external_exports.literal("add-story"),
         id: StoryIdSchema,
-        requirementIds: external_exports2.array(RequirementIdSchema2).min(1),
-        actor: external_exports2.string().min(1),
-        narrative: external_exports2.string().min(1),
-        objective: external_exports2.string().min(1),
-        userValue: external_exports2.string().min(1),
-        preconditions: external_exports2.array(external_exports2.string()).default([]),
-        happyPath: external_exports2.array(external_exports2.string()).min(1),
-        alternatives: external_exports2.array(external_exports2.string()).default([]),
-        negative: external_exports2.array(external_exports2.string()).default([]),
-        edgeCases: external_exports2.array(external_exports2.string()).default([]),
-        businessRules: external_exports2.array(external_exports2.string()).default([]),
-        acceptanceCriteria: external_exports2.array(external_exports2.object({
-          id: external_exports2.string().min(1),
-          given: external_exports2.string().min(1),
-          when: external_exports2.string().min(1),
-          then: external_exports2.string().min(1)
+        requirementIds: external_exports.array(RequirementIdSchema2).min(1),
+        actor: external_exports.string().min(1),
+        narrative: external_exports.string().min(1),
+        objective: external_exports.string().min(1),
+        userValue: external_exports.string().min(1),
+        preconditions: external_exports.array(external_exports.string()).default([]),
+        happyPath: external_exports.array(external_exports.string()).min(1),
+        alternatives: external_exports.array(external_exports.string()).default([]),
+        negative: external_exports.array(external_exports.string()).default([]),
+        edgeCases: external_exports.array(external_exports.string()).default([]),
+        businessRules: external_exports.array(external_exports.string()).default([]),
+        acceptanceCriteria: external_exports.array(external_exports.object({
+          id: external_exports.string().min(1),
+          given: external_exports.string().min(1),
+          when: external_exports.string().min(1),
+          then: external_exports.string().min(1)
         })).min(1),
-        expectedResults: external_exports2.array(external_exports2.string()).min(1),
-        dependencies: external_exports2.array(external_exports2.string()).default([]),
-        assumptionIds: external_exports2.array(external_exports2.string()).default([]),
-        unresolvedDecisionIds: external_exports2.array(external_exports2.string()).default([]),
-        serviceIds: external_exports2.array(external_exports2.string()).default([]),
-        confirmedBehavior: external_exports2.boolean()
+        expectedResults: external_exports.array(external_exports.string()).min(1),
+        dependencies: external_exports.array(external_exports.string()).default([]),
+        assumptionIds: external_exports.array(external_exports.string()).default([]),
+        unresolvedDecisionIds: external_exports.array(external_exports.string()).default([]),
+        serviceIds: external_exports.array(external_exports.string()).default([]),
+        confirmedBehavior: external_exports.boolean()
       }),
-      external_exports2.object({
-        action: external_exports2.literal("locate-repositories")
+      external_exports.object({
+        action: external_exports.literal("locate-repositories")
       }),
-      external_exports2.object({
-        action: external_exports2.literal("verify-stories"),
-        independentRerun: external_exports2.boolean().optional()
+      external_exports.object({
+        action: external_exports.literal("verify-stories"),
+        independentRerun: external_exports.boolean().optional()
       }),
-      external_exports2.object({
-        action: external_exports2.literal("prepare-fix"),
-        serviceId: external_exports2.string().min(1),
-        authorized: external_exports2.boolean(),
-        existingBranch: external_exports2.string().min(1).optional()
+      external_exports.object({
+        action: external_exports.literal("prepare-fix"),
+        serviceId: external_exports.string().min(1),
+        authorized: external_exports.boolean(),
+        existingBranch: external_exports.string().min(1).optional()
       }),
-      external_exports2.object({
-        action: external_exports2.literal("record-verification"),
-        independentRerun: external_exports2.boolean().default(false),
-        testsGreen: external_exports2.boolean().optional(),
-        scenarios: external_exports2.array(CoverageEntrySchema).default([]),
-        findings: external_exports2.array(FindingSchema).default([])
+      external_exports.object({
+        action: external_exports.literal("record-verification"),
+        independentRerun: external_exports.boolean().default(false),
+        testsGreen: external_exports.boolean().optional(),
+        scenarios: external_exports.array(CoverageEntrySchema).default([]),
+        findings: external_exports.array(FindingSchema).default([])
       }),
-      external_exports2.object({
-        action: external_exports2.literal("record-change"),
+      external_exports.object({
+        action: external_exports.literal("record-change"),
         change: ChangeRecordSchema
       }),
-      external_exports2.object({
-        action: external_exports2.literal("quality-check"),
+      external_exports.object({
+        action: external_exports.literal("quality-check"),
         requirementId: RequirementIdSchema2,
-        observedBehavior: external_exports2.enum(["partial-success", "all-or-nothing", "unspecified"]).optional(),
-        implementationSource: external_exports2.string().min(1).optional(),
-        serviceId: external_exports2.string().min(1).optional(),
-        testsGreen: external_exports2.boolean().optional(),
-        developerClaimsPass: external_exports2.boolean().optional()
+        observedBehavior: external_exports.enum(["partial-success", "all-or-nothing", "unspecified"]).optional(),
+        implementationSource: external_exports.string().min(1).optional(),
+        serviceId: external_exports.string().min(1).optional(),
+        testsGreen: external_exports.boolean().optional(),
+        developerClaimsPass: external_exports.boolean().optional()
       })
     ]);
   }
@@ -5917,7 +5932,7 @@ var DecisionKindSchema, SINGLE_AUTHORITY_OPERATIONS, TRACKER_OPERATIONS, RECORD_
 var init_authority = __esm({
   "node_modules/@praxis/contracts/dist/authority.js"() {
     init_zod();
-    DecisionKindSchema = external_exports2.enum([
+    DecisionKindSchema = external_exports.enum([
       "architecture_decision",
       "story_behavior",
       "requirement_acceptance",
@@ -5960,7 +5975,7 @@ var ApprovalOperationSchema;
 var init_approval = __esm({
   "node_modules/@praxis/contracts/dist/approval.js"() {
     init_zod();
-    ApprovalOperationSchema = external_exports2.enum([
+    ApprovalOperationSchema = external_exports.enum([
       "external_record_create",
       "external_record_update",
       "external_state_change",
@@ -5991,45 +6006,45 @@ var init_action_plan = __esm({
     init_workflow();
     ACTION_PLAN_CONTRACT = "praxis.action.plan";
     ACTION_PLAN_VERSION = 1;
-    ActionPlanBaseSchema = external_exports2.object({
-      contract: external_exports2.literal(ACTION_PLAN_CONTRACT),
-      version: external_exports2.literal(ACTION_PLAN_VERSION),
-      planId: external_exports2.string().min(1),
+    ActionPlanBaseSchema = external_exports.object({
+      contract: external_exports.literal(ACTION_PLAN_CONTRACT),
+      version: external_exports.literal(ACTION_PLAN_VERSION),
+      planId: external_exports.string().min(1),
       role: WorkflowRoleSchema.exclude(["user"]),
       decisionKind: DecisionKindSchema,
-      summary: external_exports2.string().min(1),
+      summary: external_exports.string().min(1),
       provider: WorkTrackingProviderSchema,
-      instanceId: external_exports2.string().min(1),
-      operations: external_exports2.array(ApprovalOperationSchema).min(1),
-      workItemIds: external_exports2.array(external_exports2.string()).default([]),
-      storyIds: external_exports2.array(external_exports2.string()).default([]),
-      decisionIds: external_exports2.array(external_exports2.string()).default([]),
-      repositories: external_exports2.array(external_exports2.string()).default([]),
-      branch: external_exports2.string().optional(),
-      remote: external_exports2.string().optional(),
-      actions: external_exports2.array(external_exports2.object({
-        action: external_exports2.string().min(1),
-        description: external_exports2.string().min(1),
-        targets: external_exports2.array(external_exports2.string()).default([]),
+      instanceId: external_exports.string().min(1),
+      operations: external_exports.array(ApprovalOperationSchema).min(1),
+      workItemIds: external_exports.array(external_exports.string()).default([]),
+      storyIds: external_exports.array(external_exports.string()).default([]),
+      decisionIds: external_exports.array(external_exports.string()).default([]),
+      repositories: external_exports.array(external_exports.string()).default([]),
+      branch: external_exports.string().optional(),
+      remote: external_exports.string().optional(),
+      actions: external_exports.array(external_exports.object({
+        action: external_exports.string().min(1),
+        description: external_exports.string().min(1),
+        targets: external_exports.array(external_exports.string()).default([]),
         /** Exact approved change for fixture writes. Bound into the plan fingerprint. */
-        content: external_exports2.string().optional()
+        content: external_exports.string().optional()
       })).min(1),
-      risks: external_exports2.array(external_exports2.string()).default([]),
-      sideEffects: external_exports2.array(external_exports2.string()).default([]),
-      createdAt: external_exports2.string().datetime(),
-      expiresAt: external_exports2.string().datetime()
+      risks: external_exports.array(external_exports.string()).default([]),
+      sideEffects: external_exports.array(external_exports.string()).default([]),
+      createdAt: external_exports.string().datetime(),
+      expiresAt: external_exports.string().datetime()
     });
     ActionPlanSchema = ActionPlanBaseSchema.extend({
-      fingerprint: external_exports2.string().regex(/^sha256:[a-f0-9]{64}$/)
+      fingerprint: external_exports.string().regex(/^sha256:[a-f0-9]{64}$/)
     }).superRefine((plan, ctx) => {
       for (const problem of authorityProblems(plan))
-        ctx.addIssue({ code: external_exports2.ZodIssueCode.custom, message: problem, path: ["operations"] });
+        ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: problem, path: ["operations"] });
       if (plan.actions.length !== 1) {
-        ctx.addIssue({ code: external_exports2.ZodIssueCode.custom, message: "a plan authorizes exactly one action; split it into separate plans", path: ["actions"] });
+        ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "a plan authorizes exactly one action; split it into separate plans", path: ["actions"] });
       }
       const { fingerprint: fingerprint2, ...body } = plan;
       if (fingerprint2 !== actionPlanFingerprint(body)) {
-        ctx.addIssue({ code: external_exports2.ZodIssueCode.custom, message: "plan fingerprint does not match the plan's content", path: ["fingerprint"] });
+        ctx.addIssue({ code: external_exports.ZodIssueCode.custom, message: "plan fingerprint does not match the plan's content", path: ["fingerprint"] });
       }
     });
   }
@@ -6040,69 +6055,69 @@ var ContractMeta, PraxisRoleSchema, RichTextInlineSchema, RichTextBlockSchema, P
 var init_jira_orchestration = __esm({
   "node_modules/@praxis/contracts/dist/jira-orchestration.js"() {
     init_zod();
-    ContractMeta = external_exports2.object({
-      contract: external_exports2.string().min(1),
-      version: external_exports2.string().regex(/^\d+\.\d+\.\d+$/)
+    ContractMeta = external_exports.object({
+      contract: external_exports.string().min(1),
+      version: external_exports.string().regex(/^\d+\.\d+\.\d+$/)
     });
-    PraxisRoleSchema = external_exports2.enum(["ba", "architect", "developer", "qa"]);
-    RichTextInlineSchema = external_exports2.discriminatedUnion("type", [
-      external_exports2.object({ type: external_exports2.literal("text"), text: external_exports2.string() }),
-      external_exports2.object({ type: external_exports2.literal("code"), text: external_exports2.string() }),
-      external_exports2.object({
-        type: external_exports2.literal("link"),
-        href: external_exports2.string(),
-        text: external_exports2.string()
+    PraxisRoleSchema = external_exports.enum(["ba", "architect", "developer", "qa"]);
+    RichTextInlineSchema = external_exports.discriminatedUnion("type", [
+      external_exports.object({ type: external_exports.literal("text"), text: external_exports.string() }),
+      external_exports.object({ type: external_exports.literal("code"), text: external_exports.string() }),
+      external_exports.object({
+        type: external_exports.literal("link"),
+        href: external_exports.string(),
+        text: external_exports.string()
       }),
-      external_exports2.object({ type: external_exports2.literal("issueRef"), key: external_exports2.string() })
+      external_exports.object({ type: external_exports.literal("issueRef"), key: external_exports.string() })
     ]);
-    RichTextBlockSchema = external_exports2.discriminatedUnion("type", [
-      external_exports2.object({
-        type: external_exports2.literal("heading"),
-        level: external_exports2.union([
-          external_exports2.literal(1),
-          external_exports2.literal(2),
-          external_exports2.literal(3),
-          external_exports2.literal(4),
-          external_exports2.literal(5),
-          external_exports2.literal(6)
+    RichTextBlockSchema = external_exports.discriminatedUnion("type", [
+      external_exports.object({
+        type: external_exports.literal("heading"),
+        level: external_exports.union([
+          external_exports.literal(1),
+          external_exports.literal(2),
+          external_exports.literal(3),
+          external_exports.literal(4),
+          external_exports.literal(5),
+          external_exports.literal(6)
         ]),
-        text: external_exports2.string()
+        text: external_exports.string()
       }),
-      external_exports2.object({
-        type: external_exports2.literal("paragraph"),
-        inlines: external_exports2.array(RichTextInlineSchema)
+      external_exports.object({
+        type: external_exports.literal("paragraph"),
+        inlines: external_exports.array(RichTextInlineSchema)
       }),
-      external_exports2.object({
-        type: external_exports2.literal("bulletList"),
-        items: external_exports2.array(external_exports2.array(RichTextInlineSchema))
+      external_exports.object({
+        type: external_exports.literal("bulletList"),
+        items: external_exports.array(external_exports.array(RichTextInlineSchema))
       }),
-      external_exports2.object({
-        type: external_exports2.literal("orderedList"),
-        items: external_exports2.array(external_exports2.array(RichTextInlineSchema))
+      external_exports.object({
+        type: external_exports.literal("orderedList"),
+        items: external_exports.array(external_exports.array(RichTextInlineSchema))
       }),
-      external_exports2.object({
-        type: external_exports2.literal("codeBlock"),
-        language: external_exports2.string().optional(),
-        text: external_exports2.string()
+      external_exports.object({
+        type: external_exports.literal("codeBlock"),
+        language: external_exports.string().optional(),
+        text: external_exports.string()
       }),
-      external_exports2.object({
-        type: external_exports2.literal("table"),
-        headers: external_exports2.array(external_exports2.string()),
-        rows: external_exports2.array(external_exports2.array(external_exports2.string()))
+      external_exports.object({
+        type: external_exports.literal("table"),
+        headers: external_exports.array(external_exports.string()),
+        rows: external_exports.array(external_exports.array(external_exports.string()))
       })
     ]);
-    PraxisRichTextDocumentSchema = external_exports2.object({
-      version: external_exports2.literal(1),
-      blocks: external_exports2.array(RichTextBlockSchema)
+    PraxisRichTextDocumentSchema = external_exports.object({
+      version: external_exports.literal(1),
+      blocks: external_exports.array(RichTextBlockSchema)
     });
-    EpicLifecycleSchema = external_exports2.enum([
+    EpicLifecycleSchema = external_exports.enum([
       "analysis",
       "architecture",
       "development",
       "quality",
       "done"
     ]);
-    TicketLifecycleSchema = external_exports2.enum([
+    TicketLifecycleSchema = external_exports.enum([
       "ready-for-architecture",
       "ready-for-development",
       "in-progress",
@@ -6110,7 +6125,7 @@ var init_jira_orchestration = __esm({
       "blocked",
       "done"
     ]);
-    WorkPackageLifecycleSchema = external_exports2.enum([
+    WorkPackageLifecycleSchema = external_exports.enum([
       "ready",
       "claimed",
       "in-progress",
@@ -6119,167 +6134,167 @@ var init_jira_orchestration = __esm({
       "qa-passed",
       "done"
     ]);
-    WorkPackageClaimSchema = external_exports2.object({
-      workPackageId: external_exports2.string().min(1),
-      jiraWorkPackageKey: external_exports2.string().min(1),
-      actor: external_exports2.string().min(1),
-      jiraAccountId: external_exports2.string().min(1),
-      claimedAt: external_exports2.string().min(1),
-      claimToken: external_exports2.string().min(1),
-      memberIssueKeys: external_exports2.array(external_exports2.string()),
+    WorkPackageClaimSchema = external_exports.object({
+      workPackageId: external_exports.string().min(1),
+      jiraWorkPackageKey: external_exports.string().min(1),
+      actor: external_exports.string().min(1),
+      jiraAccountId: external_exports.string().min(1),
+      claimedAt: external_exports.string().min(1),
+      claimToken: external_exports.string().min(1),
+      memberIssueKeys: external_exports.array(external_exports.string()),
       expectedState: WorkPackageLifecycleSchema,
-      state: external_exports2.enum(["active", "implementation-complete", "released"])
+      state: external_exports.enum(["active", "implementation-complete", "released"])
     });
-    PraxisWorkPackageSchema = external_exports2.object({
-      id: external_exports2.string().min(1),
-      jiraIssueKey: external_exports2.string().min(1),
-      epicKey: external_exports2.string().min(1),
-      title: external_exports2.string().min(1),
-      storyKeys: external_exports2.array(external_exports2.string()),
-      taskKeys: external_exports2.array(external_exports2.string()),
-      dependencyWorkPackages: external_exports2.array(external_exports2.string()),
-      estimatedHours: external_exports2.number().nonnegative().optional(),
-      architectureDecisionIds: external_exports2.array(external_exports2.string()),
-      platformContractIds: external_exports2.array(external_exports2.string()),
+    PraxisWorkPackageSchema = external_exports.object({
+      id: external_exports.string().min(1),
+      jiraIssueKey: external_exports.string().min(1),
+      epicKey: external_exports.string().min(1),
+      title: external_exports.string().min(1),
+      storyKeys: external_exports.array(external_exports.string()),
+      taskKeys: external_exports.array(external_exports.string()),
+      dependencyWorkPackages: external_exports.array(external_exports.string()),
+      estimatedHours: external_exports.number().nonnegative().optional(),
+      architectureDecisionIds: external_exports.array(external_exports.string()),
+      platformContractIds: external_exports.array(external_exports.string()),
       status: WorkPackageLifecycleSchema,
       claim: WorkPackageClaimSchema.nullable()
     });
     JiraBaHandoffSchema = ContractMeta.extend({
-      contract: external_exports2.literal("jira.ba.architect.handoff"),
-      epicKey: external_exports2.string().min(1),
-      storyKeys: external_exports2.array(external_exports2.string()),
-      canonicalStoryKeys: external_exports2.array(external_exports2.string()),
-      supersededStoryKeys: external_exports2.array(external_exports2.string()),
-      requirementIds: external_exports2.array(external_exports2.string()),
-      baArtifacts: external_exports2.array(external_exports2.string()),
-      openQuestions: external_exports2.array(external_exports2.string()),
-      nfrs: external_exports2.array(external_exports2.string()),
-      businessRules: external_exports2.array(external_exports2.string()),
-      constraints: external_exports2.array(external_exports2.string()),
-      acceptanceSummary: external_exports2.string(),
-      dependencies: external_exports2.array(external_exports2.string()),
-      proposalReady: external_exports2.boolean(),
-      readyForArchitecture: external_exports2.boolean()
+      contract: external_exports.literal("jira.ba.architect.handoff"),
+      epicKey: external_exports.string().min(1),
+      storyKeys: external_exports.array(external_exports.string()),
+      canonicalStoryKeys: external_exports.array(external_exports.string()),
+      supersededStoryKeys: external_exports.array(external_exports.string()),
+      requirementIds: external_exports.array(external_exports.string()),
+      baArtifacts: external_exports.array(external_exports.string()),
+      openQuestions: external_exports.array(external_exports.string()),
+      nfrs: external_exports.array(external_exports.string()),
+      businessRules: external_exports.array(external_exports.string()),
+      constraints: external_exports.array(external_exports.string()),
+      acceptanceSummary: external_exports.string(),
+      dependencies: external_exports.array(external_exports.string()),
+      proposalReady: external_exports.boolean(),
+      readyForArchitecture: external_exports.boolean()
     }).superRefine((h, ctx) => {
       if (h.readyForArchitecture && h.canonicalStoryKeys.length === 0) {
         ctx.addIssue({
-          code: external_exports2.ZodIssueCode.custom,
+          code: external_exports.ZodIssueCode.custom,
           message: "readyForArchitecture=true requires canonicalStoryKeys.length > 0"
         });
       }
     });
-    JiraBaProposalStorySchema = external_exports2.object({
-      logicalId: external_exports2.string().min(1),
-      artifactId: external_exports2.string().min(1),
-      summary: external_exports2.string().min(1),
-      userStory: external_exports2.object({
-        asA: external_exports2.string().min(1),
-        iWant: external_exports2.string().min(1),
-        soThat: external_exports2.string().min(1)
+    JiraBaProposalStorySchema = external_exports.object({
+      logicalId: external_exports.string().min(1),
+      artifactId: external_exports.string().min(1),
+      summary: external_exports.string().min(1),
+      userStory: external_exports.object({
+        asA: external_exports.string().min(1),
+        iWant: external_exports.string().min(1),
+        soThat: external_exports.string().min(1)
       }),
-      businessContext: external_exports2.string().min(1),
-      acceptanceCriteria: external_exports2.array(external_exports2.object({
-        given: external_exports2.string().min(1),
-        when: external_exports2.string().min(1),
-        then: external_exports2.string().min(1)
+      businessContext: external_exports.string().min(1),
+      acceptanceCriteria: external_exports.array(external_exports.object({
+        given: external_exports.string().min(1),
+        when: external_exports.string().min(1),
+        then: external_exports.string().min(1)
       })).min(1),
-      outOfScope: external_exports2.array(external_exports2.string()),
-      dependencies: external_exports2.array(external_exports2.string()),
-      requirementIds: external_exports2.array(external_exports2.string()).min(1)
+      outOfScope: external_exports.array(external_exports.string()),
+      dependencies: external_exports.array(external_exports.string()),
+      requirementIds: external_exports.array(external_exports.string()).min(1)
     });
     JiraBaProposalSchema = ContractMeta.extend({
-      contract: external_exports2.literal("jira.ba.proposal"),
-      epicKey: external_exports2.string().min(1),
-      stories: external_exports2.array(JiraBaProposalStorySchema),
-      nfrs: external_exports2.array(external_exports2.string()),
-      businessRules: external_exports2.array(external_exports2.string()),
-      openQuestions: external_exports2.array(external_exports2.string())
+      contract: external_exports.literal("jira.ba.proposal"),
+      epicKey: external_exports.string().min(1),
+      stories: external_exports.array(JiraBaProposalStorySchema),
+      nfrs: external_exports.array(external_exports.string()),
+      businessRules: external_exports.array(external_exports.string()),
+      openQuestions: external_exports.array(external_exports.string())
     });
-    JiraWriteOpStateSchema = external_exports2.enum([
+    JiraWriteOpStateSchema = external_exports.enum([
       "planned",
       "creating",
       "created",
       "verified",
       "committed"
     ]);
-    JiraWriteJournalEntrySchema = external_exports2.object({
-      operationId: external_exports2.string().min(1),
+    JiraWriteJournalEntrySchema = external_exports.object({
+      operationId: external_exports.string().min(1),
       role: PraxisRoleSchema,
-      operationType: external_exports2.string().min(1),
-      artifactId: external_exports2.string().min(1),
-      epicKey: external_exports2.string().optional(),
-      jiraIssueKey: external_exports2.string().optional(),
+      operationType: external_exports.string().min(1),
+      artifactId: external_exports.string().min(1),
+      epicKey: external_exports.string().optional(),
+      jiraIssueKey: external_exports.string().optional(),
       state: JiraWriteOpStateSchema,
-      provider: external_exports2.enum(["cloud", "datacenter"]),
-      projectKey: external_exports2.string().min(1),
-      startedAt: external_exports2.string().min(1),
-      completedAt: external_exports2.string().optional(),
-      detail: external_exports2.string().optional()
+      provider: external_exports.enum(["cloud", "datacenter"]),
+      projectKey: external_exports.string().min(1),
+      startedAt: external_exports.string().min(1),
+      completedAt: external_exports.string().optional(),
+      detail: external_exports.string().optional()
     });
-    JiraOperationJournalEntrySchema = external_exports2.object({
-      operationId: external_exports2.string().min(1),
-      artifactId: external_exports2.string().min(1),
-      jiraIssueKey: external_exports2.string().optional(),
-      result: external_exports2.enum(["ok", "skipped", "failed"]),
-      timestamp: external_exports2.string().min(1),
-      provider: external_exports2.enum(["cloud", "datacenter"]),
-      kind: external_exports2.string().min(1),
-      detail: external_exports2.string().optional()
+    JiraOperationJournalEntrySchema = external_exports.object({
+      operationId: external_exports.string().min(1),
+      artifactId: external_exports.string().min(1),
+      jiraIssueKey: external_exports.string().optional(),
+      result: external_exports.enum(["ok", "skipped", "failed"]),
+      timestamp: external_exports.string().min(1),
+      provider: external_exports.enum(["cloud", "datacenter"]),
+      kind: external_exports.string().min(1),
+      detail: external_exports.string().optional()
     });
-    BaJiraWriteActionSchema = external_exports2.enum([
+    BaJiraWriteActionSchema = external_exports.enum([
       "CREATE",
       "UPDATE",
       "UNCHANGED",
       "SUPERSEDED"
     ]);
-    BaJiraWritePlanItemSchema = external_exports2.object({
+    BaJiraWritePlanItemSchema = external_exports.object({
       action: BaJiraWriteActionSchema,
-      artifactId: external_exports2.string().min(1),
-      jiraIssueKey: external_exports2.string().optional(),
-      supersededBy: external_exports2.string().optional(),
-      summary: external_exports2.string().optional()
+      artifactId: external_exports.string().min(1),
+      jiraIssueKey: external_exports.string().optional(),
+      supersededBy: external_exports.string().optional(),
+      summary: external_exports.string().optional()
     });
     QualityWpReportSchema = ContractMeta.extend({
-      contract: external_exports2.literal("quality.work-package.report"),
-      workPackageId: external_exports2.string().min(1),
-      jiraWorkPackageKey: external_exports2.string().min(1),
-      memberIssueResults: external_exports2.array(external_exports2.object({
-        jiraIssueKey: external_exports2.string(),
-        acceptanceCriteria: external_exports2.array(external_exports2.string()),
-        coveredBy: external_exports2.array(external_exports2.string()),
-        result: external_exports2.enum(["pass", "fail", "unverified"])
+      contract: external_exports.literal("quality.work-package.report"),
+      workPackageId: external_exports.string().min(1),
+      jiraWorkPackageKey: external_exports.string().min(1),
+      memberIssueResults: external_exports.array(external_exports.object({
+        jiraIssueKey: external_exports.string(),
+        acceptanceCriteria: external_exports.array(external_exports.string()),
+        coveredBy: external_exports.array(external_exports.string()),
+        result: external_exports.enum(["pass", "fail", "unverified"])
       })),
-      buildResult: external_exports2.enum(["pass", "fail", "skipped"]),
-      testResult: external_exports2.enum(["pass", "fail", "skipped"]),
-      tests: external_exports2.object({
-        total: external_exports2.number(),
-        pass: external_exports2.number(),
-        fail: external_exports2.number()
+      buildResult: external_exports.enum(["pass", "fail", "skipped"]),
+      testResult: external_exports.enum(["pass", "fail", "skipped"]),
+      tests: external_exports.object({
+        total: external_exports.number(),
+        pass: external_exports.number(),
+        fail: external_exports.number()
       }),
-      coverage: external_exports2.object({
-        lines: external_exports2.number().optional(),
-        branches: external_exports2.number().optional(),
-        functions: external_exports2.number().optional(),
-        statements: external_exports2.number().optional()
+      coverage: external_exports.object({
+        lines: external_exports.number().optional(),
+        branches: external_exports.number().optional(),
+        functions: external_exports.number().optional(),
+        statements: external_exports.number().optional()
       }).nullable(),
-      runtimeVerification: external_exports2.enum(["pass", "fail", "unavailable"]),
-      runtimeReason: external_exports2.string().optional(),
-      findings: external_exports2.array(external_exports2.unknown()),
-      blockingFindings: external_exports2.array(external_exports2.unknown()),
-      potentialRisks: external_exports2.array(external_exports2.string()),
-      addedTests: external_exports2.array(external_exports2.string()),
-      sourceChangesGuard: external_exports2.enum(["pass", "fail"]),
-      overallVerdict: external_exports2.enum(["pass", "fail", "blocked"]),
-      developerEvidence: external_exports2.object({
-        workPackageId: external_exports2.string().optional(),
-        jiraWorkPackageKey: external_exports2.string().optional(),
-        canonicalStoryKeys: external_exports2.array(external_exports2.string()).optional(),
-        requirementIds: external_exports2.array(external_exports2.string()).optional(),
-        hasCompletionEvidence: external_exports2.boolean(),
-        hasQualityHandoff: external_exports2.boolean(),
-        readyForQuality: external_exports2.boolean().optional(),
-        evidencePath: external_exports2.string().optional(),
-        qualityHandoffPath: external_exports2.string().optional()
+      runtimeVerification: external_exports.enum(["pass", "fail", "unavailable"]),
+      runtimeReason: external_exports.string().optional(),
+      findings: external_exports.array(external_exports.unknown()),
+      blockingFindings: external_exports.array(external_exports.unknown()),
+      potentialRisks: external_exports.array(external_exports.string()),
+      addedTests: external_exports.array(external_exports.string()),
+      sourceChangesGuard: external_exports.enum(["pass", "fail"]),
+      overallVerdict: external_exports.enum(["pass", "fail", "blocked"]),
+      developerEvidence: external_exports.object({
+        workPackageId: external_exports.string().optional(),
+        jiraWorkPackageKey: external_exports.string().optional(),
+        canonicalStoryKeys: external_exports.array(external_exports.string()).optional(),
+        requirementIds: external_exports.array(external_exports.string()).optional(),
+        hasCompletionEvidence: external_exports.boolean(),
+        hasQualityHandoff: external_exports.boolean(),
+        readyForQuality: external_exports.boolean().optional(),
+        evidencePath: external_exports.string().optional(),
+        qualityHandoffPath: external_exports.string().optional()
       }).optional()
     });
   }
@@ -6308,238 +6323,238 @@ var init_dist = __esm({
     init_human_acts();
     init_human_act_testing();
     init_user_approval();
-    ContractMetaSchema = external_exports2.object({
-      contract: external_exports2.string().min(1),
-      version: external_exports2.string().regex(/^\d+\.\d+\.\d+$/)
+    ContractMetaSchema = external_exports.object({
+      contract: external_exports.string().min(1),
+      version: external_exports.string().regex(/^\d+\.\d+\.\d+$/)
     });
     BaToArchitectHandoffSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("ba.architect.handoff"),
-      workPackageId: external_exports2.string().min(1),
-      workPackagePath: external_exports2.string().min(1),
-      requirementIds: external_exports2.array(external_exports2.string()).min(1),
-      visionConfirmed: external_exports2.boolean(),
-      readinessChecks: external_exports2.array(external_exports2.object({
-        id: external_exports2.string(),
-        passed: external_exports2.boolean(),
-        detail: external_exports2.string().optional()
+      contract: external_exports.literal("ba.architect.handoff"),
+      workPackageId: external_exports.string().min(1),
+      workPackagePath: external_exports.string().min(1),
+      requirementIds: external_exports.array(external_exports.string()).min(1),
+      visionConfirmed: external_exports.boolean(),
+      readinessChecks: external_exports.array(external_exports.object({
+        id: external_exports.string(),
+        passed: external_exports.boolean(),
+        detail: external_exports.string().optional()
       }))
     });
     ArchitectToDeveloperHandoffSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("architect.developer.handoff"),
-      workPackageId: external_exports2.string().min(1),
-      designPackagePath: external_exports2.string().min(1),
-      contextSlicePath: external_exports2.string().min(1),
-      decisionIds: external_exports2.array(external_exports2.string()),
-      features: external_exports2.array(external_exports2.object({
-        id: external_exports2.string(),
-        title: external_exports2.string(),
-        estimateHours: external_exports2.number().nonnegative().optional(),
-        dependsOn: external_exports2.array(external_exports2.string()).optional(),
-        readyForDev: external_exports2.boolean()
+      contract: external_exports.literal("architect.developer.handoff"),
+      workPackageId: external_exports.string().min(1),
+      designPackagePath: external_exports.string().min(1),
+      contextSlicePath: external_exports.string().min(1),
+      decisionIds: external_exports.array(external_exports.string()),
+      features: external_exports.array(external_exports.object({
+        id: external_exports.string(),
+        title: external_exports.string(),
+        estimateHours: external_exports.number().nonnegative().optional(),
+        dependsOn: external_exports.array(external_exports.string()).optional(),
+        readyForDev: external_exports.boolean()
       })),
       /** Platform/interface contract ids visible to Developer (WBS 4.9). */
-      platformContractIds: external_exports2.array(external_exports2.string()).optional()
+      platformContractIds: external_exports.array(external_exports.string()).optional()
     });
-    ChangeSpecChangeSchema = external_exports2.object({
-      file: external_exports2.string().min(1),
-      description: external_exports2.string().optional(),
-      op: external_exports2.enum(["edit", "create"]).optional(),
-      match: external_exports2.string().optional(),
-      replace: external_exports2.string().optional(),
-      content: external_exports2.string().optional(),
+    ChangeSpecChangeSchema = external_exports.object({
+      file: external_exports.string().min(1),
+      description: external_exports.string().optional(),
+      op: external_exports.enum(["edit", "create"]).optional(),
+      match: external_exports.string().optional(),
+      replace: external_exports.string().optional(),
+      content: external_exports.string().optional(),
       /** @deprecated Prefer `content` with `op: "create"`. */
-      write: external_exports2.string().optional()
+      write: external_exports.string().optional()
     }).superRefine((c, ctx) => {
       const op = c.op ?? (c.content !== void 0 || c.write !== void 0 ? "create" : "edit");
       if (op === "edit") {
         if (c.match === void 0 || c.replace === void 0) {
           ctx.addIssue({
-            code: external_exports2.ZodIssueCode.custom,
+            code: external_exports.ZodIssueCode.custom,
             message: "edit changes require match and replace"
           });
         }
       } else if (op === "create") {
         if (c.content === void 0 && c.write === void 0) {
           ctx.addIssue({
-            code: external_exports2.ZodIssueCode.custom,
+            code: external_exports.ZodIssueCode.custom,
             message: "create changes require content (or legacy write)"
           });
         }
       }
     });
-    AcceptanceCheckSchema = external_exports2.union([
-      external_exports2.object({
-        type: external_exports2.literal("contains").optional(),
-        file: external_exports2.string().min(1),
-        contains: external_exports2.string().min(1)
+    AcceptanceCheckSchema = external_exports.union([
+      external_exports.object({
+        type: external_exports.literal("contains").optional(),
+        file: external_exports.string().min(1),
+        contains: external_exports.string().min(1)
       }),
-      external_exports2.object({
-        type: external_exports2.literal("npm-test")
+      external_exports.object({
+        type: external_exports.literal("npm-test")
       })
     ]);
-    ChangeSpecSchema = external_exports2.object({
-      workPackageId: external_exports2.string().min(1).optional(),
-      requirementIds: external_exports2.array(external_exports2.string()).optional(),
-      decisionIds: external_exports2.array(external_exports2.string()).optional(),
-      productRootHint: external_exports2.string().optional(),
-      researchGlobs: external_exports2.array(external_exports2.string()).optional(),
-      changes: external_exports2.array(ChangeSpecChangeSchema).min(1),
-      acceptanceChecks: external_exports2.array(AcceptanceCheckSchema).optional(),
-      features: external_exports2.array(external_exports2.object({
-        id: external_exports2.string(),
-        title: external_exports2.string(),
-        estimateHours: external_exports2.number().nonnegative().optional(),
-        dependsOn: external_exports2.array(external_exports2.string()).optional(),
-        readyForDev: external_exports2.boolean()
+    ChangeSpecSchema = external_exports.object({
+      workPackageId: external_exports.string().min(1).optional(),
+      requirementIds: external_exports.array(external_exports.string()).optional(),
+      decisionIds: external_exports.array(external_exports.string()).optional(),
+      productRootHint: external_exports.string().optional(),
+      researchGlobs: external_exports.array(external_exports.string()).optional(),
+      changes: external_exports.array(ChangeSpecChangeSchema).min(1),
+      acceptanceChecks: external_exports.array(AcceptanceCheckSchema).optional(),
+      features: external_exports.array(external_exports.object({
+        id: external_exports.string(),
+        title: external_exports.string(),
+        estimateHours: external_exports.number().nonnegative().optional(),
+        dependsOn: external_exports.array(external_exports.string()).optional(),
+        readyForDev: external_exports.boolean()
       })).min(1),
-      design: external_exports2.record(external_exports2.unknown()).optional(),
+      design: external_exports.record(external_exports.unknown()).optional(),
       /** Repo-relative paths that MUST appear in changes[].file before readyForDev. */
-      requiredMachineFiles: external_exports2.array(external_exports2.string()).optional(),
-      verificationPolicy: external_exports2.object({
-        requireTests: external_exports2.boolean().optional(),
-        requireBuild: external_exports2.boolean().optional(),
-        requireLint: external_exports2.boolean().optional()
+      requiredMachineFiles: external_exports.array(external_exports.string()).optional(),
+      verificationPolicy: external_exports.object({
+        requireTests: external_exports.boolean().optional(),
+        requireBuild: external_exports.boolean().optional(),
+        requireLint: external_exports.boolean().optional()
       }).optional()
     });
-    VerificationCheckSchema = external_exports2.object({
-      status: external_exports2.enum(["passed", "failed", "skipped"]),
-      required: external_exports2.boolean()
+    VerificationCheckSchema = external_exports.object({
+      status: external_exports.enum(["passed", "failed", "skipped"]),
+      required: external_exports.boolean()
     });
-    VerificationSchema = external_exports2.object({
+    VerificationSchema = external_exports.object({
       build: VerificationCheckSchema,
       tests: VerificationCheckSchema,
       lint: VerificationCheckSchema,
       packageCriteria: VerificationCheckSchema
     });
     DeveloperToQualityHandoffSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("developer.quality.handoff"),
+      contract: external_exports.literal("developer.quality.handoff"),
       /** Work package this handoff claims to deliver (required identity). */
-      workPackageId: external_exports2.string().min(1),
-      mergeRequestRef: external_exports2.string().min(1),
-      intention: external_exports2.string().min(1),
-      requirementIds: external_exports2.array(external_exports2.string()),
-      decisionIds: external_exports2.array(external_exports2.string()),
+      workPackageId: external_exports.string().min(1),
+      mergeRequestRef: external_exports.string().min(1),
+      intention: external_exports.string().min(1),
+      requirementIds: external_exports.array(external_exports.string()),
+      decisionIds: external_exports.array(external_exports.string()),
       verification: VerificationSchema,
       /** Optional machine AC checks Quality can execute against the product tree. */
-      acceptanceChecks: external_exports2.array(AcceptanceCheckSchema).optional(),
-      jiraWorkPackageKey: external_exports2.string().optional(),
-      canonicalStoryKeys: external_exports2.array(external_exports2.string()).optional(),
-      evidencePath: external_exports2.string().optional()
+      acceptanceChecks: external_exports.array(AcceptanceCheckSchema).optional(),
+      jiraWorkPackageKey: external_exports.string().optional(),
+      canonicalStoryKeys: external_exports.array(external_exports.string()).optional(),
+      evidencePath: external_exports.string().optional()
     });
     DeveloperCompletionEvidenceSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("developer.completion.evidence"),
-      workPackageId: external_exports2.string().min(1),
-      jiraWorkPackageKey: external_exports2.string().min(1),
-      canonicalStoryKeys: external_exports2.array(external_exports2.string()),
-      requirementIds: external_exports2.array(external_exports2.string()),
-      implementationScope: external_exports2.array(external_exports2.string()),
-      changedProductFiles: external_exports2.array(external_exports2.string()),
-      acceptanceChecks: external_exports2.array(AcceptanceCheckSchema),
-      verification: external_exports2.object({
-        command: external_exports2.string().min(1),
-        exitCode: external_exports2.number(),
-        ok: external_exports2.boolean(),
-        passed: external_exports2.number().optional(),
-        failed: external_exports2.number().optional(),
-        total: external_exports2.number().optional(),
-        timestamp: external_exports2.string().min(1)
+      contract: external_exports.literal("developer.completion.evidence"),
+      workPackageId: external_exports.string().min(1),
+      jiraWorkPackageKey: external_exports.string().min(1),
+      canonicalStoryKeys: external_exports.array(external_exports.string()),
+      requirementIds: external_exports.array(external_exports.string()),
+      implementationScope: external_exports.array(external_exports.string()),
+      changedProductFiles: external_exports.array(external_exports.string()),
+      acceptanceChecks: external_exports.array(AcceptanceCheckSchema),
+      verification: external_exports.object({
+        command: external_exports.string().min(1),
+        exitCode: external_exports.number(),
+        ok: external_exports.boolean(),
+        passed: external_exports.number().optional(),
+        failed: external_exports.number().optional(),
+        total: external_exports.number().optional(),
+        timestamp: external_exports.string().min(1)
       }),
-      implementationStatus: external_exports2.literal("complete"),
-      readyForQuality: external_exports2.literal(true)
+      implementationStatus: external_exports.literal("complete"),
+      readyForQuality: external_exports.literal(true)
     });
     QualityMrContextSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("quality.mr.context"),
-      projectId: external_exports2.string().min(1),
-      workPackageId: external_exports2.string().min(1),
-      mergeRequestRef: external_exports2.string().min(1),
-      repositoryPath: external_exports2.string().min(1),
-      baseBranch: external_exports2.string().min(1),
-      headBranch: external_exports2.string().min(1),
-      baseSha: external_exports2.string().min(1),
-      headSha: external_exports2.string().min(1),
-      changedFiles: external_exports2.array(external_exports2.string()),
-      requirementIds: external_exports2.array(external_exports2.string()),
-      decisionIds: external_exports2.array(external_exports2.string()),
+      contract: external_exports.literal("quality.mr.context"),
+      projectId: external_exports.string().min(1),
+      workPackageId: external_exports.string().min(1),
+      mergeRequestRef: external_exports.string().min(1),
+      repositoryPath: external_exports.string().min(1),
+      baseBranch: external_exports.string().min(1),
+      headBranch: external_exports.string().min(1),
+      baseSha: external_exports.string().min(1),
+      headSha: external_exports.string().min(1),
+      changedFiles: external_exports.array(external_exports.string()),
+      requirementIds: external_exports.array(external_exports.string()),
+      decisionIds: external_exports.array(external_exports.string()),
       verification: VerificationSchema.optional(),
       qualityHandoff: DeveloperToQualityHandoffSchema.optional()
     });
     QualityAuditReportSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("quality.audit.report"),
-      auditId: external_exports2.number().int().nonnegative(),
-      projectId: external_exports2.string().min(1),
-      auditedPath: external_exports2.string().min(1),
-      timestamp: external_exports2.string().min(1),
-      scope: external_exports2.string().min(1),
-      checksPerformed: external_exports2.array(external_exports2.string()),
-      findings: external_exports2.array(external_exports2.unknown()),
-      findingsBySeverity: external_exports2.record(external_exports2.number()),
-      findingsByCategory: external_exports2.record(external_exports2.number()),
-      evidence: external_exports2.array(external_exports2.string()),
-      summary: external_exports2.object({
-        total: external_exports2.number(),
-        blocking: external_exports2.number(),
-        warnings: external_exports2.number()
+      contract: external_exports.literal("quality.audit.report"),
+      auditId: external_exports.number().int().nonnegative(),
+      projectId: external_exports.string().min(1),
+      auditedPath: external_exports.string().min(1),
+      timestamp: external_exports.string().min(1),
+      scope: external_exports.string().min(1),
+      checksPerformed: external_exports.array(external_exports.string()),
+      findings: external_exports.array(external_exports.unknown()),
+      findingsBySeverity: external_exports.record(external_exports.number()),
+      findingsByCategory: external_exports.record(external_exports.number()),
+      evidence: external_exports.array(external_exports.string()),
+      summary: external_exports.object({
+        total: external_exports.number(),
+        blocking: external_exports.number(),
+        warnings: external_exports.number()
       }),
-      verdict: external_exports2.enum(["pass", "fail"]),
-      remediation: external_exports2.array(external_exports2.string()),
-      unresolvedHighRisk: external_exports2.array(external_exports2.unknown()),
-      tool: external_exports2.object({
-        name: external_exports2.string(),
-        version: external_exports2.string()
+      verdict: external_exports.enum(["pass", "fail"]),
+      remediation: external_exports.array(external_exports.string()),
+      unresolvedHighRisk: external_exports.array(external_exports.unknown()),
+      tool: external_exports.object({
+        name: external_exports.string(),
+        version: external_exports.string()
       })
     });
     QualityRollbackEventSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("quality.rollback.event"),
-      projectId: external_exports2.string().min(1),
-      workPackageId: external_exports2.string().optional(),
-      mergeRequestRef: external_exports2.string().min(1),
-      affectedRef: external_exports2.string().min(1),
-      reason: external_exports2.string().min(1),
-      trigger: external_exports2.string().min(1),
-      timestamp: external_exports2.string().optional(),
-      reviewId: external_exports2.number().int().positive().optional(),
-      findingIds: external_exports2.array(external_exports2.string()).optional(),
-      status: external_exports2.string().min(1),
-      evidence: external_exports2.string().min(1)
+      contract: external_exports.literal("quality.rollback.event"),
+      projectId: external_exports.string().min(1),
+      workPackageId: external_exports.string().optional(),
+      mergeRequestRef: external_exports.string().min(1),
+      affectedRef: external_exports.string().min(1),
+      reason: external_exports.string().min(1),
+      trigger: external_exports.string().min(1),
+      timestamp: external_exports.string().optional(),
+      reviewId: external_exports.number().int().positive().optional(),
+      findingIds: external_exports.array(external_exports.string()).optional(),
+      status: external_exports.string().min(1),
+      evidence: external_exports.string().min(1)
     });
     QualityHotfixEventSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("quality.hotfix.event"),
-      projectId: external_exports2.string().min(1),
-      rollbackId: external_exports2.number().int().positive(),
-      hotfixRef: external_exports2.string().min(1),
-      reason: external_exports2.string().min(1),
-      workPackageId: external_exports2.string().optional(),
-      reviewId: external_exports2.number().int().positive().optional(),
-      verification: external_exports2.string().min(1),
-      timestamp: external_exports2.string().optional()
+      contract: external_exports.literal("quality.hotfix.event"),
+      projectId: external_exports.string().min(1),
+      rollbackId: external_exports.number().int().positive(),
+      hotfixRef: external_exports.string().min(1),
+      reason: external_exports.string().min(1),
+      workPackageId: external_exports.string().optional(),
+      reviewId: external_exports.number().int().positive().optional(),
+      verification: external_exports.string().min(1),
+      timestamp: external_exports.string().optional()
     });
     QualityReturnEventSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("quality.return.event"),
-      projectId: external_exports2.string().min(1),
-      workPackageId: external_exports2.string().min(1),
-      mergeRequestRef: external_exports2.string().min(1),
-      reviewId: external_exports2.number().int().positive(),
-      targetRole: external_exports2.literal("developer"),
-      blockingFindingIds: external_exports2.array(external_exports2.string()).min(1),
-      reason: external_exports2.string().min(1),
-      source: external_exports2.enum(["qa", "code-review"]),
-      status: external_exports2.enum(["open", "resolved"]),
-      returnedAt: external_exports2.string().optional(),
-      resolvedAt: external_exports2.string().optional(),
-      followUpReviewId: external_exports2.number().int().positive().optional()
+      contract: external_exports.literal("quality.return.event"),
+      projectId: external_exports.string().min(1),
+      workPackageId: external_exports.string().min(1),
+      mergeRequestRef: external_exports.string().min(1),
+      reviewId: external_exports.number().int().positive(),
+      targetRole: external_exports.literal("developer"),
+      blockingFindingIds: external_exports.array(external_exports.string()).min(1),
+      reason: external_exports.string().min(1),
+      source: external_exports.enum(["qa", "code-review"]),
+      status: external_exports.enum(["open", "resolved"]),
+      returnedAt: external_exports.string().optional(),
+      resolvedAt: external_exports.string().optional(),
+      followUpReviewId: external_exports.number().int().positive().optional()
     });
     QualityNormProposalSchema = ContractMetaSchema.extend({
-      contract: external_exports2.literal("quality.norm.proposal"),
-      fingerprint: external_exports2.string().min(1),
-      occurrenceCount: external_exports2.number().int().positive(),
-      sourceIds: external_exports2.array(external_exports2.string()).min(1),
-      evidence: external_exports2.string().min(1),
-      proposedRuleId: external_exports2.string().min(1),
-      topic: external_exports2.string().min(1),
-      projectId: external_exports2.string().min(1),
-      status: external_exports2.literal("proposed"),
-      createdBy: external_exports2.literal("quality"),
-      binding: external_exports2.literal(false)
+      contract: external_exports.literal("quality.norm.proposal"),
+      fingerprint: external_exports.string().min(1),
+      occurrenceCount: external_exports.number().int().positive(),
+      sourceIds: external_exports.array(external_exports.string()).min(1),
+      evidence: external_exports.string().min(1),
+      proposedRuleId: external_exports.string().min(1),
+      topic: external_exports.string().min(1),
+      projectId: external_exports.string().min(1),
+      status: external_exports.literal("proposed"),
+      createdBy: external_exports.literal("quality"),
+      binding: external_exports.literal(false)
     });
   }
 });
@@ -13955,35 +13970,35 @@ var init_dist2 = __esm({
     import_node_path6 = require("node:path");
     import_yaml = __toESM(require_dist2(), 1);
     init_zod();
-    ProjectConfigSchema = external_exports2.object({
-      stack: external_exports2.array(external_exports2.string()).default([]),
-      requirementsFormat: external_exports2.enum([
+    ProjectConfigSchema = external_exports.object({
+      stack: external_exports.array(external_exports.string()).default([]),
+      requirementsFormat: external_exports.enum([
         "user-story-gherkin",
         "\u0438\u0441\u0442\u043E\u0440\u0438\u044F \u0441 \u043A\u0440\u0438\u0442\u0435\u0440\u0438\u044F\u043C\u0438 \u0432 \u0441\u0446\u0435\u043D\u0430\u0440\u043D\u043E\u0439 \u0444\u043E\u0440\u043C\u0435",
         "freeform"
       ]).default("user-story-gherkin"),
-      requiredArtifacts: external_exports2.array(external_exports2.string()).default([]),
-      environments: external_exports2.array(external_exports2.string()).default([]),
-      knowledge: external_exports2.object({
-        path: external_exports2.string().optional(),
-        ref: external_exports2.string().default("main"),
+      requiredArtifacts: external_exports.array(external_exports.string()).default([]),
+      environments: external_exports.array(external_exports.string()).default([]),
+      knowledge: external_exports.object({
+        path: external_exports.string().optional(),
+        ref: external_exports.string().default("main"),
         /** Optional product id for product-level rule overrides (subdir under product/). */
-        product: external_exports2.string().optional(),
+        product: external_exports.string().optional(),
         /** Optional service id for service-level rule overrides (subdir under service/). */
-        service: external_exports2.string().optional()
+        service: external_exports.string().optional()
       }).default({}),
-      jira: external_exports2.object({
-        baseUrl: external_exports2.string().url().optional(),
-        projectKey: external_exports2.string().optional()
+      jira: external_exports.object({
+        baseUrl: external_exports.string().url().optional(),
+        projectKey: external_exports.string().optional()
       }).default({}),
-      quality: external_exports2.object({
-        install: external_exports2.string().optional(),
-        build: external_exports2.string().optional(),
-        test: external_exports2.string().optional(),
-        coverage: external_exports2.string().optional(),
-        start: external_exports2.string().optional(),
-        healthUrl: external_exports2.string().optional(),
-        startupTimeoutMs: external_exports2.number().int().positive().optional()
+      quality: external_exports.object({
+        install: external_exports.string().optional(),
+        build: external_exports.string().optional(),
+        test: external_exports.string().optional(),
+        coverage: external_exports.string().optional(),
+        start: external_exports.string().optional(),
+        healthUrl: external_exports.string().optional(),
+        startupTimeoutMs: external_exports.number().int().positive().optional()
       }).default({})
     });
     PROJECT_FILE_NAMES = [".project", ".project.yaml", ".project.yml"];
@@ -22500,7 +22515,18 @@ async function projectInitApplyOp(ctx) {
     operation: "repository_edit",
     provider: "local",
     repository: repo,
-    requireYes: true
+    requireYes: true,
+    // what the user approves is the file this will write, in full
+    describe: () => ({
+      summary: inferred.existing.status === "loaded" ? "Project config already exists: nothing will be written" : `Write ${(0, import_node_path24.join)(repo, ".project")}`,
+      description: [
+        inferred.existing.status === "loaded" ? `${inferred.existing.path} already exists; applying changes nothing.` : `Creates ${(0, import_node_path24.join)(repo, ".project")} with exactly this content:`,
+        "",
+        inferred.yaml
+      ].join("\n"),
+      previewFingerprint: previewFingerprint({ yaml: inferred.yaml, existing: inferred.existing.status }),
+      targets: [(0, import_node_path24.join)(repo, ".project")]
+    })
   }, async () => {
     if (inferred.existing.status === "loaded") {
       return {
@@ -22844,7 +22870,11 @@ async function developerClaimOp(ctx) {
     provider: "jira",
     repository: repo,
     workItemId: ctx.wp,
-    requireYes: false
+    requireYes: false,
+    describe: () => ({
+      summary: `Claim work package ${ctx.wp}`,
+      description: [`Jira work package: ${ctx.wp}`, `Claimed by: ${ctx.actor ?? "the current Jira user"}`, "Effect: records the claim on the work package (idempotent for the same actor). Does not start Quality and does not change any code."].join("\n")
+    })
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     const user = await p.getCurrentUser();
     return claimWorkPackage({
@@ -22868,7 +22898,11 @@ async function developerReleaseOp(ctx) {
     provider: "jira",
     repository: repo,
     workItemId: ctx.wp,
-    requireYes: true
+    requireYes: true,
+    describe: () => ({
+      summary: `Force-release the claim on ${ctx.wp}`,
+      description: [`Jira work package: ${ctx.wp}`, "Effect: removes the current claim so another developer can claim it."].join("\n")
+    })
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     await releaseWorkPackage({
       provider: p,
@@ -22892,7 +22926,11 @@ async function developerCompleteOp(ctx) {
     provider: "jira",
     repository: repo,
     workItemId: wp,
-    requireYes: true
+    requireYes: true,
+    describe: () => ({
+      summary: `Complete development of ${wp}`,
+      description: [`Jira work package: ${wp}`, "Effect: runs the required verification, persists the evidence and the Developer to Quality handoff. Keeps Jira In Progress; does not start Quality and does not mark the issue Done."].join("\n")
+    })
   }, () => withProvider({ ...ctx, repo }, (p) => developerCompleteWp({
     provider: p,
     wpKey: wp,
@@ -23133,7 +23171,25 @@ async function qualityApplyOp(ctx) {
     provider: "jira",
     repository: repo,
     workItemId: workPackageId,
-    requireYes: true
+    requireYes: true,
+    // what the user approves is the plan this dry run produces: every Jira change, in full
+    describe: () => withProvider({ ...ctx, repo }, async (p) => {
+      try {
+        const dry = await previewQualityApply({ provider: p, repo, workPackageId, reviewId: ctx.reviewId });
+        return {
+          summary: `Apply Quality review ${dry.plan.reviewId} (${dry.plan.verdict}) to ${dry.plan.jiraWorkPackageKey}`,
+          description: [
+            `Work package: ${dry.plan.jiraWorkPackageKey} (currently ${dry.plan.currentStatus ?? "unknown"})`,
+            `Verdict: ${dry.plan.verdict}; bugs proposed: ${dry.plan.bugsProposed}`,
+            "Changes, in order:",
+            ...dry.plan.actions.map((a) => `- ${a.kind} ${a.issueKey}: ${a.operation}${a.toStatus ? ` -> ${a.toStatus}` : ""}${a.bugSummary ? ` (${a.bugSummary})` : ""}${a.alreadySatisfied ? " [already done]" : ""}`)
+          ].join("\n"),
+          previewFingerprint: dry.previewFingerprint
+        };
+      } catch (err) {
+        mapQualityReviewError(err);
+      }
+    })
   }, () => withProvider({ ...ctx, repo }, async (p) => {
     try {
       const { markQualityReviewApplied: markQualityReviewApplied2 } = await Promise.resolve().then(() => (init_quality_lifecycle(), quality_lifecycle_exports));
@@ -44694,6 +44750,29 @@ var inputRequired = Object.assign(buildInputRequired, {
     return { method: "roots/list" };
   }
 });
+function inputResponse(responses, key) {
+  if (responses === void 0 || typeof responses !== "object" || responses === null) return { kind: "missing" };
+  const entry = responses[key];
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return { kind: "missing" };
+  const candidate = entry;
+  if (candidate["action"] === "accept" || candidate["action"] === "decline" || candidate["action"] === "cancel") {
+    const content = candidate["content"];
+    return {
+      kind: "elicit",
+      action: candidate["action"],
+      ...content !== null && typeof content === "object" && !Array.isArray(content) && { content }
+    };
+  }
+  if (Array.isArray(candidate["roots"])) return {
+    kind: "roots",
+    roots: candidate["roots"]
+  };
+  if (typeof candidate["role"] === "string" && candidate["content"] !== void 0) return {
+    kind: "sampling",
+    result: candidate
+  };
+  return { kind: "missing" };
+}
 var REQUEST_STATE_ONLY_LEG_PACING_MS = 250;
 function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
@@ -54457,6 +54536,9 @@ function unwrapOptionalSchema(schema) {
   return schema.def?.innerType ?? schema;
 }
 
+// packages/mcp/dist/server.js
+init_dist();
+
 // node_modules/@modelcontextprotocol/server/dist/stdio.mjs
 var StdioServerTransport = class {
   _readBuffer;
@@ -55726,6 +55808,22 @@ var TOOLS = [
     },
     roles: ["ba", "architect", "developer", "quality"],
     kind: "read"
+  },
+  {
+    name: "praxis_approval_plan",
+    description: "READ-ONLY: the exact plan the user would be asked to approve for a protected apply tool, computed by Praxis from the live state. Runs nothing. Use it to show the user what will happen; in host-permission mode (a client with no approval dialog and PRAXIS_APPROVAL_MODE=host-permission) pass its planText to the apply tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        tool: { type: "string", description: "The protected apply tool, for example praxis_project_init_apply." },
+        toolArguments: { type: "string", description: "JSON object with the arguments you would pass to that tool (without confirmation)." }
+      },
+      required: ["tool", "toolArguments"],
+      additionalProperties: false
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read"
   }
 ];
 for (const tool of TOOLS) {
@@ -55734,6 +55832,10 @@ for (const tool of TOOLS) {
   tool.inputSchema.properties.instanceId = {
     type: "string",
     description: "External instance (Jira base URL). Defaults to the configured one."
+  };
+  tool.inputSchema.properties.planText = {
+    type: "string",
+    description: "Only for PRAXIS_APPROVAL_MODE=host-permission: the exact planText returned by praxis_approval_plan for these arguments. Ignored otherwise."
   };
   tool.description += " The user approves this exact action in the client's own approval dialog before it runs; without a dialog it is not executed, and a rejection runs nothing.";
 }
@@ -55763,6 +55865,7 @@ function parseRoleArgv(argv) {
 }
 
 // packages/mcp/dist/approval-channel.js
+init_dist();
 var MAX_MESSAGE = 12e3;
 function approvalMessage(request) {
   const lines = [
@@ -55780,6 +55883,45 @@ function approvalMessage(request) {
 \u2026 (truncated: ask the agent to show the full preview before you approve)`;
 }
 var UNAVAILABLE = /elicit|capabilit|not supported|unsupported|era\b|input_required|method not found/i;
+function elicitParams(request) {
+  return {
+    mode: "form",
+    message: approvalMessage(request),
+    requestedSchema: {
+      type: "object",
+      properties: {
+        decision: {
+          type: "string",
+          title: "Your decision",
+          description: "Approve runs exactly the action above. Reject stops it.",
+          enum: ["approve", "reject"]
+        },
+        reason: { type: "string", title: "Reason (optional)" }
+      },
+      required: ["decision"]
+    }
+  };
+}
+function answerFrom(result) {
+  const reason = typeof result.content?.reason === "string" && result.content.reason.trim() ? result.content.reason.trim() : void 0;
+  if (result.action === "cancel")
+    return { answer: "dismiss", ...reason ? { reason } : {} };
+  if (result.action === "decline")
+    return { answer: "reject", ...reason ? { reason } : {} };
+  return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...reason ? { reason } : {} };
+}
+var approvalKey = (request) => `approval-${subjectDigest(request.subject).slice(7, 23)}`;
+function roundTripChannel(inputResponses) {
+  return {
+    kind: "client-elicitation",
+    async ask(request) {
+      const view = inputResponse(inputResponses, approvalKey(request));
+      if (view.kind !== "elicit")
+        throw new ApprovalNeedsInput(request);
+      return answerFrom({ action: view.action, ...view.content ? { content: view.content } : {} });
+    }
+  };
+}
 function elicitationChannel(input2) {
   if (!input2.supported)
     return void 0;
@@ -55788,37 +55930,39 @@ function elicitationChannel(input2) {
     async ask(request) {
       let result;
       try {
-        result = await input2.elicitInput({
-          mode: "form",
-          message: approvalMessage(request),
-          requestedSchema: {
-            type: "object",
-            properties: {
-              decision: {
-                type: "string",
-                title: "Your decision",
-                description: "Approve runs exactly the action above. Reject stops it.",
-                enum: ["approve", "reject"]
-              },
-              reason: { type: "string", title: "Reason (optional)" }
-            },
-            required: ["decision"]
-          }
-        }, { timeout: input2.timeoutMs ?? 10 * 6e4 });
+        result = await input2.elicitInput(elicitParams(request), { timeout: input2.timeoutMs ?? 10 * 6e4 });
       } catch (error64) {
         if (error64 instanceof Error && UNAVAILABLE.test(error64.message))
           return { answer: "unavailable", reason: error64.message };
         throw error64;
       }
-      const reason = typeof result.content?.reason === "string" && result.content.reason.trim() ? result.content.reason.trim() : void 0;
-      if (result.action === "cancel")
-        return { answer: "dismiss", ...reason ? { reason } : {} };
-      if (result.action === "decline")
-        return { answer: "reject", ...reason ? { reason } : {} };
-      return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...reason ? { reason } : {} };
+      return answerFrom(result);
     }
   };
 }
+var hostPermissionMode = () => process.env.PRAXIS_APPROVAL_MODE?.trim() === "host-permission";
+var planTextOf = (request) => approvalMessage(request);
+function hostPermissionChannel(planText) {
+  return {
+    kind: "host-permission",
+    async ask(request) {
+      const expected = planTextOf(request);
+      if (planText === void 0) {
+        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. This client has no approval dialog; in host-permission mode call praxis_approval_plan for this action, show the plan to the user, then call this tool with that exact text as planText so the host's permission prompt shows what will run.`, { executed: false, planText: expected });
+      }
+      if (planText !== expected) {
+        throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `${request.summary} was NOT executed: planText is not the plan this call would run (the plan changed, or the text was edited). Show the user the current plan below and apply again with it.`, { executed: false, planText: expected });
+      }
+      return { answer: "approve", reason: "the host's tool-permission prompt showed this exact plan (not verifiable by Praxis)" };
+    }
+  };
+}
+var planOnlyChannel = {
+  kind: "client-elicitation",
+  async ask(request) {
+    throw new ApprovalNeedsInput(request);
+  }
+};
 
 // packages/mcp/dist/protocol.js
 var PRAXIS_MCP_SDK = {
@@ -55842,44 +55986,44 @@ function bundleVersion() {
 }
 
 // packages/mcp/node_modules/zod/v4/classic/external.js
-var external_exports = {};
-__export(external_exports, {
+var external_exports2 = {};
+__export(external_exports2, {
   $brand: () => $brand2,
   $input: () => $input2,
   $output: () => $output2,
-  INVALID: () => INVALID2,
-  NEVER: () => NEVER2,
+  INVALID: () => INVALID3,
+  NEVER: () => NEVER3,
   TimePrecision: () => TimePrecision2,
-  ZodAny: () => ZodAny2,
-  ZodArray: () => ZodArray3,
+  ZodAny: () => ZodAny3,
+  ZodArray: () => ZodArray4,
   ZodBase64: () => ZodBase643,
   ZodBase64URL: () => ZodBase64URL3,
-  ZodBigInt: () => ZodBigInt2,
+  ZodBigInt: () => ZodBigInt3,
   ZodBigIntFormat: () => ZodBigIntFormat,
-  ZodBoolean: () => ZodBoolean3,
+  ZodBoolean: () => ZodBoolean4,
   ZodCIDRv4: () => ZodCIDRv43,
   ZodCIDRv6: () => ZodCIDRv63,
   ZodCUID: () => ZodCUID4,
   ZodCUID2: () => ZodCUID23,
-  ZodCatch: () => ZodCatch3,
+  ZodCatch: () => ZodCatch4,
   ZodCodec: () => ZodCodec,
   ZodCompileAsyncError: () => ZodCompileAsyncError2,
   ZodCompileUnsupportedError: () => ZodCompileUnsupportedError2,
   ZodCreditCard: () => ZodCreditCard,
   ZodCustom: () => ZodCustom3,
   ZodCustomStringFormat: () => ZodCustomStringFormat,
-  ZodDate: () => ZodDate2,
-  ZodDefault: () => ZodDefault3,
-  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion3,
+  ZodDate: () => ZodDate3,
+  ZodDefault: () => ZodDefault4,
+  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion4,
   ZodE164: () => ZodE1643,
   ZodEmail: () => ZodEmail3,
   ZodEmoji: () => ZodEmoji3,
-  ZodEnum: () => ZodEnum3,
-  ZodError: () => ZodError,
+  ZodEnum: () => ZodEnum4,
+  ZodError: () => ZodError2,
   ZodExactOptional: () => ZodExactOptional3,
   ZodFile: () => ZodFile,
-  ZodFirstPartyTypeKind: () => ZodFirstPartyTypeKind2,
-  ZodFunction: () => ZodFunction,
+  ZodFirstPartyTypeKind: () => ZodFirstPartyTypeKind3,
+  ZodFunction: () => ZodFunction2,
   ZodGUID: () => ZodGUID3,
   ZodIBAN: () => ZodIBAN,
   ZodIPv4: () => ZodIPv43,
@@ -55889,47 +56033,47 @@ __export(external_exports, {
   ZodISODuration: () => ZodISODuration3,
   ZodISOTime: () => ZodISOTime3,
   ZodInstanceOf: () => ZodInstanceOf,
-  ZodIntersection: () => ZodIntersection3,
-  ZodIssueCode: () => ZodIssueCode2,
+  ZodIntersection: () => ZodIntersection4,
+  ZodIssueCode: () => ZodIssueCode3,
   ZodJWT: () => ZodJWT3,
   ZodKSUID: () => ZodKSUID3,
-  ZodLazy: () => ZodLazy3,
-  ZodLiteral: () => ZodLiteral3,
+  ZodLazy: () => ZodLazy4,
+  ZodLiteral: () => ZodLiteral4,
   ZodMAC: () => ZodMAC,
-  ZodMap: () => ZodMap,
-  ZodNaN: () => ZodNaN,
+  ZodMap: () => ZodMap2,
+  ZodNaN: () => ZodNaN2,
   ZodNanoID: () => ZodNanoID3,
-  ZodNever: () => ZodNever3,
+  ZodNever: () => ZodNever4,
   ZodNonOptional: () => ZodNonOptional3,
-  ZodNull: () => ZodNull3,
-  ZodNullable: () => ZodNullable3,
-  ZodNumber: () => ZodNumber3,
+  ZodNull: () => ZodNull4,
+  ZodNullable: () => ZodNullable4,
+  ZodNumber: () => ZodNumber4,
   ZodNumberFormat: () => ZodNumberFormat3,
-  ZodObject: () => ZodObject3,
-  ZodOptional: () => ZodOptional3,
+  ZodObject: () => ZodObject4,
+  ZodOptional: () => ZodOptional4,
   ZodPipe: () => ZodPipe3,
   ZodPrefault: () => ZodPrefault3,
   ZodPreprocess: () => ZodPreprocess3,
-  ZodPromise: () => ZodPromise,
-  ZodReadonly: () => ZodReadonly3,
+  ZodPromise: () => ZodPromise2,
+  ZodReadonly: () => ZodReadonly4,
   ZodRealError: () => ZodRealError3,
-  ZodRecord: () => ZodRecord3,
-  ZodSet: () => ZodSet,
-  ZodString: () => ZodString3,
+  ZodRecord: () => ZodRecord4,
+  ZodSet: () => ZodSet2,
+  ZodString: () => ZodString4,
   ZodStringFormat: () => ZodStringFormat3,
   ZodSuccess: () => ZodSuccess,
-  ZodSymbol: () => ZodSymbol,
+  ZodSymbol: () => ZodSymbol2,
   ZodTemplateLiteral: () => ZodTemplateLiteral,
   ZodTransform: () => ZodTransform3,
-  ZodTuple: () => ZodTuple,
-  ZodType: () => ZodType3,
+  ZodTuple: () => ZodTuple2,
+  ZodType: () => ZodType4,
   ZodULID: () => ZodULID3,
   ZodURL: () => ZodURL3,
   ZodUUID: () => ZodUUID3,
-  ZodUndefined: () => ZodUndefined,
-  ZodUnion: () => ZodUnion3,
-  ZodUnknown: () => ZodUnknown3,
-  ZodVoid: () => ZodVoid,
+  ZodUndefined: () => ZodUndefined2,
+  ZodUnion: () => ZodUnion4,
+  ZodUnknown: () => ZodUnknown4,
+  ZodVoid: () => ZodVoid2,
   ZodXID: () => ZodXID3,
   ZodXor: () => ZodXor,
   _ZodString: () => _ZodString3,
@@ -55955,7 +56099,7 @@ __export(external_exports, {
   cuid: () => cuid5,
   cuid2: () => cuid24,
   currencyCode: () => currencyCode2,
-  custom: () => custom,
+  custom: () => custom2,
   date: () => date7,
   decode: () => decode4,
   decodeAsync: () => decodeAsync4,
@@ -55978,7 +56122,7 @@ __export(external_exports, {
   fromJSONSchema: () => fromJSONSchema,
   function: () => _function,
   getDiscriminatedOption: () => getDiscriminatedOption2,
-  getErrorMap: () => getErrorMap,
+  getErrorMap: () => getErrorMap2,
   globalRegistry: () => globalRegistry3,
   gt: () => _gt3,
   gte: () => _gte3,
@@ -56063,7 +56207,7 @@ __export(external_exports, {
   safeParse: () => safeParse4,
   safeParseAsync: () => safeParseAsync4,
   set: () => set,
-  setErrorMap: () => setErrorMap,
+  setErrorMap: () => setErrorMap2,
   size: () => _size3,
   slugify: () => _slugify3,
   startsWith: () => _startsWith3,
@@ -56217,10 +56361,10 @@ __export(core_exports6, {
   $input: () => $input2,
   $output: () => $output2,
   Doc: () => Doc3,
-  INVALID: () => INVALID2,
+  INVALID: () => INVALID3,
   JSONSchema: () => json_schema_exports3,
   JSONSchemaGenerator: () => JSONSchemaGenerator,
-  NEVER: () => NEVER2,
+  NEVER: () => NEVER3,
   TimePrecision: () => TimePrecision2,
   URL_BAD_FORMAT: () => URL_BAD_FORMAT3,
   URL_UNPARSEABLE: () => URL_UNPARSEABLE3,
@@ -56386,10 +56530,10 @@ __export(core_exports6, {
   isValidCreditCard: () => isValidCreditCard,
   isValidIBAN: () => isValidIBAN,
   isValidIPv6: () => isValidIPv63,
-  isValidJWT: () => isValidJWT3,
+  isValidJWT: () => isValidJWT4,
   locales: () => locales_exports3,
   memoizer: () => memoizer3,
-  mergeValues: () => mergeValues3,
+  mergeValues: () => mergeValues4,
   meta: () => meta3,
   parse: () => parse4,
   parseAsync: () => parseAsync3,
@@ -56456,11 +56600,11 @@ __export(util_exports3, {
   explicitlyAborted: () => explicitlyAborted3,
   extend: () => extend3,
   finalizeIssue: () => finalizeIssue3,
-  floatSafeRemainder: () => floatSafeRemainder3,
+  floatSafeRemainder: () => floatSafeRemainder4,
   getElementAtPath: () => getElementAtPath3,
   getEnumValues: () => getEnumValues3,
   getLengthableOrigin: () => getLengthableOrigin3,
-  getParsedType: () => getParsedType3,
+  getParsedType: () => getParsedType4,
   getSizableOrigin: () => getSizableOrigin3,
   hexToUint8Array: () => hexToUint8Array3,
   hide: () => hide3,
@@ -56554,7 +56698,7 @@ function cleanRegex3(source) {
   const end = source.endsWith("$") ? source.length - 1 : source.length;
   return source.slice(start, end);
 }
-function floatSafeRemainder3(val, step) {
+function floatSafeRemainder4(val, step) {
   const ratio = val / step;
   const roundedRatio = Math.round(ratio);
   const tolerance = 4 * Number.EPSILON * Math.max(Math.abs(ratio), 1);
@@ -56743,7 +56887,7 @@ function numKeys3(data) {
   }
   return keyCount;
 }
-var getParsedType3 = (data) => {
+var getParsedType4 = (data) => {
   const t = typeof data;
   switch (t) {
     case "undefined":
@@ -57266,7 +57410,7 @@ function constantCatch3(value) {
 
 // packages/mcp/node_modules/zod/v4/core/core.js
 var _a5;
-var NEVER2 = /* @__PURE__ */ Object.freeze({
+var NEVER3 = /* @__PURE__ */ Object.freeze({
   status: "aborted"
 });
 var _zodDesc3 = { value: void 0, enumerable: false };
@@ -57974,7 +58118,7 @@ var $ZodCheckMultipleOf3 = /* @__PURE__ */ $constructor3("$ZodCheckMultipleOf", 
     const isMultiple = typeof payload.value === "bigint" ? (
       // `value % 0n` throws, and nothing is a multiple of zero — the number branch already fails this way via NaN
       def.value !== BigInt(0) && payload.value % def.value === BigInt(0)
-    ) : floatSafeRemainder3(payload.value, def.value) === 0;
+    ) : floatSafeRemainder4(payload.value, def.value) === 0;
     if (isMultiple)
       return;
     payload.issues.push({
@@ -58958,7 +59102,7 @@ var $ZodIBAN3 = /* @__PURE__ */ $constructor3("$ZodIBAN", (inst, def) => {
     });
   };
 });
-function isValidJWT3(token, algorithm = null) {
+function isValidJWT4(token, algorithm = null) {
   try {
     const tokensParts = token.split(".");
     if (tokensParts.length !== 3)
@@ -58981,7 +59125,7 @@ function isValidJWT3(token, algorithm = null) {
 var $ZodJWT3 = /* @__PURE__ */ $constructor3("$ZodJWT", (inst, def) => {
   $ZodStringFormat3.init(inst, def);
   inst._zod.check = (payload) => {
-    if (isValidJWT3(payload.value, def.alg))
+    if (isValidJWT4(payload.value, def.alg))
       return;
     payload.issues.push({
       code: "invalid_format",
@@ -59770,7 +59914,7 @@ var $ZodIntersection3 = /* @__PURE__ */ $constructor3("$ZodIntersection", (inst,
     return handleIntersectionResults3(payload, left, right);
   };
 });
-function mergeValues3(a, b) {
+function mergeValues4(a, b) {
   if (a === b) {
     return { valid: true, data: a };
   }
@@ -59786,7 +59930,7 @@ function mergeValues3(a, b) {
     for (const key of sharedKeys) {
       if (key === "__proto__")
         continue;
-      const sharedValue = mergeValues3(a[key], b[key]);
+      const sharedValue = mergeValues4(a[key], b[key]);
       if (!sharedValue.valid) {
         return {
           valid: false,
@@ -59805,7 +59949,7 @@ function mergeValues3(a, b) {
     for (let index = 0; index < a.length; index++) {
       const itemA = a[index];
       const itemB = b[index];
-      const sharedValue = mergeValues3(itemA, itemB);
+      const sharedValue = mergeValues4(itemA, itemB);
       if (!sharedValue.valid) {
         return {
           valid: false,
@@ -59860,7 +60004,7 @@ function handleIntersectionResults3(result, left, right) {
         result.issues.push(keyIssues.get(k));
     }
   }
-  const merged = mergeValues3(left.value, right.value);
+  const merged = mergeValues4(left.value, right.value);
   if (!merged.valid) {
     if (aborted3(result))
       return result;
@@ -61136,7 +61280,7 @@ __export(locales_exports3, {
   da: () => da_default,
   de: () => de_default,
   el: () => el_default,
-  en: () => en_default3,
+  en: () => en_default4,
   eo: () => eo_default,
   es: () => es_default,
   fa: () => fa_default,
@@ -62652,7 +62796,7 @@ var error14 = () => {
     }
   };
 };
-function en_default3() {
+function en_default4() {
   return {
     localeError: error14()
   };
@@ -68739,7 +68883,7 @@ function registry3() {
 var globalRegistry3 = globalThis.__zod_globalRegistry;
 
 // packages/mcp/node_modules/zod/v4/core/compile.js
-var INVALID2 = Symbol.for("zod.compile.invalid");
+var INVALID3 = Symbol.for("zod.compile.invalid");
 var FALLBACK_FLAG = Symbol.for("zod.compile.fallback");
 var ZodCompileAsyncError2 = class extends Error {
   constructor(message = "z.compile does not support async refinements, transforms, or checks") {
@@ -68788,7 +68932,7 @@ function withParser2(schema, parser) {
       return originalRun(payload, ctx);
     }
     const out = parser(payload.value);
-    if (out !== INVALID2) {
+    if (out !== INVALID3) {
       payload.value = out;
       return payload;
     }
@@ -68811,7 +68955,7 @@ function installCompiledUserMethods(target, source, parser) {
     const originalSafeParse = sourceAny.safeParse;
     targetAny.safeParse = (data, params) => {
       const out = parser(data);
-      if (out !== INVALID2) {
+      if (out !== INVALID3) {
         return { success: true, data: out };
       }
       return originalSafeParse(data, params);
@@ -68821,7 +68965,7 @@ function installCompiledUserMethods(target, source, parser) {
     const originalParse = sourceAny.parse;
     targetAny.parse = (data, params) => {
       const out = parser(data);
-      if (out !== INVALID2) {
+      if (out !== INVALID3) {
         return out;
       }
       return originalParse(data, params);
@@ -68847,7 +68991,7 @@ function compileFn(schema, options2) {
   const outputAccessor = generateCheck(doc, ctx, schema, "input", !options2?.assertOnly);
   doc.write(outputAccessor === null ? `return true;` : `return ${outputAccessor};`);
   const constantNames = ["INVALID", ...ctx.constants.keys()];
-  const constantValues = [INVALID2, ...ctx.constants.values()];
+  const constantValues = [INVALID3, ...ctx.constants.values()];
   const code = doc.content.join("\n");
   const fullCode = options2?.debug ? constantNames.length > 0 ? `// Constants: ${constantNames.join(", ")}
 ${code}` : code : "";
@@ -68887,9 +69031,9 @@ function newVar(ctx) {
 function runtimeRun(schema, value) {
   const result = schema._zod.run({ value, issues: [] }, {});
   if (result && typeof result.then === "function")
-    return INVALID2;
+    return INVALID3;
   const r = result;
-  return r.issues.length === 0 ? r.value : INVALID2;
+  return r.issues.length === 0 ? r.value : INVALID3;
 }
 function compileChild(doc, ctx, schema, accessor, needsValue = true) {
   const contentLen = doc.content.length;
@@ -69052,7 +69196,7 @@ function generateMultipleOfCheck(doc, ctx, def, accessor) {
       throw new ZodCompileUnsupportedError2("multiple_of check with a zero divisor");
     doc.write(`if (${accessor} % ${def.value}n !== 0n) return INVALID;`);
   } else {
-    const remainder = addConstant(ctx, floatSafeRemainder3);
+    const remainder = addConstant(ctx, floatSafeRemainder4);
     doc.write(`if (${remainder}(${accessor}, ${numericOperand(def.value, "multiple_of")}) !== 0) return INVALID;`);
   }
 }
@@ -69160,7 +69304,7 @@ function generateCustomRefineCheck(doc, ctx, check2, accessor) {
       const result = checkFn(fakePayload);
       if (result instanceof Promise)
         throwAsync();
-      return fakePayload.issues.length === 0 ? fakePayload.value : INVALID2;
+      return fakePayload.issues.length === 0 ? fakePayload.value : INVALID3;
     };
     const helperConst = addUserConstant(ctx, helperFn);
     const outVar = newVar(ctx);
@@ -69209,7 +69353,7 @@ function generateStringFormatCheck(doc, ctx, def, accessor, needsValue = true) {
     return accessor;
   }
   if (fmt === "jwt") {
-    const validator = addConstant(ctx, isValidJWT3);
+    const validator = addConstant(ctx, isValidJWT4);
     const alg = addConstant(ctx, def.alg ?? null);
     doc.write(`if (!${validator}(${accessor}, ${alg})) return INVALID;`);
     return accessor;
@@ -70062,7 +70206,7 @@ function generateIntersectionCheck(doc, ctx, schema, accessor) {
   ctx.definite = false;
   const leftOutput = compileChild(doc, ctx, def.left, accessor);
   const rightOutput = compileChild(doc, ctx, def.right, accessor);
-  const mergeConst = addConstant(ctx, mergeValues3);
+  const mergeConst = addConstant(ctx, mergeValues4);
   const mergedVar = newVar(ctx);
   doc.write(`const ${mergedVar} = ${mergeConst}(${leftOutput}, ${rightOutput});`);
   doc.write(`if (!${mergedVar}.valid) return INVALID;`);
@@ -70248,8 +70392,8 @@ function generatePipeCheck(doc, ctx, schema, accessor) {
       const fakePayload = { value, issues: [], addIssue: pushIssue };
       const result = transformFn(value, fakePayload);
       if (result instanceof Promise)
-        return INVALID2;
-      return fakePayload.issues.length === 0 ? result : INVALID2;
+        return INVALID3;
+      return fakePayload.issues.length === 0 ? result : INVALID3;
     };
     const helperConst = addUserConstant(ctx, helperFn);
     const transformedVar = newVar(ctx);
@@ -70283,7 +70427,7 @@ function generateCustomCheck(doc, ctx, schema, accessor) {
 function runtimeCatch(innerSchema, catchValue, value) {
   const result = innerSchema._zod.run({ value, issues: [] }, {});
   if (result && typeof result.then === "function")
-    return INVALID2;
+    return INVALID3;
   const r = result;
   if (r.issues.length === 0)
     return r.value;
@@ -70323,8 +70467,8 @@ function generateTransformCheck(doc, ctx, schema, accessor) {
       const fakePayload = { value, issues: [], addIssue: pushIssue };
       const result = transformFn(value, fakePayload);
       if (result instanceof Promise)
-        return INVALID2;
-      return fakePayload.issues.length === 0 ? result : INVALID2;
+        return INVALID3;
+      return fakePayload.issues.length === 0 ? result : INVALID3;
     };
     const helperConst = addUserConstant(ctx, helperFn);
     const outputVar = newVar(ctx);
@@ -72756,32 +72900,32 @@ var json_schema_exports3 = {};
 // packages/mcp/node_modules/zod/v4/classic/schemas.js
 var schemas_exports4 = {};
 __export(schemas_exports4, {
-  ZodAny: () => ZodAny2,
-  ZodArray: () => ZodArray3,
+  ZodAny: () => ZodAny3,
+  ZodArray: () => ZodArray4,
   ZodBase64: () => ZodBase643,
   ZodBase64URL: () => ZodBase64URL3,
-  ZodBigInt: () => ZodBigInt2,
+  ZodBigInt: () => ZodBigInt3,
   ZodBigIntFormat: () => ZodBigIntFormat,
-  ZodBoolean: () => ZodBoolean3,
+  ZodBoolean: () => ZodBoolean4,
   ZodCIDRv4: () => ZodCIDRv43,
   ZodCIDRv6: () => ZodCIDRv63,
   ZodCUID: () => ZodCUID4,
   ZodCUID2: () => ZodCUID23,
-  ZodCatch: () => ZodCatch3,
+  ZodCatch: () => ZodCatch4,
   ZodCodec: () => ZodCodec,
   ZodCreditCard: () => ZodCreditCard,
   ZodCustom: () => ZodCustom3,
   ZodCustomStringFormat: () => ZodCustomStringFormat,
-  ZodDate: () => ZodDate2,
-  ZodDefault: () => ZodDefault3,
-  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion3,
+  ZodDate: () => ZodDate3,
+  ZodDefault: () => ZodDefault4,
+  ZodDiscriminatedUnion: () => ZodDiscriminatedUnion4,
   ZodE164: () => ZodE1643,
   ZodEmail: () => ZodEmail3,
   ZodEmoji: () => ZodEmoji3,
-  ZodEnum: () => ZodEnum3,
+  ZodEnum: () => ZodEnum4,
   ZodExactOptional: () => ZodExactOptional3,
   ZodFile: () => ZodFile,
-  ZodFunction: () => ZodFunction,
+  ZodFunction: () => ZodFunction2,
   ZodGUID: () => ZodGUID3,
   ZodIBAN: () => ZodIBAN,
   ZodIPv4: () => ZodIPv43,
@@ -72791,45 +72935,45 @@ __export(schemas_exports4, {
   ZodISODuration: () => ZodISODuration3,
   ZodISOTime: () => ZodISOTime3,
   ZodInstanceOf: () => ZodInstanceOf,
-  ZodIntersection: () => ZodIntersection3,
+  ZodIntersection: () => ZodIntersection4,
   ZodJWT: () => ZodJWT3,
   ZodKSUID: () => ZodKSUID3,
-  ZodLazy: () => ZodLazy3,
-  ZodLiteral: () => ZodLiteral3,
+  ZodLazy: () => ZodLazy4,
+  ZodLiteral: () => ZodLiteral4,
   ZodMAC: () => ZodMAC,
-  ZodMap: () => ZodMap,
-  ZodNaN: () => ZodNaN,
+  ZodMap: () => ZodMap2,
+  ZodNaN: () => ZodNaN2,
   ZodNanoID: () => ZodNanoID3,
-  ZodNever: () => ZodNever3,
+  ZodNever: () => ZodNever4,
   ZodNonOptional: () => ZodNonOptional3,
-  ZodNull: () => ZodNull3,
-  ZodNullable: () => ZodNullable3,
-  ZodNumber: () => ZodNumber3,
+  ZodNull: () => ZodNull4,
+  ZodNullable: () => ZodNullable4,
+  ZodNumber: () => ZodNumber4,
   ZodNumberFormat: () => ZodNumberFormat3,
-  ZodObject: () => ZodObject3,
-  ZodOptional: () => ZodOptional3,
+  ZodObject: () => ZodObject4,
+  ZodOptional: () => ZodOptional4,
   ZodPipe: () => ZodPipe3,
   ZodPrefault: () => ZodPrefault3,
   ZodPreprocess: () => ZodPreprocess3,
-  ZodPromise: () => ZodPromise,
-  ZodReadonly: () => ZodReadonly3,
-  ZodRecord: () => ZodRecord3,
-  ZodSet: () => ZodSet,
-  ZodString: () => ZodString3,
+  ZodPromise: () => ZodPromise2,
+  ZodReadonly: () => ZodReadonly4,
+  ZodRecord: () => ZodRecord4,
+  ZodSet: () => ZodSet2,
+  ZodString: () => ZodString4,
   ZodStringFormat: () => ZodStringFormat3,
   ZodSuccess: () => ZodSuccess,
-  ZodSymbol: () => ZodSymbol,
+  ZodSymbol: () => ZodSymbol2,
   ZodTemplateLiteral: () => ZodTemplateLiteral,
   ZodTransform: () => ZodTransform3,
-  ZodTuple: () => ZodTuple,
-  ZodType: () => ZodType3,
+  ZodTuple: () => ZodTuple2,
+  ZodType: () => ZodType4,
   ZodULID: () => ZodULID3,
   ZodURL: () => ZodURL3,
   ZodUUID: () => ZodUUID3,
-  ZodUndefined: () => ZodUndefined,
-  ZodUnion: () => ZodUnion3,
-  ZodUnknown: () => ZodUnknown3,
-  ZodVoid: () => ZodVoid,
+  ZodUndefined: () => ZodUndefined2,
+  ZodUnion: () => ZodUnion4,
+  ZodUnknown: () => ZodUnknown4,
+  ZodVoid: () => ZodVoid2,
   ZodXID: () => ZodXID3,
   ZodXor: () => ZodXor,
   _ZodString: () => _ZodString3,
@@ -72850,7 +72994,7 @@ __export(schemas_exports4, {
   cuid: () => cuid5,
   cuid2: () => cuid24,
   currencyCode: () => currencyCode2,
-  custom: () => custom,
+  custom: () => custom2,
   date: () => date7,
   describe: () => describe4,
   discriminatedUnion: () => discriminatedUnion3,
@@ -73010,7 +73154,7 @@ var initializer6 = (inst, issues) => {
     }
   });
 };
-var ZodError = /* @__PURE__ */ $constructor3("ZodError", initializer6);
+var ZodError2 = /* @__PURE__ */ $constructor3("ZodError", initializer6);
 var ZodRealError3 = /* @__PURE__ */ $constructor3("ZodError", initializer6, void 0, {
   Parent: Error
 });
@@ -73032,13 +73176,13 @@ var safeDecodeAsync4 = /* @__PURE__ */ _safeDecodeAsync3(ZodRealError3);
 // packages/mcp/node_modules/zod/v4/classic/schemas.js
 function _ensureDefaultLocale3() {
   if (!globalConfig3.localeError)
-    config3(en_default3());
+    config3(en_default4());
 }
 function _ensureDefaultMemoizer3() {
   if (!globalConfig3.memoizer)
     config3({ memoizer: memoizer3() });
 }
-var ZodType3 = /* @__PURE__ */ $constructor3("ZodType", (inst, def) => {
+var ZodType4 = /* @__PURE__ */ $constructor3("ZodType", (inst, def) => {
   _ensureDefaultLocale3();
   $ZodType3.init(inst, def);
   inst.def = def;
@@ -73217,7 +73361,7 @@ var _ZodString3 = /* @__PURE__ */ $constructor3(
   "_ZodString",
   (inst, def) => {
     $ZodString3.init(inst, def);
-    ZodType3.init(inst, def);
+    ZodType4.init(inst, def);
     inst._zod.processJSONSchema = (ctx, json2, params) => stringProcessor3(inst, ctx, json2, params);
   },
   /* @__PURE__ */ util_exports3.derived({
@@ -73272,7 +73416,7 @@ var _ZodString3 = /* @__PURE__ */ $constructor3(
     }
   })
 );
-var ZodString3 = /* @__PURE__ */ $constructor3("ZodString", (inst, def) => {
+var ZodString4 = /* @__PURE__ */ $constructor3("ZodString", (inst, def) => {
   $ZodString3.init(inst, def);
   _ZodString3.init(inst, def);
 }, {
@@ -73356,7 +73500,7 @@ var ZodString3 = /* @__PURE__ */ $constructor3("ZodString", (inst, def) => {
   }
 });
 function string7(params) {
-  return _string3(ZodString3, params);
+  return _string3(ZodString4, params);
 }
 var ZodStringFormat3 = /* @__PURE__ */ $constructor3("ZodStringFormat", (inst, def) => {
   $ZodStringFormat3.init(inst, def);
@@ -73572,11 +73716,11 @@ function hash(alg, params) {
     throw new Error(`Unrecognized hash format: ${format}`);
   return _stringFormat3(ZodCustomStringFormat, format, regex, params);
 }
-var ZodNumber3 = /* @__PURE__ */ $constructor3(
+var ZodNumber4 = /* @__PURE__ */ $constructor3(
   "ZodNumber",
   (inst, def) => {
     $ZodNumber3.init(inst, def);
-    ZodType3.init(inst, def);
+    ZodType4.init(inst, def);
     inst._zod.processJSONSchema = (ctx, json2, params) => numberProcessor3(inst, ctx, json2, params);
     inst.isFinite = true;
   },
@@ -73643,11 +73787,11 @@ var ZodNumber3 = /* @__PURE__ */ $constructor3(
   })
 );
 function number7(params) {
-  return _number3(ZodNumber3, params);
+  return _number3(ZodNumber4, params);
 }
 var ZodNumberFormat3 = /* @__PURE__ */ $constructor3("ZodNumberFormat", (inst, def) => {
   $ZodNumberFormat3.init(inst, def);
-  ZodNumber3.init(inst, def);
+  ZodNumber4.init(inst, def);
 });
 function int3(params) {
   return _int3(ZodNumberFormat3, params);
@@ -73664,19 +73808,19 @@ function int32(params) {
 function uint32(params) {
   return _uint323(ZodNumberFormat3, params);
 }
-var ZodBoolean3 = /* @__PURE__ */ $constructor3("ZodBoolean", (inst, def) => {
+var ZodBoolean4 = /* @__PURE__ */ $constructor3("ZodBoolean", (inst, def) => {
   $ZodBoolean3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => booleanProcessor3(inst, ctx, json2, params);
 });
 function boolean7(params) {
-  return _boolean3(ZodBoolean3, params);
+  return _boolean3(ZodBoolean4, params);
 }
-var ZodBigInt2 = /* @__PURE__ */ $constructor3(
+var ZodBigInt3 = /* @__PURE__ */ $constructor3(
   "ZodBigInt",
   (inst, def) => {
     $ZodBigInt3.init(inst, def);
-    ZodType3.init(inst, def);
+    ZodType4.init(inst, def);
     inst._zod.processJSONSchema = (ctx, json2, params) => bigintProcessor3(inst, ctx, json2, params);
   },
   /* @__PURE__ */ util_exports3.derived({
@@ -73720,11 +73864,11 @@ var ZodBigInt2 = /* @__PURE__ */ $constructor3(
   })
 );
 function bigint5(params) {
-  return _bigint3(ZodBigInt2, params);
+  return _bigint3(ZodBigInt3, params);
 }
 var ZodBigIntFormat = /* @__PURE__ */ $constructor3("ZodBigIntFormat", (inst, def) => {
   $ZodBigIntFormat3.init(inst, def);
-  ZodBigInt2.init(inst, def);
+  ZodBigInt3.init(inst, def);
 });
 function int64(params) {
   return _int643(ZodBigIntFormat, params);
@@ -73732,67 +73876,67 @@ function int64(params) {
 function uint64(params) {
   return _uint643(ZodBigIntFormat, params);
 }
-var ZodSymbol = /* @__PURE__ */ $constructor3("ZodSymbol", (inst, def) => {
+var ZodSymbol2 = /* @__PURE__ */ $constructor3("ZodSymbol", (inst, def) => {
   $ZodSymbol3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => symbolProcessor3(inst, ctx, json2, params);
 });
 function symbol(params) {
-  return _symbol3(ZodSymbol, params);
+  return _symbol3(ZodSymbol2, params);
 }
-var ZodUndefined = /* @__PURE__ */ $constructor3("ZodUndefined", (inst, def) => {
+var ZodUndefined2 = /* @__PURE__ */ $constructor3("ZodUndefined", (inst, def) => {
   $ZodUndefined3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => undefinedProcessor3(inst, ctx, json2, params);
 });
 function _undefined7(params) {
-  return _undefined6(ZodUndefined, params);
+  return _undefined6(ZodUndefined2, params);
 }
-var ZodNull3 = /* @__PURE__ */ $constructor3("ZodNull", (inst, def) => {
+var ZodNull4 = /* @__PURE__ */ $constructor3("ZodNull", (inst, def) => {
   $ZodNull3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => nullProcessor3(inst, ctx, json2, params);
 });
 function _null9(params) {
-  return _null8(ZodNull3, params);
+  return _null8(ZodNull4, params);
 }
-var ZodAny2 = /* @__PURE__ */ $constructor3("ZodAny", (inst, def) => {
+var ZodAny3 = /* @__PURE__ */ $constructor3("ZodAny", (inst, def) => {
   $ZodAny3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => anyProcessor3(inst, ctx, json2, params);
 });
 function any2() {
-  return _any3(ZodAny2);
+  return _any3(ZodAny3);
 }
-var ZodUnknown3 = /* @__PURE__ */ $constructor3("ZodUnknown", (inst, def) => {
+var ZodUnknown4 = /* @__PURE__ */ $constructor3("ZodUnknown", (inst, def) => {
   $ZodUnknown3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => unknownProcessor3(inst, ctx, json2, params);
 });
 function unknown3() {
-  return _unknown3(ZodUnknown3);
+  return _unknown3(ZodUnknown4);
 }
-var ZodNever3 = /* @__PURE__ */ $constructor3("ZodNever", (inst, def) => {
+var ZodNever4 = /* @__PURE__ */ $constructor3("ZodNever", (inst, def) => {
   $ZodNever3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => neverProcessor3(inst, ctx, json2, params);
 });
 function never3(params) {
-  return _never3(ZodNever3, params);
+  return _never3(ZodNever4, params);
 }
-var ZodVoid = /* @__PURE__ */ $constructor3("ZodVoid", (inst, def) => {
+var ZodVoid2 = /* @__PURE__ */ $constructor3("ZodVoid", (inst, def) => {
   $ZodVoid3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => voidProcessor3(inst, ctx, json2, params);
 });
 function _void4(params) {
-  return _void3(ZodVoid, params);
+  return _void3(ZodVoid2, params);
 }
-var ZodDate2 = /* @__PURE__ */ $constructor3(
+var ZodDate3 = /* @__PURE__ */ $constructor3(
   "ZodDate",
   (inst, def) => {
     $ZodDate3.init(inst, def);
-    ZodType3.init(inst, def);
+    ZodType4.init(inst, def);
     inst._zod.processJSONSchema = (ctx, json2, params) => dateProcessor3(inst, ctx, json2, params);
     inst.min = (value, params) => inst.check(_gte3(value, params));
     inst.max = (value, params) => inst.check(_lte3(value, params));
@@ -73809,12 +73953,12 @@ var ZodDate2 = /* @__PURE__ */ $constructor3(
   }, {})
 );
 function date7(params) {
-  return _date3(ZodDate2, params);
+  return _date3(ZodDate3, params);
 }
-var ZodArray3 = /* @__PURE__ */ $constructor3("ZodArray", (inst, def) => {
+var ZodArray4 = /* @__PURE__ */ $constructor3("ZodArray", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodArray3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => arrayProcessor3(inst, ctx, json2, params);
   inst.element = def.element;
 }, {
@@ -73835,16 +73979,16 @@ var ZodArray3 = /* @__PURE__ */ $constructor3("ZodArray", (inst, def) => {
   }
 });
 function array3(element, params) {
-  return _array3(ZodArray3, element, params);
+  return _array3(ZodArray4, element, params);
 }
 function keyof(schema) {
   const shape = schema._zod.def.shape;
   return _enum4(Object.keys(shape));
 }
-var ZodObject3 = /* @__PURE__ */ $constructor3("ZodObject", (inst, def) => {
+var ZodObject4 = /* @__PURE__ */ $constructor3("ZodObject", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodObjectJIT3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => objectProcessor3(inst, ctx, json2, params);
   util_exports3.installLazyProp(inst, "shape", (self) => self._zod.def.shape, false);
 }, {
@@ -73882,7 +74026,7 @@ var ZodObject3 = /* @__PURE__ */ $constructor3("ZodObject", (inst, def) => {
     return util_exports3.omit(this, mask);
   },
   partial(...args) {
-    return util_exports3.partial(ZodOptional3, this, args[0]);
+    return util_exports3.partial(ZodOptional4, this, args[0]);
   },
   exactPartial(...args) {
     return util_exports3.partial(ZodExactOptional3, this, args[0], "exactPartial");
@@ -73897,10 +74041,10 @@ function object3(shape, params) {
     shape: shape ?? {},
     ...util_exports3.normalizeParams(params)
   };
-  return new ZodObject3(def);
+  return new ZodObject4(def);
 }
 function strictObject(shape, params) {
-  return new ZodObject3({
+  return new ZodObject4({
     type: "object",
     shape,
     catchall: never3(),
@@ -73908,28 +74052,28 @@ function strictObject(shape, params) {
   });
 }
 function looseObject3(shape, params) {
-  return new ZodObject3({
+  return new ZodObject4({
     type: "object",
     shape,
     catchall: unknown3(),
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodUnion3 = /* @__PURE__ */ $constructor3("ZodUnion", (inst, def) => {
+var ZodUnion4 = /* @__PURE__ */ $constructor3("ZodUnion", (inst, def) => {
   $ZodUnion3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => unionProcessor3(inst, ctx, json2, params);
   inst.options = def.options;
 });
 function union3(options2, params) {
-  return new ZodUnion3({
+  return new ZodUnion4({
     type: "union",
     options: options2,
     ...util_exports3.normalizeParams(params)
   });
 }
 var ZodXor = /* @__PURE__ */ $constructor3("ZodXor", (inst, def) => {
-  ZodUnion3.init(inst, def);
+  ZodUnion4.init(inst, def);
   $ZodXor3.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => unionProcessor3(inst, ctx, json2, params);
   inst.options = def.options;
@@ -73942,34 +74086,34 @@ function xor(options2, params) {
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodDiscriminatedUnion3 = /* @__PURE__ */ $constructor3("ZodDiscriminatedUnion", (inst, def) => {
-  ZodUnion3.init(inst, def);
+var ZodDiscriminatedUnion4 = /* @__PURE__ */ $constructor3("ZodDiscriminatedUnion", (inst, def) => {
+  ZodUnion4.init(inst, def);
   $ZodDiscriminatedUnion3.init(inst, def);
 });
 function discriminatedUnion3(discriminator, options2, params) {
-  return new ZodDiscriminatedUnion3({
+  return new ZodDiscriminatedUnion4({
     type: "union",
     options: options2,
     discriminator,
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodIntersection3 = /* @__PURE__ */ $constructor3("ZodIntersection", (inst, def) => {
+var ZodIntersection4 = /* @__PURE__ */ $constructor3("ZodIntersection", (inst, def) => {
   $ZodIntersection3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => intersectionProcessor3(inst, ctx, json2, params);
 });
 function intersection3(left, right) {
-  return new ZodIntersection3({
+  return new ZodIntersection4({
     type: "intersection",
     left,
     right
   });
 }
-var ZodTuple = /* @__PURE__ */ $constructor3("ZodTuple", (inst, def) => {
+var ZodTuple2 = /* @__PURE__ */ $constructor3("ZodTuple", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodTuple3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => tupleProcessor3(inst, ctx, json2, params);
 }, {
   rest(rest) {
@@ -73984,7 +74128,7 @@ var ZodTuple = /* @__PURE__ */ $constructor3("ZodTuple", (inst, def) => {
       throw new Error(".partial() cannot be used on tuple schemas containing refinements");
     return this.clone({
       ...def,
-      items: def.items.map((item) => new ZodOptional3({ type: "optional", innerType: item }))
+      items: def.items.map((item) => new ZodOptional4({ type: "optional", innerType: item }))
     });
   }
 });
@@ -73992,31 +74136,31 @@ function tuple(items, _paramsOrRest, _params) {
   const hasRest = _paramsOrRest instanceof $ZodType3;
   const params = hasRest ? _params : _paramsOrRest;
   const rest = hasRest ? _paramsOrRest : null;
-  return new ZodTuple({
+  return new ZodTuple2({
     type: "tuple",
     items,
     rest,
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodRecord3 = /* @__PURE__ */ $constructor3("ZodRecord", (inst, def) => {
+var ZodRecord4 = /* @__PURE__ */ $constructor3("ZodRecord", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodRecord3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => recordProcessor3(inst, ctx, json2, params);
   inst.keyType = def.keyType;
   inst.valueType = def.valueType;
 });
 function record3(keyType, valueType, params) {
   if (!valueType || !valueType._zod) {
-    return new ZodRecord3({
+    return new ZodRecord4({
       type: "record",
       keyType: string7(),
       valueType: keyType,
       ...util_exports3.normalizeParams(valueType)
     });
   }
-  return new ZodRecord3({
+  return new ZodRecord4({
     type: "record",
     keyType,
     valueType,
@@ -74024,7 +74168,7 @@ function record3(keyType, valueType, params) {
   });
 }
 function partialRecord(keyType, valueType, params) {
-  return new ZodRecord3({
+  return new ZodRecord4({
     type: "record",
     keyType,
     valueType,
@@ -74033,7 +74177,7 @@ function partialRecord(keyType, valueType, params) {
   });
 }
 function looseRecord(keyType, valueType, params) {
-  return new ZodRecord3({
+  return new ZodRecord4({
     type: "record",
     keyType,
     valueType,
@@ -74041,10 +74185,10 @@ function looseRecord(keyType, valueType, params) {
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodMap = /* @__PURE__ */ $constructor3("ZodMap", (inst, def) => {
+var ZodMap2 = /* @__PURE__ */ $constructor3("ZodMap", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodMap3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => mapProcessor3(inst, ctx, json2, params);
   inst.keyType = def.keyType;
   inst.valueType = def.valueType;
@@ -74054,17 +74198,17 @@ var ZodMap = /* @__PURE__ */ $constructor3("ZodMap", (inst, def) => {
   inst.size = (...args) => inst.check(_size3(...args));
 });
 function map(keyType, valueType, params) {
-  return new ZodMap({
+  return new ZodMap2({
     type: "map",
     keyType,
     valueType,
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodSet = /* @__PURE__ */ $constructor3("ZodSet", (inst, def) => {
+var ZodSet2 = /* @__PURE__ */ $constructor3("ZodSet", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodSet3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => setProcessor3(inst, ctx, json2, params);
   inst.min = (...args) => inst.check(_minSize3(...args));
   inst.nonempty = (params) => inst.check(_minSize3(1, params));
@@ -74072,15 +74216,15 @@ var ZodSet = /* @__PURE__ */ $constructor3("ZodSet", (inst, def) => {
   inst.size = (...args) => inst.check(_size3(...args));
 });
 function set(valueType, params) {
-  return new ZodSet({
+  return new ZodSet2({
     type: "set",
     valueType,
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodEnum3 = /* @__PURE__ */ $constructor3("ZodEnum", (inst, def) => {
+var ZodEnum4 = /* @__PURE__ */ $constructor3("ZodEnum", (inst, def) => {
   $ZodEnum3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => enumProcessor3(inst, ctx, json2, params);
   inst.enum = def.entries;
   inst.options = [...inst._zod.values];
@@ -74093,7 +74237,7 @@ var ZodEnum3 = /* @__PURE__ */ $constructor3("ZodEnum", (inst, def) => {
       } else
         throw new Error(`Key ${value} not found in enum`);
     }
-    return new ZodEnum3({
+    return new ZodEnum4({
       ...def,
       checks: [],
       ...util_exports3.normalizeParams(params),
@@ -74108,7 +74252,7 @@ var ZodEnum3 = /* @__PURE__ */ $constructor3("ZodEnum", (inst, def) => {
       } else
         throw new Error(`Key ${value} not found in enum`);
     }
-    return new ZodEnum3({
+    return new ZodEnum4({
       ...def,
       checks: [],
       ...util_exports3.normalizeParams(params),
@@ -74118,22 +74262,22 @@ var ZodEnum3 = /* @__PURE__ */ $constructor3("ZodEnum", (inst, def) => {
 });
 function _enum4(values, params) {
   const entries = Array.isArray(values) ? Object.fromEntries(values.map((v) => [v, v])) : values;
-  return new ZodEnum3({
+  return new ZodEnum4({
     type: "enum",
     entries,
     ...util_exports3.normalizeParams(params)
   });
 }
 function nativeEnum(entries, params) {
-  return new ZodEnum3({
+  return new ZodEnum4({
     type: "enum",
     entries,
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodLiteral3 = /* @__PURE__ */ $constructor3("ZodLiteral", (inst, def) => {
+var ZodLiteral4 = /* @__PURE__ */ $constructor3("ZodLiteral", (inst, def) => {
   $ZodLiteral3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => literalProcessor3(inst, ctx, json2, params);
   inst.values = new Set(def.values);
   Object.defineProperty(inst, "value", {
@@ -74146,7 +74290,7 @@ var ZodLiteral3 = /* @__PURE__ */ $constructor3("ZodLiteral", (inst, def) => {
   });
 });
 function literal3(value, params) {
-  return new ZodLiteral3({
+  return new ZodLiteral4({
     type: "literal",
     values: Array.isArray(value) ? value : [value],
     ...util_exports3.normalizeParams(params)
@@ -74154,7 +74298,7 @@ function literal3(value, params) {
 }
 var ZodFile = /* @__PURE__ */ $constructor3("ZodFile", (inst, def) => {
   $ZodFile3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => fileProcessor3(inst, ctx, json2, params);
   inst.min = (size, params) => inst.check(_minSize3(size, params));
   inst.max = (size, params) => inst.check(_maxSize3(size, params));
@@ -74166,7 +74310,7 @@ function file(params) {
 var ZodTransform3 = /* @__PURE__ */ $constructor3("ZodTransform", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodTransform3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => transformProcessor3(inst, ctx, json2, params);
   inst._zod.parse = (payload, _ctx) => {
     if (_ctx.direction === "backward") {
@@ -74203,21 +74347,21 @@ function transform3(fn) {
     transform: fn
   });
 }
-var ZodOptional3 = /* @__PURE__ */ $constructor3("ZodOptional", (inst, def) => {
+var ZodOptional4 = /* @__PURE__ */ $constructor3("ZodOptional", (inst, def) => {
   $ZodOptional3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => optionalProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function optional3(innerType) {
-  return new ZodOptional3({
+  return new ZodOptional4({
     type: "optional",
     innerType
   });
 }
 var ZodExactOptional3 = /* @__PURE__ */ $constructor3("ZodExactOptional", (inst, def) => {
   $ZodExactOptional3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => optionalProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
@@ -74227,14 +74371,14 @@ function exactOptional3(innerType) {
     innerType
   });
 }
-var ZodNullable3 = /* @__PURE__ */ $constructor3("ZodNullable", (inst, def) => {
+var ZodNullable4 = /* @__PURE__ */ $constructor3("ZodNullable", (inst, def) => {
   $ZodNullable3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => nullableProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function nullable3(innerType) {
-  return new ZodNullable3({
+  return new ZodNullable4({
     type: "nullable",
     innerType
   });
@@ -74242,15 +74386,15 @@ function nullable3(innerType) {
 function nullish4(innerType) {
   return optional3(nullable3(innerType));
 }
-var ZodDefault3 = /* @__PURE__ */ $constructor3("ZodDefault", (inst, def) => {
+var ZodDefault4 = /* @__PURE__ */ $constructor3("ZodDefault", (inst, def) => {
   $ZodDefault3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => defaultProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeDefault = inst.unwrap;
 });
 function _default4(innerType, defaultValue) {
-  return new ZodDefault3({
+  return new ZodDefault4({
     type: "default",
     innerType,
     get defaultValue() {
@@ -74260,7 +74404,7 @@ function _default4(innerType, defaultValue) {
 }
 var ZodPrefault3 = /* @__PURE__ */ $constructor3("ZodPrefault", (inst, def) => {
   $ZodPrefault3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => prefaultProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
@@ -74275,7 +74419,7 @@ function prefault3(innerType, defaultValue) {
 }
 var ZodNonOptional3 = /* @__PURE__ */ $constructor3("ZodNonOptional", (inst, def) => {
   $ZodNonOptional3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => nonoptionalProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
@@ -74288,7 +74432,7 @@ function nonoptional3(innerType, params) {
 }
 var ZodSuccess = /* @__PURE__ */ $constructor3("ZodSuccess", (inst, def) => {
   $ZodSuccess3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => successProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
@@ -74298,31 +74442,31 @@ function success(innerType) {
     innerType
   });
 }
-var ZodCatch3 = /* @__PURE__ */ $constructor3("ZodCatch", (inst, def) => {
+var ZodCatch4 = /* @__PURE__ */ $constructor3("ZodCatch", (inst, def) => {
   $ZodCatch3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => catchProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeCatch = inst.unwrap;
 });
 function _catch4(innerType, catchValue) {
-  return new ZodCatch3({
+  return new ZodCatch4({
     type: "catch",
     innerType,
     catchValue: typeof catchValue === "function" ? catchValue : util_exports3.constantCatch(catchValue)
   });
 }
-var ZodNaN = /* @__PURE__ */ $constructor3("ZodNaN", (inst, def) => {
+var ZodNaN2 = /* @__PURE__ */ $constructor3("ZodNaN", (inst, def) => {
   $ZodNaN3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => nanProcessor3(inst, ctx, json2, params);
 });
 function nan(params) {
-  return _nan3(ZodNaN, params);
+  return _nan3(ZodNaN2, params);
 }
 var ZodPipe3 = /* @__PURE__ */ $constructor3("ZodPipe", (inst, def) => {
   $ZodPipe3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => pipeProcessor3(inst, ctx, json2, params);
   inst.in = def.in;
   inst.out = def.out;
@@ -74362,21 +74506,21 @@ var ZodPreprocess3 = /* @__PURE__ */ $constructor3("ZodPreprocess", (inst, def) 
   ZodPipe3.init(inst, def);
   $ZodPreprocess3.init(inst, def);
 });
-var ZodReadonly3 = /* @__PURE__ */ $constructor3("ZodReadonly", (inst, def) => {
+var ZodReadonly4 = /* @__PURE__ */ $constructor3("ZodReadonly", (inst, def) => {
   $ZodReadonly3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => readonlyProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function readonly3(innerType) {
-  return new ZodReadonly3({
+  return new ZodReadonly4({
     type: "readonly",
     innerType
   });
 }
 var ZodTemplateLiteral = /* @__PURE__ */ $constructor3("ZodTemplateLiteral", (inst, def) => {
   $ZodTemplateLiteral3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => templateLiteralProcessor3(inst, ctx, json2, params);
 });
 function templateLiteral(parts, params) {
@@ -74386,37 +74530,37 @@ function templateLiteral(parts, params) {
     ...util_exports3.normalizeParams(params)
   });
 }
-var ZodLazy3 = /* @__PURE__ */ $constructor3("ZodLazy", (inst, def) => {
+var ZodLazy4 = /* @__PURE__ */ $constructor3("ZodLazy", (inst, def) => {
   $ZodLazy3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => lazyProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.getter();
 });
 function lazy3(getter) {
-  return new ZodLazy3({
+  return new ZodLazy4({
     type: "lazy",
     getter
   });
 }
-var ZodPromise = /* @__PURE__ */ $constructor3("ZodPromise", (inst, def) => {
+var ZodPromise2 = /* @__PURE__ */ $constructor3("ZodPromise", (inst, def) => {
   $ZodPromise3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => promiseProcessor3(inst, ctx, json2, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function promise(innerType) {
-  return new ZodPromise({
+  return new ZodPromise2({
     type: "promise",
     innerType
   });
 }
-var ZodFunction = /* @__PURE__ */ $constructor3("ZodFunction", (inst, def) => {
+var ZodFunction2 = /* @__PURE__ */ $constructor3("ZodFunction", (inst, def) => {
   $ZodFunction3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => functionProcessor3(inst, ctx, json2, params);
 });
 function _function(params) {
-  return new ZodFunction({
+  return new ZodFunction2({
     type: "function",
     input: Array.isArray(params?.input) ? tuple(params?.input) : params?.input ?? array3(unknown3()),
     output: params?.output ?? unknown3()
@@ -74424,7 +74568,7 @@ function _function(params) {
 }
 var ZodCustom3 = /* @__PURE__ */ $constructor3("ZodCustom", (inst, def) => {
   $ZodCustom3.init(inst, def);
-  ZodType3.init(inst, def);
+  ZodType4.init(inst, def);
   inst._zod.processJSONSchema = (ctx, json2, params) => customProcessor3(inst, ctx, json2, params);
 });
 function check(fn) {
@@ -74435,7 +74579,7 @@ function check(fn) {
   ch._zod.check = fn;
   return ch;
 }
-function custom(fn, _params) {
+function custom2(fn, _params) {
   return _custom3(ZodCustom3, fn ?? (() => true), _params);
 }
 function refine3(fn, _params = {}) {
@@ -74477,8 +74621,8 @@ function _instanceof(cls, params = {}) {
 }
 var stringbool = (...args) => _stringbool3({
   Codec: ZodCodec,
-  Boolean: ZodBoolean3,
-  String: ZodString3
+  Boolean: ZodBoolean4,
+  String: ZodString4
 }, ...args);
 function json(params) {
   const jsonSchema = lazy3(() => {
@@ -74495,7 +74639,7 @@ function preprocess3(fn, schema) {
 }
 
 // packages/mcp/node_modules/zod/v4/classic/compat.js
-var ZodIssueCode2 = {
+var ZodIssueCode3 = {
   invalid_type: "invalid_type",
   too_big: "too_big",
   too_small: "too_small",
@@ -74508,17 +74652,17 @@ var ZodIssueCode2 = {
   invalid_value: "invalid_value",
   custom: "custom"
 };
-function setErrorMap(map2) {
+function setErrorMap2(map2) {
   config3({
     customError: map2
   });
 }
-function getErrorMap() {
+function getErrorMap2() {
   return config3().customError;
 }
-var ZodFirstPartyTypeKind2;
+var ZodFirstPartyTypeKind3;
 /* @__PURE__ */ (function(ZodFirstPartyTypeKind4) {
-})(ZodFirstPartyTypeKind2 || (ZodFirstPartyTypeKind2 = {}));
+})(ZodFirstPartyTypeKind3 || (ZodFirstPartyTypeKind3 = {}));
 
 // packages/mcp/node_modules/zod/v4/classic/iso.js
 var iso_exports3 = {};
@@ -75483,35 +75627,35 @@ __export(coerce_exports3, {
   string: () => string8
 });
 function string8(params) {
-  return _coercedString2(ZodString3, params);
+  return _coercedString2(ZodString4, params);
 }
 function number8(params) {
-  return _coercedNumber2(ZodNumber3, params);
+  return _coercedNumber2(ZodNumber4, params);
 }
 function boolean8(params) {
-  return _coercedBoolean2(ZodBoolean3, params);
+  return _coercedBoolean2(ZodBoolean4, params);
 }
 function bigint6(params) {
-  return _coercedBigint2(ZodBigInt2, params);
+  return _coercedBigint2(ZodBigInt3, params);
 }
 function date9(params) {
-  return _coercedDate2(ZodDate2, params);
+  return _coercedDate2(ZodDate3, params);
 }
 
 // packages/mcp/dist/schema.js
 function fieldFor(prop) {
   if (prop.enum && prop.enum.length > 0) {
-    return external_exports.enum(prop.enum);
+    return external_exports2.enum(prop.enum);
   }
   if (prop.type === "number" || prop.type === "integer")
-    return external_exports.number();
+    return external_exports2.number();
   if (prop.type === "boolean")
-    return external_exports.boolean();
+    return external_exports2.boolean();
   if (prop.type === "array") {
-    const item = prop.items?.type === "number" || prop.items?.type === "integer" ? external_exports.number() : external_exports.string();
-    return external_exports.array(item);
+    const item = prop.items?.type === "number" || prop.items?.type === "integer" ? external_exports2.number() : external_exports2.string();
+    return external_exports2.array(item);
   }
-  return external_exports.string();
+  return external_exports2.string();
 }
 function jsonSchemaToZod(schema) {
   const shape = {};
@@ -75524,7 +75668,7 @@ function jsonSchemaToZod(schema) {
       field = field.optional();
     shape[key] = field;
   }
-  return external_exports.object(shape);
+  return external_exports2.object(shape);
 }
 
 // packages/mcp/dist/tools.js
@@ -75538,7 +75682,7 @@ var import_node_fs2 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"8797d36bc79c5beca69986e11d76a8ee82b86afc6f0c660fa982085346f8af6a","coreBaseline":"a0b2763a8756878dd63c6119c745f7e46776b45b","inputs":24}';
+    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"5e25b1ee789c28d177df2aed3fa4cfba3820d1595289461883076061fe8a120a","coreBaseline":"93a4053369da311a5392d7fd6ad6500d73f385f2","inputs":24}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -76800,23 +76944,26 @@ async function commitServiceFix(workflowRepo, planned, workflowItemId, confirmat
     ].join("\n"),
     subject
   }, { confirmation, repo: workflowRepo });
+  let pushApproval;
+  if (change.remote) {
+    try {
+      pushApproval = await obtainUserApproval({
+        action: "praxis_developer_git_publish",
+        kind: "git_operation",
+        summary: `Push branch ${change.branch} to ${change.remote}`,
+        description: [`Repository: ${repository}`, `Branch: ${change.branch}`, `Remote: ${change.remote}`, "The commit made by the Quality fix above is what is pushed."].join("\n"),
+        subject: JSON.stringify({ branch: change.branch, remote: change.remote, baseSha: change.baseSha, files: change.files, findingId: change.findingId })
+      }, { confirmation, repo: workflowRepo });
+    } catch (error64) {
+      if (!(error64 instanceof ApprovalError))
+        throw error64;
+    }
+  }
   const committed = runApprovedMutation(commitApproval, () => commitServiceFixBody(root, planned));
   if (!change.remote)
     return committed;
-  let pushApproval;
-  try {
-    pushApproval = await obtainUserApproval({
-      action: "praxis_developer_git_publish",
-      kind: "git_operation",
-      summary: `Push branch ${change.branch} to ${change.remote}`,
-      description: [`Repository: ${repository}`, `Branch: ${change.branch}`, `Commit: ${committed.change.commitSha}`, `Remote: ${change.remote}`].join("\n"),
-      subject: JSON.stringify({ branch: change.branch, commit: committed.change.commitSha, remote: change.remote })
-    }, { confirmation, repo: workflowRepo });
-  } catch (error64) {
-    if (error64 instanceof ApprovalError)
-      return { ...committed, change: { ...committed.change, mrStatus: "blocked" } };
-    throw error64;
-  }
+  if (!pushApproval)
+    return { ...committed, change: { ...committed.change, mrStatus: "blocked" } };
   return runApprovedMutation(pushApproval, () => pushServiceFix(root, committed));
 }
 function commitServiceFixBody(root, planned) {
@@ -77197,33 +77344,33 @@ var import_node_fs22 = require("node:fs");
 var import_node_path26 = require("node:path");
 var import_gray_matter = __toESM(require_gray_matter(), 1);
 init_zod();
-var ObsoleteToolBindingSchema = external_exports2.object({
+var ObsoleteToolBindingSchema = external_exports.object({
   /** Identifier of the obsolete tool or binding (e.g. legacy tracker name). */
-  toolId: external_exports2.string().min(1),
+  toolId: external_exports.string().min(1),
   /** Why the binding needs human review. */
-  reason: external_exports2.string().min(1),
+  reason: external_exports.string().min(1),
   /** Procedural content of the rule remains applicable despite the obsolete binding. */
-  proceduralContentApplicable: external_exports2.boolean().default(true),
+  proceduralContentApplicable: external_exports.boolean().default(true),
   /** Explicit review-required flag (defaults true when binding is present). */
-  reviewRequired: external_exports2.boolean().default(true)
+  reviewRequired: external_exports.boolean().default(true)
 });
-var RuleFrontmatterSchema = external_exports2.object({
-  id: external_exports2.string().min(1),
-  roles: external_exports2.array(external_exports2.string()).min(1),
-  stages: external_exports2.array(external_exports2.string()).min(1),
-  severity: external_exports2.enum(["mandatory", "advisory"]).default("mandatory"),
-  overridable: external_exports2.boolean().default(true),
-  title: external_exports2.string().optional(),
-  sourceDoc: external_exports2.string().optional(),
-  sourceVersion: external_exports2.string().optional(),
+var RuleFrontmatterSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  roles: external_exports.array(external_exports.string()).min(1),
+  stages: external_exports.array(external_exports.string()).min(1),
+  severity: external_exports.enum(["mandatory", "advisory"]).default("mandatory"),
+  overridable: external_exports.boolean().default(true),
+  title: external_exports.string().optional(),
+  sourceDoc: external_exports.string().optional(),
+  sourceVersion: external_exports.string().optional(),
   /** Optional migration marker for bindings to tools the company no longer uses (WBS 2.6.2). */
   obsoleteToolBinding: ObsoleteToolBindingSchema.optional()
 });
-var PrecedentFrontmatterSchema = external_exports2.object({
-  id: external_exports2.string().min(1),
-  roles: external_exports2.array(external_exports2.string()).min(1),
-  stages: external_exports2.array(external_exports2.string()).min(1),
-  title: external_exports2.string().optional()
+var PrecedentFrontmatterSchema = external_exports.object({
+  id: external_exports.string().min(1),
+  roles: external_exports.array(external_exports.string()).min(1),
+  stages: external_exports.array(external_exports.string()).min(1),
+  title: external_exports.string().optional()
 });
 var LEVEL_DIRS = [
   { level: "company", dir: "company" },
@@ -77494,6 +77641,56 @@ var PROTECTED_TOOLS = /* @__PURE__ */ new Set([
   "praxis_developer_git_link_jira_apply",
   "praxis_workflow_apply"
 ]);
+async function approvalPlan(args, ctx, opts) {
+  const target = str2(args.tool);
+  if (!target || !PROTECTED_TOOLS.has(target))
+    throw new Error(`INVALID_INPUT: tool must be one of ${[...PROTECTED_TOOLS].join(", ")}`);
+  let targetArgs;
+  try {
+    targetArgs = JSON.parse(str2(args.toolArguments) ?? "{}");
+  } catch {
+    throw new Error("INVALID_INPUT: toolArguments must be a JSON object");
+  }
+  const result = (request) => ({
+    required: true,
+    action: request.action,
+    kind: request.kind,
+    summary: request.summary,
+    planText: planTextOf(request),
+    ...request.subject ? { subjectDigest: subjectDigest(request.subject) } : {},
+    note: "This is what the user is asked to approve. It runs nothing."
+  });
+  if (target === "praxis_workflow_apply") {
+    const command = JSON.parse(String(targetArgs.command ?? "{}"));
+    const view = previewWorkflow(ctx.repo, command, str2(targetArgs.workItemId)).humanApproval;
+    return view ? result({ action: view.action, kind: view.kind, summary: view.summary, description: view.description, risks: view.risks }) : { required: false, note: "No approval is needed for this record; apply it directly." };
+  }
+  try {
+    const envelope = await withApprovalChannel(planOnlyChannel, () => callToolInner(target, { ...targetArgs, repo: ctx.repo, confirmation: "YES" }, { role: opts.role, version: opts.version, extra: opts.extra }));
+    return envelope.ok ? { required: false, note: "This call needs no approval." } : { required: false, code: envelope.code, errors: envelope.errors, note: "The apply tool refuses these arguments; fix them and ask again." };
+  } catch (error64) {
+    if (error64 instanceof ApprovalNeedsInput)
+      return result({ ...error64.request, subject: error64.request.subject });
+    throw error64;
+  }
+}
+function withClientReport(data, client) {
+  if (!client || !data || typeof data !== "object")
+    return data;
+  const record5 = data;
+  const target = record5.data && typeof record5.data === "object" ? record5.data : record5;
+  if (target.approval) {
+    target.approval = { ...target.approval, client };
+    if (hostPermissionMode() && !client.dialog) {
+      target.approval = {
+        ...target.approval,
+        mode: "host-permission",
+        note: "OPT-IN host-permission mode: this client has no approval dialog, so protected actions rely on the host's own tool-permission prompt, which shows the exact plan (planText from praxis_approval_plan). Praxis cannot verify the prompt was shown: an always-allow setting for the tool removes it and then the agent approves itself. Quality fixes (commit and push) still need a dialog."
+      };
+    }
+  }
+  return data;
+}
 function withApprovalNote(name, data) {
   if (!PROTECTED_TOOLS.has(name))
     return { data };
@@ -77536,7 +77733,9 @@ function preflight(name, args, ctx, version4) {
   return void 0;
 }
 async function callTool(name, rawArgs, opts) {
-  return withApprovalChannel(opts.approvalChannel, () => callToolInner(name, rawArgs, opts));
+  const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {};
+  const channel = opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str2(args.planText)) : void 0);
+  return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 async function callToolInner(name, rawArgs, opts) {
   const ops = await loadOperations();
@@ -77567,6 +77766,9 @@ async function callToolInner(name, rawArgs, opts) {
   if (refused)
     return refused;
   try {
+    if (name === "praxis_approval_plan") {
+      return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await approvalPlan(args, ctx, opts) });
+    }
     if (name === "praxis_workflow_status" || name === "praxis_workflow_inspect" || name === "praxis_session_start" || name === "praxis_workflow_preview" || name === "praxis_workflow_apply" || name === "praxis_capabilities") {
       return mcpEnvelope({
         ok: true,
@@ -77592,7 +77794,8 @@ async function callToolInner(name, rawArgs, opts) {
         data: developerWorkItemStatus(ctx.repo, str2(args.workItemId))
       });
     }
-    const data = await dispatchTool(ops, name, ctx, opts.version, opts.role);
+    const dispatched = await dispatchTool(ops, name, ctx, opts.version, opts.role);
+    const data = name === "praxis_doctor" ? withClientReport(dispatched, opts.client) : dispatched;
     if ((name === "praxis_quality_apply" || name === "praxis_developer_git_connect_apply" || name === "praxis_developer_git_commit" || name === "praxis_developer_git_publish" || name === "praxis_developer_git_merge_request" || name === "praxis_developer_git_identity_apply") && data && typeof data === "object" && "ok" in data && data.ok === false) {
       const rec = data;
       return mcpEnvelope({
@@ -77607,6 +77810,8 @@ async function callToolInner(name, rawArgs, opts) {
     }
     return mcpEnvelope({ ok: true, operation: name, version: opts.version, ...withApprovalNote(name, data) });
   } catch (err) {
+    if (err instanceof ApprovalNeedsInput)
+      throw err;
     const message = ops.redact(err instanceof Error ? err.message : String(err));
     const coded = err;
     const code = err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
@@ -77799,18 +78004,38 @@ function annotationsFor(tool) {
     openWorldHint: applies || tool.name.includes("jira") || tool.name.includes("git")
   };
 }
-function clientApprovalChannel(server, extra) {
-  const elicit = extra?.mcpReq?.elicitInput;
-  const capabilities = server.server.getClientCapabilities?.();
-  const declared = capabilities?.elicitation;
+function describeClient(server, extra) {
+  const ctx = extra?.mcpReq;
+  const negotiated = ctx?.envelope?.[PROTOCOL_VERSION_META_KEY] ?? server.server.getNegotiatedProtocolVersion?.();
+  const modern = Boolean(negotiated && negotiated >= PRAXIS_MCP_SDK.modernRevision);
+  const info = (modern ? ctx?.envelope?.[CLIENT_INFO_META_KEY] : void 0) ?? server.server.getClientVersion?.();
+  const caps = (modern ? ctx?.envelope?.[CLIENT_CAPABILITIES_META_KEY] : void 0) ?? server.server.getClientCapabilities?.();
+  const declared = caps?.elicitation;
   const form = declared !== void 0 && (Object.keys(declared).length === 0 || "form" in declared);
+  const url4 = declared !== void 0 && "url" in declared;
+  const reason = declared === void 0 ? `the client did not declare the elicitation capability (${modern ? "in the request envelope" : "at initialize"})` : !form ? "the client declared URL-mode elicitation only; Praxis needs form mode to show the action and take an answer" : !modern && !ctx?.elicitInput ? "the SDK did not expose elicitInput for this request" : void 0;
+  return {
+    name: info?.name,
+    version: info?.version,
+    protocolVersion: negotiated,
+    capabilities: caps ? Object.keys(caps).sort() : [],
+    elicitation: { declared: declared ?? null, form, url: url4 },
+    dialog: reason === void 0,
+    flow: modern ? "input-required-round-trip" : "server-initiated-request",
+    ...reason ? { reason } : {}
+  };
+}
+function clientApprovalChannel(extra, client) {
+  if (!client.dialog)
+    return void 0;
+  const ctx = extra?.mcpReq;
+  if (client.flow === "input-required-round-trip")
+    return roundTripChannel(ctx?.inputResponses);
+  const elicit = ctx?.elicitInput;
   if (!elicit)
     return void 0;
-  const negotiated = server.server.getNegotiatedProtocolVersion?.();
-  if (negotiated && negotiated >= PRAXIS_MCP_SDK.modernRevision)
-    return void 0;
   return elicitationChannel({
-    supported: form,
+    supported: true,
     elicitInput: (params, options2) => elicit(params, options2)
   });
 }
@@ -77823,12 +78048,22 @@ function createPraxisMcpServer(opts) {
       annotations: annotationsFor(tool)
     }, async (args, extra) => {
       const signal = extra && typeof extra === "object" && "signal" in extra ? extra.signal : void 0;
-      const envelope = await callTool(tool.name, args ?? {}, {
-        role: opts.role,
-        version: opts.version,
-        extra: { signal },
-        approvalChannel: clientApprovalChannel(server, extra)
-      });
+      const client = describeClient(server, extra);
+      let envelope;
+      try {
+        envelope = await callTool(tool.name, args ?? {}, {
+          role: opts.role,
+          version: opts.version,
+          extra: { signal },
+          approvalChannel: clientApprovalChannel(extra, client),
+          client
+        });
+      } catch (error64) {
+        if (error64 instanceof ApprovalNeedsInput) {
+          return inputRequired({ inputRequests: { [approvalKey(error64.request)]: inputRequired.elicit(elicitParams(error64.request)) } });
+        }
+        throw error64;
+      }
       return {
         content: [{ type: "text", text: JSON.stringify(envelope) }],
         structuredContent: envelope,

@@ -3,6 +3,7 @@ import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
 import {
   ApprovalError,
+  ApprovalNeedsInput,
   approvalsGivenInThisCall,
   logDecision,
   subjectDigest,
@@ -11,6 +12,7 @@ import {
   type WorkflowRole,
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
+import { hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf } from "./approval-channel.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
@@ -98,6 +100,75 @@ const PROTECTED_TOOLS = new Set([
   "praxis_workflow_apply",
 ]);
 
+/** What the connected MCP client declared at initialize, as far as approvals are concerned. */
+export type ClientReport = {
+  name?: string;
+  version?: string;
+  protocolVersion?: string;
+  capabilities: string[];
+  elicitation: { declared: object | null; form: boolean; url: boolean };
+  /** True when Praxis can show the user an approval dialog on this connection. */
+  dialog: boolean;
+  /** server-initiated-request (up to 2025-11-25) or input-required-round-trip (2026-07-28). */
+  flow: "server-initiated-request" | "input-required-round-trip";
+  reason?: string;
+};
+
+/** The doctor shows the evidence for its approval mode: what this client declared and why a dialog is or is not offered. */
+/**
+ * What the user would be asked for a protected apply tool, computed from the live state, running nothing: the apply tool
+ * runs against a channel that never answers, and everything that changes something asks before it changes anything.
+ */
+async function approvalPlan(args: Record<string, unknown>, ctx: OpContext, opts: { role: PraxisRole; version: string; extra?: Partial<OpContext>; client?: ClientReport }): Promise<unknown> {
+  const target = str(args.tool);
+  if (!target || !PROTECTED_TOOLS.has(target)) throw new Error(`INVALID_INPUT: tool must be one of ${[...PROTECTED_TOOLS].join(", ")}`);
+  let targetArgs: Record<string, unknown>;
+  try {
+    targetArgs = JSON.parse(str(args.toolArguments) ?? "{}") as Record<string, unknown>;
+  } catch {
+    throw new Error("INVALID_INPUT: toolArguments must be a JSON object");
+  }
+  const result = (request: { action: string; kind: string; summary: string; description: string; risks?: string[]; subject?: string }) => ({
+    required: true,
+    action: request.action,
+    kind: request.kind,
+    summary: request.summary,
+    planText: planTextOf(request as never),
+    ...(request.subject ? { subjectDigest: subjectDigest(request.subject) } : {}),
+    note: "This is what the user is asked to approve. It runs nothing.",
+  });
+  if (target === "praxis_workflow_apply") {
+    // an agent-authored record needs no approval; only a human act does
+    const command = JSON.parse(String(targetArgs.command ?? "{}")) as Record<string, unknown>;
+    const view = previewWorkflow(ctx.repo, command, str(targetArgs.workItemId)).humanApproval;
+    return view ? result({ action: view.action, kind: view.kind, summary: view.summary, description: view.description, risks: view.risks }) : { required: false, note: "No approval is needed for this record; apply it directly." };
+  }
+  try {
+    const envelope = await withApprovalChannel(planOnlyChannel, () => callToolInner(target, { ...targetArgs, repo: ctx.repo, confirmation: "YES" }, { role: opts.role, version: opts.version, extra: opts.extra }));
+    return envelope.ok ? { required: false, note: "This call needs no approval." } : { required: false, code: envelope.code, errors: envelope.errors, note: "The apply tool refuses these arguments; fix them and ask again." };
+  } catch (error) {
+    if (error instanceof ApprovalNeedsInput) return result({ ...error.request, subject: error.request.subject });
+    throw error;
+  }
+}
+
+function withClientReport(data: unknown, client: ClientReport | undefined): unknown {
+  if (!client || !data || typeof data !== "object") return data;
+  const record = data as { approval?: Record<string, unknown>; data?: { approval?: Record<string, unknown> } };
+  const target = record.data && typeof record.data === "object" ? record.data : record;
+  if (target.approval) {
+    target.approval = { ...target.approval, client };
+    if (hostPermissionMode() && !client.dialog) {
+      target.approval = {
+        ...target.approval,
+        mode: "host-permission",
+        note: "OPT-IN host-permission mode: this client has no approval dialog, so protected actions rely on the host's own tool-permission prompt, which shows the exact plan (planText from praxis_approval_plan). Praxis cannot verify the prompt was shown: an always-allow setting for the tool removes it and then the agent approves itself. Quality fixes (commit and push) still need a dialog.",
+      };
+    }
+  }
+  return data;
+}
+
 export const isProtectedTool = (name: string): boolean => PROTECTED_TOOLS.has(name);
 
 /** Says in the result how the user's approval was obtained: always in the client's own dialog (the agent cannot write that answer). */
@@ -150,15 +221,21 @@ export async function callTool(
     extra?: Partial<OpContext>;
     /** How to ask the user in the MCP client's own dialog. Absent when the client cannot: protected actions are then refused with the preview. */
     approvalChannel?: UserApprovalChannel;
+    /** What the connected client declared (see describeClient in server.ts); shown by praxis_doctor. */
+    client?: ClientReport;
   },
 ): Promise<McpEnvelope> {
-  return withApprovalChannel(opts.approvalChannel, () => callToolInner(name, rawArgs, opts));
+  // OPT-IN (PRAXIS_APPROVAL_MODE=host-permission): a client with no dialog, the host's own tool-permission prompt, and the
+  // exact plan in the arguments (see approval-channel.ts). Never chosen when the client has a dialog.
+  const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
+  const channel = opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
+  return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 
 async function callToolInner(
   name: string,
   rawArgs: unknown,
-  opts: { role: PraxisRole; version: string; extra?: Partial<OpContext> },
+  opts: { role: PraxisRole; version: string; extra?: Partial<OpContext>; client?: ClientReport },
 ): Promise<McpEnvelope> {
   const ops = await loadOperations();
   const allowed = toolsForRole(opts.role);
@@ -187,6 +264,9 @@ async function callToolInner(
   const refused = preflight(name, args, ctx, opts.version);
   if (refused) return refused;
   try {
+    if (name === "praxis_approval_plan") {
+      return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await approvalPlan(args, ctx, opts) });
+    }
     if (
       name === "praxis_workflow_status" ||
       name === "praxis_workflow_inspect" ||
@@ -219,7 +299,8 @@ async function callToolInner(
         data: developerWorkItemStatus(ctx.repo, str(args.workItemId) as string),
       });
     }
-    const data = await dispatchTool(ops, name, ctx, opts.version, opts.role);
+    const dispatched = await dispatchTool(ops, name, ctx, opts.version, opts.role);
+    const data = name === "praxis_doctor" ? withClientReport(dispatched, opts.client) : dispatched;
     if (
       (
         name === "praxis_quality_apply" ||
@@ -251,6 +332,8 @@ async function callToolInner(
     }
     return mcpEnvelope({ ok: true, operation: name, version: opts.version, ...withApprovalNote(name, data) });
   } catch (err) {
+    // not an error: the protocol layer must ask the user (2026-07-28 round trip) and re-run the call
+    if (err instanceof ApprovalNeedsInput) throw err;
     const message = ops.redact(err instanceof Error ? err.message : String(err));
     const coded = err as { code?: unknown };
     const code =

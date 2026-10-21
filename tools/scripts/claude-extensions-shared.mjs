@@ -33,6 +33,13 @@ export const JIRA_USER_CONFIG = {
     required: false,
     sensitive: true,
   },
+  approval_mode: {
+    type: "string",
+    title: "Approval without a client dialog (advanced, optional)",
+    description:
+      "Leave blank. Praxis asks you to approve protected actions (Git, Jira, confirming a Story) in your client's own approval dialog; if the client cannot show one, those actions are not executed. Set to host-permission ONLY if your client has no such dialog and you accept this weaker mode: the apply tool then carries the exact plan in its arguments so your client's own tool-permission prompt shows it. Praxis cannot tell whether that prompt was shown: choosing 'always allow' for the tool removes it, and then the agent approves itself.",
+    required: false,
+  },
   github_token: {
     type: "string",
     title: "GitHub Token",
@@ -66,6 +73,7 @@ export const JIRA_ENV_MAP = {
   PRAXIS_JIRA_EMAIL: "${user_config.jira_email}",
   PRAXIS_JIRA_PROJECT_KEY: "${user_config.jira_project_key}",
   PRAXIS_JIRA_TOKEN: "${user_config.jira_token}",
+  PRAXIS_APPROVAL_MODE: "${user_config.approval_mode}",
   PRAXIS_GITHUB_TOKEN: "${user_config.github_token}",
   PRAXIS_GITHUB_API_URL: "${user_config.github_api_url}",
   PRAXIS_GITLAB_TOKEN: "${user_config.gitlab_token}",

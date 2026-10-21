@@ -1,4 +1,5 @@
-import type { ApprovalRequest, AskAnswer, UserApprovalChannel } from "@praxis/contracts";
+import { inputResponse } from "@modelcontextprotocol/server";
+import { ApprovalError, ApprovalNeedsInput, subjectDigest, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
 
 /**
  * The user's approval, asked through the MCP client's own elicitation dialog.
@@ -37,6 +38,58 @@ export function approvalMessage(request: ApprovalRequest): string {
 /** Error text that means "this connection cannot show the dialog", as opposed to a failure while showing it. */
 const UNAVAILABLE = /elicit|capabilit|not supported|unsupported|era\b|input_required|method not found/i;
 
+/** The form shown to the user: the exact action, approve or reject. Shared by both protocol eras. */
+export function elicitParams(request: ApprovalRequest) {
+  return {
+    mode: "form" as const,
+    message: approvalMessage(request),
+    requestedSchema: {
+      type: "object" as const,
+      properties: {
+        decision: {
+          type: "string",
+          title: "Your decision",
+          description: "Approve runs exactly the action above. Reject stops it.",
+          enum: ["approve", "reject"],
+        },
+        reason: { type: "string", title: "Reason (optional)" },
+      },
+      required: ["decision"],
+    },
+  };
+}
+
+/** Maps the client's elicitation result to the user's answer: only Accept with "approve" selected approves. */
+export function answerFrom(result: { action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> }): AskAnswer {
+  const reason = typeof result.content?.reason === "string" && result.content.reason.trim() ? result.content.reason.trim() : undefined;
+  if (result.action === "cancel") return { answer: "dismiss", ...(reason ? { reason } : {}) };
+  if (result.action === "decline") return { answer: "reject", ...(reason ? { reason } : {}) };
+  return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...(reason ? { reason } : {}) };
+}
+
+/**
+ * The key under which the client answers for this exact action. It is derived from the content that will run, so an
+ * answer given for one plan can never satisfy a different plan: a changed plan has another key and is asked again.
+ */
+export const approvalKey = (request: ApprovalRequest): string => `approval-${subjectDigest(request.subject).slice(7, 23)}`;
+
+/**
+ * The 2026-07-28 protocol revision: the server cannot ask in the middle of a call. It returns input_required with the
+ * dialog, the client shows it and RETRIES the same call with the answer. Nothing has been executed on the first pass
+ * (asking comes before every write), so the retry simply runs the call again, now with the user's answer in hand.
+ * The answer arrives in the protocol's own `inputResponses` field, which the host fills: it is not a tool argument.
+ */
+export function roundTripChannel(inputResponses: Record<string, unknown> | undefined): UserApprovalChannel {
+  return {
+    kind: "client-elicitation",
+    async ask(request: ApprovalRequest): Promise<AskAnswer> {
+      const view = inputResponse(inputResponses, approvalKey(request));
+      if (view.kind !== "elicit") throw new ApprovalNeedsInput(request);
+      return answerFrom({ action: view.action, ...(view.content ? { content: view.content } : {}) });
+    },
+  };
+}
+
 export function elicitationChannel(input: {
   /** Whether the client declared the elicitation (form) capability. */
   supported: boolean;
@@ -49,34 +102,61 @@ export function elicitationChannel(input: {
     async ask(request: ApprovalRequest): Promise<AskAnswer> {
       let result: ElicitResult;
       try {
-        result = await input.elicitInput(
-          {
-            mode: "form",
-            message: approvalMessage(request),
-            requestedSchema: {
-              type: "object",
-              properties: {
-                decision: {
-                  type: "string",
-                  title: "Your decision",
-                  description: "Approve runs exactly the action above. Reject stops it.",
-                  enum: ["approve", "reject"],
-                },
-                reason: { type: "string", title: "Reason (optional)" },
-              },
-              required: ["decision"],
-            },
-          },
-          { timeout: input.timeoutMs ?? 10 * 60_000 },
-        );
+        result = await input.elicitInput(elicitParams(request), { timeout: input.timeoutMs ?? 10 * 60_000 });
       } catch (error) {
         if (error instanceof Error && UNAVAILABLE.test(error.message)) return { answer: "unavailable", reason: error.message };
         throw error;
       }
-      const reason = typeof result.content?.reason === "string" && result.content.reason.trim() ? result.content.reason.trim() : undefined;
-      if (result.action === "cancel") return { answer: "dismiss", ...(reason ? { reason } : {}) };
-      if (result.action === "decline") return { answer: "reject", ...(reason ? { reason } : {}) };
-      return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...(reason ? { reason } : {}) };
+      return answerFrom(result);
     },
   };
 }
+
+// --- OPT-IN: no client dialog, the host's own tool-permission prompt --------------------------------------------------------
+
+/**
+ * PRAXIS_APPROVAL_MODE=host-permission (an extension setting, never the default, never settable from a repository).
+ * For a host with no elicitation dialog, the only built-in confirmation is the host's prompt before an MCP tool runs. It
+ * shows the tool's arguments, so the apply tool must carry the EXACT plan text (`planText`, from praxis_approval_plan);
+ * Praxis recomputes the plan itself and refuses unless the text matches, so the prompt shows what will really run, and a
+ * changed plan needs a new planText and a new prompt.
+ *
+ * What this cannot do: Praxis cannot see whether the prompt was shown. An "always allow" setting for the tool removes it,
+ * and then the agent has approved itself. The result is labelled `host-prompt`, never `client-ui`.
+ */
+export const hostPermissionMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "host-permission";
+
+/** The text the user must see in the host's prompt for this action: the same text the dialog would show. */
+export const planTextOf = (request: ApprovalRequest): string => approvalMessage(request);
+
+export function hostPermissionChannel(planText: string | undefined): UserApprovalChannel {
+  return {
+    kind: "host-permission",
+    async ask(request: ApprovalRequest): Promise<AskAnswer> {
+      const expected = planTextOf(request);
+      if (planText === undefined) {
+        throw new ApprovalError(
+          "APPROVAL_CLIENT_UI_REQUIRED",
+          `${request.summary} was NOT executed. This client has no approval dialog; in host-permission mode call praxis_approval_plan for this action, show the plan to the user, then call this tool with that exact text as planText so the host's permission prompt shows what will run.`,
+          { executed: false, planText: expected },
+        );
+      }
+      if (planText !== expected) {
+        throw new ApprovalError(
+          "APPROVAL_SCOPE_MISMATCH",
+          `${request.summary} was NOT executed: planText is not the plan this call would run (the plan changed, or the text was edited). Show the user the current plan below and apply again with it.`,
+          { executed: false, planText: expected },
+        );
+      }
+      return { answer: "approve", reason: "the host's tool-permission prompt showed this exact plan (not verifiable by Praxis)" };
+    },
+  };
+}
+
+/** A channel that never answers: used to compute what the user would be asked, without running anything. */
+export const planOnlyChannel: UserApprovalChannel = {
+  kind: "client-elicitation",
+  async ask(request: ApprovalRequest): Promise<AskAnswer> {
+    throw new ApprovalNeedsInput(request);
+  },
+};

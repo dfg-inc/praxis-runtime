@@ -846,6 +846,23 @@ export const TOOLS: ToolDef[] = [
     roles: ["ba", "architect", "developer", "quality"],
     kind: "read",
   },
+  {
+    name: "praxis_approval_plan",
+    description:
+      "READ-ONLY: the exact plan the user would be asked to approve for a protected apply tool, computed by Praxis from the live state. Runs nothing. Use it to show the user what will happen; in host-permission mode (a client with no approval dialog and PRAXIS_APPROVAL_MODE=host-permission) pass its planText to the apply tool.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        tool: { type: "string", description: "The protected apply tool, for example praxis_project_init_apply." },
+        toolArguments: { type: "string", description: "JSON object with the arguments you would pass to that tool (without confirmation)." },
+      },
+      required: ["tool", "toolArguments"],
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
 ];
 
 for (const tool of TOOLS) {
@@ -853,6 +870,10 @@ for (const tool of TOOLS) {
   tool.inputSchema.properties.instanceId = {
     type: "string",
     description: "External instance (Jira base URL). Defaults to the configured one.",
+  };
+  tool.inputSchema.properties.planText = {
+    type: "string",
+    description: "Only for PRAXIS_APPROVAL_MODE=host-permission: the exact planText returned by praxis_approval_plan for these arguments. Ignored otherwise.",
   };
   tool.description +=
     " The user approves this exact action in the client's own approval dialog before it runs; without a dialog it is not executed, and a rejection runs nothing.";

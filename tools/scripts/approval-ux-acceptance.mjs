@@ -74,6 +74,7 @@ const repoWithPackageJson = () => {
     const repo = repoWithPackageJson();
     const doctor = await call(session, "praxis_doctor", { repo });
     expect(doctor.ok && doctor.data.approval?.mode === "client-ui", `doctor did not report client-ui: ${JSON.stringify(doctor.data?.approval)}`);
+    expect(doctor.data.approval.client?.elicitation?.form === true && doctor.data.approval.client.flow === "server-initiated-request" && doctor.data.approval.client.name, `client evidence: ${JSON.stringify(doctor.data.approval.client)}`);
     expect(doctor.data.approvalService === undefined && doctor.data.security === undefined, "the doctor still reports a removed approval component");
     prove("the doctor reports that approvals are asked in the client's own dialog");
 
@@ -82,7 +83,7 @@ const repoWithPackageJson = () => {
     const declined = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
     expect(declined.ok === false && declined.code === "APPROVAL_REJECTED", `decline: ${JSON.stringify(declined)}`);
     expect(!existsSync(join(repo, ".project")), "a declined apply wrote .project");
-    expect(session.elicited.length === 1 && /praxis_project_init_apply/.test(session.elicited[0].message), "the dialog did not show the action");
+    expect(session.elicited.length === 1 && /Creates .*\.project with exactly this content/.test(session.elicited[0].message), "the dialog did not show the file to be written");
     expect(session.elicited[0].requestedSchema?.properties?.decision?.enum?.join() === "approve,reject", "the dialog does not ask approve/reject");
     prove("Decline runs nothing; the dialog showed the exact action and asked approve/reject");
 
@@ -203,19 +204,74 @@ const repoWithPackageJson = () => {
   }
 }
 
-// --- 3. a connection that cannot carry the dialog (2026-07-28 revision) ------------------------------------------------
+// --- 3. the 2026-07-28 revision: the dialog is a round trip (input_required, then the client retries with the answer) --------
 {
-  const session = await open({ elicit: answer("accept", "approve"), modern: true });
+  let next = answer("decline");
+  const session = await open({ elicit: (params) => next(params), modern: true });
   try {
     const repo = repoWithPackageJson();
     const doctor = await call(session, "praxis_doctor", { repo });
-    expect(doctor.data.approval?.mode === "no-dialog", `modern-era doctor: ${JSON.stringify(doctor.data.approval)}`);
-    const before = session.elicited.length;
-    const refused = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-    expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && session.elicited.length === before && !existsSync(join(repo, ".project")), `modern-era apply: ${JSON.stringify(refused)}`);
-    prove("on a connection that cannot carry the dialog protected actions are refused, never run on the agent's word");
+    expect(doctor.data.approval?.mode === "client-ui" && doctor.data.approval.client?.flow === "input-required-round-trip" && doctor.data.approval.client.protocolVersion === "2026-07-28", `modern doctor: ${JSON.stringify(doctor.data.approval)}`);
+    prove("on 2026-07-28 the doctor reports the client's declared elicitation and the round-trip flow");
+    next = answer("decline");
+    const declined = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+    expect(declined.code === "APPROVAL_REJECTED" && !existsSync(join(repo, ".project")), `modern decline: ${JSON.stringify(declined)}`);
+    expect(session.elicited.length === 1 && /Creates .*\.project with exactly this content/.test(session.elicited[0].message) && /requirementsFormat/.test(session.elicited[0].message), `the dialog did not show the file: ${session.elicited[0]?.message}`);
+    next = answer("cancel");
+    const cancelled = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+    expect(cancelled.code === "APPROVAL_REJECTED" && !existsSync(join(repo, ".project")), `modern cancel: ${JSON.stringify(cancelled)}`);
+    next = answer("accept", "approve");
+    const approved = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+    expect(approved.ok && existsSync(join(repo, ".project")) && approved.data.approval?.[0]?.channel === "client-elicitation", `modern approve: ${JSON.stringify(approved)}`);
+    prove("on 2026-07-28 Decline and Cancel run nothing; Approve runs exactly the previewed file write (dialog showed the file's content)");
   } finally {
     await session.close();
+  }
+}
+
+// --- 4. 2026-07-28 without elicitation -------------------------------------------------------------------------------------
+{
+  const session = await open({ modern: true });
+  try {
+    const repo = repoWithPackageJson();
+    const doctor = await call(session, "praxis_doctor", { repo });
+    expect(doctor.data.approval?.mode === "no-dialog" && /did not declare the elicitation capability/.test(doctor.data.approval.client?.reason ?? ""), `modern no-elicitation doctor: ${JSON.stringify(doctor.data.approval)}`);
+    const refused = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+    expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && !existsSync(join(repo, ".project")), `modern no-elicitation apply: ${JSON.stringify(refused)}`);
+    prove("on 2026-07-28 a client that declares no elicitation is refused with the evidence, never run on the agent's word");
+  } finally {
+    await session.close();
+  }
+}
+
+// --- 5. OPT-IN host-permission mode: no dialog, the host's tool-permission prompt shows the exact plan ---------------------------
+{
+  const session = await open({ env: { PRAXIS_APPROVAL_MODE: "host-permission" } });
+  try {
+    const repo = repoWithPackageJson();
+    const doctor = await call(session, "praxis_doctor", { repo });
+    expect(doctor.data.approval?.mode === "host-permission" && /always-allow/.test(doctor.data.approval.note), `host-permission doctor: ${JSON.stringify(doctor.data.approval)}`);
+    const plan = await call(session, "praxis_approval_plan", { repo, tool: "praxis_project_init_apply", toolArguments: "{}" });
+    expect(plan.ok && plan.data.required && /Creates .*\.project with exactly this content/.test(plan.data.planText) && !existsSync(join(repo, ".project")), `plan: ${JSON.stringify(plan)}`);
+    const wrong = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES", planText: `${plan.data.planText} plus more` });
+    expect(wrong.code === "APPROVAL_SCOPE_MISMATCH" && !existsSync(join(repo, ".project")), `wrong plan: ${JSON.stringify(wrong)}`);
+    const none = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+    expect(none.code === "APPROVAL_CLIENT_UI_REQUIRED" && none.data.planText === plan.data.planText, `no plan: ${JSON.stringify(none)}`);
+    const ok = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES", planText: plan.data.planText });
+    expect(ok.ok && existsSync(join(repo, ".project")) && ok.data.approval?.[0]?.assurance === "host-prompt", `host-permission apply: ${JSON.stringify(ok)}`);
+    prove("opt-in host-permission mode: the exact plan runs and is labelled host-prompt; a missing, edited or stale plan is refused with the current plan");
+  } finally {
+    await session.close();
+  }
+  const session2 = await open({});
+  try {
+    const repo = repoWithPackageJson();
+    const plan = await call(session2, "praxis_approval_plan", { repo, tool: "praxis_project_init_apply", toolArguments: "{}" });
+    const forged = await call(session2, "praxis_project_init_apply", { repo, confirmation: "YES", planText: plan.data.planText });
+    expect(forged.code === "APPROVAL_CLIENT_UI_REQUIRED" && !existsSync(join(repo, ".project")), `default mode accepted planText: ${JSON.stringify(forged)}`);
+    prove("by default planText is ignored: without the opt-in nothing protected runs on arguments alone");
+  } finally {
+    await session2.close();
   }
 }
 

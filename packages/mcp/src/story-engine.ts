@@ -325,25 +325,28 @@ export async function commitServiceFix(
     },
     { confirmation, repo: workflowRepo },
   );
+  // Both approvals are obtained BEFORE anything runs (a round-trip client asks, then re-runs the whole call).
+  let pushApproval: UserApproval | undefined;
+  if (change.remote) {
+    try {
+      pushApproval = await obtainUserApproval(
+        {
+          action: "praxis_developer_git_publish",
+          kind: "git_operation",
+          summary: `Push branch ${change.branch} to ${change.remote}`,
+          description: [`Repository: ${repository}`, `Branch: ${change.branch}`, `Remote: ${change.remote}`, "The commit made by the Quality fix above is what is pushed."].join("\n"),
+          subject: JSON.stringify({ branch: change.branch, remote: change.remote, baseSha: change.baseSha, files: change.files, findingId: change.findingId }),
+        },
+        { confirmation, repo: workflowRepo },
+      );
+    } catch (error) {
+      // a refused push leaves the approved commit local: the record says the push did not happen instead of pretending it did
+      if (!(error instanceof ApprovalError)) throw error;
+    }
+  }
   const committed = runApprovedMutation(commitApproval, () => commitServiceFixBody(root, planned));
   if (!change.remote) return committed;
-  let pushApproval: UserApproval;
-  try {
-    pushApproval = await obtainUserApproval(
-      {
-        action: "praxis_developer_git_publish",
-        kind: "git_operation",
-        summary: `Push branch ${change.branch} to ${change.remote}`,
-        description: [`Repository: ${repository}`, `Branch: ${change.branch}`, `Commit: ${committed.change.commitSha}`, `Remote: ${change.remote}`].join("\n"),
-        subject: JSON.stringify({ branch: change.branch, commit: committed.change.commitSha, remote: change.remote }),
-      },
-      { confirmation, repo: workflowRepo },
-    );
-  } catch (error) {
-    // The commit exists on the local branch; the record says the push did not happen instead of pretending it did.
-    if (error instanceof ApprovalError) return { ...committed, change: { ...committed.change, mrStatus: "blocked" } };
-    throw error;
-  }
+  if (!pushApproval) return { ...committed, change: { ...committed.change, mrStatus: "blocked" } };
   return runApprovedMutation(pushApproval, () => pushServiceFix(root, committed));
 }
 

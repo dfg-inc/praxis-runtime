@@ -9,9 +9,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { decisionContentFingerprint, decisionLogPath, storyContentFingerprint, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
+import { ApprovalNeedsInput, decisionContentFingerprint, decisionLogPath, storyContentFingerprint, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
 import { createFixtureJiraProvider, createMockFetch, createMockJiraState, type JiraConfig } from "@praxis/jira";
-import { elicitationChannel } from "./approval-channel.js";
+import { approvalKey, elicitationChannel, roundTripChannel } from "./approval-channel.js";
 import { callTool } from "./tools.js";
 import { readPersistedState, type McpEnvelope } from "./workflow-test-helpers.js";
 
@@ -451,5 +451,67 @@ describe("running under the MCP server", () => {
     expect((withDialog.data.approval as Array<{ assurance: string }>)[0]!.assurance).toBe("client-ui");
     expect(without.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
     expect(seen).toHaveLength(1);
+  });
+});
+
+describe("2026-07-28: the dialog is a round trip (input_required, then the client retries with the answer)", () => {
+  async function firstPass(repo: string, command: object) {
+    return apply(repo, command, { channel: roundTripChannel(undefined) }).catch((error) => error);
+  }
+
+  it("the first pass runs nothing and hands the protocol layer the exact dialog", async () => {
+    const repo = await setup();
+    const before = JSON.stringify(state(repo));
+    const needs = await firstPass(repo, confirmStory(repo, "US-FLW-001"));
+    expect(needs).toBeInstanceOf(ApprovalNeedsInput);
+    expect(needs.request).toMatchObject({ action: "confirm-story", kind: "story_behavior" });
+    expect(needs.request.description).toContain("story 1 confirmed");
+    expect(JSON.stringify(state(repo))).toBe(before);
+  });
+
+  it("the retry with Approve runs exactly that action; Reject and Cancel run nothing", async () => {
+    for (const [response, expectOk] of [
+      [{ action: "accept", content: { decision: "approve" } }, true],
+      [{ action: "accept", content: { decision: "reject" } }, false],
+      [{ action: "decline" }, false],
+      [{ action: "cancel" }, false],
+    ] as const) {
+      const repo = await setup();
+      const command = confirmStory(repo, "US-FLW-001");
+      const needs = await firstPass(repo, command);
+      const retried = await apply(repo, command, { channel: roundTripChannel({ [approvalKey(needs.request)]: response }) });
+      expect(retried.ok, JSON.stringify(response)).toBe(expectOk);
+      if (!expectOk) expect(retried.code).toBe("APPROVAL_REJECTED");
+      expect(state(repo).stories.find((s) => s.id === "US-FLW-001")!.confirmedBehavior).toBe(expectOk);
+      expect(state(repo).stories.find((s) => s.id === "US-FLW-002")!.confirmedBehavior).toBe(false);
+    }
+  });
+
+  it("an answer is bound to the plan it was given for: a changed plan is asked again, not approved", async () => {
+    const repo = await setup();
+    const needs1 = await firstPass(repo, confirmStory(repo, "US-FLW-001"));
+    const answerForStory1 = { [approvalKey(needs1.request)]: { action: "accept", content: { decision: "approve" } } };
+    // the same answer cannot approve a different story
+    const other = await apply(repo, confirmStory(repo, "US-FLW-002"), { channel: roundTripChannel(answerForStory1) }).catch((error) => error);
+    expect(other).toBeInstanceOf(ApprovalNeedsInput);
+    expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
+    // nor can it approve the same thing after its content changed
+    const decision1 = await firstPass(repo, confirmDecision(repo, "DEC-FLW-001"));
+    const answerForDecision = { [approvalKey(decision1.request)]: { action: "accept", content: { decision: "approve" } } };
+    await must(repo, { action: "record-decision", id: "DEC-FLW-001", statement: "Ask the user, differently", rationale: "changed" });
+    const changed = await apply(repo, confirmDecision(repo, "DEC-FLW-001"), { channel: roundTripChannel(answerForDecision), role: "architect" }).catch((error) => error);
+    expect(changed).toBeInstanceOf(ApprovalNeedsInput);
+    expect(state(repo).decisions.find((d) => d.id === "DEC-FLW-001")!.confirmed).toBe(false);
+  });
+
+  it("a response that is not an elicitation result, or is for another key, is not an answer", async () => {
+    const repo = await setup();
+    const command = confirmStory(repo, "US-FLW-001");
+    const needs = await firstPass(repo, command);
+    for (const bogus of [{ [approvalKey(needs.request)]: { decision: "approve" } }, { [approvalKey(needs.request)]: "approve" }, { "approval-0000000000000000": { action: "accept", content: { decision: "approve" } } }, undefined]) {
+      const result = await apply(repo, command, { channel: roundTripChannel(bogus as never) }).catch((error) => error);
+      expect(result).toBeInstanceOf(ApprovalNeedsInput);
+    }
+    expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
   });
 });
