@@ -66,7 +66,7 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect d5696ec1dba4fa679f4207e9784ba9c38b23c0ce78d5fcc4cc51d8de16a37df7
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 518f398e2d25faaa3b1bbd07f6c785a841ede4e275bbb9ae7244262a509fd4f8
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -98,7 +98,7 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `d5696ec1dba4fa679f4207e9784ba9c38b23c0ce78d5fcc4cc51d8de16a37df7`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
+(sha256 `518f398e2d25faaa3b1bbd07f6c785a841ede4e275bbb9ae7244262a509fd4f8`, byte-identical to the file inside the `.mcpb`). Its `.mcp.json` already defaults
 `PRAXIS_SECURITY_MODE` to `secure`.
 
 ## Verify the loaded build, not the version string
@@ -108,9 +108,9 @@ The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-
 | field | expect |
 | --- | --- |
 | `origin` | `bundle` |
-| `bundleSha256` | `d5696ec1dba4fa679f4207e9784ba9c38b23c0ce78d5fcc4cc51d8de16a37df7` (the file Desktop is running) |
-| `coreBaseline` | `fd42b461c3fbc26a4e4210c8e24a4c7dfca4854d` |
-| `sourceDigest` | `a605b1de726e94c09e392e4044e19bbee418a704add7be601a7ad21e27a58f38` |
+| `bundleSha256` | `518f398e2d25faaa3b1bbd07f6c785a841ede4e275bbb9ae7244262a509fd4f8` (the file Desktop is running) |
+| `coreBaseline` | `4ecbc07adb085b2dd2809027bbd8bad1e2f5924a` |
+| `sourceDigest` | `ecdd0d443c23bfed4c7d351e2c75f1d2ae7a566b95cbc449ce5e5589019308e5` |
 
 Mismatching `bundleSha256` means an older extension is still loaded: fully quit Claude Desktop and reopen.
 
@@ -125,7 +125,7 @@ Expected after install (Desktop → ask Praxis Doctor, then list tools):
 - **52 MCP tools** (50 before): new read-only `praxis_workflow_inspect` (requirements, Stories, decisions, work, handoffs, open items, Quality evidence, links) and `praxis_session_start` (role initialisation without a local script).
 - `praxis_developer_status` takes `workItemId` for a local Work Item; `workPackage` accepts only a Work Package id or a Jira key and refuses a Work Item id.
 - Role plugins: install the four `praxis-<role>.zip` files from `desktop-install/` (skills: BA 23, Architect 25, Developer 30, Quality 7). Their `session-start` skills call `praxis_session_start`.
-- `.mcpb` sha256 `524dda1e89ebed751f640b393478f7d727eab72a7d16ea2a06213cfa5596644e`.
+- `.mcpb` sha256 `96533ddd11e2eedef9efe9c23ebf8b1b97a4903b73198f08239cb6361e242f2c`.
 
 Desktop acceptance is **not** claimed for this build until it has been installed and re-tested on the real Desktop host.
 

@@ -24,11 +24,12 @@
     "accept:workflow": "npm run build -w @praxis/mcp && node tools/scripts/workflow-external-acceptance.mjs",
     "accept:stories": "npm run build -w @praxis/mcp && node tools/scripts/story-quality-acceptance.mjs",
     "accept:generic": "npm run build -w @praxis/mcp && node tools/scripts/generic-quality-acceptance.mjs",
-    "verify": "npm run build && npm run typecheck && npm run test && npm run check:tests && npm run pack:mcpb && npm run accept:git-delivery && npm run accept:git-delivery-e2e && npm run accept:quality-startup && npm run accept:quality-review && npm run accept:quality-apply && npm run accept:quality-state-consistency && npm run accept:quality-readback && npm run accept:mcpb-runtime && npm run accept:git-authorization",
+    "verify": "npm run build && npm run typecheck && npm run test && npm run check:tests && npm run pack:mcpb && npm run accept:git-delivery && npm run accept:git-delivery-e2e && npm run accept:quality-startup && npm run accept:quality-review && npm run accept:quality-apply && npm run accept:quality-state-consistency && npm run accept:quality-readback && npm run accept:mcpb-runtime && npm run accept:git-authorization && npm run accept:service-delegation",
     "check:version": "node tools/scripts/check-ecosystem-version.mjs",
     "check:tests": "node tools/scripts/check-test-completeness.mjs",
     "accept:git-authorization": "node tools/scripts/git-authorization-acceptance.mjs",
-    "report:tool-origins": "node tools/scripts/tool-origins-report.mjs"
+    "report:tool-origins": "node tools/scripts/tool-origins-report.mjs",
+    "accept:service-delegation": "node tools/scripts/service-delegation-acceptance.mjs"
   },
   "engines": {
     "node": ">=20"
