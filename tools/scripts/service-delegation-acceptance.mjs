@@ -26,7 +26,10 @@ import { buildConsumerLikeFixture, emptyBare, attachSshLikeRemote, git, startGit
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const version = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version;
 const coreRoot = process.env.PRAXIS_CORE_ROOT ?? resolve(root, "../praxis-core");
-const serviceCli = join(coreRoot, "tools/approval-service/praxis-approval-service.mjs");
+// By default the service runs from source under this script's Node. PRAXIS_SERVICE_NODE and PRAXIS_SERVICE_BUNDLE run the packaged
+// bundle under the packaged runtime instead (the test variant of the bundle: the production one refuses to run unisolated).
+const serviceCli = process.env.PRAXIS_SERVICE_BUNDLE ?? join(coreRoot, "tools/approval-service/praxis-approval-service.mjs");
+const serviceNode = process.env.PRAXIS_SERVICE_NODE ?? process.execPath;
 const authenticatorModule = join(coreRoot, "tools/broker/test-authenticator.mjs");
 const steps = [];
 const blocked = [];
@@ -40,6 +43,7 @@ const ok = (name) => {
 };
 const expect = (cond, msg) => cond || fail(msg);
 
+console.log(`service under test: ${serviceNode} ${serviceCli}`);
 if (!existsSync(serviceCli)) {
   console.log(`BLOCKED service-delegation: the approval service is not at ${serviceCli} (set PRAXIS_CORE_ROOT)`);
   process.exit(2);
@@ -104,7 +108,7 @@ writeFileSync(
 let service;
 const startService = () =>
   new Promise((resolveStart, reject) => {
-    const child = spawn(process.execPath, [serviceCli, "run", "--config", configFile], { stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, PRAXIS_APPROVAL_PLAN_TTL_MS: "120000" } });
+    const child = spawn(serviceNode, [serviceCli, "run", "--config", configFile], { stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH, PRAXIS_APPROVAL_PLAN_TTL_MS: "120000" } });
     let out = "";
     child.stdout.on("data", (d) => {
       out += d;
@@ -122,7 +126,7 @@ const post = async (path, body) => {
   return { status: r.status, json: await r.json() };
 };
 {
-  const enroll = spawnSync(process.execPath, [serviceCli, "enroll-code", "--config", configFile], { encoding: "utf8" });
+  const enroll = spawnSync(serviceNode, [serviceCli, "enroll-code", "--config", configFile], { encoding: "utf8" });
   const code = /: ([a-f0-9]{20})\n/.exec(enroll.stdout)?.[1];
   expect(code, `enrollment code: ${enroll.stdout}${enroll.stderr}`);
   const c = await post("/api/enroll/challenge", { secret: code, label: "acceptance" });
