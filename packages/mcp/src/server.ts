@@ -17,6 +17,8 @@ export { parseRoleArgv, PraxisMcpRoleError } from "./catalog.js";
 export { PRAXIS_MCP_SDK } from "./protocol.js";
 export { jsonSchemaToZod } from "./schema.js";
 
+import { recordDiagnostic } from "./diagnostics-log.js";
+
 function logStderr(line: string): void {
   console.error(line);
 }
@@ -105,6 +107,20 @@ export function createPraxisMcpServer(opts: { role: PraxisRole; version: string 
             ? (extra as { signal?: AbortSignal }).signal
             : undefined;
         const client = describeClient(server, extra);
+        const started = Date.now();
+        const callId = `${started.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+        recordDiagnostic({
+          event: "tool_enter",
+          callId,
+          tool: tool.name,
+          client: client.name ?? null,
+          protocol: client.protocolVersion ?? null,
+          flow: client.flow,
+          capabilities: client.capabilities,
+          elicitationDeclared: client.elicitation.declared !== null,
+          dialog: client.dialog,
+          ...(client.reason ? { reason: client.reason } : {}),
+        });
         let envelope;
         try {
           envelope = await callTool(tool.name, args ?? {}, {
@@ -117,10 +133,20 @@ export function createPraxisMcpServer(opts: { role: PraxisRole; version: string 
         } catch (error) {
           // 2026-07-28: nothing has run; ask the user in the client's dialog and let it retry the call with the answer
           if (error instanceof ApprovalNeedsInput) {
+            recordDiagnostic({ event: "input_required", callId, tool: tool.name, ms: Date.now() - started });
             return inputRequired({ inputRequests: { [approvalKey(error.request)]: inputRequired.elicit(elicitParams(error.request) as never) } });
           }
+          recordDiagnostic({ event: "tool_failed", callId, tool: tool.name, ms: Date.now() - started, error: error instanceof Error ? error.name : "unknown" });
           throw error;
         }
+        recordDiagnostic({
+          event: "tool_finished",
+          callId,
+          tool: tool.name,
+          ms: Date.now() - started,
+          ok: envelope.ok,
+          code: (envelope as { code?: string }).code ?? null,
+        });
         return {
           content: [{ type: "text" as const, text: JSON.stringify(envelope) }],
           structuredContent: envelope as unknown as Record<string, unknown>,
@@ -162,6 +188,7 @@ export function startStdioServer(opts?: {
       },
     });
     logStderr("[praxis-mcp] ready");
+    recordDiagnostic({ event: "server_start", version, role });
     const shutdown = () => {
       void handle.close().finally(() => process.exit(0));
     };

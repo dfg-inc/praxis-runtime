@@ -13890,11 +13890,11 @@ function unsetFields(config4) {
 }
 function loadProjectConfig(repoRoot) {
   for (const name of PROJECT_FILE_NAMES) {
-    const path = (0, import_node_path6.join)(repoRoot, name);
-    if (!(0, import_node_fs7.existsSync)(path))
+    const path = (0, import_node_path7.join)(repoRoot, name);
+    if (!(0, import_node_fs8.existsSync)(path))
       continue;
     try {
-      const raw = (0, import_node_fs7.readFileSync)(path, "utf8");
+      const raw = (0, import_node_fs8.readFileSync)(path, "utf8");
       const data = (0, import_yaml.parse)(raw) ?? {};
       const config4 = ProjectConfigSchema.parse(data);
       return { status: "loaded", path, config: config4, unset: unsetFields(config4) };
@@ -13913,14 +13913,14 @@ function loadProjectConfig(repoRoot) {
     status: "missing",
     config: DEFAULTS,
     unset: unsetFields(DEFAULTS),
-    suggestedPath: (0, import_node_path6.join)(repoRoot, ".project")
+    suggestedPath: (0, import_node_path7.join)(repoRoot, ".project")
   };
 }
 function readJson3(path) {
-  if (!(0, import_node_fs7.existsSync)(path))
+  if (!(0, import_node_fs8.existsSync)(path))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs7.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs8.readFileSync)(path, "utf8"));
   } catch {
     return void 0;
   }
@@ -13928,7 +13928,7 @@ function readJson3(path) {
 function inferProjectConfig(repoRoot) {
   const existing = loadProjectConfig(repoRoot);
   const notes = [];
-  const pkg = readJson3((0, import_node_path6.join)(repoRoot, "package.json"));
+  const pkg = readJson3((0, import_node_path7.join)(repoRoot, "package.json"));
   const scripts = pkg && typeof pkg.scripts === "object" && pkg.scripts ? pkg.scripts : {};
   const stack = [];
   if (pkg) {
@@ -13955,19 +13955,19 @@ function inferProjectConfig(repoRoot) {
 }
 function writeProjectConfig(repoRoot, yamlOrConfig) {
   requireMutationLease();
-  const path = (0, import_node_path6.join)(repoRoot, ".project");
+  const path = (0, import_node_path7.join)(repoRoot, ".project");
   const yaml2 = typeof yamlOrConfig === "string" ? yamlOrConfig.endsWith("\n") ? yamlOrConfig : `${yamlOrConfig}
 ` : `${(0, import_yaml.stringify)(yamlOrConfig).trimEnd()}
 `;
-  (0, import_node_fs7.writeFileSync)(path, yaml2);
+  (0, import_node_fs8.writeFileSync)(path, yaml2);
   return path;
 }
-var import_node_fs7, import_node_path6, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
+var import_node_fs8, import_node_path7, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
 var init_dist2 = __esm({
   "node_modules/@praxis/project-config/dist/index.js"() {
     init_dist();
-    import_node_fs7 = require("node:fs");
-    import_node_path6 = require("node:path");
+    import_node_fs8 = require("node:fs");
+    import_node_path7 = require("node:path");
     import_yaml = __toESM(require_dist2(), 1);
     init_zod();
     ProjectConfigSchema = external_exports.object({
@@ -15157,7 +15157,7 @@ var init_dist3 = __esm({
 
 // node_modules/@praxis/jira/dist/mutation-auth.js
 function jiraMutation(repo, spec) {
-  const root = (0, import_node_path7.resolve)(repo);
+  const root = (0, import_node_path8.resolve)(repo);
   return {
     repo: root,
     operation: spec.operation,
@@ -15174,10 +15174,10 @@ function authorizeJira(request, write) {
     return write();
   throw new ApprovalError("APPROVAL_REQUIRED", `${request.action} changes Jira and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was sent.`);
 }
-var import_node_path7;
+var import_node_path8;
 var init_mutation_auth = __esm({
   "node_modules/@praxis/jira/dist/mutation-auth.js"() {
-    import_node_path7 = require("node:path");
+    import_node_path8 = require("node:path");
     init_dist();
   }
 });
@@ -15230,21 +15230,21 @@ var init_role_policy = __esm({
 
 // node_modules/@praxis/jira/dist/atomic-json.js
 function writeJsonAtomic(filePath, value) {
-  (0, import_node_fs8.mkdirSync)((0, import_node_path8.dirname)(filePath), { recursive: true });
+  (0, import_node_fs9.mkdirSync)((0, import_node_path9.dirname)(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  (0, import_node_fs8.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs9.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs8.renameSync)(tmp, filePath);
+  (0, import_node_fs9.renameSync)(tmp, filePath);
 }
 function readJsonFile(filePath, artifactType) {
-  if (!(0, import_node_fs8.existsSync)(filePath)) {
+  if (!(0, import_node_fs9.existsSync)(filePath)) {
     return {
       ok: false,
       reason: "missing",
       message: `${artifactType} unavailable (${filePath})`
     };
   }
-  const raw = (0, import_node_fs8.readFileSync)(filePath, "utf8");
+  const raw = (0, import_node_fs9.readFileSync)(filePath, "utf8");
   if (!raw.trim()) {
     return {
       ok: false,
@@ -15262,17 +15262,17 @@ function readJsonFile(filePath, artifactType) {
     };
   }
 }
-var import_node_fs8, import_node_path8;
+var import_node_fs9, import_node_path9;
 var init_atomic_json = __esm({
   "node_modules/@praxis/jira/dist/atomic-json.js"() {
-    import_node_fs8 = require("node:fs");
-    import_node_path8 = require("node:path");
+    import_node_fs9 = require("node:fs");
+    import_node_path9 = require("node:path");
   }
 });
 
 // node_modules/@praxis/jira/dist/write-journal.js
 function writeJournalPath(repo) {
-  return (0, import_node_path9.join)(repo, ".praxis-jira", "write-journal.json");
+  return (0, import_node_path10.join)(repo, ".praxis-jira", "write-journal.json");
 }
 function loadWriteJournal(repo) {
   const parsed = readJsonFile(writeJournalPath(repo), "jira-write-journal");
@@ -15314,10 +15314,10 @@ function advanceWriteOp(repo, operationId, patch) {
   };
   return upsertWriteOp(repo, next);
 }
-var import_node_path9;
+var import_node_path10;
 var init_write_journal = __esm({
   "node_modules/@praxis/jira/dist/write-journal.js"() {
-    import_node_path9 = require("node:path");
+    import_node_path10 = require("node:path");
     init_atomic_json();
   }
 });
@@ -15500,18 +15500,18 @@ var init_managed_scope = __esm({
 
 // node_modules/@praxis/jira/dist/work-package-local.js
 function listDirs(abs) {
-  if (!(0, import_node_fs9.existsSync)(abs))
+  if (!(0, import_node_fs10.existsSync)(abs))
     return [];
-  return (0, import_node_fs9.readdirSync)(abs).map((n) => (0, import_node_path10.join)(abs, n)).filter((p) => {
+  return (0, import_node_fs10.readdirSync)(abs).map((n) => (0, import_node_path11.join)(abs, n)).filter((p) => {
     try {
-      return (0, import_node_fs9.statSync)(p).isDirectory();
+      return (0, import_node_fs10.statSync)(p).isDirectory();
     } catch {
       return false;
     }
   });
 }
 function readIf(path) {
-  return (0, import_node_fs9.existsSync)(path) ? (0, import_node_fs9.readFileSync)(path, "utf8") : void 0;
+  return (0, import_node_fs10.existsSync)(path) ? (0, import_node_fs10.readFileSync)(path, "utf8") : void 0;
 }
 function extractMermaid(text) {
   const out = [];
@@ -15529,7 +15529,7 @@ function discoverLocalWorkPackages(repo) {
       return;
     const cur = byId.get(id) ?? {
       id,
-      manifestDir: (0, import_node_path10.join)(repo, "work-packages", id),
+      manifestDir: (0, import_node_path11.join)(repo, "work-packages", id),
       mermaid: []
     };
     if (kind === "design")
@@ -15540,24 +15540,24 @@ function discoverLocalWorkPackages(repo) {
       cur.manifestDir = abs;
     byId.set(id, cur);
   };
-  for (const p of listDirs((0, import_node_path10.join)(repo, "design")))
+  for (const p of listDirs((0, import_node_path11.join)(repo, "design")))
     take(p, "design");
-  for (const p of listDirs((0, import_node_path10.join)(repo, "wp")))
+  for (const p of listDirs((0, import_node_path11.join)(repo, "wp")))
     take(p, "canon");
-  for (const p of listDirs((0, import_node_path10.join)(repo, "work-packages")))
+  for (const p of listDirs((0, import_node_path11.join)(repo, "work-packages")))
     take(p, "manifest");
   for (const wp of byId.values()) {
     const root = wp.designDir ?? wp.canonWpDir ?? wp.manifestDir;
-    const spec = (0, import_node_path10.join)(root, "change-spec.json");
-    const handoff4 = (0, import_node_path10.join)(root, "architect-developer.handoff.json");
-    wp.changeSpecPath = (0, import_node_fs9.existsSync)(spec) ? spec : void 0;
-    wp.handoffPath = (0, import_node_fs9.existsSync)(handoff4) ? handoff4 : void 0;
-    wp.indexMd = readIf((0, import_node_path10.join)(root, "index.md"));
+    const spec = (0, import_node_path11.join)(root, "change-spec.json");
+    const handoff4 = (0, import_node_path11.join)(root, "architect-developer.handoff.json");
+    wp.changeSpecPath = (0, import_node_fs10.existsSync)(spec) ? spec : void 0;
+    wp.handoffPath = (0, import_node_fs10.existsSync)(handoff4) ? handoff4 : void 0;
+    wp.indexMd = readIf((0, import_node_path11.join)(root, "index.md"));
     const blob = [
       wp.indexMd ?? "",
-      readIf((0, import_node_path10.join)(root, "decisions.md")) ?? "",
-      readIf((0, import_node_path10.join)(root, "nfr-budgets.md")) ?? "",
-      readIf((0, import_node_path10.join)(root, "contracts.md")) ?? ""
+      readIf((0, import_node_path11.join)(root, "decisions.md")) ?? "",
+      readIf((0, import_node_path11.join)(root, "nfr-budgets.md")) ?? "",
+      readIf((0, import_node_path11.join)(root, "contracts.md")) ?? ""
     ].join("\n");
     wp.mermaid = extractMermaid(blob);
   }
@@ -15577,11 +15577,11 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   if (byId)
     return byId;
   for (const w of all) {
-    const manifestPath = (0, import_node_path10.join)(w.manifestDir, "manifest.json");
-    if (!(0, import_node_fs9.existsSync)(manifestPath))
+    const manifestPath = (0, import_node_path11.join)(w.manifestDir, "manifest.json");
+    if (!(0, import_node_fs10.existsSync)(manifestPath))
       continue;
     try {
-      const m = JSON.parse((0, import_node_fs9.readFileSync)(manifestPath, "utf8"));
+      const m = JSON.parse((0, import_node_fs10.readFileSync)(manifestPath, "utf8"));
       if (m.jiraIssueKey === idOrKey || m.id === idOrKey)
         return w;
     } catch {
@@ -15590,24 +15590,24 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   return void 0;
 }
 function writeWpManifest(repo, wp) {
-  const dir = (0, import_node_path10.join)(repo, "work-packages", wp.id);
-  (0, import_node_fs9.mkdirSync)(dir, { recursive: true });
-  const path = (0, import_node_path10.join)(dir, "manifest.json");
-  (0, import_node_fs9.writeFileSync)(path, `${JSON.stringify(wp, null, 2)}
+  const dir = (0, import_node_path11.join)(repo, "work-packages", wp.id);
+  (0, import_node_fs10.mkdirSync)(dir, { recursive: true });
+  const path = (0, import_node_path11.join)(dir, "manifest.json");
+  (0, import_node_fs10.writeFileSync)(path, `${JSON.stringify(wp, null, 2)}
 `);
   return path;
 }
 function readWpManifest(repo, id) {
-  const path = (0, import_node_path10.join)(repo, "work-packages", id, "manifest.json");
-  if (!(0, import_node_fs9.existsSync)(path))
+  const path = (0, import_node_path11.join)(repo, "work-packages", id, "manifest.json");
+  if (!(0, import_node_fs10.existsSync)(path))
     return void 0;
-  return JSON.parse((0, import_node_fs9.readFileSync)(path, "utf8"));
+  return JSON.parse((0, import_node_fs10.readFileSync)(path, "utf8"));
 }
-var import_node_fs9, import_node_path10, WP_ID_RE;
+var import_node_fs10, import_node_path11, WP_ID_RE;
 var init_work_package_local = __esm({
   "node_modules/@praxis/jira/dist/work-package-local.js"() {
-    import_node_fs9 = require("node:fs");
-    import_node_path10 = require("node:path");
+    import_node_fs10 = require("node:fs");
+    import_node_path11 = require("node:path");
     WP_ID_RE = /^WP-\d{8}-\d+$/;
   }
 });
@@ -15654,9 +15654,9 @@ function firstMarkdownHeading(md) {
   return void 0;
 }
 function readText(path) {
-  if (!path || !(0, import_node_fs10.existsSync)(path))
+  if (!path || !(0, import_node_fs11.existsSync)(path))
     return void 0;
-  return (0, import_node_fs10.readFileSync)(path, "utf8");
+  return (0, import_node_fs11.readFileSync)(path, "utf8");
 }
 function readJson4(path) {
   const raw = readText(path);
@@ -15709,10 +15709,10 @@ function jiraWpSummary(id, title) {
   return `[${id}] ${title}`;
 }
 function readNormalizedWorkPackage(repo, local, opts) {
-  const designIndex = local.designDir ? readText((0, import_node_path11.join)(local.designDir, "index.md")) : void 0;
-  const canonIndex = local.canonWpDir ? readText((0, import_node_path11.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path11.join)(repo, "wp", local.id, "index.md"));
-  const manifest = readJson4((0, import_node_path11.join)(local.manifestDir, "manifest.json"));
-  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path11.join)(local.designDir, "change-spec.json") : void 0);
+  const designIndex = local.designDir ? readText((0, import_node_path12.join)(local.designDir, "index.md")) : void 0;
+  const canonIndex = local.canonWpDir ? readText((0, import_node_path12.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path12.join)(repo, "wp", local.id, "index.md"));
+  const manifest = readJson4((0, import_node_path12.join)(local.manifestDir, "manifest.json"));
+  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path12.join)(local.designDir, "change-spec.json") : void 0);
   const spec = readJson4(specPath);
   const fm = {
     ...parseSimpleFrontmatter(splitFrontmatter(designIndex ?? "").frontmatter),
@@ -15790,11 +15790,11 @@ function selectArchitectWorkPackages(opts) {
   }
   return { selected: selected ? [selected] : [], inspected };
 }
-var import_node_fs10, import_node_path11, INVALID_WP_TITLES, WorkPackageScopeError;
+var import_node_fs11, import_node_path12, INVALID_WP_TITLES, WorkPackageScopeError;
 var init_work_package_read = __esm({
   "node_modules/@praxis/jira/dist/work-package-read.js"() {
-    import_node_fs10 = require("node:fs");
-    import_node_path11 = require("node:path");
+    import_node_fs11 = require("node:fs");
+    import_node_path12 = require("node:path");
     init_work_package_local();
     INVALID_WP_TITLES = /* @__PURE__ */ new Set(["", "---", "-", "work package", "untitled"]);
     WorkPackageScopeError = class extends Error {
@@ -16138,8 +16138,8 @@ ${usefulMermaid[0]}
       await opts.provider.writePraxisState(wpKey, {
         lifecycle: "ready-for-development"
       });
-      const handoffPath2 = local.handoffPath ?? (0, import_node_path12.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
-      const prev = (0, import_node_fs11.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs11.readFileSync)(handoffPath2, "utf8")) : {};
+      const handoffPath2 = local.handoffPath ?? (0, import_node_path13.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
+      const prev = (0, import_node_fs12.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs12.readFileSync)(handoffPath2, "utf8")) : {};
       writeJsonAtomic(handoffPath2, {
         ...prev,
         contract: prev.contract ?? "architect.developer.handoff",
@@ -16203,11 +16203,11 @@ ${usefulMermaid[0]}
     outOfScopeWorkPackages
   };
 }
-var import_node_fs11, import_node_path12, WP_PROP, ARCH_COMMENT_PROP;
+var import_node_fs12, import_node_path13, WP_PROP, ARCH_COMMENT_PROP;
 var init_architect_apply = __esm({
   "node_modules/@praxis/jira/dist/architect-apply.js"() {
-    import_node_fs11 = require("node:fs");
-    import_node_path12 = require("node:path");
+    import_node_fs12 = require("node:fs");
+    import_node_path13 = require("node:path");
     init_rich_text();
     init_role_policy();
     init_managed_scope();
@@ -16604,10 +16604,10 @@ var init_legacy_adopt = __esm({
 
 // node_modules/@praxis/jira/dist/developer-complete.js
 function readJson5(path) {
-  if (!(0, import_node_fs12.existsSync)(path))
+  if (!(0, import_node_fs13.existsSync)(path))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs12.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs13.readFileSync)(path, "utf8"));
   } catch {
     return void 0;
   }
@@ -16615,10 +16615,10 @@ function readJson5(path) {
 function loadQualityTestCommand(repo) {
   const names = [".project", ".project.yaml", ".project.yml"];
   for (const name of names) {
-    const p = (0, import_node_path13.join)(repo, name);
-    if (!(0, import_node_fs12.existsSync)(p))
+    const p = (0, import_node_path14.join)(repo, name);
+    if (!(0, import_node_fs13.existsSync)(p))
       continue;
-    const raw = (0, import_node_fs12.readFileSync)(p, "utf8");
+    const raw = (0, import_node_fs13.readFileSync)(p, "utf8");
     let inQ = false;
     for (const line of raw.split("\n")) {
       if (/^quality:\s*$/.test(line)) {
@@ -16634,10 +16634,10 @@ function loadQualityTestCommand(repo) {
         return m[1].replace(/^["']|["']$/g, "").trim();
     }
   }
-  const pkgPath = (0, import_node_path13.join)(repo, "package.json");
-  if ((0, import_node_fs12.existsSync)(pkgPath)) {
+  const pkgPath = (0, import_node_path14.join)(repo, "package.json");
+  if ((0, import_node_fs13.existsSync)(pkgPath)) {
     try {
-      const pkg = JSON.parse((0, import_node_fs12.readFileSync)(pkgPath, "utf8"));
+      const pkg = JSON.parse((0, import_node_fs13.readFileSync)(pkgPath, "utf8"));
       if (pkg.scripts?.test)
         return "npm test";
     } catch {
@@ -16684,14 +16684,14 @@ function runProjectVerification(repo) {
   return { command, exitCode, ok, stdout, timestamp, ...counts };
 }
 function completionPaths(repo, workPackageId) {
-  const design = (0, import_node_path13.join)(repo, "design", workPackageId);
-  const dev = (0, import_node_path13.join)(design, "dev");
+  const design = (0, import_node_path14.join)(repo, "design", workPackageId);
+  const dev = (0, import_node_path14.join)(design, "dev");
   return {
     designDir: design,
-    evidencePath: (0, import_node_path13.join)(dev, "completion-evidence.json"),
-    qualityHandoffPath: (0, import_node_path13.join)(dev, "quality-handoff.json"),
-    changeSpecPath: (0, import_node_path13.join)(design, "change-spec.json"),
-    architectHandoffPath: (0, import_node_path13.join)(design, "architect-developer.handoff.json")
+    evidencePath: (0, import_node_path14.join)(dev, "completion-evidence.json"),
+    qualityHandoffPath: (0, import_node_path14.join)(dev, "quality-handoff.json"),
+    changeSpecPath: (0, import_node_path14.join)(design, "change-spec.json"),
+    architectHandoffPath: (0, import_node_path14.join)(design, "architect-developer.handoff.json")
   };
 }
 function readChangeSpec(repo, id) {
@@ -16736,10 +16736,10 @@ function persistLocalComplete(opts) {
     qualityState: "pending",
     claim: opts.claim ? { ...opts.claim, state: "active", expectedState: "ready-for-qa" } : prev.claim ?? null
   });
-  const claimFile = (0, import_node_path13.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
+  const claimFile = (0, import_node_path14.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
   if (opts.claim) {
-    (0, import_node_fs12.mkdirSync)((0, import_node_path13.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-    (0, import_node_fs12.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
+    (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+    (0, import_node_fs13.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
 `);
   }
   void opts.verification;
@@ -16792,7 +16792,7 @@ async function developerCompleteWp(opts) {
   const arch = readJson5(paths.architectHandoffPath) ?? {};
   const features = Array.isArray(spec.features) ? spec.features : Array.isArray(arch.features) ? arch.features : [];
   const acceptanceChecks = acceptanceFromSpec(spec);
-  (0, import_node_fs12.mkdirSync)((0, import_node_path13.join)(paths.designDir, "dev"), { recursive: true });
+  (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(paths.designDir, "dev"), { recursive: true });
   let evidence;
   let handoff4;
   try {
@@ -17009,12 +17009,12 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto7, import_node_fs12, import_node_path13, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto7, import_node_fs13, import_node_path14, import_node_child_process3, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
     import_node_crypto7 = require("node:crypto");
-    import_node_fs12 = require("node:fs");
-    import_node_path13 = require("node:path");
+    import_node_fs13 = require("node:fs");
+    import_node_path14 = require("node:path");
     import_node_child_process3 = require("node:child_process");
     init_dist();
     init_mutation_auth();
@@ -17074,47 +17074,47 @@ function qualityApplyFingerprint(plan) {
   })}`;
 }
 function qualityEvidencePath(repo, workPackageId) {
-  return (0, import_node_path14.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  return (0, import_node_path15.join)(repo, "design", workPackageId, "qa", "quality-review.json");
 }
 function qualityEvidenceSidecarPath(repo, workPackageId) {
-  return (0, import_node_path14.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  return (0, import_node_path15.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
 }
 function qualityApplyPreviewPath(repo, workPackageId) {
-  return (0, import_node_path14.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
+  return (0, import_node_path15.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
 }
 function qualityApplyResultPath(repo, workPackageId) {
-  return (0, import_node_path14.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
+  return (0, import_node_path15.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
 }
 function readQualityEvidence(repo, workPackageId) {
   const p = qualityEvidencePath(repo, workPackageId);
   const alt = qualityEvidenceSidecarPath(repo, workPackageId);
-  const file2 = (0, import_node_fs13.existsSync)(p) ? p : (0, import_node_fs13.existsSync)(alt) ? alt : void 0;
+  const file2 = (0, import_node_fs14.existsSync)(p) ? p : (0, import_node_fs14.existsSync)(alt) ? alt : void 0;
   if (!file2)
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs13.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs14.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeQualityEvidence(repo, evidence) {
   const p = qualityEvidencePath(repo, evidence.workPackageId);
-  (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(p, ".."), { recursive: true });
-  (0, import_node_fs13.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(p, ".."), { recursive: true });
+  (0, import_node_fs14.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
 `);
   const side = qualityEvidenceSidecarPath(repo, evidence.workPackageId);
-  (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(side, ".."), { recursive: true });
-  (0, import_node_fs13.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(side, ".."), { recursive: true });
+  (0, import_node_fs14.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
 `);
   return p;
 }
 function liveSnapshotDigest(repo, files) {
   const uniq = [...new Set((files ?? []).map((f) => f.path).filter(Boolean))].sort();
   const entries = uniq.map((rel2) => {
-    const abs = (0, import_node_path14.join)(repo, rel2);
-    if (!(0, import_node_fs13.existsSync)(abs))
+    const abs = (0, import_node_path15.join)(repo, rel2);
+    if (!(0, import_node_fs14.existsSync)(abs))
       return { path: rel2, missing: true };
-    return { path: rel2, sha256: sha256Text((0, import_node_fs13.readFileSync)(abs, "utf8")) };
+    return { path: rel2, sha256: sha256Text((0, import_node_fs14.readFileSync)(abs, "utf8")) };
   });
   return sha256Text(JSON.stringify(entries));
 }
@@ -17122,8 +17122,8 @@ function commentBody(evidence) {
   return `${QUALITY_COMMENT_MARK} ${evidence.verdict} reviewId=${evidence.reviewId}`;
 }
 function writeJson(path, value) {
-  (0, import_node_fs13.mkdirSync)((0, import_node_path14.join)(path, ".."), { recursive: true });
-  (0, import_node_fs13.writeFileSync)(path, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(path, ".."), { recursive: true });
+  (0, import_node_fs14.writeFileSync)(path, `${JSON.stringify(value, null, 2)}
 `);
 }
 function propertyAction(wpKey, propertyKey, intendedValue) {
@@ -17303,10 +17303,10 @@ async function existingBugKey(provider, fingerprint2) {
 }
 function readQualityApplyResult(repo, workPackageId) {
   const p = qualityApplyResultPath(repo, workPackageId);
-  if (!(0, import_node_fs13.existsSync)(p))
+  if (!(0, import_node_fs14.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs13.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs14.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
@@ -17390,10 +17390,10 @@ async function applyQualityReview(opts) {
     throw new QualityApplyError("QUALITY_REVIEW_STALE", "implementation snapshot changed; run a new Quality Review");
   }
   const previewFile = qualityApplyPreviewPath(opts.repo, opts.workPackageId);
-  if (!(0, import_node_fs13.existsSync)(previewFile)) {
+  if (!(0, import_node_fs14.existsSync)(previewFile)) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "no saved apply preview; re-run apply preview");
   }
-  const saved = JSON.parse((0, import_node_fs13.readFileSync)(previewFile, "utf8"));
+  const saved = JSON.parse((0, import_node_fs14.readFileSync)(previewFile, "utf8"));
   if (saved.previewFingerprint !== opts.previewFingerprint) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "previewFingerprint is stale; re-run apply preview");
   }
@@ -17570,8 +17570,8 @@ async function applyQualityReview(opts) {
       if (action.kind === "manifest") {
         lifecycle = "reconciling";
         const local = resolveLocalWorkPackage(opts.repo, evidence.workPackageId);
-        const manifestFile = local ? (0, import_node_path14.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path14.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
-        if (!local || !(0, import_node_fs13.existsSync)(manifestFile)) {
+        const manifestFile = local ? (0, import_node_path15.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path15.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
+        if (!local || !(0, import_node_fs14.existsSync)(manifestFile)) {
           errors.push(`QUALITY_MANIFEST_MISSING: cannot update ${evidence.workPackageId}`);
           return persistPartial({ code: "QUALITY_MANIFEST_MISSING" });
         }
@@ -17716,12 +17716,12 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto8, import_node_fs13, import_node_path14, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto8, import_node_fs14, import_node_path15, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
     import_node_crypto8 = require("node:crypto");
-    import_node_fs13 = require("node:fs");
-    import_node_path14 = require("node:path");
+    import_node_fs14 = require("node:fs");
+    import_node_path15 = require("node:path");
     init_mutation_auth();
     init_managed_scope();
     init_rich_text();
@@ -17926,7 +17926,7 @@ var init_quality_lifecycle_status = __esm({
 
 // node_modules/@praxis/jira/dist/workflows.js
 function loadJournal(repo) {
-  const parsed = readJsonFile((0, import_node_path15.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
+  const parsed = readJsonFile((0, import_node_path16.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
   if (!parsed.ok) {
     if (parsed.reason === "missing")
       return [];
@@ -17935,7 +17935,7 @@ function loadJournal(repo) {
   return parsed.value;
 }
 function saveJournal(repo, journal) {
-  writeJsonAtomic((0, import_node_path15.join)(repo, ".praxis-jira", "journal.json"), journal);
+  writeJsonAtomic((0, import_node_path16.join)(repo, ".praxis-jira", "journal.json"), journal);
 }
 function record4(repo, entry) {
   const journal = loadJournal(repo);
@@ -17946,7 +17946,7 @@ function record4(repo, entry) {
   saveJournal(repo, journal);
 }
 function proposalPath(repo, epicKey) {
-  return (0, import_node_path15.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
+  return (0, import_node_path16.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
 }
 function loadBaProposal(repo, epicKey) {
   const parsed = readJsonFile(proposalPath(repo, epicKey), "jira.ba.proposal");
@@ -18016,9 +18016,9 @@ async function ensureBaHandoffComment(provider, epicKey, canonical) {
   await provider.addComment(epicKey, provider.renderDescription(textDocument(`Praxis BA handoff ready. Stories: ${canonical.join(", ") || "none"}`)));
 }
 async function persistPreview(repo, epicKey, payload, planText) {
-  const dir = (0, import_node_path15.join)(repo, ".praxis-jira", "previews");
-  writeJsonAtomic((0, import_node_path15.join)(dir, `${epicKey}.json`), payload);
-  (0, import_node_fs14.writeFileSync)((0, import_node_path15.join)(dir, `${epicKey}.plan.txt`), `${planText}
+  const dir = (0, import_node_path16.join)(repo, ".praxis-jira", "previews");
+  writeJsonAtomic((0, import_node_path16.join)(dir, `${epicKey}.json`), payload);
+  (0, import_node_fs15.writeFileSync)((0, import_node_path16.join)(dir, `${epicKey}.plan.txt`), `${planText}
 `);
 }
 async function baAnalyzeEpic(opts) {
@@ -18141,7 +18141,7 @@ CREATE:
     canonicalStoryKeys: canonical,
     supersededStoryKeys: superseded,
     requirementIds: specs.flatMap((s) => s.requirementIds),
-    baArtifacts: [(0, import_node_path15.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
+    baArtifacts: [(0, import_node_path16.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
     openQuestions: [],
     nfrs: [],
     businessRules: [],
@@ -18160,8 +18160,8 @@ CREATE:
       supersededStoryKeys: superseded,
       plan: result.plan
     }, result.planText);
-    (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
-    (0, import_node_fs14.writeFileSync)((0, import_node_path15.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
+    (0, import_node_fs15.mkdirSync)((0, import_node_path16.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
+    (0, import_node_fs15.writeFileSync)((0, import_node_path16.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
 `);
   }
   if (opts.dryRun) {
@@ -18176,7 +18176,7 @@ CREATE:
       migration: adoption.status === "adopted" ? "required" : "none"
     };
   }
-  const handoffPath2 = (0, import_node_path15.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
+  const handoffPath2 = (0, import_node_path16.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
   assertRole("ba", "ba-handoff");
   await opts.provider.setIssueProperty(opts.epicKey, "praxis.baHandoff", handoff4);
   await ensureBaHandoffComment(opts.provider, opts.epicKey, canonical);
@@ -18315,8 +18315,8 @@ async function claimWorkPackage(opts) {
       claim: claim4
     });
   }
-  (0, import_node_fs14.mkdirSync)((0, import_node_path15.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-  (0, import_node_fs14.writeFileSync)((0, import_node_path15.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
+  (0, import_node_fs15.mkdirSync)((0, import_node_path16.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+  (0, import_node_fs15.writeFileSync)((0, import_node_path16.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
 `);
   await opts.provider.addComment(wpKey, opts.provider.renderDescription(textDocument(`Work Package claimed by ${opts.actor}`)));
   await opts.provider.writePraxisState(wpKey, { lifecycle: "claimed" });
@@ -18388,12 +18388,12 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto9, import_node_fs14, import_node_path15, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto9, import_node_fs15, import_node_path16, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
     import_node_crypto9 = require("node:crypto");
-    import_node_fs14 = require("node:fs");
-    import_node_path15 = require("node:path");
+    import_node_fs15 = require("node:fs");
+    import_node_path16 = require("node:path");
     init_dist();
     init_mutation_auth();
     init_role_policy();
@@ -18434,16 +18434,16 @@ var init_workflows = __esm({
 
 // node_modules/@praxis/cli/dist/identity.js
 function workItemIds(repo) {
-  const dir = (0, import_node_path16.join)(repo, ".praxis", "workflow");
+  const dir = (0, import_node_path17.join)(repo, ".praxis", "workflow");
   const ids = /* @__PURE__ */ new Set();
   try {
-    for (const name of (0, import_node_fs15.readdirSync)((0, import_node_path16.join)(dir, "items")))
+    for (const name of (0, import_node_fs16.readdirSync)((0, import_node_path17.join)(dir, "items")))
       if (name.endsWith(".json"))
         ids.add(name.slice(0, -5));
   } catch {
   }
   try {
-    const legacy = JSON.parse((0, import_node_fs15.readFileSync)((0, import_node_path16.join)(dir, "state.json"), "utf8"));
+    const legacy = JSON.parse((0, import_node_fs16.readFileSync)((0, import_node_path17.join)(dir, "state.json"), "utf8"));
     if (typeof legacy.workItem?.id === "string")
       ids.add(legacy.workItem.id);
   } catch {
@@ -18451,7 +18451,7 @@ function workItemIds(repo) {
   return [...ids];
 }
 function isWorkItemId(repo, value) {
-  return (0, import_node_fs15.existsSync)((0, import_node_path16.join)(repo, ".praxis", "workflow")) && workItemIds(repo).includes(value);
+  return (0, import_node_fs16.existsSync)((0, import_node_path17.join)(repo, ".praxis", "workflow")) && workItemIds(repo).includes(value);
 }
 function resolveWorkPackageRef(repo, value) {
   const local = resolveLocalWorkPackage(repo, value);
@@ -18472,17 +18472,17 @@ function resolveWorkPackageRef(repo, value) {
 }
 function readManifestKey(manifestDir) {
   try {
-    const manifest = JSON.parse((0, import_node_fs15.readFileSync)((0, import_node_path16.join)(manifestDir, "manifest.json"), "utf8"));
+    const manifest = JSON.parse((0, import_node_fs16.readFileSync)((0, import_node_path17.join)(manifestDir, "manifest.json"), "utf8"));
     return typeof manifest.jiraIssueKey === "string" && manifest.jiraIssueKey.length > 0 ? manifest.jiraIssueKey : null;
   } catch {
     return null;
   }
 }
-var import_node_fs15, import_node_path16, JIRA_KEY_RE;
+var import_node_fs16, import_node_path17, JIRA_KEY_RE;
 var init_identity = __esm({
   "node_modules/@praxis/cli/dist/identity.js"() {
-    import_node_fs15 = require("node:fs");
-    import_node_path16 = require("node:path");
+    import_node_fs16 = require("node:fs");
+    import_node_path17 = require("node:path");
     init_workflows();
     JIRA_KEY_RE = /^[A-Z][A-Z0-9]+-\d+$/;
   }
@@ -18600,7 +18600,7 @@ function doctorNextSteps(input2) {
     }
   }
   if (input2.approval.mode === "no-dialog") {
-    steps.push("This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them.");
+    steps.push("This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them. Some hosts (Claude Desktop) have their own tool-permission prompt instead of a dialog: praxis_doctor approval.client shows what yours declared, and the optional host-permission setting (docs/user-approval.md) uses that prompt with the exact plan in the tool arguments; it is weaker, because Praxis cannot see whether the prompt was shown.");
   }
   if (input2.dotenvRejected?.length) {
     steps.push(`A repository .env file tried to set ${input2.dotenvRejected.join(", ")}. Approval settings are only read from the real environment, so they were ignored. Remove them from the file.`);
@@ -18900,10 +18900,10 @@ function splitNames(stdout) {
   return stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 function fileSha256(repo, rel2) {
-  const abs = (0, import_node_path17.join)(repo, rel2);
-  if (!(0, import_node_fs16.existsSync)(abs) || !(0, import_node_fs16.statSync)(abs).isFile())
+  const abs = (0, import_node_path18.join)(repo, rel2);
+  if (!(0, import_node_fs17.existsSync)(abs) || !(0, import_node_fs17.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto10.createHash)("sha256").update((0, import_node_fs16.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto10.createHash)("sha256").update((0, import_node_fs17.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel2) {
   const r = runGit(repo, ["show", `${rev}:${rel2}`]);
@@ -18918,16 +18918,16 @@ function listCommitFiles(repo, rev) {
   return splitNames(r.stdout);
 }
 function listHooks(repo) {
-  const dir = (0, import_node_path17.join)(repo, ".git", "hooks");
-  if (!(0, import_node_fs16.existsSync)(dir))
+  const dir = (0, import_node_path18.join)(repo, ".git", "hooks");
+  if (!(0, import_node_fs17.existsSync)(dir))
     return [];
   const out = [];
-  for (const name of (0, import_node_fs16.readdirSync)(dir)) {
+  for (const name of (0, import_node_fs17.readdirSync)(dir)) {
     if (name.endsWith(".sample"))
       continue;
-    const p = (0, import_node_path17.join)(dir, name);
+    const p = (0, import_node_path18.join)(dir, name);
     try {
-      const st = (0, import_node_fs16.statSync)(p);
+      const st = (0, import_node_fs17.statSync)(p);
       if (!st.isFile())
         continue;
       const executable = (st.mode & 73) !== 0;
@@ -19070,12 +19070,12 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto10, import_node_fs16, import_node_path17, import_node_child_process4;
+var import_node_crypto10, import_node_fs17, import_node_path18, import_node_child_process4;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
     import_node_crypto10 = require("node:crypto");
-    import_node_fs16 = require("node:fs");
-    import_node_path17 = require("node:path");
+    import_node_fs17 = require("node:fs");
+    import_node_path18 = require("node:path");
     import_node_child_process4 = require("node:child_process");
     init_redact();
     init_git_url();
@@ -19149,9 +19149,9 @@ var init_staging_policy = __esm({
 
 // node_modules/@praxis/vcs/dist/gitignore-policy.js
 function previewGitignore(repo) {
-  const path = (0, import_node_path18.join)(repo, ".gitignore");
-  const exists = (0, import_node_fs17.existsSync)(path);
-  const current = exists ? (0, import_node_fs17.readFileSync)(path, "utf8") : "";
+  const path = (0, import_node_path19.join)(repo, ".gitignore");
+  const exists = (0, import_node_fs18.existsSync)(path);
+  const current = exists ? (0, import_node_fs18.readFileSync)(path, "utf8") : "";
   const lines = current.split(/\r?\n/);
   const missingLines = RECOMMENDED_GITIGNORE.filter((rule) => !lines.some((l) => l.trim() === rule));
   let proposed = null;
@@ -19164,11 +19164,11 @@ ${extra}
   }
   return { path: ".gitignore", exists, current, missingLines, proposed, writes: false };
 }
-var import_node_fs17, import_node_path18, RECOMMENDED_GITIGNORE;
+var import_node_fs18, import_node_path19, RECOMMENDED_GITIGNORE;
 var init_gitignore_policy = __esm({
   "node_modules/@praxis/vcs/dist/gitignore-policy.js"() {
-    import_node_fs17 = require("node:fs");
-    import_node_path18 = require("node:path");
+    import_node_fs18 = require("node:fs");
+    import_node_path19 = require("node:path");
     RECOMMENDED_GITIGNORE = [
       ".praxis-jira/",
       ".praxis-quality/",
@@ -19182,19 +19182,19 @@ var init_gitignore_policy = __esm({
 
 // node_modules/@praxis/vcs/dist/quality-snapshot.js
 function readJson6(path) {
-  if (!(0, import_node_fs18.existsSync)(path))
+  if (!(0, import_node_fs19.existsSync)(path))
     return null;
   try {
-    return JSON.parse((0, import_node_fs18.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs19.readFileSync)(path, "utf8"));
   } catch {
     return null;
   }
 }
 function readQualitySnapshot(repo, workPackageId) {
-  const primary = (0, import_node_path19.join)(repo, "design", workPackageId, "qa", "quality-review.json");
-  const sidecar = (0, import_node_path19.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  const primary = (0, import_node_path20.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  const sidecar = (0, import_node_path20.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
   const raw = readJson6(primary) ?? readJson6(sidecar);
-  const source = raw ? (0, import_node_fs18.existsSync)(primary) ? primary : sidecar : null;
+  const source = raw ? (0, import_node_fs19.existsSync)(primary) ? primary : sidecar : null;
   const snapshot = raw?.snapshot && typeof raw.snapshot === "object" ? raw.snapshot : {};
   const files = Array.isArray(snapshot.files) ? snapshot.files : [];
   return {
@@ -19234,11 +19234,11 @@ function compareToQualitySnapshot(repo, selected, snapshot) {
     liveDigest
   };
 }
-var import_node_fs18, import_node_path19, import_node_crypto11;
+var import_node_fs19, import_node_path20, import_node_crypto11;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
-    import_node_fs18 = require("node:fs");
-    import_node_path19 = require("node:path");
+    import_node_fs19 = require("node:fs");
+    import_node_path20 = require("node:path");
     import_node_crypto11 = require("node:crypto");
     init_git_local();
   }
@@ -19610,17 +19610,17 @@ var init_gitlab_provider = __esm({
 
 // node_modules/@praxis/vcs/dist/journal.js
 function journalPath(repo, workPackageId) {
-  return (0, import_node_path20.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
+  return (0, import_node_path21.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
 }
 function handoffPath(repo, workPackageId) {
-  return (0, import_node_path20.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
+  return (0, import_node_path21.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
 }
 function readJournal(repo, workPackageId) {
   const p = journalPath(repo, workPackageId);
-  if (!(0, import_node_fs19.existsSync)(p))
+  if (!(0, import_node_fs20.existsSync)(p))
     return null;
   try {
-    const v = JSON.parse((0, import_node_fs19.readFileSync)(p, "utf8"));
+    const v = JSON.parse((0, import_node_fs20.readFileSync)(p, "utf8"));
     return { ...v, forcePush: false, merged: false };
   } catch {
     return null;
@@ -19635,20 +19635,20 @@ function writeJournal(repo, entry) {
     merged: false
   };
   const p = journalPath(repo, entry.workPackageId);
-  (0, import_node_fs19.mkdirSync)((0, import_node_path20.join)(p, ".."), { recursive: true });
-  (0, import_node_fs19.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs20.mkdirSync)((0, import_node_path21.join)(p, ".."), { recursive: true });
+  (0, import_node_fs20.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
 `);
   const handoff4 = handoffPath(repo, entry.workPackageId);
-  (0, import_node_fs19.mkdirSync)((0, import_node_path20.join)(handoff4, ".."), { recursive: true });
-  (0, import_node_fs19.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs20.mkdirSync)((0, import_node_path21.join)(handoff4, ".."), { recursive: true });
+  (0, import_node_fs20.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
 `);
 }
-var import_node_path20, import_node_fs19;
+var import_node_path21, import_node_fs20;
 var init_journal = __esm({
   "node_modules/@praxis/vcs/dist/journal.js"() {
     init_dist();
-    import_node_path20 = require("node:path");
-    import_node_fs19 = require("node:fs");
+    import_node_path21 = require("node:path");
+    import_node_fs20 = require("node:fs");
   }
 });
 
@@ -19706,7 +19706,7 @@ var init_secret_scan = __esm({
 
 // node_modules/@praxis/vcs/dist/mutation-auth.js
 function localMutation(repo, spec) {
-  const root = (0, import_node_path21.resolve)(repo);
+  const root = (0, import_node_path22.resolve)(repo);
   return {
     repo: root,
     operation: spec.operation,
@@ -19722,10 +19722,10 @@ function authorizeLocal(request, write) {
     return write();
   throw new ApprovalError("APPROVAL_REQUIRED", `${request.action} changes the repository and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was changed.`);
 }
-var import_node_path21;
+var import_node_path22;
 var init_mutation_auth2 = __esm({
   "node_modules/@praxis/vcs/dist/mutation-auth.js"() {
-    import_node_path21 = require("node:path");
+    import_node_path22 = require("node:path");
     init_dist();
   }
 });
@@ -20890,18 +20890,18 @@ function safeErrorMessage(raw) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(0, 240);
 }
 function safeLogTail(logFile) {
-  if (!(0, import_node_fs20.existsSync)(logFile))
+  if (!(0, import_node_fs21.existsSync)(logFile))
     return "";
-  return (0, import_node_fs20.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
+  return (0, import_node_fs21.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
 }
 function looksLikeElectronBinary(execPath, electronVersion) {
   if (electronVersion)
     return true;
-  const base = (0, import_node_path22.basename)(execPath).toLowerCase();
+  const base = (0, import_node_path23.basename)(execPath).toLowerCase();
   return base.includes("electron") || base.includes("claude") || /claude\.app\/contents\/macos\//i.test(execPath);
 }
 function isNodeCliExecutable(execPath) {
-  const base = (0, import_node_path22.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
+  const base = (0, import_node_path23.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
   return base === "node" || base === "nodejs";
 }
 function isElectronHelperExecutable(execPath) {
@@ -20986,27 +20986,27 @@ function waitForChildStart(child, timeoutMs = 1500) {
   });
 }
 function repoKey(repo) {
-  const abs = (0, import_node_path22.resolve)(repo);
+  const abs = (0, import_node_path23.resolve)(repo);
   try {
-    return (0, import_node_fs20.realpathSync)(abs);
+    return (0, import_node_fs21.realpathSync)(abs);
   } catch {
     return abs;
   }
 }
 function qualityDir(repo) {
-  return (0, import_node_path22.join)(repoKey(repo), ".praxis-quality");
+  return (0, import_node_path23.join)(repoKey(repo), ".praxis-quality");
 }
 function qualityStatePath(repo) {
-  return (0, import_node_path22.join)(qualityDir(repo), "quality.json");
+  return (0, import_node_path23.join)(qualityDir(repo), "quality.json");
 }
 function qualityPidPath(repo) {
-  return (0, import_node_path22.join)(qualityDir(repo), "quality.pid");
+  return (0, import_node_path23.join)(qualityDir(repo), "quality.pid");
 }
 function qualityDbPath(repo) {
-  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path22.join)(qualityDir(repo), "quality.sqlite");
+  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path23.join)(qualityDir(repo), "quality.sqlite");
 }
 function qualityLogPath(repo) {
-  return (0, import_node_path22.join)(qualityDir(repo), "quality.log");
+  return (0, import_node_path23.join)(qualityDir(repo), "quality.log");
 }
 function startupTimeoutMs() {
   const raw = Number(process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS);
@@ -21037,20 +21037,20 @@ function urlForPort(port) {
 }
 function readState(repo) {
   const p = qualityStatePath(repo);
-  if (!(0, import_node_fs20.existsSync)(p))
+  if (!(0, import_node_fs21.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs20.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs21.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeState(repo, state2) {
-  (0, import_node_fs20.mkdirSync)(qualityDir(repo), { recursive: true });
-  (0, import_node_fs20.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
+  (0, import_node_fs21.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs21.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
 `);
   if (state2.pid)
-    (0, import_node_fs20.writeFileSync)(qualityPidPath(repo), `${state2.pid}
+    (0, import_node_fs21.writeFileSync)(qualityPidPath(repo), `${state2.pid}
 `);
 }
 function patchState(repo, patch) {
@@ -21060,8 +21060,8 @@ function patchState(repo, patch) {
 function appendSupervisorLog(repo, line) {
   try {
     const p = qualityLogPath(repo);
-    (0, import_node_fs20.mkdirSync)((0, import_node_path22.dirname)(p), { recursive: true });
-    (0, import_node_fs20.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+    (0, import_node_fs21.mkdirSync)((0, import_node_path23.dirname)(p), { recursive: true });
+    (0, import_node_fs21.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `, { flag: "a" });
   } catch {
   }
@@ -21169,32 +21169,32 @@ function rootsMatch(a, b) {
 function resolveQualityExecutable() {
   const override = process.env.PRAXIS_QUALITY_ENTRY;
   if (override)
-    return (0, import_node_path22.isAbsolute)(override) ? override : (0, import_node_path22.resolve)(override);
-  const argvDir = process.argv[1] ? (0, import_node_path22.dirname)((0, import_node_path22.resolve)(process.argv[1])) : void 0;
+    return (0, import_node_path23.isAbsolute)(override) ? override : (0, import_node_path23.resolve)(override);
+  const argvDir = process.argv[1] ? (0, import_node_path23.dirname)((0, import_node_path23.resolve)(process.argv[1])) : void 0;
   if (argvDir) {
-    const sibling = (0, import_node_path22.join)(argvDir, "praxis-quality.cjs");
-    if ((0, import_node_fs20.existsSync)(sibling))
+    const sibling = (0, import_node_path23.join)(argvDir, "praxis-quality.cjs");
+    if ((0, import_node_fs21.existsSync)(sibling))
       return sibling;
   }
   try {
-    const here = (0, import_node_path22.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
-    const bundled = (0, import_node_path22.join)(here, "praxis-quality.cjs");
-    if ((0, import_node_fs20.existsSync)(bundled))
+    const here = (0, import_node_path23.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
+    const bundled = (0, import_node_path23.join)(here, "praxis-quality.cjs");
+    if ((0, import_node_fs21.existsSync)(bundled))
       return bundled;
   } catch {
   }
   try {
     const req = (0, import_node_module.createRequire)(import_meta.url);
     const pkg = req.resolve("@praxis/quality-service/package.json");
-    const entry = (0, import_node_path22.join)((0, import_node_path22.dirname)(pkg), "dist", "main.js");
-    if ((0, import_node_fs20.existsSync)(entry))
+    const entry = (0, import_node_path23.join)((0, import_node_path23.dirname)(pkg), "dist", "main.js");
+    if ((0, import_node_fs21.existsSync)(entry))
       return entry;
   } catch {
   }
   try {
-    const here = (0, import_node_path22.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
-    const monorepo = (0, import_node_path22.resolve)(here, "../../../apps/quality-service/dist/main.js");
-    if ((0, import_node_fs20.existsSync)(monorepo))
+    const here = (0, import_node_path23.dirname)((0, import_node_url3.fileURLToPath)(import_meta.url));
+    const monorepo = (0, import_node_path23.resolve)(here, "../../../apps/quality-service/dist/main.js");
+    if ((0, import_node_fs21.existsSync)(monorepo))
       return monorepo;
   } catch {
   }
@@ -21291,7 +21291,7 @@ function resolveQualityChildRuntime() {
     return { mode: "process", execPath: override, extraArgs, extraEnv, parent, child: child2 };
   }
   if (isElectronHelperExecutable(observedParent)) {
-    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path22.basename)(observedParent)}`);
+    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path23.basename)(observedParent)}`);
     return {
       mode: "worker",
       execPath: process.execPath,
@@ -21365,8 +21365,8 @@ function startQualityWorker(opts) {
     }
     workers.delete(key);
   }
-  (0, import_node_fs20.mkdirSync)((0, import_node_path22.dirname)(opts.logPath), { recursive: true });
-  const log = (0, import_node_fs20.createWriteStream)(opts.logPath, { flags: "a" });
+  (0, import_node_fs21.mkdirSync)((0, import_node_path23.dirname)(opts.logPath), { recursive: true });
+  const log = (0, import_node_fs21.createWriteStream)(opts.logPath, { flags: "a" });
   const env = {};
   for (const [key2, val] of Object.entries(opts.env)) {
     if (val !== void 0)
@@ -21422,11 +21422,11 @@ function fail(code, message, stage, t0, details) {
 }
 async function probeQuality(opts) {
   const repo = repoKey(opts.repo);
-  const state2 = (0, import_node_fs20.existsSync)(opts.repo) ? readState(repo) : void 0;
+  const state2 = (0, import_node_fs21.existsSync)(opts.repo) ? readState(repo) : void 0;
   const port = state2?.port ?? configuredPort();
   const url4 = state2?.url ?? urlForPort(port);
-  const db = state2?.db ?? ((0, import_node_fs20.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
-  const logPath = (0, import_node_fs20.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
+  const db = state2?.db ?? ((0, import_node_fs21.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
+  const logPath = (0, import_node_fs21.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
   const extras = {
     lastKnownPid: state2?.lastKnownPid ?? state2?.pid,
     lastHealthyAt: state2?.lastHealthyAt,
@@ -21531,7 +21531,7 @@ async function ensureQualityOnce(opts) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, "Quality service executable is not packaged with Praxis Runtime", "quality.entry.resolve", t0, { healthUrl: probe.url, logPath });
   }
   qlog(`quality.entry.resolve path=${executable}`);
-  if (!(0, import_node_fs20.existsSync)(executable)) {
+  if (!(0, import_node_fs21.existsSync)(executable)) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, `Quality service executable missing: ${executable}`, "quality.entry.resolve", t0, { executable, healthUrl: probe.url, logPath });
   }
   const runtime = resolveQualityChildRuntime();
@@ -21587,7 +21587,7 @@ async function ensureQualityOnce(opts) {
     }
     fail(QUALITY_CODES.QUALITY_PORT_UNAVAILABLE, `Quality port ${port} is already in use by another process`, "port", t0, { ...diagnosticDetails, healthUrl: url4, port });
   }
-  (0, import_node_fs20.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs21.mkdirSync)(qualityDir(repo), { recursive: true });
   qlog(`cwd resolved path=${repo}`);
   qlog(`db path resolved path=${db}`);
   let pid;
@@ -21646,7 +21646,7 @@ async function ensureQualityOnce(opts) {
     env.PRAXIS_QUALITY_DB = db;
     env.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
     env.PRAXIS_QUALITY_HOST = "127.0.0.1";
-    const logFd = (0, import_node_fs20.openSync)(logPath, "a");
+    const logFd = (0, import_node_fs21.openSync)(logPath, "a");
     qlog("quality.spawn");
     let child;
     try {
@@ -21657,7 +21657,7 @@ async function ensureQualityOnce(opts) {
         stdio: ["ignore", logFd, logFd]
       });
     } catch (err) {
-      (0, import_node_fs20.closeSync)(logFd);
+      (0, import_node_fs21.closeSync)(logFd);
       const errno = err;
       fail(classifySpawnFailure(errno), errno instanceof Error ? errno.message : String(err), "quality.spawn", t0, {
         ...diagnosticDetails,
@@ -21668,7 +21668,7 @@ async function ensureQualityOnce(opts) {
       });
     }
     const started = await waitForChildStart(child, 1500);
-    (0, import_node_fs20.closeSync)(logFd);
+    (0, import_node_fs21.closeSync)(logFd);
     pid = started.pid;
     qlog(`quality.child.start spawned=${started.spawned} pid=${pid ?? "none"} exitCode=${started.exitCode ?? "none"} spawnError=${started.error?.code ?? "none"}`);
     if (!started.spawned || started.error || started.exitCode !== void 0 || started.exitSignal) {
@@ -21783,21 +21783,21 @@ function resetQualityEnsureForTests(repo) {
   if (repo) {
     const dir = qualityDir(repo);
     stopQuality(repo);
-    (0, import_node_fs20.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs21.rmSync)(dir, { recursive: true, force: true });
     inFlight.delete(repoKey(repo));
     return;
   }
   inFlight.clear();
 }
-var import_node_child_process5, import_node_worker_threads, import_node_fs20, import_node_net, import_node_module, import_node_path22, import_node_url3, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
+var import_node_child_process5, import_node_worker_threads, import_node_fs21, import_node_net, import_node_module, import_node_path23, import_node_url3, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
 var init_quality_ensure = __esm({
   "node_modules/@praxis/cli/dist/quality-ensure.js"() {
     import_node_child_process5 = require("node:child_process");
     import_node_worker_threads = require("node:worker_threads");
-    import_node_fs20 = require("node:fs");
+    import_node_fs21 = require("node:fs");
     import_node_net = __toESM(require("node:net"), 1);
     import_node_module = require("node:module");
-    import_node_path22 = require("node:path");
+    import_node_path23 = require("node:path");
     import_node_url3 = require("node:url");
     import_meta = {};
     DEFAULT_QUALITY_PORT = 8792;
@@ -21914,7 +21914,7 @@ async function runQualityWorkPackageReview(opts) {
   const { status, json: json2 } = await postJson(`${url4}/reviews/work-package`, {
     projectId: opts.workPackageId,
     workPackageId: opts.workPackageId,
-    path: (0, import_node_path23.resolve)(opts.repo),
+    path: (0, import_node_path24.resolve)(opts.repo),
     runtimeVersion: opts.runtimeVersion
   });
   if (status >= 400) {
@@ -22046,10 +22046,10 @@ function qualityReviewStatus(repo, workPackageId) {
     approvalApplied: evidence.approvalApplied === true
   };
 }
-var import_node_path23, QualityReviewTransportError;
+var import_node_path24, QualityReviewTransportError;
 var init_quality_lifecycle = __esm({
   "node_modules/@praxis/cli/dist/quality-lifecycle.js"() {
-    import_node_path23 = require("node:path");
+    import_node_path24 = require("node:path");
     init_workflows();
     init_quality_ensure();
     QualityReviewTransportError = class extends Error {
@@ -22155,14 +22155,14 @@ function loadPraxisDotenv(repo) {
   }
   if (process.env.PRAXIS_SKIP_DOTENV === "1")
     return;
-  const resolved = (0, import_node_path24.resolve)(repo);
-  if (!(0, import_node_fs21.existsSync)(resolved))
+  const resolved = (0, import_node_path25.resolve)(repo);
+  if (!(0, import_node_fs22.existsSync)(resolved))
     return;
   for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
-    const p = (0, import_node_path24.join)(resolved, f);
-    if (!(0, import_node_fs21.existsSync)(p))
+    const p = (0, import_node_path25.join)(resolved, f);
+    if (!(0, import_node_fs22.existsSync)(p))
       continue;
-    for (const line of (0, import_node_fs21.readFileSync)(p, "utf8").split("\n")) {
+    for (const line of (0, import_node_fs22.readFileSync)(p, "utf8").split("\n")) {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
       if (!m)
         continue;
@@ -22189,8 +22189,8 @@ function gitRoot(cwd) {
 }
 function requireRepo(repo) {
   loadPraxisDotenv(repo);
-  const resolved = (0, import_node_path24.resolve)(repo);
-  if (!(0, import_node_fs21.existsSync)(resolved)) {
+  const resolved = (0, import_node_path25.resolve)(repo);
+  if (!(0, import_node_fs22.existsSync)(resolved)) {
     throw new PraxisOpError(OP_CODES.REPOSITORY_UNAVAILABLE, `REPOSITORY_UNAVAILABLE: ${resolved}`);
   }
   return resolved;
@@ -22352,7 +22352,7 @@ async function guardWrite(ctx, spec, write) {
     requireConfirm(ctx.confirmation, spec.what);
   if (hasMutationLease())
     return write();
-  const repo = (0, import_node_path24.resolve)(spec.repository);
+  const repo = (0, import_node_path25.resolve)(spec.repository);
   try {
     const described = await (spec.git?.describe ?? spec.describe)?.();
     if (described?.previewFingerprint && ctx.previewFingerprint && described.previewFingerprint !== ctx.previewFingerprint) {
@@ -22413,8 +22413,8 @@ async function tracedFingerprint(trace, plan) {
 }
 async function doctorOp(ctx, version4) {
   loadPraxisDotenv(ctx.repo);
-  const resolved = (0, import_node_path24.resolve)(ctx.repo);
-  const repoExists = (0, import_node_fs21.existsSync)(resolved);
+  const resolved = (0, import_node_path25.resolve)(ctx.repo);
+  const repoExists = (0, import_node_fs22.existsSync)(resolved);
   const git2 = repoExists ? gitRoot(resolved) : void 0;
   const project = repoExists ? loadProjectConfig(git2 ?? resolved) : { status: "missing", suggestedPath: resolved };
   const jiraFlags = jiraConfigFlags();
@@ -22518,14 +22518,14 @@ async function projectInitApplyOp(ctx) {
     requireYes: true,
     // what the user approves is the file this will write, in full
     describe: () => ({
-      summary: inferred.existing.status === "loaded" ? "Project config already exists: nothing will be written" : `Write ${(0, import_node_path24.join)(repo, ".project")}`,
+      summary: inferred.existing.status === "loaded" ? "Project config already exists: nothing will be written" : `Write ${(0, import_node_path25.join)(repo, ".project")}`,
       description: [
-        inferred.existing.status === "loaded" ? `${inferred.existing.path} already exists; applying changes nothing.` : `Creates ${(0, import_node_path24.join)(repo, ".project")} with exactly this content:`,
+        inferred.existing.status === "loaded" ? `${inferred.existing.path} already exists; applying changes nothing.` : `Creates ${(0, import_node_path25.join)(repo, ".project")} with exactly this content:`,
         "",
         inferred.yaml
       ].join("\n"),
       previewFingerprint: previewFingerprint({ yaml: inferred.yaml, existing: inferred.existing.status }),
-      targets: [(0, import_node_path24.join)(repo, ".project")]
+      targets: [(0, import_node_path25.join)(repo, ".project")]
     })
   }, async () => {
     if (inferred.existing.status === "loaded") {
@@ -23466,13 +23466,13 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto13, import_node_child_process6, import_node_fs21, import_node_path24, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto13, import_node_child_process6, import_node_fs22, import_node_path25, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
     import_node_crypto13 = require("node:crypto");
     import_node_child_process6 = require("node:child_process");
-    import_node_fs21 = require("node:fs");
-    import_node_path24 = require("node:path");
+    import_node_fs22 = require("node:fs");
+    import_node_path25 = require("node:path");
     init_dist2();
     init_dist3();
     init_workflows();
@@ -23545,6 +23545,7 @@ var init_operations = __esm({
       APPROVAL_REVOKED: "APPROVAL_REVOKED",
       APPROVAL_REJECTED: "APPROVAL_REJECTED",
       APPROVAL_CLIENT_UI_REQUIRED: "APPROVAL_CLIENT_UI_REQUIRED",
+      APPROVAL_TIMED_OUT: "APPROVAL_TIMED_OUT",
       APPROVAL_RECONCILIATION_REQUIRED: "APPROVAL_RECONCILIATION_REQUIRED",
       APPROVAL_SELF_GRANT_FORBIDDEN: "APPROVAL_SELF_GRANT_FORBIDDEN",
       APPROVAL_AMBIGUOUS: "APPROVAL_AMBIGUOUS",
@@ -55932,6 +55933,9 @@ function elicitationChannel(input2) {
       try {
         result = await input2.elicitInput(elicitParams(request), { timeout: input2.timeoutMs ?? 10 * 6e4 });
       } catch (error64) {
+        if (error64 instanceof Error && /timed? ?out|timeout/i.test(error64.message)) {
+          throw new ApprovalError("APPROVAL_TIMED_OUT", "No answer arrived in the approval dialog in time. Nothing was executed; ask again to get a new dialog.", { executed: false });
+        }
         if (error64 instanceof Error && UNAVAILABLE.test(error64.message))
           return { answer: "unavailable", reason: error64.message };
         throw error64;
@@ -75671,18 +75675,39 @@ function jsonSchemaToZod(schema) {
   return external_exports2.object(shape);
 }
 
+// packages/mcp/dist/diagnostics-log.js
+var import_node_fs2 = require("node:fs");
+var import_node_os2 = require("node:os");
+var import_node_path2 = require("node:path");
+var MAX_BYTES = 1e6;
+var diagnosticsPath = () => (0, import_node_path2.join)(process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path2.join)((0, import_node_os2.homedir)(), ".praxis"), "diagnostics", "mcp.jsonl");
+function recordDiagnostic(entry) {
+  try {
+    const file2 = diagnosticsPath();
+    (0, import_node_fs2.mkdirSync)((0, import_node_path2.join)(file2, ".."), { recursive: true });
+    try {
+      if ((0, import_node_fs2.statSync)(file2).size > MAX_BYTES)
+        (0, import_node_fs2.renameSync)(file2, `${file2}.1`);
+    } catch {
+    }
+    (0, import_node_fs2.appendFileSync)(file2, `${JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), pid: process.pid, ...entry })}
+`);
+  } catch {
+  }
+}
+
 // packages/mcp/dist/tools.js
-var import_node_fs24 = require("node:fs");
-var import_node_path29 = require("node:path");
+var import_node_fs25 = require("node:fs");
+var import_node_path30 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/build-info.js
 var import_node_crypto4 = require("node:crypto");
-var import_node_fs2 = require("node:fs");
+var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"9cd0ecec11dd61a10a7cbf1a2ba599c1a7aa9762e8a518bc7827e23cd37c5e6f","coreBaseline":"b2edcf3d833b6f082c1371aef067dd65b10e9596","inputs":24}';
+    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"8e96b5c9f8c653861ee8cd5038a65f52b5724d8be579e5749db3278d762b9b91","coreBaseline":"eb91c00f10b8ce548741edb9dbb7a4dd282d9b7c","inputs":25}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -75693,7 +75718,7 @@ function runtimeBuildInfo(version4) {
   const entry = process.argv[1];
   if (embedded && entry && /\.cjs$/.test(entry)) {
     try {
-      bundleSha256 = (0, import_node_crypto4.createHash)("sha256").update((0, import_node_fs2.readFileSync)(entry)).digest("hex");
+      bundleSha256 = (0, import_node_crypto4.createHash)("sha256").update((0, import_node_fs3.readFileSync)(entry)).digest("hex");
       bundlePath = entry;
     } catch {
       bundleSha256 = null;
@@ -75733,15 +75758,15 @@ function mcpEnvelope(opts) {
 
 // packages/mcp/dist/story-engine.js
 var import_node_child_process2 = require("node:child_process");
-var import_node_fs6 = require("node:fs");
-var import_node_path5 = require("node:path");
+var import_node_fs7 = require("node:fs");
+var import_node_path6 = require("node:path");
 var import_node_url2 = require("node:url");
 init_dist();
 
 // packages/mcp/dist/generic-verification.js
 var import_node_child_process = require("node:child_process");
-var import_node_fs3 = require("node:fs");
-var import_node_path2 = require("node:path");
+var import_node_fs4 = require("node:fs");
+var import_node_path3 = require("node:path");
 var import_node_url = require("node:url");
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
@@ -75750,8 +75775,8 @@ function safeFile(root, relative5) {
   if (!relative5 || relative5.startsWith("/") || relative5.includes("\0") || relative5.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
-  const absolute = (0, import_node_path2.resolve)(root, relative5);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path2.sep}`))
+  const absolute = (0, import_node_path3.resolve)(root, relative5);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path3.sep}`))
     throw new Error("UNSAFE_PATH");
   return absolute;
 }
@@ -75766,7 +75791,7 @@ print(json.dumps(result))
 `;
 async function runSteps(root, modulePath, steps) {
   const file2 = safeFile(root, modulePath);
-  if (!(0, import_node_fs3.existsSync)(file2))
+  if (!(0, import_node_fs4.existsSync)(file2))
     throw new Error(`MODULE_MISSING:${modulePath}`);
   if (file2.endsWith(".py")) {
     const result = (0, import_node_child_process.spawnSync)("python3", ["-c", PYTHON, file2, JSON.stringify(steps)], {
@@ -75789,11 +75814,11 @@ async function runSteps(root, modulePath, steps) {
   return value;
 }
 function readChecks(workflowRepo, workItemId) {
-  const scoped = workItemId ? (0, import_node_path2.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
-  const file2 = scoped && (0, import_node_fs3.existsSync)(scoped) ? scoped : (0, import_node_path2.join)(workflowRepo, ".praxis", "quality", "checks.json");
-  if (!(0, import_node_fs3.existsSync)(file2))
+  const scoped = workItemId ? (0, import_node_path3.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
+  const file2 = scoped && (0, import_node_fs4.existsSync)(scoped) ? scoped : (0, import_node_path3.join)(workflowRepo, ".praxis", "quality", "checks.json");
+  if (!(0, import_node_fs4.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs3.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs4.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.checks) || parsed.checks.length === 0)
     throw new Error("CHECKS_INVALID");
   return parsed.checks;
@@ -76005,25 +76030,25 @@ function inspectionPlan(input2) {
 }
 
 // packages/mcp/dist/project-profile.js
-var import_node_fs4 = require("node:fs");
-var import_node_path3 = require("node:path");
+var import_node_fs5 = require("node:fs");
+var import_node_path4 = require("node:path");
 var SKIP = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", "coverage"]);
 function walk(root, dir, out, depth) {
   if (depth > 4 || out.length >= 200)
     return;
   let entries = [];
   try {
-    entries = (0, import_node_fs4.readdirSync)(dir);
+    entries = (0, import_node_fs5.readdirSync)(dir);
   } catch {
     return;
   }
   for (const name of entries) {
     if (SKIP.has(name))
       continue;
-    const absolute = (0, import_node_path3.join)(dir, name);
+    const absolute = (0, import_node_path4.join)(dir, name);
     let info;
     try {
-      info = (0, import_node_fs4.statSync)(absolute);
+      info = (0, import_node_fs5.statSync)(absolute);
     } catch {
       continue;
     }
@@ -76035,14 +76060,14 @@ function walk(root, dir, out, depth) {
 }
 function readJson(file2) {
   try {
-    return JSON.parse((0, import_node_fs4.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs5.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function inspectService(service) {
   const repository = service.repository ?? service.id;
-  if (!service.localPath || !(0, import_node_fs4.existsSync)(service.localPath)) {
+  if (!service.localPath || !(0, import_node_fs5.existsSync)(service.localPath)) {
     return {
       serviceId: service.id,
       repository,
@@ -76062,7 +76087,7 @@ function inspectService(service) {
   const languages = [];
   const frameworks = [];
   const testRunners = [];
-  const packageJson = names.has("package.json") ? readJson((0, import_node_path3.join)(service.localPath, "package.json")) : void 0;
+  const packageJson = names.has("package.json") ? readJson((0, import_node_path4.join)(service.localPath, "package.json")) : void 0;
   const deps = {
     ...packageJson?.dependencies,
     ...packageJson?.devDependencies
@@ -76092,7 +76117,7 @@ function inspectService(service) {
   for (const file2 of pythonTests.slice(0, 20)) {
     let text = "";
     try {
-      text = (0, import_node_fs4.readFileSync)((0, import_node_path3.join)(service.localPath, file2), "utf8");
+      text = (0, import_node_fs5.readFileSync)((0, import_node_path4.join)(service.localPath, file2), "utf8");
     } catch {
       continue;
     }
@@ -76145,8 +76170,8 @@ function inspectService(service) {
 }
 
 // packages/mcp/dist/workflow-store.js
-var import_node_fs5 = require("node:fs");
-var import_node_path4 = require("node:path");
+var import_node_fs6 = require("node:fs");
+var import_node_path5 = require("node:path");
 var import_node_crypto5 = require("node:crypto");
 
 // packages/mcp/dist/human-approval.js
@@ -76253,10 +76278,10 @@ var WorkItemError = class extends Error {
   }
 };
 function workflowDir(repo) {
-  return (0, import_node_path4.join)(repo, ".praxis", "workflow");
+  return (0, import_node_path5.join)(repo, ".praxis", "workflow");
 }
-var legacyPath = (repo) => (0, import_node_path4.join)(workflowDir(repo), "state.json");
-var indexPath = (repo) => (0, import_node_path4.join)(workflowDir(repo), "index.json");
+var legacyPath = (repo) => (0, import_node_path5.join)(workflowDir(repo), "state.json");
+var indexPath = (repo) => (0, import_node_path5.join)(workflowDir(repo), "index.json");
 function assertWorkItemId(id) {
   if (!WORK_ITEM_ID_RE.test(id) || id.includes("..")) {
     throw new WorkItemError("WORK_ITEM_INVALID", "work item ids use letters, digits, '.', '_' and '-' only");
@@ -76264,10 +76289,10 @@ function assertWorkItemId(id) {
   return id;
 }
 function itemPath(repo, id) {
-  return (0, import_node_path4.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
+  return (0, import_node_path5.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
 }
 function readJson2(path) {
-  return JSON.parse((0, import_node_fs5.readFileSync)(path, "utf8"));
+  return JSON.parse((0, import_node_fs6.readFileSync)(path, "utf8"));
 }
 function summarize(state2) {
   return {
@@ -76283,25 +76308,25 @@ function summarize(state2) {
   };
 }
 function toPortable(repo, state2) {
-  const root = (0, import_node_path4.resolve)(repo);
+  const root = (0, import_node_path5.resolve)(repo);
   return {
     ...state2,
     services: state2.services.map((service) => {
-      if (!service.localPath || !(0, import_node_path4.isAbsolute)(service.localPath))
+      if (!service.localPath || !(0, import_node_path5.isAbsolute)(service.localPath))
         return service;
-      const rel2 = (0, import_node_path4.relative)(root, service.localPath);
-      const ups = rel2.split(import_node_path4.sep).filter((part) => part === "..").length;
+      const rel2 = (0, import_node_path5.relative)(root, service.localPath);
+      const ups = rel2.split(import_node_path5.sep).filter((part) => part === "..").length;
       if (ups > 2)
         return service;
-      return { ...service, localPath: (rel2 === "" ? "." : rel2).split(import_node_path4.sep).join("/") };
+      return { ...service, localPath: (rel2 === "" ? "." : rel2).split(import_node_path5.sep).join("/") };
     })
   };
 }
 function toAbsolute(repo, state2) {
-  const root = (0, import_node_path4.resolve)(repo);
+  const root = (0, import_node_path5.resolve)(repo);
   return {
     ...state2,
-    services: state2.services.map((service) => service.localPath && !(0, import_node_path4.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path4.resolve)(root, service.localPath) } : service)
+    services: state2.services.map((service) => service.localPath && !(0, import_node_path5.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path5.resolve)(root, service.localPath) } : service)
   };
 }
 function readLegacy(repo) {
@@ -76318,15 +76343,15 @@ function readLegacy(repo) {
   return toAbsolute(repo, WorkflowStateSchema.parse(raw));
 }
 function itemFiles(repo) {
-  const dir = (0, import_node_path4.join)(workflowDir(repo), "items");
+  const dir = (0, import_node_path5.join)(workflowDir(repo), "items");
   try {
-    return (0, import_node_fs5.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
+    return (0, import_node_fs6.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
   } catch {
     return [];
   }
 }
 function rebuildIndex(repo, files) {
-  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson2((0, import_node_path4.join)(workflowDir(repo), "items", name))))));
+  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson2((0, import_node_path5.join)(workflowDir(repo), "items", name))))));
   return {
     legacy: false,
     index: {
@@ -76358,7 +76383,7 @@ function readLayout(repo) {
     }
     if (files.length > 0)
       return rebuildIndex(repo, files);
-    if ((0, import_node_fs5.existsSync)(legacyPath(repo))) {
+    if ((0, import_node_fs6.existsSync)(legacyPath(repo))) {
       throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but there are no items to rebuild the index from");
     }
     return null;
@@ -76462,10 +76487,10 @@ function pause(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function lockIsStale(dir) {
-  if (!(0, import_node_fs5.existsSync)(dir))
+  if (!(0, import_node_fs6.existsSync)(dir))
     return false;
   try {
-    const owner = readJson2((0, import_node_path4.join)(dir, "owner"));
+    const owner = readJson2((0, import_node_path5.join)(dir, "owner"));
     if (typeof owner.at === "number" && Date.now() - owner.at > LOCK_STALE_MS)
       return true;
     if (typeof owner.pid === "number") {
@@ -76478,20 +76503,20 @@ function lockIsStale(dir) {
     return false;
   } catch {
     try {
-      return Date.now() - (0, import_node_fs5.statSync)(dir).mtimeMs > LOCK_STALE_MS;
+      return Date.now() - (0, import_node_fs6.statSync)(dir).mtimeMs > LOCK_STALE_MS;
     } catch {
       return false;
     }
   }
 }
 function withWorkflowLock(repo, fn) {
-  (0, import_node_fs5.mkdirSync)(workflowDir(repo), { recursive: true });
-  const dir = (0, import_node_path4.join)(workflowDir(repo), ".lock");
+  (0, import_node_fs6.mkdirSync)(workflowDir(repo), { recursive: true });
+  const dir = (0, import_node_path5.join)(workflowDir(repo), ".lock");
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (; ; ) {
     try {
-      (0, import_node_fs5.mkdirSync)(dir);
-      (0, import_node_fs5.writeFileSync)((0, import_node_path4.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
+      (0, import_node_fs6.mkdirSync)(dir);
+      (0, import_node_fs6.writeFileSync)((0, import_node_path5.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
       break;
     } catch (err) {
       if (err.code !== "EEXIST")
@@ -76499,8 +76524,8 @@ function withWorkflowLock(repo, fn) {
       if (lockIsStale(dir)) {
         const claimed = `${dir}.stale-${process.pid}-${Date.now()}`;
         try {
-          (0, import_node_fs5.renameSync)(dir, claimed);
-          (0, import_node_fs5.rmSync)(claimed, { recursive: true, force: true });
+          (0, import_node_fs6.renameSync)(dir, claimed);
+          (0, import_node_fs6.rmSync)(claimed, { recursive: true, force: true });
         } catch {
         }
         continue;
@@ -76514,15 +76539,15 @@ function withWorkflowLock(repo, fn) {
   try {
     return fn();
   } finally {
-    (0, import_node_fs5.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs6.rmSync)(dir, { recursive: true, force: true });
   }
 }
 function writeAtomic(path, value) {
-  (0, import_node_fs5.mkdirSync)((0, import_node_path4.dirname)(path), { recursive: true });
+  (0, import_node_fs6.mkdirSync)((0, import_node_path5.dirname)(path), { recursive: true });
   const tmp = `${path}.${process.pid}.tmp`;
-  (0, import_node_fs5.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs6.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs5.renameSync)(tmp, path);
+  (0, import_node_fs6.renameSync)(tmp, path);
 }
 function writeIndex(repo, index) {
   requireMutationLease();
@@ -76712,14 +76737,14 @@ function safeFile2(root, relative5) {
   if (!relative5 || relative5.startsWith("/") || relative5.includes("\0") || relative5.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
-  const absolute = (0, import_node_path5.resolve)(root, relative5);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path5.sep}`))
+  const absolute = (0, import_node_path6.resolve)(root, relative5);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path6.sep}`))
     throw new Error("UNSAFE_PATH");
   return absolute;
 }
 async function loadAdapter(workflowRepo) {
-  const file2 = (0, import_node_path5.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
-  if (!(0, import_node_fs6.existsSync)(file2))
+  const file2 = (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
+  if (!(0, import_node_fs7.existsSync)(file2))
     return void 0;
   return import(`${(0, import_node_url2.pathToFileURL)(file2).href}?v=${Date.now()}-${Math.random()}`);
 }
@@ -76728,7 +76753,7 @@ async function loadModule(service, relative5) {
     return { missingLocation: true, repository: service.repository, file: relative5 };
   }
   const file2 = safeFile2(service.localPath, relative5);
-  if (!(0, import_node_fs6.existsSync)(file2))
+  if (!(0, import_node_fs7.existsSync)(file2))
     return { missingModule: true, repository: service.repository, file: file2 };
   const mod = await import(`${(0, import_node_url2.pathToFileURL)(file2).href}?v=${Date.now()}-${Math.random()}`);
   return { mod, repository: service.repository, file: file2 };
@@ -76736,14 +76761,14 @@ async function loadModule(service, relative5) {
 function testsAreGreen(services) {
   let saw = false;
   for (const service of services) {
-    if (!service.localPath || !(0, import_node_fs6.existsSync)(service.localPath))
+    if (!service.localPath || !(0, import_node_fs7.existsSync)(service.localPath))
       continue;
-    const src = (0, import_node_path5.join)(service.localPath, "src");
-    if ((0, import_node_fs6.existsSync)(src)) {
-      const tests = (0, import_node_fs6.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
+    const src = (0, import_node_path6.join)(service.localPath, "src");
+    if ((0, import_node_fs7.existsSync)(src)) {
+      const tests = (0, import_node_fs7.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
       if (tests.length) {
         saw = true;
-        const result = (0, import_node_child_process2.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path5.join)("src", name))], {
+        const result = (0, import_node_child_process2.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path6.join)("src", name))], {
           cwd: service.localPath,
           encoding: "utf8"
         });
@@ -76751,8 +76776,8 @@ function testsAreGreen(services) {
           return false;
       }
     }
-    const testsDir = (0, import_node_path5.join)(service.localPath, "tests");
-    const pytests = (0, import_node_fs6.existsSync)(testsDir) ? (0, import_node_fs6.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
+    const testsDir = (0, import_node_path6.join)(service.localPath, "tests");
+    const pytests = (0, import_node_fs7.existsSync)(testsDir) ? (0, import_node_fs7.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
     if (pytests.length) {
       saw = true;
       const result = (0, import_node_child_process2.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
@@ -76778,10 +76803,10 @@ function serviceVerdicts(scenarios) {
   });
 }
 function readHostProposal(workflowRepo, serviceId) {
-  const file2 = (0, import_node_path5.join)(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
-  if (!(0, import_node_fs6.existsSync)(file2))
+  const file2 = (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
+  if (!(0, import_node_fs7.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs6.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs7.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.files) || parsed.files.length === 0)
     throw new Error("PROPOSAL_INVALID");
   return parsed;
@@ -76915,8 +76940,8 @@ function applyProposal(root, proposal) {
     }
     if (typeof file2.after !== "string")
       throw new Error("PROPOSAL_INVALID");
-    (0, import_node_fs6.mkdirSync)((0, import_node_path5.dirname)(absolute), { recursive: true });
-    (0, import_node_fs6.writeFileSync)(absolute, file2.after);
+    (0, import_node_fs7.mkdirSync)((0, import_node_path6.dirname)(absolute), { recursive: true });
+    (0, import_node_fs7.writeFileSync)(absolute, file2.after);
   }
 }
 async function commitServiceFix(workflowRepo, planned, workflowItemId, confirmation) {
@@ -76928,7 +76953,7 @@ async function commitServiceFix(workflowRepo, planned, workflowItemId, confirmat
   const root = service?.localPath;
   if (!root)
     throw new Error("REPOSITORY_LOCATION_MISSING");
-  const repository = (0, import_node_path5.resolve)(root);
+  const repository = (0, import_node_path6.resolve)(root);
   const workItemId = change.storyIds[0] ?? change.serviceId;
   const subject = JSON.stringify({ serviceId: change.serviceId, findingId: change.findingId, branch: change.branch, baseSha: change.baseSha, files: change.files, remote: change.remote ?? null });
   const commitApproval = await obtainUserApproval({
@@ -77027,7 +77052,7 @@ function pushServiceFix(root, committed) {
 }
 
 // packages/mcp/dist/workflow-inspect.js
-var import_node_path25 = require("node:path");
+var import_node_path26 = require("node:path");
 init_dist();
 var INSPECT_SCHEMA = "praxis.workflow.inspect.v1";
 var INSPECT_VIEWS = [
@@ -77044,7 +77069,7 @@ var INSPECT_VIEWS = [
 ];
 var SECRET_VALUE = /\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
 function scrub(repo, value) {
-  const root = (0, import_node_path25.resolve)(repo);
+  const root = (0, import_node_path26.resolve)(repo);
   const clean = (input2) => {
     if (typeof input2 === "string") {
       return input2.split(`${root}/`).join("").split(root).join(".").replace(SECRET_VALUE, "[redacted]");
@@ -77220,7 +77245,7 @@ function quality(state2) {
   };
 }
 function isLocalRepository(repo, name) {
-  return name === "." || name === (0, import_node_path25.basename)((0, import_node_path25.resolve)(repo)) || (0, import_node_path25.resolve)(name) === (0, import_node_path25.resolve)(repo);
+  return name === "." || name === (0, import_node_path26.basename)((0, import_node_path26.resolve)(repo)) || (0, import_node_path26.resolve)(name) === (0, import_node_path26.resolve)(repo);
 }
 function links(state2, repo) {
   const { items } = listWorkItems(repo);
@@ -77335,13 +77360,13 @@ function developerWorkItemStatus(repo, workItemId) {
 }
 
 // packages/mcp/dist/session-start.js
-var import_node_path27 = require("node:path");
-var import_node_fs23 = require("node:fs");
 var import_node_path28 = require("node:path");
+var import_node_fs24 = require("node:fs");
+var import_node_path29 = require("node:path");
 
 // node_modules/@praxis/knowledge/dist/index.js
-var import_node_fs22 = require("node:fs");
-var import_node_path26 = require("node:path");
+var import_node_fs23 = require("node:fs");
+var import_node_path27 = require("node:path");
 var import_gray_matter = __toESM(require_gray_matter(), 1);
 init_zod();
 var ObsoleteToolBindingSchema = external_exports.object({
@@ -77378,15 +77403,15 @@ var LEVEL_DIRS = [
   { level: "service", dir: "service" }
 ];
 function walkMarkdown(root) {
-  if (!(0, import_node_fs22.existsSync)(root))
+  if (!(0, import_node_fs23.existsSync)(root))
     return [];
   const out = [];
   const stack = [root];
   while (stack.length) {
     const cur = stack.pop();
-    for (const name of (0, import_node_fs22.readdirSync)(cur)) {
-      const p = (0, import_node_path26.join)(cur, name);
-      const st = (0, import_node_fs22.statSync)(p);
+    for (const name of (0, import_node_fs23.readdirSync)(cur)) {
+      const p = (0, import_node_path27.join)(cur, name);
+      const st = (0, import_node_fs23.statSync)(p);
       if (st.isDirectory())
         stack.push(p);
       else if (name.endsWith(".md"))
@@ -77396,7 +77421,7 @@ function walkMarkdown(root) {
   return out;
 }
 function parseRuleFile(path, level) {
-  const raw = (0, import_node_fs22.readFileSync)(path, "utf8");
+  const raw = (0, import_node_fs23.readFileSync)(path, "utf8");
   const parsed = (0, import_gray_matter.default)(raw);
   const fm = RuleFrontmatterSchema.safeParse(parsed.data);
   if (!fm.success) {
@@ -77435,17 +77460,17 @@ function loadApplicableSlice(opts) {
   const byId = /* @__PURE__ */ new Map();
   const precedentsById = /* @__PURE__ */ new Map();
   for (const { level, dir } of LEVEL_DIRS) {
-    let base = (0, import_node_path26.join)(knowledgeRoot, dir);
+    let base = (0, import_node_path27.join)(knowledgeRoot, dir);
     if (level === "product" && product)
-      base = (0, import_node_path26.join)(base, product);
+      base = (0, import_node_path27.join)(base, product);
     if (level === "service" && service)
-      base = (0, import_node_path26.join)(base, service);
-    if (level !== "company" && !(0, import_node_fs22.existsSync)(base))
+      base = (0, import_node_path27.join)(base, service);
+    if (level !== "company" && !(0, import_node_fs23.existsSync)(base))
       continue;
-    for (const file2 of walkMarkdown((0, import_node_path26.join)(base, "rules"))) {
+    for (const file2 of walkMarkdown((0, import_node_path27.join)(base, "rules"))) {
       const result = parseRuleFile(file2, level);
       if ("error" in result) {
-        errors.push(`${(0, import_node_path26.relative)(knowledgeRoot, file2)}: ${result.error}`);
+        errors.push(`${(0, import_node_path27.relative)(knowledgeRoot, file2)}: ${result.error}`);
         continue;
       }
       const { roles, stages, id } = result.frontmatter;
@@ -77458,10 +77483,10 @@ function loadApplicableSlice(opts) {
       }
       byId.set(id, result);
     }
-    for (const file2 of walkMarkdown((0, import_node_path26.join)(base, "precedents"))) {
+    for (const file2 of walkMarkdown((0, import_node_path27.join)(base, "precedents"))) {
       const result = parseScopedPrecedentFile(file2, level);
       if ("error" in result) {
-        errors.push(`${(0, import_node_path26.relative)(knowledgeRoot, file2)}: ${result.error}`);
+        errors.push(`${(0, import_node_path27.relative)(knowledgeRoot, file2)}: ${result.error}`);
         continue;
       }
       const { roles, stages, id } = result.frontmatter;
@@ -77485,7 +77510,7 @@ function loadApplicableSlice(opts) {
   };
 }
 function parseScopedPrecedentFile(path, level) {
-  const raw = (0, import_node_fs22.readFileSync)(path, "utf8");
+  const raw = (0, import_node_fs23.readFileSync)(path, "utf8");
   const parsed = (0, import_gray_matter.default)(raw);
   const fm = PrecedentFrontmatterSchema.safeParse(parsed.data);
   if (!fm.success) {
@@ -77517,8 +77542,8 @@ var DEFAULT_STAGE = {
 };
 var KNOWLEDGE_ROLE = { ba: "ba", architect: "architect", developer: "developer", quality: "qa" };
 var rel = (root, path) => {
-  const r = (0, import_node_path27.relative)(root, path);
-  return r === "" ? "." : r.split(import_node_path27.sep).join("/");
+  const r = (0, import_node_path28.relative)(root, path);
+  return r === "" ? "." : r.split(import_node_path28.sep).join("/");
 };
 function sessionStart(repo, args, version4) {
   if (!SESSION_ROLES.includes(args.role ?? "")) {
@@ -77526,15 +77551,15 @@ function sessionStart(repo, args, version4) {
   }
   const role = args.role;
   const stage = role === "quality" ? DEFAULT_STAGE.quality : args.stage ?? DEFAULT_STAGE[role];
-  const root = (0, import_node_path27.resolve)(repo);
+  const root = (0, import_node_path28.resolve)(repo);
   const project = loadProjectConfig(root);
   let knowledge;
   if (!project.config.knowledge.path) {
     knowledge = { status: "skipped", message: "knowledge.path unset; rules not applied" };
   } else {
     try {
-      const knowledgeRoot = (0, import_node_path28.isAbsolute)(project.config.knowledge.path) ? project.config.knowledge.path : (0, import_node_path27.resolve)(root, project.config.knowledge.path);
-      if (!(0, import_node_fs23.existsSync)(knowledgeRoot))
+      const knowledgeRoot = (0, import_node_path29.isAbsolute)(project.config.knowledge.path) ? project.config.knowledge.path : (0, import_node_path28.resolve)(root, project.config.knowledge.path);
+      if (!(0, import_node_fs24.existsSync)(knowledgeRoot))
         throw new Error("path does not exist");
       const slice = loadApplicableSlice({
         knowledgeRoot,
@@ -77680,7 +77705,14 @@ function withClientReport(data, client) {
   const record5 = data;
   const target = record5.data && typeof record5.data === "object" ? record5.data : record5;
   if (target.approval) {
-    target.approval = { ...target.approval, client };
+    target.approval = {
+      ...target.approval,
+      client,
+      diagnosticsLog: diagnosticsPath(),
+      ...!client.dialog ? {
+        hostGate: "Some hosts (Claude Desktop) hold an apply call at their own tool-permission prompt BEFORE it reaches Praxis. If you see no result and no prompt, look for that prompt in the host window; diagnosticsLog lists the calls that did reach Praxis (tool_enter). Praxis itself answers a protected call without a dialog immediately with APPROVAL_CLIENT_UI_REQUIRED."
+      } : {}
+    };
     if (hostPermissionMode() && !client.dialog) {
       target.approval = {
         ...target.approval,
@@ -77837,12 +77869,12 @@ function hydrateWorkflowCommand(repo, raw) {
   const relative5 = command.implementationPath;
   if (typeof relative5 !== "string" || relative5.length === 0)
     return command;
-  const root = (0, import_node_path29.resolve)(repo);
-  const absolute = (0, import_node_path29.resolve)(root, relative5);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path29.sep}`)) {
+  const root = (0, import_node_path30.resolve)(repo);
+  const absolute = (0, import_node_path30.resolve)(root, relative5);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path30.sep}`)) {
     throw new Error("implementation path escapes the repository");
   }
-  command.implementationSource = (0, import_node_fs24.readFileSync)(absolute, "utf8");
+  command.implementationSource = (0, import_node_fs25.readFileSync)(absolute, "utf8");
   delete command.implementationPath;
   return command;
 }
@@ -78049,6 +78081,20 @@ function createPraxisMcpServer(opts) {
     }, async (args, extra) => {
       const signal = extra && typeof extra === "object" && "signal" in extra ? extra.signal : void 0;
       const client = describeClient(server, extra);
+      const started = Date.now();
+      const callId = `${started.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+      recordDiagnostic({
+        event: "tool_enter",
+        callId,
+        tool: tool.name,
+        client: client.name ?? null,
+        protocol: client.protocolVersion ?? null,
+        flow: client.flow,
+        capabilities: client.capabilities,
+        elicitationDeclared: client.elicitation.declared !== null,
+        dialog: client.dialog,
+        ...client.reason ? { reason: client.reason } : {}
+      });
       let envelope;
       try {
         envelope = await callTool(tool.name, args ?? {}, {
@@ -78060,10 +78106,20 @@ function createPraxisMcpServer(opts) {
         });
       } catch (error64) {
         if (error64 instanceof ApprovalNeedsInput) {
+          recordDiagnostic({ event: "input_required", callId, tool: tool.name, ms: Date.now() - started });
           return inputRequired({ inputRequests: { [approvalKey(error64.request)]: inputRequired.elicit(elicitParams(error64.request)) } });
         }
+        recordDiagnostic({ event: "tool_failed", callId, tool: tool.name, ms: Date.now() - started, error: error64 instanceof Error ? error64.name : "unknown" });
         throw error64;
       }
+      recordDiagnostic({
+        event: "tool_finished",
+        callId,
+        tool: tool.name,
+        ms: Date.now() - started,
+        ok: envelope.ok,
+        code: envelope.code ?? null
+      });
       return {
         content: [{ type: "text", text: JSON.stringify(envelope) }],
         structuredContent: envelope,
@@ -78099,6 +78155,7 @@ function startStdioServer(opts) {
       }
     });
     logStderr("[praxis-mcp] ready");
+    recordDiagnostic({ event: "server_start", version: version4, role });
     const shutdown = () => {
       void handle.close().finally(() => process.exit(0));
     };

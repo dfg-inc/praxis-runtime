@@ -1,3 +1,4 @@
+import { diagnosticsPath } from "./diagnostics-log.js";
 import { readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
@@ -157,7 +158,17 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
   const record = data as { approval?: Record<string, unknown>; data?: { approval?: Record<string, unknown> } };
   const target = record.data && typeof record.data === "object" ? record.data : record;
   if (target.approval) {
-    target.approval = { ...target.approval, client };
+    target.approval = {
+      ...target.approval,
+      client,
+      diagnosticsLog: diagnosticsPath(),
+      ...(!client.dialog
+        ? {
+            hostGate:
+              "Some hosts (Claude Desktop) hold an apply call at their own tool-permission prompt BEFORE it reaches Praxis. If you see no result and no prompt, look for that prompt in the host window; diagnosticsLog lists the calls that did reach Praxis (tool_enter). Praxis itself answers a protected call without a dialog immediately with APPROVAL_CLIENT_UI_REQUIRED.",
+          }
+        : {}),
+    };
     if (hostPermissionMode() && !client.dialog) {
       target.approval = {
         ...target.approval,

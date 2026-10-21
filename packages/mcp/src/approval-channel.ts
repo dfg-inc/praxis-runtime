@@ -104,6 +104,10 @@ export function elicitationChannel(input: {
       try {
         result = await input.elicitInput(elicitParams(request), { timeout: input.timeoutMs ?? 10 * 60_000 });
       } catch (error) {
+        // an unanswered dialog is neither a yes nor a no: report it as its own outcome, never as a refusal or an approval
+        if (error instanceof Error && /timed? ?out|timeout/i.test(error.message)) {
+          throw new ApprovalError("APPROVAL_TIMED_OUT", "No answer arrived in the approval dialog in time. Nothing was executed; ask again to get a new dialog.", { executed: false });
+        }
         if (error instanceof Error && UNAVAILABLE.test(error.message)) return { answer: "unavailable", reason: error.message };
         throw error;
       }
