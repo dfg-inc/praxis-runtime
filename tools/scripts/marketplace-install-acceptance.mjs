@@ -91,6 +91,23 @@ for (const p of installed.filter((item) => item.name.startsWith("praxis-") && it
 }
 prove("every role plugin ships local-workflow and present-plan skills");
 
+// Generated build outputs must be in what a user installs (they are build products, not source): BA's validator CLI and every
+// role's session bootstrap, runnable with no npm install.
+{
+  const ba = installed.find((p) => p.name === "praxis-ba");
+  expect(existsSync(join(ba.path, "canon-graph/dist/cli.js")) && existsSync(join(ba.path, "bin/praxis-ba.cjs")), "installed praxis-ba lacks canon-graph/dist or bin/praxis-ba.cjs");
+  const bare = mkdtempSync(join(work, "canon-"));
+  const status = spawnSync(process.execPath, [join(ba.path, "bin/praxis-ba.cjs"), "status", "--repo", bare], { cwd: bare, encoding: "utf8", env: { PATH: process.env.PATH } });
+  expect(/VERIFY-OK/.test(status.stdout), `installed BA CLI: ${status.stdout}${status.stderr}`);
+  for (const role of ["ba", "architect", "developer", "quality"]) {
+    const plugin = installed.find((p) => p.name === `praxis-${role}`);
+    const dir = mkdtempSync(join(work, `${role}-`));
+    const boot = spawnSync(process.execPath, [join(plugin.path, "tools/session-bootstrap.cjs"), dir], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
+    expect(boot.status === 0, `installed ${role} session-bootstrap.cjs: ${boot.stderr}`);
+  }
+  prove("generated build outputs are in the installed plugins: BA canon-graph/dist and the self-contained bin/praxis-ba.cjs (runs, VERIFY-OK), session-bootstrap.cjs of all four roles (run)");
+}
+
 const runtime = installed.find((p) => p.name === "praxis-runtime");
 const mcpJson = JSON.parse(readFileSync(join(runtime.path, ".mcp.json"), "utf8"));
 const server = mcpJson["praxis-runtime"] ?? mcpJson.mcpServers?.["praxis-runtime"];
@@ -158,12 +175,13 @@ if (previousRef) {
   mkdirSync(upgrade);
   const old = join(work, "marketplace-old");
   git(work, "clone", "-q", mk, old);
+  const currentSha = git(old, "rev-parse", "HEAD");
   git(old, "checkout", "-q", previousRef);
   const oldVersion = JSON.parse(readFileSync(join(old, ".claude-plugin/marketplace.json"), "utf8")).metadata.version;
   expect(claude(upgrade, "plugin", "marketplace", "add", old).ok, "upgrade: add old");
   for (const name of ["praxis-ba", "praxis-runtime"]) expect(claude(upgrade, "plugin", "install", `${name}@praxis`).ok, `upgrade: install old ${name}`);
   expect(listInstalled(upgrade).every((p) => p.version === oldVersion), "old versions installed");
-  git(old, "checkout", "-q", "master");
+  git(old, "checkout", "-q", currentSha);
   expect(claude(upgrade, "plugin", "marketplace", "update", "praxis").ok, "upgrade: marketplace update");
   for (const name of ["praxis-ba", "praxis-runtime"]) {
     r = claude(upgrade, "plugin", "update", `${name}@praxis`);
