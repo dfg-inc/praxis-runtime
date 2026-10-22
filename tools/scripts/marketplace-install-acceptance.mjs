@@ -21,7 +21,11 @@ import { connectOfficialMcp, parseDoctorEnvelope, versionNegotiationModern } fro
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const option = (name) => args.find((arg, i) => args[i - 1] === `--${name}`) ?? args.find((arg) => arg.startsWith(`--${name}=`))?.split("=")[1];
-const marketplaceSource = resolve(option("marketplace") ?? join(here, "../../../praxis-marketplace"));
+// --marketplace may be a local directory, a git URL, or a GitHub shorthand (owner/repo). A URL or shorthand is also what the
+// full-set and single-role installs add (exactly what a user types in Claude); a local directory is cloned first.
+const marketplaceArg = option("marketplace");
+const remoteSource = marketplaceArg && (/^https?:\/\//.test(marketplaceArg) || /^[\w.-]+\/[\w.-]+$/.test(marketplaceArg) ? marketplaceArg : undefined);
+const marketplaceSource = remoteSource ? (/^https?:/.test(remoteSource) ? remoteSource : `https://github.com/${remoteSource}.git`) : resolve(marketplaceArg ?? join(here, "../../../praxis-marketplace"));
 const previousRef = option("previous");
 
 const proven = [];
@@ -55,20 +59,25 @@ expect(["praxis", "praxis-runtime", "praxis-ba", "praxis-architect", "praxis-dev
 
 function listInstalled(configDir) {
   const out = claude(configDir, "plugin", "list").out;
-  return [...out.matchAll(/❯ (\S+)@praxis\s+Version: (\S+)\s+Read from: (\S+)/g)].map((m) => ({ name: m[1], version: m[2], path: m[3] }));
+  // A marketplace read in place (local directory) prints "Read from"; a git-sourced one is copied into the plugin cache.
+  return [...out.matchAll(/❯ (\S+)@praxis\s+Version: (\S+)(?:\s+Read from: (\S+))?/g)].map((m) => ({
+    name: m[1],
+    version: m[2],
+    path: m[3] ?? join(configDir, "plugins", "cache", "praxis", m[1], m[2]),
+  }));
 }
 
 // 1 + 3 + 4 + 5 + 6: the full set
 const full = join(work, "config-full");
 mkdirSync(full);
-let r = claude(full, "plugin", "marketplace", "add", mk);
+let r = claude(full, "plugin", "marketplace", "add", remoteSource ?? mk);
 expect(r.ok, `marketplace add: ${r.out}`);
 r = claude(full, "plugin", "install", "praxis@praxis");
 expect(r.ok && /\+ 5 dependencies/.test(r.out), `install praxis: ${r.out}`);
 const installed = listInstalled(full);
 expect(installed.map((p) => p.name).sort().join() === "praxis,praxis-architect,praxis-ba,praxis-developer,praxis-quality,praxis-runtime", `installed: ${JSON.stringify(installed)}`);
 expect(installed.every((p) => p.version === marketplaceVersion), `versions: ${JSON.stringify(installed)}`);
-prove(`installing only "praxis" also installed praxis-runtime, praxis-ba, praxis-architect, praxis-developer, praxis-quality (all ${marketplaceVersion})`);
+prove(`${remoteSource ? `marketplace added by "${remoteSource}"; ` : ""}installing only "praxis" also installed praxis-runtime, praxis-ba, praxis-architect, praxis-developer, praxis-quality (all ${marketplaceVersion})`);
 
 const mcpConfigs = installed.filter((p) => existsSync(join(p.path, ".mcp.json")));
 expect(mcpConfigs.length === 1 && mcpConfigs[0].name === "praxis-runtime", `MCP configs: ${mcpConfigs.map((p) => p.name)}`);
@@ -137,7 +146,7 @@ await withRuntime({ PRAXIS_STATE_HOME: stateHome, PRAXIS_APPROVAL_MODE: "trusted
 // 2: a single role pulls the Runtime by itself
 const roleOnly = join(work, "config-role");
 mkdirSync(roleOnly);
-expect(claude(roleOnly, "plugin", "marketplace", "add", mk).ok, "role marketplace add");
+expect(claude(roleOnly, "plugin", "marketplace", "add", remoteSource ?? mk).ok, "role marketplace add");
 r = claude(roleOnly, "plugin", "install", "praxis-quality@praxis");
 expect(r.ok && /\+ 1 dependency: praxis-runtime/.test(r.out), `role install: ${r.out}`);
 expect(listInstalled(roleOnly).map((p) => p.name).sort().join() === "praxis-quality,praxis-runtime", "role-only set");
@@ -184,5 +193,5 @@ prove("no /Users/serg path in the shipped plugins or manifests");
 rmSync(work, { recursive: true, force: true });
 console.log(`PASS marketplace-install (${proven.length} checks, Claude Code CLI)`);
 for (const line of proven) console.log(`  ok ${line}`);
-console.log("NOT PROVEN: the Claude UI flow (Customize -> Plugins -> Add marketplace); Claude Desktop Chat; a hosted GitHub marketplace.");
+console.log("NOT PROVEN: the Claude UI flow (Customize -> Plugins -> Add marketplace); Claude Desktop Chat.");
 void dirname;
