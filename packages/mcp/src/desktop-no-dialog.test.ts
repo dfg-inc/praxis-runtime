@@ -140,4 +140,13 @@ describe("Trusted Client: an explicit opt-in, never the default", () => {
     expect((result.data as { approval: { mode: string; note: string } }).approval.mode).toBe("trusted-client");
     expect((result.data as { approval: { note: string } }).approval.note).toMatch(/not proof/);
   });
+
+  it("enabled: acts only a person may perform (confirming a Story) are still not run on a standing permission", async () => {
+    trusted();
+    const { trustedClientChannel } = await import("./approval-channel.js");
+    await expect(
+      trustedClientChannel.ask({ action: "confirm-story", kind: "story_behavior", summary: "Confirm story US-1", description: "d", subject: "s" }),
+    ).rejects.toMatchObject({ code: "APPROVAL_CLIENT_UI_REQUIRED" });
+    await expect(trustedClientChannel.ask({ action: "praxis_project_init_apply", kind: "development_action", summary: "x", description: "d", subject: "s" })).resolves.toMatchObject({ answer: "approve" });
+  });
 });

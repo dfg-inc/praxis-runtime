@@ -23597,7 +23597,8 @@ var init_operations = __esm({
       "PRAXIS_APPROVAL_",
       "PRAXIS_ALLOW_",
       "PRAXIS_FIXTURE_",
-      "PRAXIS_TEST_"
+      "PRAXIS_TEST_",
+      "PRAXIS_STATE_HOME"
     ];
     dotenvRejected = [];
     describeConnect = (ctx) => async () => {
@@ -55965,9 +55966,13 @@ function hostPermissionChannel(planText) {
   };
 }
 var trustedClientMode = () => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
+var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service"]);
 var trustedClientChannel = {
   kind: "trusted-client",
-  async ask() {
+  async ask(request) {
+    if (PERSONAL_ACTS.has(request.action)) {
+      throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code), or in the praxis CLI.`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
+    }
     return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
   }
 };
@@ -75717,7 +75722,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"7957855d0e6829f7f020cfbe5fbd2d51843da0511e820bfee9781697f1008480","coreBaseline":"a42b8929dba02beb5dd14f397cffbee1956af09b","inputs":31}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"e14e12a5638f3c9e9b50ad0ecfcb076787afa9c0c57b839852303a42e9032409","coreBaseline":"12d05944e41bf7a5af4b03701bf49ca5f888c317","inputs":25}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

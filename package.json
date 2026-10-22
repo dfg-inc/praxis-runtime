@@ -29,7 +29,8 @@
     "check:tests": "node tools/scripts/check-test-completeness.mjs",
     "report:tool-origins": "node tools/scripts/tool-origins-report.mjs",
     "accept:approval-ux": "node tools/scripts/approval-ux-acceptance.mjs",
-    "accept:claude-code-approval": "node tools/scripts/claude-code-approval-acceptance.mjs"
+    "accept:claude-code-approval": "node tools/scripts/claude-code-approval-acceptance.mjs",
+    "accept:marketplace-install": "node tools/scripts/marketplace-install-acceptance.mjs --previous 002da09"
   },
   "engines": {
     "node": ">=20"

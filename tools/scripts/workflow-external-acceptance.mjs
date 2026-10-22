@@ -350,11 +350,12 @@ try {
     const candidate = { action: "set-service", service: service("api", "api", [], "approved") };
     const fingerprint = await preview(candidate);
     const shown = await callTool("praxis_workflow_preview", { repo, command: JSON.stringify(candidate) }, { role: "runtime", version });
-    const refused = await applyWith(candidate, fingerprint);
+    // no client dialog for this call: the agent's own confirmation=YES must not approve the service
+    const refused = await callTool("praxis_workflow_apply", { repo, command: JSON.stringify(candidate), previewFingerprint: fingerprint, confirmation: "YES" }, { role: "runtime", version });
     record(
       "agent-cannot-approve-a-service",
-      shown.data?.humanApproval?.kind === "quality_verdict" && refused.ok === false && refused.code === "APPROVAL_REQUIRED" && state().services.find((item) => item.id === "api")?.status !== "approved",
-      `${shown.data?.humanApproval?.status}/${refused.code}`,
+      shown.ok === true && refused.ok === false && refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && state().services.find((item) => item.id === "api")?.status !== "approved",
+      `${shown.ok}/${refused.code}`,
     );
   }
   for (const item of [

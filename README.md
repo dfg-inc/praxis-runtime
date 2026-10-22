@@ -4,13 +4,17 @@ Shared Praxis Runtime Desktop Extension (**MCPB**) and Quality HTTP worker.
 
 Repository: [github.com/dfg-inc/praxis-runtime](https://github.com/dfg-inc/praxis-runtime)
 
-## Install (Desktop)
+## Install
+
+**Claude Code, Desktop Code, Cowork:** use the marketplace: Claude → Customize → Plugins → Add marketplace → `dfg-inc/praxis-marketplace` → **Praxis** → Add. The `praxis-runtime` plugin (this server) is installed with it.
+
+**Claude Desktop Chat** (a plugin's local server is not a Chat tool): install the MCPB.
 
 1. Open [Releases](https://github.com/dfg-inc/praxis-runtime/releases).
 2. Download `praxis-runtime.mcpb` (and `release-meta.json` for SHA-256 / compatibility).
-3. Install in Claude Desktop as a desktop extension.
-4. Optionally configure Jira, GitHub or GitLab in Runtime `user_config` (every setting is optional; local no-Jira workflows work without them).
-5. Install role ZIPs from their own repository Releases (BA / Architect / Developer / Quality).
+3. Install in Claude Desktop (Settings → Extensions). Start a new Chat.
+4. Optionally configure Jira, GitHub or GitLab in Runtime settings (every setting is optional; local no-Jira workflows work without them). Leave **Approval mode** empty unless you want [Trusted Client](https://github.com/dfg-inc/praxis-core/blob/master/docs/user-approval.md).
+5. Role skills: use the marketplace, or upload the role ZIPs from their repositories' Releases.
 
 ## Clone / develop
 

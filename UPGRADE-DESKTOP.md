@@ -1,12 +1,11 @@
 # Upgrading the Claude Desktop extension (local build)
 
-This procedure installs the locally built `claude-extensions/praxis-runtime.mcpb` over an older
-Praxis Runtime. It was written for the build packed from praxis-core `83d2953` and has **not** been
+This procedure installs `claude-extensions/praxis-runtime.mcpb` (0.1.0-alpha.48) over an older
+Praxis Runtime in Claude Desktop **Chat** (Code, Cowork and the Claude CLI use the marketplace plugin instead). It has **not** been
 executed through Claude Desktop yet: the sections marked *check* are how you confirm it worked.
 Nothing here publishes, tags or bumps a version.
 
-The version string is still `0.1.0-alpha.47`, so Desktop may treat the new file as the same version.
-Uninstall first rather than relying on an in-place upgrade.
+If Desktop treats the file as the same version, uninstall first rather than relying on an in-place upgrade. Always compare `build.bundleSha256` from `praxis_doctor` with the release notes.
 
 ## 0. What changes for you
 
@@ -19,7 +18,7 @@ Uninstall first rather than relying on an in-place upgrade.
 | Jira settings | Required | Optional |
 | `praxis_doctor` | Flags only | `providers`, `approval`, `nextSteps` |
 
-Approvals are yours, in the client: before a commit, push, merge request, Jira write or Story confirmation runs,
+Approval modes: the default is **Approval Required**; the extension setting *Approval mode* can be set to `trusted-client` (explicit opt-in: runs protected actions on the agent's `confirmation=YES` for a current preview, labelled `trusted-client`, never your per-action confirmation). Desktop Chat declared no approval dialog in a real test, so by default protected actions are refused there with the preview. Approvals are yours, in the client: before a commit, push, merge request, Jira write or Story confirmation runs,
 Praxis shows you the exact action in the client's own approval dialog (MCP elicitation) and runs it only if you
 approve. If your client cannot show that dialog, `praxis_doctor` says so (`approval.mode: no-dialog`) and the
 protected action is **not executed**: Praxis returns the preview and a clear message, and nothing the agent says
@@ -104,7 +103,7 @@ The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-
 
 ## Verify the loaded build, not the version string
 
-`0.1.0-alpha.47` names several different runtimes. After installing, call `praxis_doctor` in Desktop and read `build`:
+One version string can name several different runtimes (alpha.47 did). After installing, call `praxis_doctor` in Desktop and read `build`:
 
 | field | expect |
 | --- | --- |
