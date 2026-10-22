@@ -275,6 +275,23 @@ const repoWithPackageJson = () => {
   }
 }
 
+// --- 6. OPT-IN Trusted Client: the owner's standing permission, labelled as such ------------------------------------------------
+{
+  const session = await open({ env: { PRAXIS_APPROVAL_MODE: "trusted-client" } });
+  try {
+    const repo = repoWithPackageJson();
+    const doctor = await call(session, "praxis_doctor", { repo });
+    expect(doctor.data.approval?.mode === "trusted-client" && /not proof/.test(doctor.data.approval.note), `trusted doctor: ${JSON.stringify(doctor.data.approval)}`);
+    const no = await call(session, "praxis_project_init_apply", { repo, confirmation: "NO" });
+    expect(!no.ok && !existsSync(join(repo, ".project")), `trusted confirmation=NO: ${JSON.stringify(no)}`);
+    const ok = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+    expect(ok.ok && existsSync(join(repo, ".project")) && ok.data.approval?.[0]?.assurance === "trusted-client", `trusted apply: ${JSON.stringify(ok)}`);
+    prove("opt-in Trusted Client: confirmation=YES runs the previewed init, labelled trusted-client (never client-ui); confirmation=NO still runs nothing");
+  } finally {
+    await session.close();
+  }
+}
+
 rmSync(dest, { recursive: true, force: true });
 console.log(`PASS approval-ux (${proven.length} checks)`);
 for (const line of proven) console.log(`  ok ${line}`);

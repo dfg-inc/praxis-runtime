@@ -157,6 +157,21 @@ export function hostPermissionChannel(planText: string | undefined): UserApprova
   };
 }
 
+/**
+ * PRAXIS_APPROVAL_MODE=trusted-client (an extension setting; never the default, never settable from a repository).
+ * The owner's explicit decision to trust this client with protected actions without a separate confirmation of each one.
+ * It is a standing permission, not an approval of the specific action, and is labelled "trusted-client" in results and
+ * the journal. Unchanged: the agent's confirmation=YES, the preview and its fingerprint, argument checks, the journal.
+ */
+export const trustedClientMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
+
+export const trustedClientChannel: UserApprovalChannel = {
+  kind: "trusted-client",
+  async ask(): Promise<AskAnswer> {
+    return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
+  },
+};
+
 /** A channel that never answers: used to compute what the user would be asked, without running anything. */
 export const planOnlyChannel: UserApprovalChannel = {
   kind: "client-elicitation",

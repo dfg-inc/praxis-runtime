@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { describeClient } from "./server.js";
 import { callTool } from "./tools.js";
 import { diagnosticsPath, recordDiagnostic } from "./diagnostics-log.js";
+import { decisionLogPath } from "@praxis/contracts";
 import type { McpEnvelope } from "./workflow-test-helpers.js";
 
 const desktopRequest = {
@@ -97,5 +98,46 @@ describe("a declared dialog nobody answers", () => {
     expect(result.ok).toBe(false);
     expect(result.code).toBe("APPROVAL_TIMED_OUT");
     expect(existsSync(join(repo, ".project"))).toBe(false);
+  });
+});
+
+describe("Trusted Client: an explicit opt-in, never the default", () => {
+  const trusted = () => {
+    process.env.PRAXIS_APPROVAL_MODE = "trusted-client";
+    process.env.PRAXIS_TEST_APPROVALS = process.env.PRAXIS_TEST_APPROVALS ?? "1";
+  };
+
+  it("by default (Desktop-like client, no dialog) the same apply is still refused", async () => {
+    const client = describeClient(server(), desktopRequest);
+    const result = (await callTool("praxis_project_init_apply", { repo, confirmation: "YES" }, { role: "developer", version: "t", client })) as McpEnvelope;
+    expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    expect(existsSync(join(repo, ".project"))).toBe(false);
+  });
+
+  it("enabled: the apply writes, labelled trusted-client, and the journal says so", async () => {
+    trusted();
+    const client = describeClient(server(), desktopRequest);
+    const result = (await callTool("praxis_project_init_apply", { repo, confirmation: "YES" }, { role: "developer", version: "t", client })) as McpEnvelope;
+    expect(result.ok, JSON.stringify(result.errors)).toBe(true);
+    expect(existsSync(join(repo, ".project"))).toBe(true);
+    expect((result.data as { approval: Array<{ channel: string; assurance: string }> }).approval[0]).toMatchObject({ channel: "trusted-client", assurance: "trusted-client" });
+    expect(readFileSync(decisionLogPath(repo), "utf8")).toMatch(/"channel":"trusted-client"/);
+  });
+
+  it("enabled: confirmation=NO and a missing confirmation still write nothing", async () => {
+    trusted();
+    for (const confirmation of ["NO", undefined]) {
+      const result = (await callTool("praxis_project_init_apply", { repo, ...(confirmation ? { confirmation } : {}) }, { role: "developer", version: "t" })) as McpEnvelope;
+      expect(result.ok).toBe(false);
+      expect(existsSync(join(repo, ".project"))).toBe(false);
+    }
+  });
+
+  it("enabled: the doctor reports trusted-client, not client-ui", async () => {
+    trusted();
+    const client = describeClient(server(), desktopRequest);
+    const result = (await callTool("praxis_doctor", { repo }, { role: "developer", version: "t", client })) as McpEnvelope;
+    expect((result.data as { approval: { mode: string; note: string } }).approval.mode).toBe("trusted-client");
+    expect((result.data as { approval: { note: string } }).approval.note).toMatch(/not proof/);
   });
 });

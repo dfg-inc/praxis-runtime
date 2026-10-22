@@ -1,6 +1,6 @@
 {
   "name": "@praxis/mcp",
-  "version": "0.1.0-alpha.47",
+  "version": "0.1.0-alpha.48",
   "private": true,
   "type": "module",
   "description": "Praxis MCP adapter for Claude UI / Cowork hosted plugins. Protocol adapter over @praxis/cli operations; not a second business-logic copy. Bundled into claude-plugins ZIPs; not independently published as tgz because hosted plugins cannot npm-install.",
@@ -24,11 +24,11 @@
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",
-    "@praxis/cli": "file:../../vendor/praxis-cli-0.1.0-alpha.47.tgz",
-    "@praxis/contracts": "file:../../vendor/praxis-contracts-0.1.0-alpha.47.tgz",
-    "@praxis/jira": "file:../../vendor/praxis-jira-0.1.0-alpha.47.tgz",
-    "@praxis/knowledge": "file:../../vendor/praxis-knowledge-0.1.0-alpha.47.tgz",
-    "@praxis/project-config": "file:../../vendor/praxis-project-config-0.1.0-alpha.47.tgz",
+    "@praxis/cli": "file:../../vendor/praxis-cli-0.1.0-alpha.48.tgz",
+    "@praxis/contracts": "file:../../vendor/praxis-contracts-0.1.0-alpha.48.tgz",
+    "@praxis/jira": "file:../../vendor/praxis-jira-0.1.0-alpha.48.tgz",
+    "@praxis/knowledge": "file:../../vendor/praxis-knowledge-0.1.0-alpha.48.tgz",
+    "@praxis/project-config": "file:../../vendor/praxis-project-config-0.1.0-alpha.48.tgz",
     "zod": "^4.6.5"
   },
   "files": [

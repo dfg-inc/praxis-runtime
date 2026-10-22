@@ -4219,7 +4219,7 @@ function createUserApproval(input2) {
     subjectDigest: subjectDigest(input2.request.subject),
     decision: "approved",
     channel: input2.channel,
-    assurance: input2.channel === "host-permission" ? "host-prompt" : "client-ui",
+    assurance: input2.channel === "host-permission" ? "host-prompt" : input2.channel === "trusted-client" ? "trusted-client" : "client-ui",
     decidedAt: (input2.now ?? /* @__PURE__ */ new Date()).toISOString(),
     ...input2.reason ? { reason: input2.reason } : {}
   });
@@ -4237,6 +4237,9 @@ function approvalsGivenInThisCall() {
 }
 function approvalModeReport() {
   const channel = currentApprovalChannel();
+  if (channel?.kind === "trusted-client") {
+    return { mode: "trusted-client", note: "TRUSTED CLIENT (enabled by you in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, without a separate confirmation of each action. This is your standing permission for this client, not proof that you confirmed each action. Every action is still checked against its preview and journaled." };
+  }
   if (channel && channel.kind !== "host-permission") {
     return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
   }
@@ -23102,7 +23105,7 @@ async function qualityReviewOp(ctx) {
       const reviewed = await runQualityWorkPackageReview2({
         repo,
         workPackageId,
-        runtimeVersion: "0.1.0-alpha.47"
+        runtimeVersion: "0.1.0-alpha.48"
       });
       const qualityInputs = discoverQualityInputs(repo, workPackageId);
       return {
@@ -55961,6 +55964,13 @@ function hostPermissionChannel(planText) {
     }
   };
 }
+var trustedClientMode = () => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
+var trustedClientChannel = {
+  kind: "trusted-client",
+  async ask() {
+    return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
+  }
+};
 var planOnlyChannel = {
   kind: "client-elicitation",
   async ask(request) {
@@ -55986,7 +55996,7 @@ var PRAXIS_MCP_SDK = {
   ]
 };
 function bundleVersion() {
-  return "0.1.0-alpha.47";
+  return "0.1.0-alpha.48";
 }
 
 // packages/mcp/node_modules/zod/v4/classic/external.js
@@ -75707,7 +75717,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.47","sourceDigest":"8e96b5c9f8c653861ee8cd5038a65f52b5724d8be579e5749db3278d762b9b91","coreBaseline":"eb91c00f10b8ce548741edb9dbb7a4dd282d9b7c","inputs":25}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"7957855d0e6829f7f020cfbe5fbd2d51843da0511e820bfee9781697f1008480","coreBaseline":"a42b8929dba02beb5dd14f397cffbee1956af09b","inputs":31}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -77713,7 +77723,13 @@ function withClientReport(data, client) {
         hostGate: "Some hosts (Claude Desktop) hold an apply call at their own tool-permission prompt BEFORE it reaches Praxis. If you see no result and no prompt, look for that prompt in the host window; diagnosticsLog lists the calls that did reach Praxis (tool_enter). Praxis itself answers a protected call without a dialog immediately with APPROVAL_CLIENT_UI_REQUIRED."
       } : {}
     };
-    if (hostPermissionMode() && !client.dialog) {
+    if (trustedClientMode()) {
+      target.approval = {
+        ...target.approval,
+        mode: "trusted-client",
+        note: "TRUSTED CLIENT (you enabled it in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, with no separate confirmation of each action. That is your standing permission for this client, not proof you confirmed each action; results and the journal say trusted-client. Previews, stale-plan checks and the journal still apply."
+      };
+    } else if (hostPermissionMode() && !client.dialog) {
       target.approval = {
         ...target.approval,
         mode: "host-permission",
@@ -77766,7 +77782,7 @@ function preflight(name, args, ctx, version4) {
 }
 async function callTool(name, rawArgs, opts) {
   const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {};
-  const channel = opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str2(args.planText)) : void 0);
+  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannel : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str2(args.planText)) : void 0);
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 async function callToolInner(name, rawArgs, opts) {

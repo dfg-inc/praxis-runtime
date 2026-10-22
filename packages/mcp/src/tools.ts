@@ -13,7 +13,7 @@ import {
   type WorkflowRole,
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
-import { hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf } from "./approval-channel.js";
+import { hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannel, trustedClientMode } from "./approval-channel.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
@@ -169,7 +169,13 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
           }
         : {}),
     };
-    if (hostPermissionMode() && !client.dialog) {
+    if (trustedClientMode()) {
+      target.approval = {
+        ...target.approval,
+        mode: "trusted-client",
+        note: "TRUSTED CLIENT (you enabled it in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, with no separate confirmation of each action. That is your standing permission for this client, not proof you confirmed each action; results and the journal say trusted-client. Previews, stale-plan checks and the journal still apply.",
+      };
+    } else if (hostPermissionMode() && !client.dialog) {
       target.approval = {
         ...target.approval,
         mode: "host-permission",
@@ -239,7 +245,8 @@ export async function callTool(
   // OPT-IN (PRAXIS_APPROVAL_MODE=host-permission): a client with no dialog, the host's own tool-permission prompt, and the
   // exact plan in the arguments (see approval-channel.ts). Never chosen when the client has a dialog.
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
-  const channel = opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
+  // Trusted Client (explicit opt-in) replaces any dialog for protected tools: the owner chose not to be asked per action.
+  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannel : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 

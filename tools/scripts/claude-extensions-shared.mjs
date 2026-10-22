@@ -35,9 +35,9 @@ export const JIRA_USER_CONFIG = {
   },
   approval_mode: {
     type: "string",
-    title: "Approval without a client dialog (advanced, optional)",
+    title: "Approval mode (advanced, optional)",
     description:
-      "Leave blank. Praxis asks you to approve protected actions (Git, Jira, confirming a Story) in your client's own approval dialog; if the client cannot show one, those actions are not executed. Set to host-permission ONLY if your client has no such dialog and you accept this weaker mode: the apply tool then carries the exact plan in its arguments so your client's own tool-permission prompt shows it. Praxis cannot tell whether that prompt was shown: choosing 'always allow' for the tool removes it, and then the agent approves itself.",
+      "Leave blank for the default. Praxis asks you to approve protected actions (Git, Jira, confirming a Story) in your client's own approval dialog; if the client cannot show one, those actions are not executed. Set to trusted-client ONLY if you trust this client to run protected actions (writes, Git, Jira, confirming Stories) without asking you about each one, for example Claude Desktop with 'Always allow': Praxis then runs an action when the agent confirms a current preview, labels it trusted-client (not as your confirmation) and journals it. Set to host-permission ONLY if your client has no such dialog and you accept this weaker mode: the apply tool then carries the exact plan in its arguments so your client's own tool-permission prompt shows it. Praxis cannot tell whether that prompt was shown: choosing 'always allow' for the tool removes it, and then the agent approves itself.",
     required: false,
   },
   github_token: {
