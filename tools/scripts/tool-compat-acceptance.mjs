@@ -71,7 +71,7 @@ const problemsReal = problems.filter(Boolean);
 if (problemsReal.length) fail(problemsReal.join("; "));
 proven.push("input schemas are backward compatible (no property removed, none newly required, no type change, no enum value removed, same destructive hint)");
 const added = Object.keys(newTools).filter((n) => !oldTools[n]).sort();
-const expected = ["praxis_context_diagnose", "praxis_frontend_discover", "praxis_repository_brief", "praxis_repository_inspect", "praxis_review_apply", "praxis_review_render", "praxis_workflow_commands"];
+const expected = ["praxis_canon_init_apply", "praxis_canon_init_preview", "praxis_context_diagnose", "praxis_frontend_discover", "praxis_repository_brief", "praxis_repository_inspect", "praxis_review_apply", "praxis_review_render", "praxis_workflow_commands"];
 if (canon(added) !== canon(expected)) fail(`added tools ${added.join(", ")} differ from the expected ${expected.join(", ")}`);
 for (const n of added) {
   const t = newTools[n];

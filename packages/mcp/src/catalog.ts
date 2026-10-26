@@ -789,6 +789,30 @@ export const TOOLS: ToolDef[] = [
     kind: "read",
   },
   {
+    name: "praxis_canon_init_preview",
+    description:
+      "READ-ONLY plan for starting the BA canon in a NEW project without any manual service files and without the BA CLI: lists exactly what would be created (.ba/config.yaml, .ba/counters.yaml, a draft vision.md, the canon folders) and what already exists and is left alone. Writes nothing. Refuses (and says why) a symbolic link or a path of the wrong kind. Same files as `praxis-ba init`.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, product: { type: "string", description: "Product name for the heading of the draft vision (optional)." } },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_canon_init_apply",
+    description:
+      "Create the BA canon root listed by praxis_canon_init_preview. Only ever creates: an existing file or folder is left untouched. The user approves exactly the listed paths in the client's own dialog before anything is written. Does not create a first epic or the documentation layer (praxis-ba epic add and the ba-scaffold skill do).",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, product: { type: "string", description: "Product name for the heading of the draft vision (optional)." }, confirmation: confirmProp },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "apply",
+  },
+  {
     name: "praxis_review_render",
     description:
       "Build the standard HTML review for one stage and return a link the USER opens: view requirements (every acceptance criterion with its own accept/reject/comment control, edit by id, add/remove criteria, scope: in / deferred / out), prototype (clickable screens on mock data with states and roles, comments on elements), story-plan (one line per planned story, edit, exclude, agree), or stories (a checkbox for every criterion, step, rule and result). Writes an offline copy under .praxis/workflow/reviews and serves a live copy on 127.0.0.1 so the user's Save records their decisions directly. The page is a view, never the source of truth. Does not change workflow state.",

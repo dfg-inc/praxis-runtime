@@ -24107,7 +24107,7 @@ function classifySpawnFailure(err) {
   return QUALITY_CODES.QUALITY_SPAWN_FAILED;
 }
 function waitForChildStart(child, timeoutMs = 1500) {
-  return new Promise((resolve17) => {
+  return new Promise((resolve18) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -24117,7 +24117,7 @@ function waitForChildStart(child, timeoutMs = 1500) {
       child.off("spawn", onSpawn);
       child.off("error", onError);
       child.off("exit", onExit);
-      resolve17(result);
+      resolve18(result);
     };
     const onSpawn = () => finish({ spawned: true, pid: child.pid });
     const onError = (err) => finish({ spawned: false, pid: child.pid, error: err });
@@ -24495,7 +24495,7 @@ function portListening(port2) {
   });
 }
 function waitForWorkerStart(worker, timeoutMs = 1500) {
-  return new Promise((resolve17) => {
+  return new Promise((resolve18) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -24505,7 +24505,7 @@ function waitForWorkerStart(worker, timeoutMs = 1500) {
       worker.off("online", onOnline);
       worker.off("error", onError);
       worker.off("exit", onExit);
-      resolve17(result);
+      resolve18(result);
     };
     const onOnline = () => finish({ spawned: true, pid: process.pid });
     const onError = (err) => finish({ spawned: false, pid: process.pid, error: err });
@@ -26916,7 +26916,7 @@ var init_operations = __esm({
 var require_kind_of = __commonJS({
   "node_modules/kind-of/index.js"(exports2, module2) {
     var toString = Object.prototype.toString;
-    module2.exports = function kindOf(val) {
+    module2.exports = function kindOf2(val) {
       if (val === void 0) return "undefined";
       if (val === null) return "null";
       var type = typeof val;
@@ -33842,7 +33842,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve17) {
+function isRecursive(inst, stack, resolve18) {
   const cached4 = recursive.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN : NONE;
@@ -33852,7 +33852,7 @@ function isRecursive(inst, stack, resolve17) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve17);
+      const answer = isRecursive(child, stack, resolve18);
       if (answer > result)
         result = answer;
     }
@@ -33863,7 +33863,7 @@ function isRecursive(inst, stack, resolve17) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve17) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve18) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -33926,7 +33926,7 @@ function isRecursive(inst, stack, resolve17) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve17 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve18 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -41328,7 +41328,7 @@ var recursive2 = /* @__PURE__ */ new WeakMap();
 var NONE2 = 0;
 var ASSUMED2 = 1;
 var PROVEN2 = 2;
-function isRecursive2(inst, stack, resolve17) {
+function isRecursive2(inst, stack, resolve18) {
   const cached4 = recursive2.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN2 : NONE2;
@@ -41338,7 +41338,7 @@ function isRecursive2(inst, stack, resolve17) {
   let result = NONE2;
   const check2 = (child) => {
     if (result !== PROVEN2 && child?._zod) {
-      const answer = isRecursive2(child, stack, resolve17);
+      const answer = isRecursive2(child, stack, resolve18);
       if (answer > result)
         result = answer;
     }
@@ -41349,7 +41349,7 @@ function isRecursive2(inst, stack, resolve17) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve17) : NONE2;
+      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve18) : NONE2;
       if (child > answer)
         answer = child;
     }
@@ -41412,7 +41412,7 @@ function isRecursive2(inst, stack, resolve17) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve17 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve18 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive2(inner, stack, false) : ASSUMED2);
       break;
     }
@@ -48017,14 +48017,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve17, reject) => {
+  return new Promise((resolve18, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve17();
+      resolve18();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -48818,7 +48818,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve17, reject) => {
+    return new Promise((resolve18, reject) => {
       const earlyReject = (error64) => {
         reject(error64);
       };
@@ -48886,7 +48886,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options2?.allowInputRequired === true) return resolve17(manualInputRequiredValue(decoded));
+          if (options2?.allowInputRequired === true) return resolve18(manualInputRequiredValue(decoded));
           const flow = {
             codec: codec2,
             request,
@@ -48898,11 +48898,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve17(this._resolveNonCompleteResult(decoded, flow));
+          return resolve18(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve17(parseResult.data);
+          if (parseResult.success) resolve18(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -51814,7 +51814,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve17.call(this, root, ref);
+    let _sch = resolve18.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a7 = root.localRefs) === null || _a7 === void 0 ? void 0 : _a7[ref];
       const { schemaId } = this.opts;
@@ -51840,7 +51840,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve17(root, ref) {
+  function resolve18(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -52290,7 +52290,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     else if (typeof uri === "object") uri = parse6(serialize(uri, options2), options2);
     return uri;
   }
-  function resolve17(baseURI, relativeURI, options2) {
+  function resolve18(baseURI, relativeURI, options2) {
     const schemelessOptions = options2 ? Object.assign({ scheme: "null" }, options2) : { scheme: "null" };
     const resolved = resolveComponent(parse6(baseURI, schemelessOptions), parse6(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
@@ -52464,7 +52464,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
   const fastUri = {
     SCHEMES,
     normalize,
-    resolve: resolve17,
+    resolve: resolve18,
     resolveComponent,
     equal,
     serialize,
@@ -57840,7 +57840,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve17, reject) => {
+    return new Promise((resolve18, reject) => {
       const json3 = serializeMessage(message);
       let settled = false;
       const onError = (error64) => {
@@ -57855,14 +57855,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve17();
+        resolve18();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json3)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve17();
+        resolve18();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -57916,14 +57916,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve17) => {
+    return await new Promise((resolve18) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve17(true);
+        resolve18(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve17(false);
+        resolve18(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -58992,6 +58992,28 @@ var TOOLS = [
     },
     roles: ["ba", "architect", "developer", "quality"],
     kind: "read"
+  },
+  {
+    name: "praxis_canon_init_preview",
+    description: "READ-ONLY plan for starting the BA canon in a NEW project without any manual service files and without the BA CLI: lists exactly what would be created (.ba/config.yaml, .ba/counters.yaml, a draft vision.md, the canon folders) and what already exists and is left alone. Writes nothing. Refuses (and says why) a symbolic link or a path of the wrong kind. Same files as `praxis-ba init`.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, product: { type: "string", description: "Product name for the heading of the draft vision (optional)." } },
+      additionalProperties: false
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read"
+  },
+  {
+    name: "praxis_canon_init_apply",
+    description: "Create the BA canon root listed by praxis_canon_init_preview. Only ever creates: an existing file or folder is left untouched. The user approves exactly the listed paths in the client's own dialog before anything is written. Does not create a first epic or the documentation layer (praxis-ba epic add and the ba-scaffold skill do).",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, product: { type: "string", description: "Product name for the heading of the draft vision (optional)." }, confirmation: confirmProp },
+      additionalProperties: false
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "apply"
   },
   {
     name: "praxis_review_render",
@@ -64372,7 +64394,7 @@ var recursive3 = /* @__PURE__ */ new WeakMap();
 var NONE3 = 0;
 var ASSUMED3 = 1;
 var PROVEN3 = 2;
-function isRecursive3(inst, stack, resolve17) {
+function isRecursive3(inst, stack, resolve18) {
   const cached4 = recursive3.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN3 : NONE3;
@@ -64382,7 +64404,7 @@ function isRecursive3(inst, stack, resolve17) {
   let result = NONE3;
   const check2 = (child) => {
     if (result !== PROVEN3 && child?._zod) {
-      const answer = isRecursive3(child, stack, resolve17);
+      const answer = isRecursive3(child, stack, resolve18);
       if (answer > result)
         result = answer;
     }
@@ -64393,7 +64415,7 @@ function isRecursive3(inst, stack, resolve17) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve17) : NONE3;
+      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve18) : NONE3;
       if (child > answer)
         answer = child;
     }
@@ -64456,7 +64478,7 @@ function isRecursive3(inst, stack, resolve17) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve17 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve18 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive3(inner, stack, false) : ASSUMED3);
       break;
     }
@@ -79054,8 +79076,8 @@ function recordDiagnostic(entry) {
 }
 
 // packages/mcp/dist/tools.js
-var import_node_fs30 = require("node:fs");
-var import_node_path35 = require("node:path");
+var import_node_fs31 = require("node:fs");
+var import_node_path36 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/build-info.js
@@ -79064,7 +79086,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"a3b6349b375faaa7a3cf9d326cd5489abe3844b02e98f165be047ab5511d6ca1","coreBaseline":"6c898d14ebfa49c99e57fae96e0432ddef085baf","inputs":30}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"6a841e55b52198d5ef662ac273802aaf2d8d008ff3baaccee2694c7c1670edb2","coreBaseline":"1ecfed0fe000e390983da233d5f8035100922394","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81125,14 +81147,131 @@ function sessionStart(repo, args, version4) {
   };
 }
 
+// packages/mcp/dist/canon-init.js
+var import_node_fs26 = require("node:fs");
+var import_node_path31 = require("node:path");
+var CANON_FOLDERS = ["epics", "br", "cr", "wp", "bugs", "baselines"];
+var CONFIG = `canon_roots:
+  - vision.md
+  - epics/
+  - br/
+  - cr/
+  - wp/
+  - bugs/
+  - goals/
+`;
+var COUNTERS = `product:
+  epic: 0
+  cr: 0
+  wp: 0
+  bug: 0
+  baselineSeq: {}
+epics: {}
+retired: []
+`;
+var VISION_BODY = `<!-- Draft vision. Replace this body with the product vision. Leave \`status: draft\`
+in the frontmatter: only a human running \`praxis-ba vision confirm\` may set
+\`status: confirmed\`. No work package can become ready while the vision is a draft. -->
+
+State, in one or two paragraphs, what this product is for and the outcome
+it exists to produce - the single sentence a stranger could use to judge
+whether any future requirement belongs in scope. Plain prose; only the
+frontmatter status is machine-checked.
+`;
+function visionText(product) {
+  const heading = product ? `# ${product.replace(/\s+/g, " ").trim()}
+
+` : "";
+  return `---
+type: vision
+status: draft
+---
+
+${heading}${VISION_BODY}`;
+}
+function kindOf(abs, rel2) {
+  let st;
+  try {
+    st = (0, import_node_fs26.lstatSync)(abs);
+  } catch (error64) {
+    if (error64.code === "ENOENT")
+      return "missing";
+    throw error64;
+  }
+  if (st.isSymbolicLink())
+    throw new Error(`INVALID_INPUT: ${rel2} is a symbolic link; refusing to write through it`);
+  if (st.isDirectory())
+    return "dir";
+  if (st.isFile())
+    return "file";
+  throw new Error(`INVALID_INPUT: ${rel2} exists but is neither a regular file nor a directory`);
+}
+function planCanonInit(repoInput, options2 = {}) {
+  if (options2.product !== void 0 && !options2.product.trim())
+    throw new Error("INVALID_INPUT: product must not be empty");
+  if (!(0, import_node_fs26.existsSync)(repoInput))
+    throw new Error(`INVALID_INPUT: ${repoInput} does not exist`);
+  const repo = (0, import_node_fs26.realpathSync)((0, import_node_path31.resolve)(repoInput));
+  if (!(0, import_node_fs26.lstatSync)(repo).isDirectory())
+    throw new Error(`INVALID_INPUT: ${repo} is not a directory`);
+  const create = [];
+  const skipped = [];
+  const dir = (rel2, mustBeDir = true) => {
+    const k = kindOf((0, import_node_path31.join)(repo, rel2), rel2);
+    if (k === "file" && mustBeDir)
+      throw new Error(`INVALID_INPUT: ${rel2} exists but is a file, expected a directory`);
+    if (k === "dir")
+      skipped.push(`${rel2}/`);
+    else
+      create.push({ path: `${rel2}/`, kind: "dir" });
+    return k;
+  };
+  const file2 = (rel2, content) => {
+    const k = kindOf((0, import_node_path31.join)(repo, rel2), rel2);
+    if (k === "dir")
+      throw new Error(`INVALID_INPUT: ${rel2} exists but is a directory, expected a file`);
+    if (k === "file")
+      skipped.push(rel2);
+    else
+      create.push({ path: rel2, kind: "file", content });
+  };
+  dir(".ba");
+  file2(".ba/config.yaml", CONFIG);
+  file2(".ba/counters.yaml", COUNTERS);
+  file2("vision.md", visionText(options2.product?.trim()));
+  for (const folder of CANON_FOLDERS) {
+    const k = dir(folder);
+    if (k === "missing")
+      create.push({ path: `${folder}/.gitkeep`, kind: "file", content: "" });
+  }
+  return {
+    repo,
+    create,
+    skipped,
+    next: ["Optional: the ba-scaffold skill lays out the project documentation layer.", "Draft the vision in vision.md, then run the confirm-vision skill.", "Add the first epic with `praxis-ba epic add` (Claude Code or Cowork), then start with capture-cr."]
+  };
+}
+function applyCanonInit(plan) {
+  const written = [];
+  for (const item of plan.create) {
+    const abs = (0, import_node_path31.join)(plan.repo, item.path);
+    if (item.kind === "dir")
+      (0, import_node_fs26.mkdirSync)(abs, { recursive: false });
+    else
+      (0, import_node_fs26.writeFileSync)(abs, item.content ?? "", { encoding: "utf8", flag: "wx" });
+    written.push(item.path);
+  }
+  return written;
+}
+
 // packages/mcp/dist/context-tool.js
-var import_node_fs27 = require("node:fs");
-var import_node_path32 = require("node:path");
+var import_node_fs28 = require("node:fs");
+var import_node_path33 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/frontend-discover.js
-var import_node_fs26 = require("node:fs");
-var import_node_path31 = require("node:path");
+var import_node_fs27 = require("node:fs");
+var import_node_path32 = require("node:path");
 init_dist();
 var SKIP_DIRS = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", ".next", ".nuxt", "out", "coverage", ".turbo", ".cache", "vendor", "Pods", "DerivedData", ".gradle", "target", "__pycache__", ".venv", "venv"]);
 var MAX_FILES = 5e3;
@@ -81168,7 +81307,7 @@ function walk2(root) {
       return;
     let entries;
     try {
-      entries = (0, import_node_fs26.readdirSync)(dir).sort();
+      entries = (0, import_node_fs27.readdirSync)(dir).sort();
     } catch {
       return;
     }
@@ -81177,16 +81316,16 @@ function walk2(root) {
         truncated = true;
         return;
       }
-      const abs = (0, import_node_path31.join)(dir, name);
+      const abs = (0, import_node_path32.join)(dir, name);
       let stat;
       try {
-        stat = (0, import_node_fs26.lstatSync)(abs);
+        stat = (0, import_node_fs27.lstatSync)(abs);
         if (stat.isSymbolicLink())
           continue;
       } catch {
         continue;
       }
-      const rel2 = (0, import_node_path31.relative)(root, abs).split(import_node_path31.sep).join("/");
+      const rel2 = (0, import_node_path32.relative)(root, abs).split(import_node_path32.sep).join("/");
       if (stat.isDirectory()) {
         if (SKIP_DIRS.has(name) || depth >= MAX_DEPTH)
           continue;
@@ -81202,9 +81341,9 @@ function walk2(root) {
 }
 function readSmall(path) {
   try {
-    if ((0, import_node_fs26.statSync)(path).size > MAX_FILE_BYTES)
+    if ((0, import_node_fs27.statSync)(path).size > MAX_FILE_BYTES)
       return void 0;
-    return (0, import_node_fs26.readFileSync)(path, "utf8");
+    return (0, import_node_fs27.readFileSync)(path, "utf8");
   } catch {
     return void 0;
   }
@@ -81282,8 +81421,8 @@ function tokensFromScript(text, file2, tokens) {
   return found;
 }
 function discoverFrontend(repoPath) {
-  const root = (0, import_node_fs26.existsSync)(repoPath) ? (0, import_node_fs26.realpathSync)((0, import_node_path31.resolve)(repoPath)) : (0, import_node_path31.resolve)(repoPath);
-  if (!(0, import_node_fs26.existsSync)(root) || !(0, import_node_fs26.statSync)(root).isDirectory())
+  const root = (0, import_node_fs27.existsSync)(repoPath) ? (0, import_node_fs27.realpathSync)((0, import_node_path32.resolve)(repoPath)) : (0, import_node_path32.resolve)(repoPath);
+  if (!(0, import_node_fs27.existsSync)(root) || !(0, import_node_fs27.statSync)(root).isDirectory())
     throw new Error(`INSPECT_PATH_INVALID: ${repoPath} is not a directory`);
   const { files, truncated } = walk2(root);
   const names = /* @__PURE__ */ new Set();
@@ -81316,14 +81455,14 @@ function discoverFrontend(repoPath) {
   const tokens = { colors: {}, fonts: {}, sources: [] };
   const ranked = [...styleFiles].sort((a, b) => Number(/(^|\/)(global|globals|index|app|main|variables|theme|tokens|root)[\w.-]*\./i.test(b)) - Number(/(^|\/)(global|globals|index|app|main|variables|theme|tokens|root)[\w.-]*\./i.test(a)));
   for (const file2 of ranked.slice(0, 40)) {
-    const text = readSmall((0, import_node_path31.join)(root, file2));
+    const text = readSmall((0, import_node_path32.join)(root, file2));
     if (text)
       tokensFromCss(text, file2, tokens);
     if (Object.keys(tokens.colors).length >= 6 && tokens.fonts.body && tokens.radius)
       break;
   }
   for (const file2 of themeFiles.slice(0, 20)) {
-    const text = readSmall((0, import_node_path31.join)(root, file2));
+    const text = readSmall((0, import_node_path32.join)(root, file2));
     if (text)
       (file2.endsWith(".json") || /\.(c|m)?[jt]s$/.test(file2)) && tokensFromScript(text, file2, tokens);
   }
@@ -81350,15 +81489,15 @@ function discoverFrontend(repoPath) {
 
 // packages/mcp/dist/context-tool.js
 function diagnoseContextTool(repo, input2) {
-  const root = (0, import_node_path32.resolve)(repo);
+  const root = (0, import_node_path33.resolve)(repo);
   const state2 = loadWorkflow(root, input2.workItemId);
   const files = discoverFrontend(root).instructionFiles;
   const scanned = files.slice(0, 20).map((file2) => {
     let findings = [];
     try {
-      const path = (0, import_node_path32.join)(root, file2);
-      if ((0, import_node_fs27.statSync)(path).size < 2e5)
-        findings = scanUntrustedInstructions((0, import_node_fs27.readFileSync)(path, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
+      const path = (0, import_node_path33.join)(root, file2);
+      if ((0, import_node_fs28.statSync)(path).size < 2e5)
+        findings = scanUntrustedInstructions((0, import_node_fs28.readFileSync)(path, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
     } catch {
     }
     return { file: file2, findings };
@@ -81366,13 +81505,13 @@ function diagnoseContextTool(repo, input2) {
   for (const repository of state2?.repositories ?? []) {
     if (!repository.localPath)
       continue;
-    const base = (0, import_node_path32.resolve)(root, repository.localPath);
+    const base = (0, import_node_path33.resolve)(root, repository.localPath);
     for (const file2 of (repository.inspection?.instructionFiles ?? []).slice(0, 20)) {
       let findings = [];
       try {
-        const path = (0, import_node_path32.join)(base, file2);
-        if ((0, import_node_fs27.statSync)(path).size < 2e5)
-          findings = scanUntrustedInstructions((0, import_node_fs27.readFileSync)(path, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
+        const path = (0, import_node_path33.join)(base, file2);
+        if ((0, import_node_fs28.statSync)(path).size < 2e5)
+          findings = scanUntrustedInstructions((0, import_node_fs28.readFileSync)(path, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
       } catch {
       }
       scanned.push({ file: `${repository.id}:${file2}`, findings });
@@ -81398,8 +81537,8 @@ function diagnoseContextTool(repo, input2) {
 
 // packages/mcp/dist/repository-tools.js
 var import_node_child_process8 = require("node:child_process");
-var import_node_fs28 = require("node:fs");
-var import_node_path33 = require("node:path");
+var import_node_fs29 = require("node:fs");
+var import_node_path34 = require("node:path");
 init_dist();
 function requireState(repo, workItemId) {
   const state2 = loadWorkflow(repo, workItemId);
@@ -81436,10 +81575,10 @@ function inspectRepository(repo, input2) {
     throw new Error(`INVALID_INPUT: repository ${input2.repositoryId} is not registered; record it first with the register-repository command`);
   if (!entry.localPath)
     throw new Error(`INSPECT_PATH_INVALID: repository ${entry.id} has no localPath; register it with a local checkout to inspect it`);
-  const path = (0, import_node_path33.isAbsolute)(entry.localPath) ? entry.localPath : (0, import_node_path33.resolve)(repo, entry.localPath);
-  if (!(0, import_node_fs28.existsSync)(path) || !(0, import_node_fs28.statSync)(path).isDirectory())
+  const path = (0, import_node_path34.isAbsolute)(entry.localPath) ? entry.localPath : (0, import_node_path34.resolve)(repo, entry.localPath);
+  if (!(0, import_node_fs29.existsSync)(path) || !(0, import_node_fs29.statSync)(path).isDirectory())
     throw new Error(`INSPECT_PATH_INVALID: ${path} is not a directory`);
-  const top = (0, import_node_fs28.readdirSync)(path).filter((n) => n !== ".git").sort();
+  const top = (0, import_node_fs29.readdirSync)(path).filter((n) => n !== ".git").sort();
   const frameworks = /* @__PURE__ */ new Set();
   const entries = [];
   for (const name of top.slice(0, 60)) {
@@ -81448,7 +81587,7 @@ function inspectRepository(repo, input2) {
       frameworks.add(manifest[1]);
     const isDir = (() => {
       try {
-        return (0, import_node_fs28.statSync)((0, import_node_path33.join)(path, name)).isDirectory();
+        return (0, import_node_fs29.statSync)((0, import_node_path34.join)(path, name)).isDirectory();
       } catch {
         return false;
       }
@@ -81497,9 +81636,9 @@ function repositoryBrief(repo, input2) {
 var import_node_child_process9 = require("node:child_process");
 var import_node_http = require("node:http");
 var import_node_crypto15 = require("node:crypto");
-var import_node_fs29 = require("node:fs");
+var import_node_fs30 = require("node:fs");
 var import_node_os6 = require("node:os");
-var import_node_path34 = require("node:path");
+var import_node_path35 = require("node:path");
 init_dist();
 var IDLE_MS = 4 * 60 * 60 * 1e3;
 var MAX_BODY = 1e6;
@@ -81509,7 +81648,7 @@ var server;
 var port = 0;
 var isReviewView = (value) => typeof value === "string" && REVIEW_VIEWS.includes(value);
 function reviewDir(repo, workItemId) {
-  return (0, import_node_path34.join)(repo, ".praxis", "workflow", "reviews", workItemId);
+  return (0, import_node_path35.join)(repo, ".praxis", "workflow", "reviews", workItemId);
 }
 function requireState2(repo, workItemId) {
   const state2 = loadWorkflow(repo, workItemId);
@@ -81591,16 +81730,16 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
   return outcome(repo, id, submission.view, applied, conflicts, plan.stale, plan.summary);
 }
 function readSubmissionFile(repo, file2) {
-  const root = (0, import_node_fs29.realpathSync)((0, import_node_path34.resolve)(repo));
-  const downloads = (0, import_node_path34.join)((0, import_node_os6.homedir)(), "Downloads");
-  const path = (0, import_node_fs29.realpathSync)((0, import_node_path34.resolve)(root, file2));
-  const inside = path === root || path.startsWith(`${root}${import_node_path34.sep}`);
-  const inDownloads = (0, import_node_fs29.existsSync)(downloads) && path.startsWith(`${(0, import_node_fs29.realpathSync)(downloads)}${import_node_path34.sep}`);
+  const root = (0, import_node_fs30.realpathSync)((0, import_node_path35.resolve)(repo));
+  const downloads = (0, import_node_path35.join)((0, import_node_os6.homedir)(), "Downloads");
+  const path = (0, import_node_fs30.realpathSync)((0, import_node_path35.resolve)(root, file2));
+  const inside = path === root || path.startsWith(`${root}${import_node_path35.sep}`);
+  const inDownloads = (0, import_node_fs30.existsSync)(downloads) && path.startsWith(`${(0, import_node_fs30.realpathSync)(downloads)}${import_node_path35.sep}`);
   if (!inside && !inDownloads)
     throw new Error("INVALID_INPUT: the decisions file must be inside the repository or in Downloads");
-  if ((0, import_node_fs29.statSync)(path).size > MAX_BODY)
+  if ((0, import_node_fs30.statSync)(path).size > MAX_BODY)
     throw new Error("INVALID_INPUT: the decisions file is too large");
-  return JSON.parse((0, import_node_fs29.readFileSync)(path, "utf8"));
+  return JSON.parse((0, import_node_fs30.readFileSync)(path, "utf8"));
 }
 function json2(res, status, body2) {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
@@ -81697,11 +81836,11 @@ async function openInBrowser(url4) {
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
   return new Promise((done) => {
     try {
-      const dir = (0, import_node_fs29.mkdtempSync)((0, import_node_path34.join)((0, import_node_os6.tmpdir)(), "praxis-open-"));
-      (0, import_node_fs29.chmodSync)(dir, 448);
-      const page = (0, import_node_path34.join)(dir, "open-review.html");
-      (0, import_node_fs29.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><title>Opening review</title><meta http-equiv="refresh" content="0;url=${url4.replace(/"/g, "&quot;")}"><p>Opening the review... <a href="${url4.replace(/"/g, "&quot;")}">continue</a></p>`, { mode: 384 });
-      setTimeout(() => (0, import_node_fs29.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
+      const dir = (0, import_node_fs30.mkdtempSync)((0, import_node_path35.join)((0, import_node_os6.tmpdir)(), "praxis-open-"));
+      (0, import_node_fs30.chmodSync)(dir, 448);
+      const page = (0, import_node_path35.join)(dir, "open-review.html");
+      (0, import_node_fs30.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><title>Opening review</title><meta http-equiv="refresh" content="0;url=${url4.replace(/"/g, "&quot;")}"><p>Opening the review... <a href="${url4.replace(/"/g, "&quot;")}">continue</a></p>`, { mode: 384 });
+      setTimeout(() => (0, import_node_fs30.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
       const child = (0, import_node_child_process9.spawn)(opener, [page], { detached: true, stdio: "ignore" });
       const timer = setTimeout(() => {
         child.unref();
@@ -81726,9 +81865,9 @@ async function renderReviewTool(repo, input2) {
   const view = input2.view;
   const state2 = requireState2(repo, input2.workItemId);
   const dir = reviewDir(repo, state2.workItem.id);
-  (0, import_node_fs29.mkdirSync)(dir, { recursive: true });
-  const file2 = (0, import_node_path34.join)(dir, `${view}.html`);
-  (0, import_node_fs29.writeFileSync)(file2, renderReview(state2, view, { reviewId: `${view}-${state2.workItem.id}`, generatedAt: (/* @__PURE__ */ new Date()).toISOString() }));
+  (0, import_node_fs30.mkdirSync)(dir, { recursive: true });
+  const file2 = (0, import_node_path35.join)(dir, `${view}.html`);
+  (0, import_node_fs30.writeFileSync)(file2, renderReview(state2, view, { reviewId: `${view}-${state2.workItem.id}`, generatedAt: (/* @__PURE__ */ new Date()).toISOString() }));
   let url4;
   let opened = false;
   if (input2.serve !== false) {
@@ -81746,7 +81885,7 @@ async function renderReviewTool(repo, input2) {
     if (created && opened)
       created.openedAt = Date.now();
     if (!opened && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
-      (0, import_node_fs29.writeFileSync)((0, import_node_path34.join)(dir, `${view}.url`), secretUrl);
+      (0, import_node_fs30.writeFileSync)((0, import_node_path35.join)(dir, `${view}.url`), secretUrl);
     url4 = `http://127.0.0.1:${p}/r/${id}`;
   }
   return {
@@ -81810,7 +81949,8 @@ var PROTECTED_TOOLS = /* @__PURE__ */ new Set([
   "praxis_developer_git_publish",
   "praxis_developer_git_merge_request",
   "praxis_developer_git_link_jira_apply",
-  "praxis_workflow_apply"
+  "praxis_workflow_apply",
+  "praxis_canon_init_apply"
 ]);
 async function approvalPlan(args, ctx, opts) {
   const target = str2(args.tool);
@@ -81961,7 +82101,7 @@ async function callToolInner(name, rawArgs, opts) {
         ...withApprovalNote(name, await runWorkflowTool(name, args, ctx.repo, opts.version))
       });
     }
-    if (name === "praxis_workflow_commands" || name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
+    if (name === "praxis_canon_init_preview" || name === "praxis_canon_init_apply" || name === "praxis_workflow_commands" || name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
       return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await runPlanningTool(name, args, ctx.repo, opts.role) });
     }
     if (name === "praxis_developer_status" && str2(args.workItemId)) {
@@ -82025,18 +82165,39 @@ function hydrateWorkflowCommand(repo, raw) {
   const relative6 = command.implementationPath;
   if (typeof relative6 !== "string" || relative6.length === 0)
     return command;
-  const root = (0, import_node_path35.resolve)(repo);
-  const absolute = (0, import_node_path35.resolve)(root, relative6);
-  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path35.sep}`)) {
+  const root = (0, import_node_path36.resolve)(repo);
+  const absolute = (0, import_node_path36.resolve)(root, relative6);
+  if (absolute !== root && !absolute.startsWith(`${root}${import_node_path36.sep}`)) {
     throw new Error("implementation path escapes the repository");
   }
-  command.implementationSource = (0, import_node_fs30.readFileSync)(absolute, "utf8");
+  command.implementationSource = (0, import_node_fs31.readFileSync)(absolute, "utf8");
   delete command.implementationPath;
   return command;
 }
 async function runPlanningTool(name, args, repo, role) {
   const workItemId = str2(args.workItemId);
   switch (name) {
+    case "praxis_canon_init_preview": {
+      const plan = planCanonInit(repo, { product: str2(args.product) });
+      return { dryRun: true, repo: plan.repo, willCreate: plan.create.map((c) => c.path), alreadyThere: plan.skipped, next: plan.next, note: "Nothing was written. praxis_canon_init_apply creates these paths after the user approves them." };
+    }
+    case "praxis_canon_init_apply": {
+      const plan = planCanonInit(repo, { product: str2(args.product) });
+      if (plan.create.length === 0)
+        return { created: [], alreadyThere: plan.skipped, note: "The canon root is already complete: nothing to create." };
+      await obtainUserApproval({
+        action: "praxis_canon_init_apply",
+        kind: "development_action",
+        summary: `Create the BA canon root in ${plan.repo} (${plan.create.length} path(s))`,
+        description: `Creates, and never overwrites:
+${plan.create.map((c) => `- ${c.path}`).join("\n")}
+
+Left untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
+        subject: JSON.stringify(plan.create.map((c) => [c.path, c.content ?? ""]))
+      }, { confirmation: str2(args.confirmation), repo });
+      const created = applyCanonInit(plan);
+      return { created, alreadyThere: plan.skipped, next: plan.next };
+    }
     case "praxis_workflow_commands": {
       const only = str2(args.action);
       const all = commandCatalog();
@@ -82065,7 +82226,7 @@ async function runPlanningTool(name, args, repo, role) {
         const entry = state2?.repositories.find((r) => r.id === registered);
         if (!entry?.localPath)
           throw new Error(`INVALID_INPUT: repository ${registered} is not registered with a local path`);
-        target = (0, import_node_path35.resolve)(repo, entry.localPath);
+        target = (0, import_node_path36.resolve)(repo, entry.localPath);
       }
       return discoverFrontend(target);
     }
@@ -82085,16 +82246,16 @@ function assertImplementationPath(repo, command, workItemId) {
   if (!service)
     return;
   const registered = state2.repositories.find((r) => r.id === service.repositoryId);
-  const root = (0, import_node_fs30.realpathSync)((0, import_node_path35.resolve)(repo, service.localPath ?? registered?.localPath ?? "."));
+  const root = (0, import_node_fs31.realpathSync)((0, import_node_path36.resolve)(repo, service.localPath ?? registered?.localPath ?? "."));
   let target;
   try {
-    target = (0, import_node_fs30.realpathSync)((0, import_node_path35.resolve)(root, String(command.path ?? "")));
-    if (!(0, import_node_fs30.statSync)(target).isFile())
+    target = (0, import_node_fs31.realpathSync)((0, import_node_path36.resolve)(root, String(command.path ?? "")));
+    if (!(0, import_node_fs31.statSync)(target).isFile())
       throw new Error("not a file");
   } catch {
     throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is not an existing file in ${service.id}'s checkout (${root}); record real work only`);
   }
-  if (target !== root && !target.startsWith(`${root}${import_node_path35.sep}`))
+  if (target !== root && !target.startsWith(`${root}${import_node_path36.sep}`))
     throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
 }
 async function runWorkflowTool(name, args, repo, version4) {

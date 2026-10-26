@@ -5,6 +5,7 @@ import type { OpContext } from "@praxis/cli/operations";
 import {
   ApprovalError,
   ApprovalNeedsInput,
+  obtainUserApproval,
   approvalsGivenInThisCall,
   logDecision,
   subjectDigest,
@@ -22,6 +23,7 @@ import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
 import { developerWorkItemStatus, inspectWorkflow } from "./workflow-inspect.js";
 import { sessionStart } from "./session-start.js";
+import { applyCanonInit, planCanonInit } from "./canon-init.js";
 import { diagnoseContextTool } from "./context-tool.js";
 import { discoverFrontend } from "./frontend-discover.js";
 import { inspectRepository, repositoryBrief } from "./repository-tools.js";
@@ -106,6 +108,7 @@ const PROTECTED_TOOLS = new Set([
   "praxis_developer_git_merge_request",
   "praxis_developer_git_link_jira_apply",
   "praxis_workflow_apply",
+  "praxis_canon_init_apply",
 ]);
 
 /** What the connected MCP client declared at initialize, as far as approvals are concerned. */
@@ -307,7 +310,7 @@ async function callToolInner(
         ...withApprovalNote(name, await runWorkflowTool(name, args, ctx.repo, opts.version)),
       });
     }
-    if (name === "praxis_workflow_commands" || name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
+    if (name === "praxis_canon_init_preview" || name === "praxis_canon_init_apply" || name === "praxis_workflow_commands" || name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
       return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await runPlanningTool(name, args, ctx.repo, opts.role) });
     }
     if (name === "praxis_developer_status" && str(args.workItemId)) {
@@ -420,6 +423,26 @@ function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
 async function runPlanningTool(name: string, args: Record<string, unknown>, repo: string, role: PraxisRole): Promise<unknown> {
   const workItemId = str(args.workItemId);
   switch (name) {
+    case "praxis_canon_init_preview": {
+      const plan = planCanonInit(repo, { product: str(args.product) });
+      return { dryRun: true, repo: plan.repo, willCreate: plan.create.map((c) => c.path), alreadyThere: plan.skipped, next: plan.next, note: "Nothing was written. praxis_canon_init_apply creates these paths after the user approves them." };
+    }
+    case "praxis_canon_init_apply": {
+      const plan = planCanonInit(repo, { product: str(args.product) });
+      if (plan.create.length === 0) return { created: [], alreadyThere: plan.skipped, note: "The canon root is already complete: nothing to create." };
+      await obtainUserApproval(
+        {
+          action: "praxis_canon_init_apply",
+          kind: "development_action",
+          summary: `Create the BA canon root in ${plan.repo} (${plan.create.length} path(s))`,
+          description: `Creates, and never overwrites:\n${plan.create.map((c) => `- ${c.path}`).join("\n")}\n\nLeft untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
+          subject: JSON.stringify(plan.create.map((c) => [c.path, c.content ?? ""])),
+        },
+        { confirmation: str(args.confirmation), repo },
+      );
+      const created = applyCanonInit(plan);
+      return { created, alreadyThere: plan.skipped, next: plan.next };
+    }
     case "praxis_workflow_commands": {
       const only = str(args.action);
       const all = commandCatalog();

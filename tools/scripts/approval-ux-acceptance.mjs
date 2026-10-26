@@ -130,8 +130,11 @@ const repoWithPackageJson = () => {
       expect(result.ok, `${command.action}: ${JSON.stringify(result)}`);
     };
     next = answer("accept", "approve");
-    const askedBefore = session.elicited.length;
+    // opening a classic item is the user's choice: it asks once, in the dialog
+    const beforeOpen = session.elicited.length;
     await record({ action: "open", projectId: "ux", title: "Approval UX", request: "r", mode: "classic" });
+    expect(session.elicited.length === beforeOpen + 1 && /CLASSIC mode/.test(session.elicited.at(-1).message), "opening a classic work item did not ask the user exactly once");
+    const askedBefore = session.elicited.length;
     await record({ action: "add-requirement", id: "REQ-UX-001", statement: "The user approves.", acceptanceCriteria: ["Done."] });
     await record({
       action: "add-story",
