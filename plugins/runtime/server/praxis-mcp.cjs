@@ -4642,6 +4642,8 @@ var init_planning_schemas = __esm({
       storyHistory: external_exports.array(StoryHistoryEntrySchema).default([]),
       sessionLog: external_exports.array(SessionNoteSchema).default([]),
       waivers: external_exports.array(CoverageWaiverSchema).default([]),
+      /** Earlier content of requirements, the prototype and the story plan (JSON text), so a revision never loses what it replaced. */
+      artifactHistory: external_exports.array(external_exports.object({ kind: external_exports.enum(["requirement", "prototype", "story-plan"]), id: external_exports.string(), revision: external_exports.number().int().positive(), at: external_exports.string(), snapshot: external_exports.string() })).default([]),
       updatedAt: external_exports.string().optional()
     };
   }
@@ -5087,7 +5089,7 @@ function cascadeScope(state2, now) {
         return { ...entry, status: "excluded", excludedReason: "scope: all requirements are deferred or excluded" };
       if (hasScope && entry.status === "excluded" && entry.excludedReason?.startsWith("scope:")) {
         const { excludedReason: _e, ...rest } = entry;
-        return { ...rest, status: "planned" };
+        return { ...rest, status: restored.includes(entry.id) ? "detailed" : "planned" };
       }
       return entry;
     });
@@ -5110,6 +5112,14 @@ function dropDanglingRefs(state2) {
     next = { ...next, storyPlan: { ...next.storyPlan, entries: next.storyPlan.entries.map((e) => ({ ...e, acIds: e.acIds.filter((id) => acIds.has(id)) })) } };
   }
   return next;
+}
+function keepArtifact(state2, kind, id, revision, value, now) {
+  const kept = state2.artifactHistory;
+  const entry = { kind, id, revision, at: iso(now), snapshot: JSON.stringify(value) };
+  const all = [...kept, entry];
+  const protos = all.filter((h) => h.kind === "prototype");
+  const drop = new Set(protos.slice(0, Math.max(0, protos.length - 10)));
+  return { ...state2, artifactHistory: all.filter((h) => !drop.has(h)).slice(-150) };
 }
 function applyRequirementDecisions(state2, command, now) {
   let next = state2;
@@ -5177,6 +5187,7 @@ function applyRequirementDecisions(state2, command, now) {
       summary.push(`${id} removed`);
     }
     if (revised) {
+      next = keepArtifact(next, "requirement", current.id, current.revision, current, now);
       requirement = { ...requirement, revision: current.revision + 1, status: "proposed" };
       contentChanged = true;
       changed.push(requirement.id);
@@ -5189,7 +5200,12 @@ function applyRequirementDecisions(state2, command, now) {
     next = cascadeScope(next, now).state;
   }
   next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ") || "marks only"}`);
-  return { state: next, duplicate: false, result: { changedRequirementIds: changed, reviewProgress: reviewProgress(next) } };
+  const marked = command.decisions.some((d) => d.acceptance.some((a) => a.status !== void 0));
+  if (marked && (command.via === "html-review" || command.via === "approved") && reviewProgress(next).complete && acceptanceStatus(next, "requirements_review") !== "accepted") {
+    next = recordAcceptance(next, "requirements_review", command.via, now);
+    next = { ...next, requirements: next.requirements.map((r) => r.scope === "in" && r.status !== "superseded" ? { ...r, status: "approved" } : r) };
+  }
+  return { state: next, duplicate: false, result: { changedRequirementIds: changed, reviewProgress: reviewProgress(next), accepted: acceptanceStatus(next, "requirements_review") === "accepted" } };
 }
 function markDownstreamStale(state2, requirementId, now) {
   let next = state2;
@@ -5221,7 +5237,18 @@ function reviewProgress(state2) {
     complete: criteria.length > 0 && criteria.every((c) => c.review.status === "accepted") && reqs.every((r) => r.acceptanceCriteria.length > 0)
   };
 }
+function assertNoRealSecrets(value, where) {
+  if (typeof value === "string") {
+    if (REAL_SECRET.test(value))
+      throw missing("PROTOTYPE_SECRET", `${where} contains something that looks like a real secret or token; use an obviously fake value`);
+  } else if (Array.isArray(value))
+    value.forEach((v, i) => assertNoRealSecrets(v, `${where}[${i}]`));
+  else if (value && typeof value === "object")
+    for (const [k, v] of Object.entries(value))
+      assertNoRealSecrets(v, `${where}.${k}`);
+}
 function validatePrototype(state2, prototype) {
+  assertNoRealSecrets({ mock: prototype.mock, endpoints: prototype.endpoints, notes: prototype.notes }, "the prototype");
   const screenIds = /* @__PURE__ */ new Set();
   for (const screen of prototype.screens) {
     if (screenIds.has(screen.id))
@@ -5280,7 +5307,8 @@ function withPrototype(state2, prototype, summary, now) {
     status: "draft",
     history: [...state2.prototype?.history ?? [], { revision, at: iso(now), summary }].slice(-100)
   };
-  return touch({ ...state2, prototype: next }, now, `prototype r${revision}: ${summary}`);
+  const kept = state2.prototype ? keepArtifact(state2, "prototype", state2.prototype.id, state2.prototype.revision, state2.prototype, now) : state2;
+  return touch({ ...kept, prototype: next }, now, `prototype r${revision}: ${summary}`);
 }
 function applyPrototypeOps(state2, operations) {
   const current = state2.prototype;
@@ -5427,7 +5455,8 @@ function withPlan(state2, entries, summary, now) {
     entries,
     history: [...state2.storyPlan?.history ?? [], { revision, at: iso(now), summary }].slice(-100)
   };
-  return touch({ ...state2, storyPlan: plan }, now, `story plan r${revision}: ${summary}`);
+  const kept = state2.storyPlan ? keepArtifact(state2, "story-plan", "plan", state2.storyPlan.revision, state2.storyPlan, now) : state2;
+  return touch({ ...kept, storyPlan: plan }, now, `story plan r${revision}: ${summary}`);
 }
 function storyOf(state2, id) {
   const story = state2.stories.find((s) => s.id === id && s.status !== "superseded");
@@ -5539,6 +5568,21 @@ function assertRepos(state2, ids) {
 function phaseIndex(phase) {
   return PHASES.indexOf(phase);
 }
+function implementationOrderOf(state2) {
+  const ids = state2.services.map((s) => s.id);
+  const done = /* @__PURE__ */ new Set();
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const s of state2.services) {
+      if (!done.has(s.id) && s.dependsOn.filter((d) => ids.includes(d)).every((d) => done.has(d))) {
+        done.add(s.id);
+        progressed = true;
+      }
+    }
+  }
+  return ids.filter((id) => !done.has(id));
+}
 function phaseGates(state2, to) {
   const missingItems = [];
   const warnings = [];
@@ -5587,6 +5631,8 @@ function phaseGates(state2, to) {
         for (const dep of service.dependsOn)
           if (!state2.services.some((s) => s.id === dep))
             missingItems.push(`service ${service.id} depends on unknown ${dep}`);
+      const cyc = implementationOrderOf(state2);
+      need(cyc.length === 0, `services depend on each other in a cycle: ${cyc.join(", ")}`);
       for (const repo of state2.repositories) {
         const assigned = activeStories(state2).some((s) => s.repositoryIds.includes(repo.id)) || activeRequirements(state2).some((r) => r.repositoryIds.includes(repo.id));
         need(!assigned || state2.services.some((s) => s.repositoryId === repo.id), `repository ${repo.id} has stories or requirements assigned but no service (set-service with repositoryId): nothing would be implemented there`);
@@ -5599,6 +5645,10 @@ function phaseGates(state2, to) {
     }
     case "delivery":
       need(state2.verdicts.some((v) => v.scope === "feature" && v.verdict !== "FAIL" && !v.stale), "a current feature verdict that is not FAIL");
+      for (const service of state2.services) {
+        need(state2.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
+        need(service.status === "approved" || service.status === "completed" || state2.verdicts.some((v) => v.scope === "service" && v.scopeId === service.id && v.verdict !== "FAIL" && !v.stale), `service ${service.id} has no current non-FAIL verdict`);
+      }
       break;
     default:
       break;
@@ -5661,11 +5711,11 @@ function nextStep(state2) {
       return {
         ...base,
         role: "ba",
-        action: progress.complete ? "advance-to-prototype" : "review-requirements",
-        summary: progress.complete ? "All criteria are accepted: move to the prototype." : `Review requirements in HTML: ${progress.accepted}/${progress.criteria} criteria accepted, ${progress.pending} pending, ${progress.rejected} rejected.`,
+        action: progress.complete && acceptanceStatus(state2, "requirements_review") === "accepted" ? "advance-to-prototype" : "review-requirements",
+        summary: progress.complete && acceptanceStatus(state2, "requirements_review") === "accepted" ? "All criteria are accepted: move to the prototype." : progress.complete ? "Every criterion is marked, but the review is not recorded as accepted: ask the user to open the review again and accept." : `Review requirements in HTML: ${progress.accepted}/${progress.criteria} criteria accepted, ${progress.pending} pending, ${progress.rejected} rejected.`,
         tools: ["praxis_review_render", "praxis_review_apply"],
         skills: ["praxis-ba:requirements-review"],
-        userDecision: !progress.complete
+        userDecision: !(progress.complete && acceptanceStatus(state2, "requirements_review") === "accepted")
       };
     case "prototype":
       return {
@@ -5736,6 +5786,7 @@ function isUserDecision(command) {
     case "agree-story-plan":
     case "accept-stories":
     case "review-stories":
+    case "waive-coverage":
       return true;
     case "review-requirements":
       return command.decisions.some((d) => (d.acceptance ?? []).some((a) => a.status !== void 0));
@@ -5796,7 +5847,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
     }
     case "set-prototype": {
       const { prototype } = command;
-      const parsed = PrototypeSchema.omit({ revision: true, status: true, history: true, feedback: true }).parse({ id: "PROTO-1", tokens: { colors: {}, fonts: {}, sources: [] }, ...prototype });
+      const parsed = PrototypeSchema.omit({ revision: true, status: true, history: true, feedback: true }).parse({ id: "PROTO-1", styles: { colors: {}, fonts: {}, sources: [] }, ...prototype });
       const next = withPrototype(state2, { ...parsed, feedback: state2.prototype?.feedback ?? [], history: [], revision: 1, status: "draft" }, command.summary ?? "prototype set", now);
       return { state: next, duplicate: false, result: { revision: next.prototype.revision, screens: next.prototype.screens.length } };
     }
@@ -6215,7 +6266,7 @@ function migrateWorkflowState(state2) {
   const migrated = { ...state2, version: "1.1.0", requirements: requirements2 };
   return { ...migrated, phase: inferPhase(migrated) };
 }
-var import_node_crypto2, iso, hash, activeRequirements, inScope, activeStories, KEYWORDS, storyText, Via, ReviewStatus, AcDecision, RequirementDecision, PrototypeInput, PrototypeOperation, PlanOperation, StoryPatch, CriterionOp, NewStoryFromOriginal, PlanningCommandSchemas, PLANNING_ACTIONS, missing, requirementOf, PATCH_ITEM_KEYS, REVIEW_DECISION_ACTION;
+var import_node_crypto2, iso, hash, activeRequirements, inScope, activeStories, KEYWORDS, storyText, Via, ReviewStatus, AcDecision, RequirementDecision, PrototypeInput, PrototypeOperation, PlanOperation, StoryPatch, CriterionOp, NewStoryFromOriginal, PlanningCommandSchemas, PLANNING_ACTIONS, missing, requirementOf, REAL_SECRET, PATCH_ITEM_KEYS, REVIEW_DECISION_ACTION;
 var init_planning = __esm({
   "node_modules/@praxis/contracts/dist/planning.js"() {
     import_node_crypto2 = require("node:crypto");
@@ -6359,12 +6410,17 @@ var init_planning = __esm({
         throw missing("MISSING_REQUIREMENT", `requirement ${id} not found`);
       return found;
     };
+    REAL_SECRET = /(Bearer\s+[A-Za-z0-9._~+\/-]{20,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
     PATCH_ITEM_KEYS = { happyPath: "step", alternatives: "alt", negative: "neg", edgeCases: "edge", businessRules: "rule", expectedResults: "result" };
     REVIEW_DECISION_ACTION = "review-decisions";
   }
 });
 
 // node_modules/@praxis/contracts/dist/workflow.js
+function redactState(state2) {
+  const { prototype, ...rest } = state2;
+  return { ...redactPersistent(rest), ...prototype === void 0 ? {} : { prototype } };
+}
 function redactPersistent(value) {
   if (Array.isArray(value))
     return value.map((item) => redactPersistent(item));
@@ -6901,6 +6957,9 @@ function applyWorkflowCommand(state2, raw, options2) {
     return { state: next2, duplicate: false, result: { requirementId: command.id } };
   }
   if (command.action === "set-service") {
+    if (command.service.repositoryId && !state2.repositories.some((r) => r.id === command.service.repositoryId)) {
+      throw new WorkflowError("REPOSITORY_NOT_FOUND", `service ${command.service.id} names repository ${command.service.repositoryId}, which is not registered (register-repository first)`);
+    }
     const previous = state2.services.find((service) => service.id === command.service.id);
     const approving = command.service.status === "approved" || command.service.status === "completed";
     const unchanged = previous !== void 0 && fingerprintPayload(previous) === fingerprintPayload(command.service);
@@ -6990,6 +7049,9 @@ function applyWorkflowCommand(state2, raw, options2) {
     return { state: next2, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed } };
   }
   if (command.action === "record-implementation") {
+    if (state2.mode === "guided" && !state2.services.some((s) => s.id === command.serviceId)) {
+      throw new WorkflowError("SERVICE_NOT_FOUND", `service ${command.serviceId} is not part of this work item (set-service first): an implementation record needs a service`);
+    }
     const implementationUnits = [
       ...state2.implementationUnits.filter((unit) => unit.id !== command.id),
       {
@@ -8238,9 +8300,10 @@ function submissionToCommands(state2, raw) {
   const conflicts = [];
   const commands = [];
   const summary = [];
+  const details = [];
   const stale = submission.baseFingerprint !== fingerprintFor(state2, submission.view);
   if (submission.workItemId !== state2.workItem.id) {
-    return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state2.workItem.id}` }], stale: true, summary: [] };
+    return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state2.workItem.id}` }], stale: true, summary: [], details: [] };
   }
   const via = "html-review";
   if (submission.view === "requirements" && submission.requirements) {
@@ -8267,8 +8330,26 @@ function submissionToCommands(state2, raw) {
           conflicts.push({ item: criterion.id, reason: `criterion changed since the review (now revision ${live.revision})` });
           continue;
         }
+        if (criterion.from !== void 0 && criterion.status !== void 0 && live.review.status !== criterion.from) {
+          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} by someone else since the review (the page showed ${criterion.from})` });
+          continue;
+        }
+        const unchanged = (criterion.status === void 0 || criterion.status === live.review.status) && (criterion.comment === void 0 || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === void 0 || criterion.statement === live.statement);
+        if (unchanged)
+          continue;
+        details.push(`${criterion.id} '${live.statement.slice(0, 80)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== void 0 ? `edit to '${criterion.statement.slice(0, 80)}'` : "", criterion.comment ? `comment '${criterion.comment.slice(0, 80)}'` : ""].filter(Boolean).join(", ")}`);
         acceptance.push({ id: criterion.id, ...criterion.status ? { status: criterion.status } : {}, ...criterion.comment !== void 0 ? { comment: criterion.comment } : {}, ...criterion.statement !== void 0 ? { statement: criterion.statement } : {} });
       }
+      if (item.statement !== void 0)
+        details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 80)}'`);
+      if (item.scope !== void 0 && item.scope !== current.scope)
+        details.push(`${item.id}: scope ${current.scope} -> ${item.scope}`);
+      for (const a of item.addCriteria)
+        details.push(`${item.id}: add criterion '${a.statement.slice(0, 80)}'`);
+      for (const r of item.removeCriteria)
+        details.push(`${item.id}: remove criterion ${r}`);
+      if (acceptance.length === 0 && item.statement === void 0 && item.scope === void 0 && item.scopeNote === void 0 && item.comment === void 0 && item.addCriteria.length === 0 && item.removeCriteria.length === 0)
+        continue;
       decisions2.push({
         requirementId: item.id,
         ...item.statement !== void 0 ? { statement: item.statement } : {},
@@ -8290,6 +8371,7 @@ function submissionToCommands(state2, raw) {
       else {
         commands.push({ action: "accept-requirements", via });
         summary.push("accept all pending criteria");
+        details.push("ACCEPT every criterion still undecided and record the requirements review as accepted");
       }
     }
   }
@@ -8301,6 +8383,10 @@ function submissionToCommands(state2, raw) {
       if (p.feedback.length > 0 || p.resolve.length > 0) {
         commands.push({ action: "prototype-feedback", via, items: p.feedback, resolve: p.resolve });
         summary.push(`${p.feedback.length} comment(s)`);
+        for (const f of p.feedback)
+          details.push(`prototype comment on ${f.target}: '${f.comment.slice(0, 100)}'`);
+        for (const r of p.resolve)
+          details.push(`prototype feedback ${r} resolved`);
       }
       if (p.accept) {
         if (stale)
@@ -8308,6 +8394,7 @@ function submissionToCommands(state2, raw) {
         else {
           commands.push({ action: "accept-prototype", via });
           summary.push("prototype accepted");
+          details.push(`ACCEPT prototype revision ${state2.prototype.revision}`);
         }
       }
     }
@@ -8333,6 +8420,14 @@ function submissionToCommands(state2, raw) {
         operations.push({ op: "exclude", id: entry.id, reason: entry.exclude });
       if (entry.restore)
         operations.push({ op: "restore", id: entry.id });
+      if (entry.exclude !== void 0)
+        details.push(`${entry.id}: exclude (${entry.exclude})`);
+      if (entry.restore)
+        details.push(`${entry.id}: restore`);
+      if (Object.keys(patch).length > 0)
+        details.push(`${entry.id}: edit ${Object.keys(patch).join(", ")}`);
+      if (entry.status !== void 0)
+        details.push(`${entry.id} '${current.title}': ${entry.status.toUpperCase()}`);
       if (entry.status !== void 0)
         operations.push({ op: "review", id: entry.id, status: entry.status, ...entry.comment !== void 0 ? { comment: entry.comment } : {} });
     }
@@ -8341,11 +8436,12 @@ function submissionToCommands(state2, raw) {
       summary.push(`${operations.length} plan change(s)`);
     }
     if (submission.plan.agree) {
-      if (conflicts.length > 0)
-        conflicts.push({ item: "agree plan", reason: "not applied: part of the review could not be applied" });
+      if (conflicts.length > 0 || stale)
+        conflicts.push({ item: "agree plan", reason: "not applied: part of the review is out of date or could not be applied; re-open it" });
       else {
         commands.push({ action: "agree-story-plan", via });
         summary.push("plan agreed");
+        details.push(`AGREE the story plan (${state2.storyPlan?.entries.length ?? 0} lines, revision ${state2.storyPlan?.revision})`);
       }
     }
   }
@@ -8378,22 +8474,43 @@ function submissionToCommands(state2, raw) {
       }
     }
     const edited = new Set(commands.filter((c) => c.action === "update-story" || c.action === "exclude-story" || c.action === "restore-story").map((c) => String(c.id)));
-    const items = s.items.filter((item) => !edited.has(item.storyId));
+    const items = s.items.filter((item) => {
+      if (edited.has(item.storyId))
+        return false;
+      const live = state2.stories.find((x) => x.id === item.storyId && x.status !== "superseded");
+      const current = live?.review[item.key]?.status ?? "pending";
+      if (item.from !== void 0 && current !== item.from) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} by someone else since the review (the page showed ${item.from})` });
+        return false;
+      }
+      if (current === item.status && (item.comment === void 0 || item.comment === (live?.review[item.key]?.comment ?? "")))
+        return false;
+      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 80)}')` : ""}`);
+      return true;
+    });
     const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).map((x) => ({ storyId: x.storyId, revision: x.revision }));
+    for (const a of acceptStories)
+      details.push(`${a.storyId}: ACCEPT everything in the story (revision ${a.revision})`);
     if (items.length > 0 || acceptStories.length > 0) {
       commands.push({ action: "review-stories", via, items, acceptStories });
       summary.push(`${items.length} item mark(s), ${acceptStories.length} bulk accept(s)`);
     }
     if (s.accept) {
-      if (conflicts.length > 0 || edited.size > 0)
+      if (conflicts.length > 0 || edited.size > 0 || stale)
         conflicts.push({ item: "accept stories", reason: "not applied: stories changed or could not be applied, review them again" });
       else {
         commands.push({ action: "accept-stories", via });
         summary.push("stories accepted");
+        details.push("ACCEPT the stories");
       }
     }
   }
-  return { commands, conflicts, stale, summary };
+  for (const w of submission.waivers) {
+    commands.push({ action: "waive-coverage", kind: w.kind, ...w.requirementId ? { requirementId: w.requirementId } : {}, reason: w.reason });
+    summary.push(`waive ${w.kind}`);
+    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 120)}'`);
+  }
+  return { commands, conflicts, stale, summary, details };
 }
 var REVIEW_VIEWS, ReviewViewSchema, Mark, RequirementsPayload, PrototypePayload, PlanPayload, StoriesPayload, ReviewSubmissionSchema;
 var init_review_submission = __esm({
@@ -8413,7 +8530,7 @@ var init_review_submission = __esm({
         scopeNote: external_exports.string().max(2e3).optional(),
         statement: external_exports.string().min(1).max(4e3).optional(),
         comment: external_exports.string().max(4e3).optional(),
-        criteria: external_exports.array(external_exports.object({ id: external_exports.string().min(1), revision: external_exports.number().int().positive(), status: Mark.optional(), comment: external_exports.string().max(4e3).optional(), statement: external_exports.string().min(1).max(4e3).optional() })).default([]),
+        criteria: external_exports.array(external_exports.object({ id: external_exports.string().min(1), revision: external_exports.number().int().positive(), from: Mark.optional(), status: Mark.optional(), comment: external_exports.string().max(4e3).optional(), statement: external_exports.string().min(1).max(4e3).optional() })).default([]),
         addCriteria: external_exports.array(external_exports.object({ statement: external_exports.string().min(1).max(4e3) })).default([]),
         removeCriteria: external_exports.array(external_exports.string()).default([])
       })).default([]),
@@ -8439,7 +8556,7 @@ var init_review_submission = __esm({
       agree: external_exports.boolean().default(false)
     });
     StoriesPayload = external_exports.object({
-      items: external_exports.array(external_exports.object({ storyId: StoryIdSchema, revision: external_exports.number().int().positive(), key: external_exports.string().min(1), status: Mark, comment: external_exports.string().max(4e3).optional() })).default([]),
+      items: external_exports.array(external_exports.object({ storyId: StoryIdSchema, revision: external_exports.number().int().positive(), key: external_exports.string().min(1), from: Mark.optional(), status: Mark, comment: external_exports.string().max(4e3).optional() })).default([]),
       stories: external_exports.array(external_exports.object({
         storyId: StoryIdSchema,
         revision: external_exports.number().int().positive(),
@@ -8463,7 +8580,9 @@ var init_review_submission = __esm({
       requirements: RequirementsPayload.optional(),
       prototype: PrototypePayload.optional(),
       plan: PlanPayload.optional(),
-      stories: StoriesPayload.optional()
+      stories: StoriesPayload.optional(),
+      /** Gaps the user chooses not to cover (a prototype for a pure refactor, a capability a requirement does not need). Only the user may waive. */
+      waivers: external_exports.array(external_exports.object({ kind: external_exports.string().min(1).max(100), requirementId: RequirementIdSchema.optional(), reason: external_exports.string().min(3).max(1e3) })).default([])
     });
   }
 });
@@ -8717,7 +8836,7 @@ function collect(){
         var aid=row.getAttribute('data-ac');
         if($('[data-f=remove]',row)&&$('[data-f=remove]',row).checked){item.removeCriteria.push(aid);touched=true;return}
         var c={id:aid,revision:num(row)};var ch=false;
-        var m=markOf(row,'m-'+aid);if(m&&m!==row.getAttribute('data-initial-status')){c.status=m;ch=true}
+        var m=markOf(row,'m-'+aid);if(m&&m!==row.getAttribute('data-initial-status')){c.status=m;c.from=row.getAttribute('data-initial-status');ch=true}
         var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==cm.getAttribute('data-initial')){c.comment=val(cm);ch=true}
         var ts=$('[data-f=ac-statement]',row);if(ts&&val(ts)!==ts.getAttribute('data-initial')){c.statement=val(ts);ch=true}
         if(ch){item.criteria.push(c);touched=true}
@@ -8752,7 +8871,7 @@ function collect(){
       $$('[data-key]',card).forEach(function(row){
         var key=row.getAttribute('data-key');var m=markOf(row,'m-'+id+'-'+key);
         var cm=$('[data-f=comment]',row);
-        if(m&&(m!==row.getAttribute('data-initial-status')||(cm&&val(cm)))){var it={storyId:id,revision:rev,key:key,status:m};if(cm&&val(cm))it.comment=val(cm);items.push(it)}
+        if(m&&(m!==row.getAttribute('data-initial-status')||(cm&&val(cm)))){var it={storyId:id,revision:rev,key:key,from:row.getAttribute('data-initial-status'),status:m};if(cm&&val(cm))it.comment=val(cm);items.push(it)}
       });
       var n=$('[data-f=narrative]',card);if(n&&val(n)!==n.getAttribute('data-initial')){st.narrative=val(n);ch=true}
       var o=$('[data-f=objective]',card);if(o&&val(o)!==o.getAttribute('data-initial')){st.objective=val(o);ch=true}
@@ -8813,7 +8932,7 @@ if(D.view==='prototype'&&D.proto&&D.proto.kind==='ui'){
           rows.forEach(function(r){t.appendChild(h('tr',{},cols.map(function(key){return h('td',{},[String(r[key]==null?'':r[key])])})))});
           if(rows.length)wrap.appendChild(t)}
       }
-      else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id});i.addEventListener('input',function(){P._q=P._q||{};P._q[el.collection||'']=i.value;(P.screens.filter(function(s){return s.id===cur})[0].elements).forEach(function(e2){if(e2.collection===el.collection){P._q[e2.id]=i.value}});render()});wrap.appendChild(i)}
+      else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id});i.value=(P._q&&P._q[el.id])||'';if(P._focus===el.id){setTimeout(function(){i.focus();try{i.setSelectionRange(i.value.length,i.value.length)}catch(e){}},0)}i.addEventListener('input',function(){P._focus=el.id;P._q=P._q||{};P._q[el.collection||'']=i.value;(P.screens.filter(function(s){return s.id===cur})[0].elements).forEach(function(e2){if(e2.collection===el.collection){P._q[e2.id]=i.value}});render()});wrap.appendChild(i)}
       else if(k==='field'){wrap.appendChild(h('label',{},[el.label||el.field||'']));wrap.appendChild(h('input',{type:'text',placeholder:el.text||''}))}
       else if(k==='button'||k==='link'){
         var b=h('button',{class:'btn'+(k==='link'?' sec':''),type:'button'},[el.label||'Button']);
@@ -8947,7 +9066,7 @@ var init_context_trust = __esm({
       { rule: "remote-code", severity: "high", re: /\b(curl|wget)\b[^|\n]*\|\s*(sh|bash|zsh)\b|\bbase64\s+-d\b[^|\n]*\|\s*(sh|bash)\b/i },
       { rule: "exfiltration", severity: "high", re: /\b(send|post|upload|exfiltrate)\b[^.\n]{0,40}\b(token|secret|credential|password|api[ _-]?key|\.env)\b/i }
     ];
-    AGENT_INSTRUCTION_FILES = [/(^|\/)CLAUDE\.md$/i, /(^|\/)AGENTS\.md$/i, /(^|\/)GEMINI\.md$/i, /(^|\/)\.cursorrules$/i, /(^|\/)\.cursor\/rules\//i, /(^|\/)\.claude\//i, /(^|\/)SKILL\.md$/i, /(^|\/)\.github\/copilot-instructions\.md$/i, /(^|\/)\.windsurfrules$/i];
+    AGENT_INSTRUCTION_FILES = [/(^|\/)CLAUDE\.md$/i, /(^|\/)AGENTS\.md$/i, /(^|\/)GEMINI\.md$/i, /(^|\/)\.cursorrules$/i, /(^|\/)\.cursor\/rules\//i, /(^|\/)\.claude\//i, /(^|\/)SKILL\.md$/i, /(^|\/)\.github\/copilot-instructions\.md$/i, /(^|\/)\.windsurfrules$/i, /(^|\/)CLAUDE\.local\.md$/i, /(^|\/)AGENT\.md$/i, /(^|\/)\.mcp\.json$/i, /(^|\/)\.clinerules/i, /(^|\/)\.roo\/rules/i, /(^|\/)\.github\/instructions\//i, /(^|\/)\.aider/i];
   }
 });
 
@@ -9098,6 +9217,63 @@ var init_briefing = __esm({
   }
 });
 
+// node_modules/@praxis/contracts/dist/command-catalog.js
+function commandCatalog() {
+  return WorkflowCommandSchema.options.map((schema) => {
+    const action = schema.shape.action.value;
+    const required4 = [];
+    const optional4 = [];
+    for (const [key, type] of Object.entries(schema.shape)) {
+      if (key === "action")
+        continue;
+      (optionalish(type) ? optional4 : required4).push(key);
+    }
+    let userOnly = false;
+    try {
+      userOnly = isUserDecision({ action, decisions: [{ acceptance: [{ status: "x" }] }], operations: [{ op: "review" }] });
+    } catch {
+      userOnly = false;
+    }
+    return { action, required: required4, optional: optional4, userOnly, ...EXAMPLES[action] ? { example: EXAMPLES[action] } : {} };
+  });
+}
+function explainCommandError(error64) {
+  if (!(error64 instanceof external_exports.ZodError))
+    return void 0;
+  const lines = error64.issues.slice(0, 8).map((issue4) => `${issue4.path.join(".") || "(command)"}: ${issue4.message}`);
+  return `the command is invalid: ${lines.join("; ")}. praxis_workflow_commands lists every action with its fields and an example.`;
+}
+var optionalish, EXAMPLES;
+var init_command_catalog = __esm({
+  "node_modules/@praxis/contracts/dist/command-catalog.js"() {
+    init_zod();
+    init_planning();
+    init_workflow();
+    optionalish = (type) => type instanceof external_exports.ZodOptional || type instanceof external_exports.ZodDefault || type instanceof external_exports.ZodNullable && optionalish(type.unwrap());
+    EXAMPLES = {
+      open: { action: "open", projectId: "orders", title: "Order list", request: "Managers need to see and search orders", mode: "guided" },
+      "add-requirement": { action: "add-requirement", id: "REQ-ORD-001", statement: "Managers can view and search orders", acceptanceCriteria: ["The list shows all orders", "A manager can search by number"] },
+      "set-prototype": { action: "set-prototype", summary: "first version", prototype: { kind: "ui", title: "Orders", startScreen: "list", roles: ["manager", "viewer"], styles: { colors: { primary: "#0b6bcb" }, fonts: {}, sources: [{ file: "src/theme.css" }] }, mock: [{ id: "orders", name: "Orders", fields: [{ key: "number", label: "Number", type: "string" }], rows: [{ number: "A-1" }] }], screens: [{ id: "list", title: "Orders", states: ["default", "empty", "error"], elements: [{ id: "tbl", kind: "table", collection: "orders", columns: ["number"], intent: "view", requirementIds: ["REQ-ORD-001"], acIds: ["REQ-ORD-001-AC-01"] }] }] } },
+      "update-prototype": { action: "update-prototype", summary: "added a column", operations: [{ op: "update-element", screenId: "list", id: "tbl", patch: { columns: ["number", "status"] } }] },
+      "set-story-plan": { action: "set-story-plan", entries: [{ id: "US-ORD-001", title: "See and search orders", implementation: "list page with search", userGets: "all orders, found by number", requirementIds: ["REQ-ORD-001"], acIds: ["REQ-ORD-001-AC-01"], screenRefs: ["list"], capabilities: ["view", "search", "states"] }] },
+      "add-story": { action: "add-story", id: "US-ORD-001", requirementIds: ["REQ-ORD-001"], actor: "manager", narrative: "As a manager, I want to see orders, so that I can work.", objective: "see orders", userValue: "no manual lookup", happyPath: ["open the list"], acceptanceCriteria: [{ id: "US-ORD-001-AC-01", given: "orders exist", when: "the manager opens the list", then: "all orders are shown" }], expectedResults: ["the list is shown"], confirmedBehavior: false },
+      "update-story": { action: "update-story", id: "US-ORD-001", patch: { objective: "find orders quickly" }, criteria: [{ op: "add", given: "no order matches", when: "searching", then: "an empty state is shown" }], reason: "the user asked for the empty state" },
+      "register-repository": { action: "register-repository", repository: { id: "web", name: "Orders web", role: "web frontend", localPath: "/path/to/checkout" } },
+      "assign-repositories": { action: "assign-repositories", repositoryIds: ["web"], storyIds: ["US-ORD-001"], requirementIds: ["REQ-ORD-001"], serviceIds: ["svc-web"] },
+      "set-service": { action: "set-service", service: { id: "svc-web", name: "Web", kind: "frontend", repositoryId: "web", responsibilities: ["orders ui"], requirementIds: ["REQ-ORD-001"], dependsOn: ["svc-api"], status: "in_progress" } },
+      "set-contract": { action: "set-contract", contract: { id: "C-1", name: "Orders API", providerServiceId: "svc-api", consumerServiceIds: ["svc-web"], schemaRef: "openapi.yaml", status: "proposed" } },
+      "record-impact": { action: "record-impact", impact: { baseline: { summary: "orders list exists", behaviors: [{ id: "B1", statement: "The list shows orders", evidence: [{ repositoryId: "web", path: "src/pages/Orders.tsx" }] }] }, affected: [{ repositoryId: "web", path: "src/pages/Orders.tsx", area: "orders page", change: "add export button" }], regressionChecks: [{ id: "R1", statement: "The list still shows all orders" }] } },
+      "record-implementation": { action: "record-implementation", id: "IMPL-1", serviceId: "svc-web", requirementIds: ["REQ-ORD-001"], path: "src/pages/Orders.tsx", summary: "orders list with search" },
+      "review-requirements": { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "Managers can view, search and filter orders", addAcceptance: [{ statement: "Filtering by status works" }] }] },
+      "set-requirement-scope": { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "deferred", note: "next release" },
+      "advance-phase": { action: "advance-phase", to: "prototype" },
+      "return-to-phase": { action: "return-to-phase", to: "requirements_review", reason: "the user changed the search requirement" },
+      "log-session": { action: "log-session", summary: "Requirements accepted", nextAction: "build the prototype", role: "ba" },
+      "waive-coverage": { action: "waive-coverage", kind: "prototype", reason: "pure refactor, nothing to show" }
+    };
+  }
+});
+
 // node_modules/@praxis/contracts/dist/index.js
 var ContractMetaSchema, BaToArchitectHandoffSchema, ArchitectToDeveloperHandoffSchema, ChangeSpecChangeSchema, AcceptanceCheckSchema, ChangeSpecSchema, VerificationCheckSchema, VerificationSchema, DeveloperToQualityHandoffSchema, DeveloperCompletionEvidenceSchema, QualityMrContextSchema, QualityAuditReportSchema, QualityRollbackEventSchema, QualityHotfixEventSchema, QualityReturnEventSchema, QualityNormProposalSchema;
 var init_dist = __esm({
@@ -9121,6 +9297,7 @@ var init_dist = __esm({
     init_review_html();
     init_context_trust();
     init_briefing();
+    init_command_catalog();
     ContractMetaSchema = external_exports.object({
       contract: external_exports.string().min(1),
       version: external_exports.string().regex(/^\d+\.\d+\.\d+$/)
@@ -58544,6 +58721,17 @@ var TOOLS = [
     kind: "read"
   },
   {
+    name: "praxis_workflow_commands",
+    description: "READ-ONLY list of every workflow command (action) with its required and optional fields, whether it records the user's own decisions (userOnly: refused from an agent), and a working JSON example for the non-obvious ones (pass action to get one). Use it before writing a command for praxis_workflow_preview / praxis_workflow_apply instead of guessing field names.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, action: { type: "string", description: "One action, for its example (for example add-story, set-prototype, record-impact)." } },
+      additionalProperties: false
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read"
+  },
+  {
     name: "praxis_review_render",
     description: "Build the standard HTML review for one stage and return a link the USER opens: view requirements (every acceptance criterion with its own accept/reject/comment control, edit by id, add/remove criteria, scope: in / deferred / out), prototype (clickable screens on mock data with states and roles, comments on elements), story-plan (one line per planned story, edit, exclude, agree), or stories (a checkbox for every criterion, step, rule and result). Writes an offline copy under .praxis/workflow/reviews and serves a live copy on 127.0.0.1 so the user's Save records their decisions directly. The page is a view, never the source of truth. Does not change workflow state.",
     inputSchema: {
@@ -58657,7 +58845,7 @@ var TOOLS = [
   },
   {
     name: "praxis_workflow_preview",
-    description: "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional.",
+    description: "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
     inputSchema: {
       type: "object",
       properties: {
@@ -78613,7 +78801,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"eb1cd41ee1ddab0176c35625df295e120569a39175bbd197ff6a997ddfe80c34","coreBaseline":"1c2efdcae78c7050357db0de2af57cd803e40cc2","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"b0b3445bf92883f193eb99589347dde1c3218355821b99a1dd98ee0faa4761d8","coreBaseline":"2cfaed4fd6351dc312fe927ab762c34c79fb4d54","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -79395,7 +79583,8 @@ function workflowStatus(repo, workItemId) {
     phase: state2.phase,
     mode: state2.mode,
     next: nextStep(state2),
-    briefing: buildResumeBriefing(state2)
+    briefing: buildResumeBriefing(state2),
+    ...items.length > 1 ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} "${item.title}" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` } : {}
   };
 }
 function pause(ms) {
@@ -79481,7 +79670,7 @@ function writeItem(repo, state2) {
   requireMutationLease();
   const path = itemPath(repo, state2.workItem.id);
   keepPreviousVersion(path);
-  writeAtomic(path, redactPersistent(toPortable(repo, state2)));
+  writeAtomic(path, redactState(toPortable(repo, state2)));
   return path;
 }
 function ensureMigrated(repo) {
@@ -80532,7 +80721,8 @@ function sessionStart(repo, args, version4) {
         mode: state2.mode,
         next: step,
         skills: skillPlan(state2.phase, state2.workItem.kind !== "feature"),
-        briefing: buildResumeBriefing(state2)
+        briefing: buildResumeBriefing(state2),
+        ...items.length > 1 ? { choose: `${items.length} work items exist. Unless the user already named one, ask which to continue: ${items.map((i) => `${i.workItemId} "${i.title}" (${i.phase ?? i.stage})${i.workItemId === current ? " [current]" : ""}`).join("; ")}.` } : {}
       };
     }
   } else if (selectionRequired) {
@@ -80602,7 +80792,10 @@ var FRAMEWORKS = [
   ["react-native", /^react-native$/],
   ["expo", /^expo$/]
 ];
-var SAFE_VALUE = /^[#\w(),.%\s/'"-]{1,80}$/;
+var COLOR_VALUE = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([\d\s.,%\/-]{1,40}\))$/;
+var FONT_VALUE = /^[A-Za-z0-9 ,'"_-]{1,60}$/;
+var LENGTH_VALUE = /^[\d.]{1,6}(px|rem|em|%)?$/;
+var fontOk = (v) => FONT_VALUE.test(v) && v.split(",").length <= 6 && v.trim().split(/\s+/).length <= 10;
 function walk2(root) {
   const out = [];
   let truncated = false;
@@ -80623,7 +80816,9 @@ function walk2(root) {
       const abs = (0, import_node_path30.join)(dir, name);
       let stat;
       try {
-        stat = (0, import_node_fs25.statSync)(abs);
+        stat = (0, import_node_fs25.lstatSync)(abs);
+        if (stat.isSymbolicLink())
+          continue;
       } catch {
         continue;
       }
@@ -80675,25 +80870,23 @@ function tokensFromCss(text, file2, tokens) {
   for (const match of text.matchAll(/--([\w-]+)\s*:\s*([^;}\n]+)[;}\n]/g)) {
     const name = match[1];
     const value = match[2].trim();
-    if (!SAFE_VALUE.test(value))
-      continue;
-    const color = /^(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|hsla?\([^)]*\))$/.test(value) ? colorName(name) : void 0;
+    const color = COLOR_VALUE.test(value) ? colorName(name) : void 0;
     if (color && !(color in tokens.colors)) {
       tokens.colors[color] = value;
       found = true;
-    } else if (/font/.test(name) && !tokens.fonts.body && /sans|serif|mono|system|inter|roboto|helvetica|arial|font/i.test(value)) {
+    } else if (/font/.test(name) && !tokens.fonts.body && fontOk(value) && /sans|serif|mono|system|inter|roboto|helvetica|arial/i.test(value)) {
       tokens.fonts.body = value;
       found = true;
-    } else if (/radius/.test(name) && !tokens.radius) {
+    } else if (/radius/.test(name) && !tokens.radius && LENGTH_VALUE.test(value)) {
       tokens.radius = value;
       found = true;
-    } else if (/(^|-)(spacing|space|gap)(-|$)/.test(name) && !tokens.spacing) {
+    } else if (/(^|-)(spacing|space|gap)(-|$)/.test(name) && !tokens.spacing && LENGTH_VALUE.test(value)) {
       tokens.spacing = value;
       found = true;
     }
   }
   const family = text.match(/font-family\s*:\s*([^;}\n]+)[;}\n]/);
-  if (family && !tokens.fonts.body && SAFE_VALUE.test(family[1].trim())) {
+  if (family && !tokens.fonts.body && fontOk(family[1].trim())) {
     tokens.fonts.body = family[1].trim();
     found = true;
   }
@@ -80716,7 +80909,7 @@ function tokensFromScript(text, file2, tokens) {
     found = true;
   }
   const font = text.match(/fontFamily\s*:\s*["']([^"']+)["']/);
-  if (font && !tokens.fonts.body && SAFE_VALUE.test(font[1])) {
+  if (font && !tokens.fonts.body && fontOk(font[1])) {
     tokens.fonts.body = font[1];
     found = true;
   }
@@ -80725,7 +80918,7 @@ function tokensFromScript(text, file2, tokens) {
   return found;
 }
 function discoverFrontend(repoPath) {
-  const root = (0, import_node_path30.resolve)(repoPath);
+  const root = (0, import_node_fs25.existsSync)(repoPath) ? (0, import_node_fs25.realpathSync)((0, import_node_path30.resolve)(repoPath)) : (0, import_node_path30.resolve)(repoPath);
   if (!(0, import_node_fs25.existsSync)(root) || !(0, import_node_fs25.statSync)(root).isDirectory())
     throw new Error(`INSPECT_PATH_INVALID: ${repoPath} is not a directory`);
   const { files, truncated } = walk2(root);
@@ -80806,6 +80999,21 @@ function diagnoseContextTool(repo, input2) {
     }
     return { file: file2, findings };
   });
+  for (const repository of state2?.repositories ?? []) {
+    if (!repository.localPath)
+      continue;
+    const base = (0, import_node_path31.resolve)(root, repository.localPath);
+    for (const file2 of (repository.inspection?.instructionFiles ?? []).slice(0, 20)) {
+      let findings = [];
+      try {
+        const path = (0, import_node_path31.join)(base, file2);
+        if ((0, import_node_fs26.statSync)(path).size < 2e5)
+          findings = scanUntrustedInstructions((0, import_node_fs26.readFileSync)(path, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
+      } catch {
+      }
+      scanned.push({ file: `${repository.id}:${file2}`, findings });
+    }
+  }
   const flagged = scanned.filter((s) => s.findings.length > 0);
   const diagnosis = state2 ? diagnoseContext(state2) : void 0;
   return {
@@ -80922,6 +81130,7 @@ function repositoryBrief(repo, input2) {
 }
 
 // packages/mcp/dist/review-service.js
+var import_node_child_process8 = require("node:child_process");
 var import_node_http = require("node:http");
 var import_node_crypto15 = require("node:crypto");
 var import_node_fs28 = require("node:fs");
@@ -80930,6 +81139,7 @@ var import_node_path33 = require("node:path");
 init_dist();
 var IDLE_MS = 4 * 60 * 60 * 1e3;
 var MAX_BODY = 1e6;
+var LOAD_TOKEN_MS = 10 * 60 * 1e3;
 var sessions = /* @__PURE__ */ new Map();
 var server;
 var port = 0;
@@ -80999,10 +81209,8 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
   const decisions2 = plan.commands.filter((c) => isUserDecision(c));
   let approval;
   if (decisions2.length > 0) {
-    const request = reviewApprovalRequest(decisions2, `Record your ${submission.view} review decisions (${plan.summary.join("; ")})`);
-    approval = await obtainUserApproval({ ...request, description: `${plan.summary.map((s) => `- ${s}`).join("\n")}
-
-${request.description}` }, { confirmation, repo });
+    const request = reviewApprovalRequest(decisions2, `Record your ${submission.view} review decisions (${plan.details.length} decision(s))`);
+    approval = await obtainUserApproval({ ...request, description: plan.details.map((s) => `- ${s}`).join("\n") }, { confirmation, repo });
   }
   const conflicts = [...plan.conflicts];
   let applied = 0;
@@ -81065,11 +81273,15 @@ async function handle(req, res) {
     return json2(res, 404, { error: "unknown or expired review" });
   session.lastUsed = Date.now();
   if (req.method === "GET" && !match[2]) {
-    if (!safeEqual(url4.searchParams.get("t") ?? "", session.token))
-      return json2(res, 403, { error: "bad token" });
+    if (Date.now() > session.loadUntil || !safeEqual(url4.searchParams.get("t") ?? "", session.loadToken))
+      return json2(res, 403, { error: "bad or expired link" });
     try {
       const state2 = requireState2(session.repo, session.workItemId);
-      const html = renderReview(state2, session.view, { reviewId: session.id, saveUrl: `http://127.0.0.1:${port}/r/${session.id}/submit`, token: session.token, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      const saveToken = (0, import_node_crypto15.randomBytes)(24).toString("hex");
+      session.saveTokens.add(saveToken);
+      if (session.saveTokens.size > 20)
+        session.saveTokens.delete(session.saveTokens.values().next().value);
+      const html = renderReview(state2, session.view, { reviewId: session.id, saveUrl: `http://127.0.0.1:${port}/r/${session.id}/submit`, token: saveToken, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
@@ -81083,10 +81295,11 @@ async function handle(req, res) {
     return;
   }
   if (req.method === "POST" && match[2]) {
-    if (!safeEqual(String(req.headers["x-praxis-review-token"] ?? ""), session.token))
+    const presented = String(req.headers["x-praxis-review-token"] ?? "");
+    if (![...session.saveTokens].some((tok) => safeEqual(presented, tok)))
       return json2(res, 403, { error: "bad token" });
     const origin = req.headers.origin;
-    if (origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`)
+    if (origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`)
       return json2(res, 403, { error: "bad origin" });
     if (!String(req.headers["content-type"] ?? "").startsWith("application/json"))
       return json2(res, 415, { error: "json only" });
@@ -81114,6 +81327,19 @@ async function ensureServer() {
   server.unref();
   return port;
 }
+function openInBrowser(url4) {
+  if (process.env.PRAXIS_REVIEW_NO_BROWSER === "1")
+    return false;
+  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
+  try {
+    const child = (0, import_node_child_process8.spawn)(opener, [url4], { detached: true, stdio: "ignore" });
+    child.on("error", () => void 0);
+    child.unref();
+    return child.pid !== void 0;
+  } catch {
+    return false;
+  }
+}
 async function renderReviewTool(repo, input2) {
   if (!isReviewView(input2.view))
     throw new Error(`INVALID_INPUT: view must be one of ${REVIEW_VIEWS.join(", ")}`);
@@ -81124,21 +81350,26 @@ async function renderReviewTool(repo, input2) {
   const file2 = (0, import_node_path33.join)(dir, `${view}.html`);
   (0, import_node_fs28.writeFileSync)(file2, renderReview(state2, view, { reviewId: `${view}-${state2.workItem.id}`, generatedAt: (/* @__PURE__ */ new Date()).toISOString() }));
   let url4;
+  let opened = false;
   if (input2.serve !== false) {
     const p = await ensureServer();
     const id = (0, import_node_crypto15.randomBytes)(8).toString("hex");
-    const token = (0, import_node_crypto15.randomBytes)(24).toString("hex");
-    sessions.set(id, { id, token, repo, workItemId: state2.workItem.id, view, lastUsed: Date.now() });
-    url4 = `http://127.0.0.1:${p}/r/${id}?t=${token}`;
+    const loadToken = (0, import_node_crypto15.randomBytes)(24).toString("hex");
+    sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now() });
+    const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
+    opened = openInBrowser(secretUrl);
+    if (!opened && process.env.PRAXIS_REVIEW_NO_BROWSER === "1")
+      (0, import_node_fs28.writeFileSync)((0, import_node_path33.join)(dir, `${view}.url`), secretUrl);
+    url4 = `http://127.0.0.1:${p}/r/${id}`;
   }
   return {
     view,
     workItemId: state2.workItem.id,
     file: file2,
-    ...url4 ? { url: url4 } : {},
+    ...url4 ? { url: url4, openedInBrowser: opened } : {},
     fingerprint: fingerprintFor(state2, view),
     progress: progressFor(state2, view),
-    how: url4 ? "Give the user this link to open in their browser. Clicking Save there records their decisions directly. The file is an offline copy: its Copy/Download buttons produce a decisions file, which praxis_review_apply records after the user approves it in the client's dialog." : "Offline copy only. Its Copy/Download buttons produce a decisions file for praxis_review_apply.",
+    how: url4 ? opened ? "The review page was opened in the user's browser. Tell them to review it and press Save; their decisions are recorded directly. The address shown is not a usable link on its own. If they closed it, call this tool again." : "The live page could not be opened on this machine. Give the user the offline copy (file): its Copy decisions button produces a decisions file, which praxis_review_apply records after the user approves exactly those decisions in the client's dialog." : "Offline copy only. Its Copy/Download buttons produce a decisions file for praxis_review_apply.",
     note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf."
   };
 }
@@ -81343,7 +81574,7 @@ async function callToolInner(name, rawArgs, opts) {
         ...withApprovalNote(name, await runWorkflowTool(name, args, ctx.repo, opts.version))
       });
     }
-    if (name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
+    if (name === "praxis_workflow_commands" || name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
       return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await runPlanningTool(name, args, ctx.repo, opts.role) });
     }
     if (name === "praxis_developer_status" && str2(args.workItemId)) {
@@ -81381,10 +81612,10 @@ async function callToolInner(name, rawArgs, opts) {
   } catch (err) {
     if (err instanceof ApprovalNeedsInput)
       throw err;
-    const message = ops.redact(err instanceof Error ? err.message : String(err));
+    const message = ops.redact(explainCommandError(err) ?? (err instanceof Error ? err.message : String(err)));
     const coded = err;
-    const prefixed = message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH):/)?.[1];
-    const code = err instanceof WorkflowError ? err.code : prefixed ? prefixed : err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
+    const prefixed = explainCommandError(err) ? "INVALID_INPUT" : message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH):/)?.[1];
+    const code = err instanceof WorkflowError ? err.code : typeof prefixed === "string" && prefixed ? prefixed : err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
     const details = err instanceof WorkflowError ? { ...err.details ?? {} } : err instanceof ops.PraxisOpError ? {
       ...err.stage ? { stage: err.stage } : {},
       ...typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {},
@@ -81419,6 +81650,11 @@ function hydrateWorkflowCommand(repo, raw) {
 async function runPlanningTool(name, args, repo, role) {
   const workItemId = str2(args.workItemId);
   switch (name) {
+    case "praxis_workflow_commands": {
+      const only = str2(args.action);
+      const all = commandCatalog();
+      return { count: all.length, commands: only ? all.filter((c) => c.action === only) : all.map(({ example: _e, ...c }) => c), note: "Pass the command to praxis_workflow_preview and praxis_workflow_apply as JSON text. Ask for one action to get an example. userOnly commands record the user's decisions and are refused when an agent sends them; use praxis_review_render / praxis_review_apply." };
+    }
     case "praxis_review_render":
       return renderReviewTool(repo, { view: str2(args.view) ?? "", workItemId, serve: args.serve === false ? false : true });
     case "praxis_review_apply": {
@@ -81430,7 +81666,7 @@ async function runPlanningTool(name, args, repo, role) {
       try {
         raw = text !== void 0 ? JSON.parse(text) : readSubmissionFile(repo, file2);
       } catch (error64) {
-        throw new Error(`INVALID_INPUT: the decisions could not be read: ${error64 instanceof Error ? error64.message : String(error64)}`);
+        throw new Error(`INVALID_INPUT: the decisions could not be read: ${error64 instanceof SyntaxError ? "not valid JSON" : error64 instanceof Error && /^INVALID_INPUT/.test(error64.message) ? error64.message.replace(/^INVALID_INPUT: /, "") : "the file could not be opened"}`);
       }
       return applyHandedOver(repo, workItemId, raw, str2(args.confirmation));
     }
@@ -81454,6 +81690,24 @@ async function runPlanningTool(name, args, repo, role) {
       return diagnoseContextTool(repo, { workItemId, role: ["ba", "architect", "developer", "quality"].find((r) => r === str2(args.role)) ?? (role === "runtime" ? void 0 : role) });
   }
 }
+function assertImplementationPath(repo, command, workItemId) {
+  const state2 = loadWorkflow(repo, workItemId);
+  if (!state2 || state2.mode !== "guided")
+    return;
+  const service = state2.services.find((s) => s.id === command.serviceId);
+  if (!service)
+    return;
+  const registered = state2.repositories.find((r) => r.id === service.repositoryId);
+  const root = (0, import_node_fs29.realpathSync)((0, import_node_path34.resolve)(repo, service.localPath ?? registered?.localPath ?? "."));
+  let target;
+  try {
+    target = (0, import_node_fs29.realpathSync)((0, import_node_path34.resolve)(root, String(command.path ?? "")));
+  } catch {
+    throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} does not exist in ${service.id}'s checkout (${root}); record real work only`);
+  }
+  if (target !== root && !target.startsWith(`${root}${import_node_path34.sep}`))
+    throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
+}
 async function runWorkflowTool(name, args, repo, version4) {
   const workItemId = str2(args.workItemId);
   if (name === "praxis_workflow_inspect") {
@@ -81470,6 +81724,8 @@ async function runWorkflowTool(name, args, repo, version4) {
     return capabilityRoute({ request: str2(args.request) ?? "", role: resolved });
   }
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str2(args.command) ?? ""));
+  if (parsed.action === "record-implementation")
+    assertImplementationPath(repo, parsed, workItemId);
   if (parsed.action === "record-repository-inspection") {
     throw new Error("INVALID_INPUT: a repository inspection is read by the Runtime, not written by an agent: call praxis_repository_inspect");
   }
@@ -81605,11 +81861,12 @@ async function dispatchTool(ops, name, ctx, version4, role) {
 function logStderr(line) {
   console.error(line);
 }
+var STATE_WRITING_READS = /* @__PURE__ */ new Set(["praxis_repository_inspect", "praxis_review_render"]);
 function annotationsFor(tool) {
   const applies = tool.kind === "apply";
   return {
     title: tool.name,
-    readOnlyHint: !applies,
+    readOnlyHint: !applies && !STATE_WRITING_READS.has(tool.name),
     destructiveHint: applies,
     idempotentHint: false,
     openWorldHint: applies || tool.name.includes("jira") || tool.name.includes("git")

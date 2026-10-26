@@ -8,7 +8,7 @@ import {
   commandFingerprint,
   migrateWorkflowState,
   nextStep,
-  redactPersistent,
+  redactState,
   requireMutationLease,
   resumeWorkflow,
   routeCapabilities,
@@ -422,6 +422,9 @@ export function workflowStatus(repo: string, workItemId?: string): {
     mode: state.mode,
     next: nextStep(state),
     briefing: buildResumeBriefing(state),
+    ...(items.length > 1
+      ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} \"${item.title}\" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` }
+      : {}),
   };
 }
 
@@ -517,7 +520,7 @@ function writeItem(repo: string, state: WorkflowState): string {
   requireMutationLease();
   const path = itemPath(repo, state.workItem.id);
   keepPreviousVersion(path);
-  writeAtomic(path, redactPersistent(toPortable(repo, state)));
+  writeAtomic(path, redactState(toPortable(repo, state)));
   return path;
 }
 

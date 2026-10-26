@@ -56,7 +56,7 @@ async function open({ elicit, bundle, env = {} } = {}) {
     command: process.execPath,
     args,
     cwd: extracted.dest,
-    env: { ...hostedCleanEnv(extracted.dest), PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/local/bin`, PRAXIS_SKIP_DOTENV: "1", ...jiraEnv, ...env },
+    env: { ...hostedCleanEnv(extracted.dest), PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/local/bin`, PRAXIS_SKIP_DOTENV: "1", PRAXIS_REVIEW_NO_BROWSER: "1", ...jiraEnv, ...env },
     versionNegotiation: versionNegotiationLegacy(),
     elicit,
     timeoutMs: 20_000,
@@ -130,10 +130,12 @@ async function must(session, repo, command, workItemId) {
 async function userSaves(session, repo, view, workItemId, payload) {
   const rendered = await call(session, "praxis_review_render", { repo, view, workItemId });
   check(rendered.ok, `render ${view}: ${JSON.stringify(rendered.errors)}`);
-  const html = await (await fetch(rendered.data.url)).text();
+  check(!JSON.stringify(rendered).includes("?t="), "the tool result must not carry the page link token");
+  const secret = readFileSync(join(dirname(rendered.data.file), `${view}.url`), "utf8");
+  const html = await (await fetch(secret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
   const submission = { contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: data.workItemId, baseFingerprint: data.baseFingerprint, ...payload(data) };
-  const res = await fetch(`${rendered.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", "x-praxis-review-token": data.token }, body: JSON.stringify(submission) });
+  const res = await fetch(`${rendered.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify(submission) });
   const body = await res.json();
   check(res.status === 200, `save ${view}: ${res.status} ${JSON.stringify(body)}`);
   return { body, rendered: rendered.data, html, data };
@@ -512,6 +514,8 @@ await scenario("S13", "Several work items stay independent; the agent must ask w
   eq(stateOf(repo, b).requirements.map((r) => r.id), ["REQ-INV-001"], "item B has only its own requirement");
   await userSaves(agent, repo, "requirements", a, acceptAllRequirements(repo, a));
   eq(stateOf(repo, b).requirements[0].acceptanceCriteria[0].review.status, "pending", "accepting in A does not touch B");
+  const normal = await call(agent, "praxis_workflow_status", { repo });
+  check(/ask which to continue/.test(normal.data.choose), "with several items the agent is told to ask in normal use");
   const index = JSON.parse(readFileSync(join(repo, ".praxis", "workflow", "index.json"), "utf8"));
   index.current = null;
   writeFileSync(join(repo, ".praxis", "workflow", "index.json"), JSON.stringify(index));
@@ -637,10 +641,11 @@ await scenario("S18", "Negative cases: invalid data, incomplete results, repeats
   check(dup.ok === true || dup.ok === false, "adding the same requirement again is handled");
   // conflict: a page rendered, then the requirement edited elsewhere
   const stale = await call(agent, "praxis_review_render", { repo, workItemId: id, view: "requirements" });
-  const html = await (await fetch(stale.data.url)).text();
+  const staleSecret = readFileSync(join(dirname(stale.data.file), "requirements.url"), "utf8");
+  const html = await (await fetch(staleSecret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
   await must(agent, repo, { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "View and filter orders" }] }, id);
-  const submit = await fetch(`${stale.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "requirements", workItemId: id, baseFingerprint: data.baseFingerprint, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, statement: "My stale edit", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } }) });
+  const submit = await fetch(`${stale.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(staleSecret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "requirements", workItemId: id, baseFingerprint: data.baseFingerprint, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, statement: "My stale edit", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } }) });
   const body = await submit.json();
   eq(body.conflicts.map((c) => c.item), ["REQ-ORD-001"], "the stale edit is reported");
   eq(stateOf(repo, id).requirements[0].statement, "View and filter orders", "the other edit is not overwritten");

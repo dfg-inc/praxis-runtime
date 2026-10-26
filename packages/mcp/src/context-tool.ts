@@ -25,6 +25,21 @@ export function diagnoseContextTool(repo: string, input: { workItemId?: string; 
     }
     return { file, findings };
   });
+  // Instruction files of the registered repositories being analysed: scanned the same way (names and findings only).
+  for (const repository of state?.repositories ?? []) {
+    if (!repository.localPath) continue;
+    const base = resolve(root, repository.localPath);
+    for (const file of (repository.inspection?.instructionFiles ?? []).slice(0, 20)) {
+      let findings: Array<{ rule: string; severity: string; line: number }> = [];
+      try {
+        const path = join(base, file);
+        if (statSync(path).size < 200_000) findings = scanUntrustedInstructions(readFileSync(path, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
+      } catch {
+        /* unreadable */
+      }
+      scanned.push({ file: `${repository.id}:${file}`, findings });
+    }
+  }
   const flagged = scanned.filter((s) => s.findings.length > 0);
   const diagnosis = state ? diagnoseContext(state) : undefined;
   return {

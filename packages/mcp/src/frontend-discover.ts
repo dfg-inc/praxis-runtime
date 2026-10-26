@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { isAgentInstructionFile } from "@praxis/contracts";
 
@@ -33,7 +33,11 @@ const FRAMEWORKS: Array<[string, RegExp]> = [
   ["expo", /^expo$/],
 ];
 
-const SAFE_VALUE = /^[#\w(),.%\s/'"-]{1,80}$/;
+/** Only values that look like what they claim to be are kept: a color, a short font stack, a length. Prose in a stylesheet never gets through. */
+const COLOR_VALUE = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([\d\s.,%\/-]{1,40}\))$/;
+const FONT_VALUE = /^[A-Za-z0-9 ,'"_-]{1,60}$/;
+const LENGTH_VALUE = /^[\d.]{1,6}(px|rem|em|%)?$/;
+const fontOk = (v: string) => FONT_VALUE.test(v) && v.split(",").length <= 6 && v.trim().split(/\s+/).length <= 10;
 
 export type FrontendDiscovery = {
   root: string;
@@ -72,7 +76,8 @@ function walk(root: string): { files: Walked[]; truncated: boolean } {
       const abs = join(dir, name);
       let stat;
       try {
-        stat = statSync(abs);
+        stat = lstatSync(abs);
+        if (stat.isSymbolicLink()) continue; // a link must not lead the walk out of the repository
       } catch {
         continue;
       }
@@ -117,24 +122,23 @@ function tokensFromCss(text: string, file: string, tokens: FrontendDiscovery["st
   for (const match of text.matchAll(/--([\w-]+)\s*:\s*([^;}\n]+)[;}\n]/g)) {
     const name = match[1];
     const value = match[2].trim();
-    if (!SAFE_VALUE.test(value)) continue;
-    const color = /^(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\)|hsla?\([^)]*\))$/.test(value) ? colorName(name) : undefined;
+    const color = COLOR_VALUE.test(value) ? colorName(name) : undefined;
     if (color && !(color in tokens.colors)) {
       tokens.colors[color] = value;
       found = true;
-    } else if (/font/.test(name) && !tokens.fonts.body && /sans|serif|mono|system|inter|roboto|helvetica|arial|font/i.test(value)) {
+    } else if (/font/.test(name) && !tokens.fonts.body && fontOk(value) && /sans|serif|mono|system|inter|roboto|helvetica|arial/i.test(value)) {
       tokens.fonts.body = value;
       found = true;
-    } else if (/radius/.test(name) && !tokens.radius) {
+    } else if (/radius/.test(name) && !tokens.radius && LENGTH_VALUE.test(value)) {
       tokens.radius = value;
       found = true;
-    } else if (/(^|-)(spacing|space|gap)(-|$)/.test(name) && !tokens.spacing) {
+    } else if (/(^|-)(spacing|space|gap)(-|$)/.test(name) && !tokens.spacing && LENGTH_VALUE.test(value)) {
       tokens.spacing = value;
       found = true;
     }
   }
   const family = text.match(/font-family\s*:\s*([^;}\n]+)[;}\n]/);
-  if (family && !tokens.fonts.body && SAFE_VALUE.test(family[1].trim())) {
+  if (family && !tokens.fonts.body && fontOk(family[1].trim())) {
     tokens.fonts.body = family[1].trim();
     found = true;
   }
@@ -158,7 +162,7 @@ function tokensFromScript(text: string, file: string, tokens: FrontendDiscovery[
     found = true;
   }
   const font = text.match(/fontFamily\s*:\s*["']([^"']+)["']/);
-  if (font && !tokens.fonts.body && SAFE_VALUE.test(font[1])) {
+  if (font && !tokens.fonts.body && fontOk(font[1])) {
     tokens.fonts.body = font[1];
     found = true;
   }
@@ -167,7 +171,7 @@ function tokensFromScript(text: string, file: string, tokens: FrontendDiscovery[
 }
 
 export function discoverFrontend(repoPath: string): FrontendDiscovery {
-  const root = resolve(repoPath);
+  const root = existsSync(repoPath) ? realpathSync(resolve(repoPath)) : resolve(repoPath);
   if (!existsSync(root) || !statSync(root).isDirectory()) throw new Error(`INSPECT_PATH_INVALID: ${repoPath} is not a directory`);
   const { files, truncated } = walk(root);
   const names = new Set<string>();

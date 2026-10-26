@@ -777,6 +777,18 @@ export const TOOLS: ToolDef[] = [
     kind: "read",
   },
   {
+    name: "praxis_workflow_commands",
+    description:
+      "READ-ONLY list of every workflow command (action) with its required and optional fields, whether it records the user's own decisions (userOnly: refused from an agent), and a working JSON example for the non-obvious ones (pass action to get one). Use it before writing a command for praxis_workflow_preview / praxis_workflow_apply instead of guessing field names.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, action: { type: "string", description: "One action, for its example (for example add-story, set-prototype, record-impact)." } },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
     name: "praxis_review_render",
     description:
       "Build the standard HTML review for one stage and return a link the USER opens: view requirements (every acceptance criterion with its own accept/reject/comment control, edit by id, add/remove criteria, scope: in / deferred / out), prototype (clickable screens on mock data with states and roles, comments on elements), story-plan (one line per planned story, edit, exclude, agree), or stories (a checkbox for every criterion, step, rule and result). Writes an offline copy under .praxis/workflow/reviews and serves a live copy on 127.0.0.1 so the user's Save records their decisions directly. The page is a view, never the source of truth. Does not change workflow state.",
@@ -898,7 +910,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_workflow_preview",
     description:
-      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional.",
+      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
     inputSchema: {
       type: "object",
       properties: {

@@ -1,5 +1,5 @@
 import { diagnosticsPath } from "./diagnostics-log.js";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
 import {
@@ -10,6 +10,8 @@ import {
   subjectDigest,
   withApprovalChannel,
   WorkflowError,
+  commandCatalog,
+  explainCommandError,
   type UserApprovalChannel,
   type WorkflowRole,
 } from "@praxis/contracts";
@@ -305,7 +307,7 @@ async function callToolInner(
         ...withApprovalNote(name, await runWorkflowTool(name, args, ctx.repo, opts.version)),
       });
     }
-    if (name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
+    if (name === "praxis_workflow_commands" || name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
       return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await runPlanningTool(name, args, ctx.repo, opts.role) });
     }
     if (name === "praxis_developer_status" && str(args.workItemId)) {
@@ -360,13 +362,13 @@ async function callToolInner(
   } catch (err) {
     // not an error: the protocol layer must ask the user (2026-07-28 round trip) and re-run the call
     if (err instanceof ApprovalNeedsInput) throw err;
-    const message = ops.redact(err instanceof Error ? err.message : String(err));
+    const message = ops.redact(explainCommandError(err) ?? (err instanceof Error ? err.message : String(err)));
     const coded = err as { code?: unknown };
-    const prefixed = message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH):/)?.[1];
+    const prefixed = explainCommandError(err) ? "INVALID_INPUT" : message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH):/)?.[1];
     const code =
       err instanceof WorkflowError
         ? err.code
-        : prefixed
+        : typeof prefixed === "string" && prefixed
           ? prefixed
           : err instanceof ops.PraxisOpError
         ? err.code
@@ -418,6 +420,11 @@ function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
 async function runPlanningTool(name: string, args: Record<string, unknown>, repo: string, role: PraxisRole): Promise<unknown> {
   const workItemId = str(args.workItemId);
   switch (name) {
+    case "praxis_workflow_commands": {
+      const only = str(args.action);
+      const all = commandCatalog();
+      return { count: all.length, commands: only ? all.filter((c) => c.action === only) : all.map(({ example: _e, ...c }) => c), note: "Pass the command to praxis_workflow_preview and praxis_workflow_apply as JSON text. Ask for one action to get an example. userOnly commands record the user's decisions and are refused when an agent sends them; use praxis_review_render / praxis_review_apply." };
+    }
     case "praxis_review_render":
       return renderReviewTool(repo, { view: str(args.view) ?? "", workItemId, serve: args.serve === false ? false : true });
     case "praxis_review_apply": {
@@ -428,7 +435,7 @@ async function runPlanningTool(name: string, args: Record<string, unknown>, repo
       try {
         raw = text !== undefined ? JSON.parse(text) : readSubmissionFile(repo, file as string);
       } catch (error) {
-        throw new Error(`INVALID_INPUT: the decisions could not be read: ${error instanceof Error ? error.message : String(error)}`);
+        throw new Error(`INVALID_INPUT: the decisions could not be read: ${error instanceof SyntaxError ? "not valid JSON" : error instanceof Error && /^INVALID_INPUT/.test(error.message) ? error.message.replace(/^INVALID_INPUT: /, "") : "the file could not be opened"}`);
       }
       return applyHandedOver(repo, workItemId, raw, str(args.confirmation));
     }
@@ -452,6 +459,27 @@ async function runPlanningTool(name: string, args: Record<string, unknown>, repo
   }
 }
 
+/**
+ * In a guided work item an implementation record must point at something real: a file that exists inside the service's
+ * checkout (its path, its registered repository's path, or this repository). Records for work that does not exist are what
+ * made "entered" and "implemented" fakeable.
+ */
+function assertImplementationPath(repo: string, command: Record<string, unknown>, workItemId: string | undefined): void {
+  const state = loadWorkflow(repo, workItemId);
+  if (!state || state.mode !== "guided") return;
+  const service = state.services.find((s) => s.id === command.serviceId);
+  if (!service) return; // the reducer reports the unknown service
+  const registered = state.repositories.find((r) => r.id === service.repositoryId);
+  const root = realpathSync(resolve(repo, service.localPath ?? registered?.localPath ?? "."));
+  let target: string;
+  try {
+    target = realpathSync(resolve(root, String(command.path ?? "")));
+  } catch {
+    throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} does not exist in ${service.id}'s checkout (${root}); record real work only`);
+  }
+  if (target !== root && !target.startsWith(`${root}${sep}`)) throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
+}
+
 async function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string, version: string): Promise<unknown> {
   const workItemId = str(args.workItemId);
   if (name === "praxis_workflow_inspect") {
@@ -466,6 +494,7 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
     return capabilityRoute({ request: str(args.request) ?? "", role: resolved });
   }
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? "")) as Record<string, unknown>;
+  if (parsed.action === "record-implementation") assertImplementationPath(repo, parsed, workItemId);
   if (parsed.action === "record-repository-inspection") {
     throw new Error("INVALID_INPUT: a repository inspection is read by the Runtime, not written by an agent: call praxis_repository_inspect");
   }

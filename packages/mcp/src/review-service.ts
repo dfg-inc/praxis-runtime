@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
@@ -33,7 +34,8 @@ import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
 const IDLE_MS = 4 * 60 * 60 * 1000;
 const MAX_BODY = 1_000_000;
 
-type Session = { id: string; token: string; repo: string; workItemId: string; view: ReviewView; lastUsed: number };
+type Session = { id: string; loadToken: string; loadUntil: number; saveTokens: Set<string>; repo: string; workItemId: string; view: ReviewView; lastUsed: number };
+const LOAD_TOKEN_MS = 10 * 60 * 1000;
 const sessions = new Map<string, Session>();
 let server: Server | undefined;
 let port = 0;
@@ -126,8 +128,8 @@ export async function applyHandedOver(repo: string, workItemId: string | undefin
   const decisions = plan.commands.filter((c) => isUserDecision(c as never));
   let approval;
   if (decisions.length > 0) {
-    const request = reviewApprovalRequest(decisions, `Record your ${submission.view} review decisions (${plan.summary.join("; ")})`);
-    approval = await obtainUserApproval({ ...request, description: `${plan.summary.map((s) => `- ${s}`).join("\n")}\n\n${request.description}` }, { confirmation, repo });
+    const request = reviewApprovalRequest(decisions, `Record your ${submission.view} review decisions (${plan.details.length} decision(s))`);
+    approval = await obtainUserApproval({ ...request, description: plan.details.map((s) => `- ${s}`).join("\n") }, { confirmation, repo });
   }
   const conflicts = [...plan.conflicts];
   let applied = 0;
@@ -191,10 +193,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (!match || !session) return json(res, 404, { error: "unknown or expired review" });
   session.lastUsed = Date.now();
   if (req.method === "GET" && !match[2]) {
-    if (!safeEqual(url.searchParams.get("t") ?? "", session.token)) return json(res, 403, { error: "bad token" });
+    if (Date.now() > session.loadUntil || !safeEqual(url.searchParams.get("t") ?? "", session.loadToken)) return json(res, 403, { error: "bad or expired link" });
     try {
       const state = requireState(session.repo, session.workItemId);
-      const html = renderReview(state, session.view, { reviewId: session.id, saveUrl: `http://127.0.0.1:${port}/r/${session.id}/submit`, token: session.token, generatedAt: new Date().toISOString() });
+      // Each page load gets its own save token; the link token only opens the page.
+      const saveToken = randomBytes(24).toString("hex");
+      session.saveTokens.add(saveToken);
+      if (session.saveTokens.size > 20) session.saveTokens.delete(session.saveTokens.values().next().value as string);
+      const html = renderReview(state, session.view, { reviewId: session.id, saveUrl: `http://127.0.0.1:${port}/r/${session.id}/submit`, token: saveToken, generatedAt: new Date().toISOString() });
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
@@ -208,9 +214,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return;
   }
   if (req.method === "POST" && match[2]) {
-    if (!safeEqual(String(req.headers["x-praxis-review-token"] ?? ""), session.token)) return json(res, 403, { error: "bad token" });
+    const presented = String(req.headers["x-praxis-review-token"] ?? "");
+    if (![...session.saveTokens].some((tok) => safeEqual(presented, tok))) return json(res, 403, { error: "bad token" });
     const origin = req.headers.origin;
-    if (origin && origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(res, 403, { error: "bad origin" });
+    // A browser always sends Origin on a cross-site or fetch POST; a request without it did not come from the page.
+    if (origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(res, 403, { error: "bad origin" });
     if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "json only" });
     try {
       const result = applyFromPage(session.repo, session.workItemId, session.view, JSON.parse(await body(req)));
@@ -244,6 +252,20 @@ export function stopReviewServer(): void {
   port = 0;
 }
 
+/** Opens a URL in the user's default browser without a shell. False when there is no way to do it here. */
+function openInBrowser(url: string): boolean {
+  if (process.env.PRAXIS_REVIEW_NO_BROWSER === "1") return false;
+  const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
+  try {
+    const child = spawn(opener, [url], { detached: true, stdio: "ignore" });
+    child.on("error", () => undefined);
+    child.unref();
+    return child.pid !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export async function renderReviewTool(repo: string, input: { view: string; workItemId?: string; serve?: boolean }) {
   if (!isReviewView(input.view)) throw new Error(`INVALID_INPUT: view must be one of ${REVIEW_VIEWS.join(", ")}`);
   const view = input.view;
@@ -253,22 +275,29 @@ export async function renderReviewTool(repo: string, input: { view: string; work
   const file = join(dir, `${view}.html`);
   writeFileSync(file, renderReview(state, view, { reviewId: `${view}-${state.workItem.id}`, generatedAt: new Date().toISOString() }));
   let url: string | undefined;
+  let opened = false;
   if (input.serve !== false) {
     const p = await ensureServer();
     const id = randomBytes(8).toString("hex");
-    const token = randomBytes(24).toString("hex");
-    sessions.set(id, { id, token, repo, workItemId: state.workItem.id, view, lastUsed: Date.now() });
-    url = `http://127.0.0.1:${p}/r/${id}?t=${token}`;
+    const loadToken = randomBytes(24).toString("hex");
+    sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: new Set(), repo, workItemId: state.workItem.id, view, lastUsed: Date.now() });
+    const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
+    // The link that can open and save the page goes to the user's browser, never into the agent's tool result: an agent that held it could Save for the user.
+    opened = openInBrowser(secretUrl);
+    if (!opened && process.env.PRAXIS_REVIEW_NO_BROWSER === "1") writeFileSync(join(dir, `${view}.url`), secretUrl);
+    url = `http://127.0.0.1:${p}/r/${id}`;
   }
   return {
     view,
     workItemId: state.workItem.id,
     file,
-    ...(url ? { url } : {}),
+    ...(url ? { url, openedInBrowser: opened } : {}),
     fingerprint: fingerprintFor(state, view),
     progress: progressFor(state, view),
     how: url
-      ? "Give the user this link to open in their browser. Clicking Save there records their decisions directly. The file is an offline copy: its Copy/Download buttons produce a decisions file, which praxis_review_apply records after the user approves it in the client's dialog."
+      ? opened
+        ? "The review page was opened in the user's browser. Tell them to review it and press Save; their decisions are recorded directly. The address shown is not a usable link on its own. If they closed it, call this tool again."
+        : "The live page could not be opened on this machine. Give the user the offline copy (file): its Copy decisions button produces a decisions file, which praxis_review_apply records after the user approves exactly those decisions in the client's dialog."
       : "Offline copy only. Its Copy/Download buttons produce a decisions file for praxis_review_apply.",
     note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf.",
   };

@@ -91,6 +91,7 @@ export function sessionStart(repo: string, args: { role?: string; stage?: string
         next: step,
         skills: skillPlan(state.phase, state.workItem.kind !== "feature"),
         briefing: buildResumeBriefing(state),
+        ...(items.length > 1 ? { choose: `${items.length} work items exist. Unless the user already named one, ask which to continue: ${items.map((i) => `${i.workItemId} \"${i.title}\" (${i.phase ?? i.stage})${i.workItemId === current ? " [current]" : ""}`).join("; ")}.` } : {}),
       };
     }
   } else if (selectionRequired) {
