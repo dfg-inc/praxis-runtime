@@ -4440,7 +4440,9 @@ var init_planning_schemas = __esm({
       storyIds: external_exports.array(StoryIdSchema).default([]),
       status: external_exports.enum(["proposed", "agreed"]).default("proposed"),
       /** Who agreed it: only the user can (see isUserDecision). Absent while proposed. */
-      agreement: external_exports.object({ at: external_exports.string(), via: external_exports.enum(["html-review", "approved", "system"]) }).optional()
+      agreement: external_exports.object({ at: external_exports.string(), via: external_exports.enum(["html-review", "approved", "system"]) }).optional(),
+      /** The user agreed this contract at some point. Kept when it becomes proposed again, so it cannot be deleted by the agent. */
+      everAgreed: external_exports.boolean().optional()
     });
     EvidenceRefSchema = external_exports.object({
       repositoryId: RepositoryIdSchema,
@@ -4872,7 +4874,7 @@ function requirementsFingerprint(state2) {
   })));
 }
 function contractsFingerprint(state2) {
-  return hash(state2.contracts.map(({ status: _s, agreement: _a7, ...content }) => content));
+  return hash(state2.contracts.map(({ status: _s, agreement: _a7, everAgreed: _e, ...content }) => content));
 }
 function prototypeFingerprint(prototype) {
   if (!prototype)
@@ -6229,12 +6231,12 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
           throw missing("SERVICE_NOT_FOUND", `consumer service ${id} not found`);
       const previous = state2.contracts.find((c) => c.id === contract.id);
       const stripped = (c) => {
-        const { status: _s, agreement: _a7, ...rest } = c;
+        const { status: _s, agreement: _a7, everAgreed: _e, ...rest } = c;
         return hash(rest);
       };
       const agreedNow = contract.status === "agreed";
       const kept = previous?.status === "agreed" && !agreedNow && stripped(previous) === stripped(contract);
-      const next1 = { ...contract, status: agreedNow || kept ? "agreed" : "proposed", ...agreedNow ? { agreement: { at: iso(now), via: command.via === "approved" ? "approved" : "html-review" } } : kept && previous?.agreement ? { agreement: previous.agreement } : {} };
+      const next1 = { ...contract, ...agreedNow || previous?.everAgreed ? { everAgreed: true } : {}, status: agreedNow || kept ? "agreed" : "proposed", ...agreedNow ? { agreement: { at: iso(now), via: command.via === "approved" ? "approved" : "html-review" } } : kept && previous?.agreement ? { agreement: previous.agreement } : {} };
       const contracts = [...state2.contracts.filter((c) => c.id !== contract.id), next1];
       return { state: touch({ ...state2, contracts }, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
     }
@@ -6242,7 +6244,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       const doomed = state2.contracts.find((c) => c.id === command.id);
       if (!doomed)
         throw missing("CONTRACT_NOT_FOUND", `contract ${command.id} not found`);
-      if (doomed.status === "agreed" && !verified)
+      if ((doomed.status === "agreed" || doomed.everAgreed) && !verified)
         throw new WorkflowError("USER_DECISION_REQUIRED", `contract ${command.id} was agreed by the user; removing it is their decision, not the agent's`);
       return { state: touch({ ...state2, contracts: state2.contracts.filter((c) => c.id !== command.id) }, now, `contract ${command.id} removed`), duplicate: false, result: { removed: command.id } };
     }
@@ -6457,7 +6459,7 @@ var init_planning = __esm({
       external_exports.object({ action: external_exports.literal("register-repository"), repository: RepositorySchema.pick({ id: true, name: true }).extend({ role: external_exports.string().default(""), localPath: external_exports.string().optional(), remoteUrl: external_exports.string().optional(), branch: external_exports.string().optional(), notes: external_exports.string().optional() }) }),
       external_exports.object({ action: external_exports.literal("assign-repositories"), repositoryIds: external_exports.array(RepositoryIdSchema).min(1), storyIds: external_exports.array(StoryIdSchema).default([]), requirementIds: external_exports.array(RequirementIdSchema).default([]), serviceIds: external_exports.array(external_exports.string()).default([]) }),
       external_exports.object({ action: external_exports.literal("record-repository-inspection"), repositoryId: RepositoryIdSchema, inspection: RepositoryInspectionSchema }),
-      external_exports.object({ action: external_exports.literal("set-contract"), via: Via, contract: ServiceContractSchema.omit({ agreement: true }) }),
+      external_exports.object({ action: external_exports.literal("set-contract"), via: Via, contract: ServiceContractSchema.omit({ agreement: true, everAgreed: true }) }),
       external_exports.object({ action: external_exports.literal("set-mode"), mode: WorkflowModeSchema, reason: external_exports.string().optional() }),
       external_exports.object({ action: external_exports.literal("remove-contract"), via: Via, id: external_exports.string().min(1) }),
       external_exports.object({ action: external_exports.literal("record-impact"), impact: ImpactSchema.omit({ revision: true, recordedAt: true }) }),
@@ -6994,7 +6996,7 @@ function applyWorkflowCommand(state2, raw, options2) {
     if (state2)
       return { state: state2, duplicate: true, result: { workflowId: state2.workflowId } };
     const opened = openLocalWorkflow(command);
-    return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id } };
+    return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id, mode: opened.mode, ...opened.mode === "classic" ? { note: "This work item is classic: stage gates, plan-before-stories and coverage checks are not enforced (user decisions still are). Tell the user." } : {} } };
   }
   if (command.action === "select-work-item") {
     throw new WorkflowError("EXECUTION_REQUIRED", "select-work-item is resolved by the workflow store");
@@ -79004,7 +79006,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"73f41a49703c0d17812130ac4b09033326fa07d7be8dd0aba26ab459676938e7","coreBaseline":"ddcda3b5bd738b2cf6ca256e40e9f2255b3032d0","inputs":30}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"7c047207c7e42e695eb69fb89669e769e771f528eed992948b64152f7e0dfc24","coreBaseline":"faa90762bdb8b054d640e337a37a0d9c02820f15","inputs":30}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81650,7 +81652,7 @@ async function renderReviewTool(repo, input2) {
     const p = await ensureServer();
     const live = [...sessions.values()].find((s) => s.repo === repo && s.workItemId === state2.workItem.id && s.view === view && s.loadUntil > Date.now() && s.openedAt !== void 0);
     if (live && !input2.reopen) {
-      return { view, workItemId: state2.workItem.id, file: file2, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state2, view), progress: progressFor(state2, view), how: "This review is already open in the user's browser (opened less than ten minutes ago). Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
+      return { view, workItemId: state2.workItem.id, file: file2, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state2, view), progress: progressFor(state2, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
     const id = (0, import_node_crypto15.randomBytes)(8).toString("hex");
     const loadToken = (0, import_node_crypto15.randomBytes)(24).toString("hex");

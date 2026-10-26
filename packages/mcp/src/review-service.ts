@@ -300,7 +300,7 @@ export async function renderReviewTool(repo: string, input: { view: string; work
     // a page for this view is already open and its link still valid: do not open another browser tab on every call
     const live = [...sessions.values()].find((s) => s.repo === repo && s.workItemId === state.workItem.id && s.view === view && s.loadUntil > Date.now() && s.openedAt !== undefined);
     if (live && !input.reopen) {
-      return { view, workItemId: state.workItem.id, file, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state, view), progress: progressFor(state, view), how: "This review is already open in the user's browser (opened less than ten minutes ago). Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
+      return { view, workItemId: state.workItem.id, file, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state, view), progress: progressFor(state, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
     const id = randomBytes(8).toString("hex");
     const loadToken = randomBytes(24).toString("hex");
