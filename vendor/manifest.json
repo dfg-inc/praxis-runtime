@@ -1,6 +1,6 @@
 {
   "version": "0.1.0-alpha.48",
-  "baseline": "fa3b68180019e0a9cf52e7e2f32b2dc09dc4b256",
+  "baseline": "f8c70582ac66379ec0d606741038430f21f0f83c",
   "packages": [
     "@praxis/contracts",
     "@praxis/project-config",

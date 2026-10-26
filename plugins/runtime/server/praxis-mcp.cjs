@@ -8764,7 +8764,7 @@ ${out ? `<p class="meta">Excluded: ${esc3(story.excludedReason ?? "")}</p><label
   }).join("");
   const body2 = `${staleBanner(state2, "stories_review")}
 <div class="card"><div class="kv"><span class="muted">Stories</span><span>${progress.stories}</span><span class="muted">Items</span><span>${progress.items}</span><span class="muted">Accepted</span><span>${progress.accepted}</span><span class="muted">Rejected</span><span>${progress.rejected}</span><span class="muted">Undecided</span><span>${progress.pending}</span></div>
-<p class="meta">Editing a story's text creates a new revision; marks on that story start over. Marks on other stories are kept.</p></div>
+<p class="meta">Editing a story creates a new revision. Items you did not change keep their marks; an item whose text changed starts over, and so does the story's confirmation.</p></div>
 ${cards || `<p class="muted">No stories yet.</p>`}`;
   return shell(state2, "stories", "User stories review", body2, {}, options2, `<label class="marks"><input type="checkbox" id="accept-stories"> Accept the stories</label>`);
 }
@@ -8917,7 +8917,19 @@ if(D.view==='prototype'&&D.proto&&D.proto.kind==='ui'){
   function h(t,a,c){var e=document.createElement(t);for(var k in (a||{})){if(k==='class')e.className=a[k];else e.setAttribute(k,a[k])}(c||[]).forEach(function(x){e.appendChild(typeof x==='string'?document.createTextNode(x):x)});return e}
   function tag(el){var t=[].concat(el.requirementIds||[],el.acIds||[]);return t.length?h('span',{class:'tag'},[t.join(' ')]):document.createTextNode('')}
   function coll(id){return mock.filter(function(c){return c.id===id})[0]}
+  function fillTable(box,el){
+    box.textContent='';
+    var c=coll(el.collection);
+    if(!c){box.appendChild(h('div',{class:'state-msg'},['No data']));return}
+    var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
+    var t=h('table',{},[]);t.appendChild(h('tr',{},cols.map(function(key){var f=c.fields.filter(function(x){return x.key===key})[0];return h('th',{},[f?f.label:key])})));
+    var rows=c.rows.filter(function(r){return !(P._q&&P._q[el.id])||JSON.stringify(r).toLowerCase().indexOf(P._q[el.id].toLowerCase())>=0});
+    if(!rows.length)box.appendChild(h('div',{class:'state-msg'},['No rows']));
+    rows.forEach(function(r){t.appendChild(h('tr',{},cols.map(function(key){return h('td',{},[String(r[key]==null?'':r[key])])})))});
+    if(rows.length)box.appendChild(t)
+  }
   function render(){
+    P._tables=[];
     host.textContent='';
     var scr=P.screens.filter(function(s){return s.id===cur})[0];if(!scr)return;
     var sw=$('#proto-state');sw.textContent='';scr.states.forEach(function(s){var o=h('option',{value:s},[s]);if(s===stateName)o.selected=true;sw.appendChild(o)});
@@ -8931,6 +8943,8 @@ if(D.view==='prototype'&&D.proto&&D.proto.kind==='ui'){
       if(k==='heading')wrap.appendChild(h('h3',{},[el.label||el.text||'']));
       else if(k==='text')wrap.appendChild(h('p',{},[el.text||el.label||'']));
       else if(k==='table'||k==='list'){
+        var box=h('div',{class:'tblbox'});wrap.appendChild(box);(P._tables=P._tables||[]).push({wrap:box,el:el});fillTable(box,el)}
+      else if(k==='__old_table'){
         var c=coll(el.collection);
         if(!c){wrap.appendChild(h('div',{class:'state-msg'},['No data']))}
         else{
@@ -8942,7 +8956,7 @@ if(D.view==='prototype'&&D.proto&&D.proto.kind==='ui'){
           rows.forEach(function(r){t.appendChild(h('tr',{},cols.map(function(key){return h('td',{},[String(r[key]==null?'':r[key])])})))});
           if(rows.length)wrap.appendChild(t)}
       }
-      else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id});i.value=(P._q&&P._q[el.id])||'';if(P._focus===el.id){setTimeout(function(){i.focus();try{i.setSelectionRange(i.value.length,i.value.length)}catch(e){}},0)}i.addEventListener('input',function(){P._focus=el.id;P._q=P._q||{};P._q[el.collection||'']=i.value;(P.screens.filter(function(s){return s.id===cur})[0].elements).forEach(function(e2){if(e2.collection===el.collection){P._q[e2.id]=i.value}});render()});wrap.appendChild(i)}
+      else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id});i.value=(P._q&&P._q[el.id])||'';if(P._focus===el.id){setTimeout(function(){i.focus();try{i.setSelectionRange(i.value.length,i.value.length)}catch(e){}},0)}i.addEventListener('input',function(){P._focus=el.id;P._q=P._q||{};P._q[el.collection||'']=i.value;(P.screens.filter(function(s){return s.id===cur})[0].elements).forEach(function(e2){if(e2.collection===el.collection){P._q[e2.id]=i.value}});(P._tables||[]).forEach(function(x){fillTable(x.wrap,x.el)})});wrap.appendChild(i)}
       else if(k==='field'){wrap.appendChild(h('label',{},[el.label||el.field||'']));wrap.appendChild(h('input',{type:'text',placeholder:el.text||''}))}
       else if(k==='button'||k==='link'){
         var b=h('button',{class:'btn'+(k==='link'?' sec':''),type:'button'},[el.label||'Button']);
@@ -78812,7 +78826,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"fd7b019c418a2199f4971e3c39b10dd6adb853aa8740eed6eb9eaf839e622c52","coreBaseline":"fa3b68180019e0a9cf52e7e2f32b2dc09dc4b256","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"ae59a4cca9106d805590a5083022be23e62d6f87816bf918cde1f0b31536bb0c","coreBaseline":"f8c70582ac66379ec0d606741038430f21f0f83c","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
