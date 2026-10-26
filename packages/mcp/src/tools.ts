@@ -426,7 +426,7 @@ async function runPlanningTool(name: string, args: Record<string, unknown>, repo
       return { count: all.length, commands: only ? all.filter((c) => c.action === only) : all.map(({ example: _e, ...c }) => c), note: "Pass the command to praxis_workflow_preview and praxis_workflow_apply as JSON text. Ask for one action to get an example. userOnly commands record the user's decisions and are refused when an agent sends them; use praxis_review_render / praxis_review_apply." };
     }
     case "praxis_review_render":
-      return renderReviewTool(repo, { view: str(args.view) ?? "", workItemId, serve: args.serve === false ? false : true });
+      return renderReviewTool(repo, { view: str(args.view) ?? "", workItemId, serve: args.serve === false ? false : true, reopen: args.reopen === true });
     case "praxis_review_apply": {
       const text = str(args.submission);
       const file = str(args.file);

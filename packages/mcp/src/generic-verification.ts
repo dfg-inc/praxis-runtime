@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
@@ -104,23 +106,14 @@ async function runSteps(root: string, modulePath: string, steps: CheckStep[]): P
     const result = spawnSync("python3", ["-c", PYTHON, file, JSON.stringify(steps)], {
       cwd: root,
       encoding: "utf8",
+      env: scrubbedEnv(tmpdir()),
     });
     if ((result.status ?? 1) !== 0) {
       throw new Error((result.stderr || result.stdout || "python check failed").trim());
     }
     return JSON.parse(result.stdout.trim());
   }
-  const imported = (await import(`${pathToFileURL(file).href}?v=${Date.now()}-${Math.random()}`)) as Record<
-    string,
-    unknown
-  >;
-  let value: unknown;
-  for (const step of steps) {
-    const fn = imported[step.function];
-    if (typeof fn !== "function") throw new Error(`EXPORT_MISSING:${step.function}`);
-    value = await (fn as (...args: unknown[]) => unknown)(...(step.args ?? []));
-  }
-  return value;
+  return runIsolated({ file, cwd: root, op: "steps", steps });
 }
 
 /** Checks scoped to one work item win over the repository-wide checks. */

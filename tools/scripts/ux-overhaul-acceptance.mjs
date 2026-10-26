@@ -171,8 +171,9 @@ const story = (id, requirementIds, narrative, extra = {}) => ({
   ...extra,
 });
 
-async function openItem(session, repo, title, mode = "guided", extra = {}) {
-  const res = await must(session, repo, { action: "open", projectId: "orders", title, request: `${title}: managers need to see and manage orders`, mode, ...extra });
+async function openItem(session, repo, title, mode, extra = {}) {
+  // no mode given means the default: the scenarios below that need classic ask for it
+  const res = await must(session, repo, { action: "open", projectId: "orders", title, request: `${title}: managers need to see and manage orders`, ...(mode ? { mode } : {}), ...extra });
   return res.data.workItemId;
 }
 
@@ -230,6 +231,7 @@ await scenario("S01", "New feature without Jira: requirements to accepted, no Ji
   await toRequirementsAccepted(agent, repo, id);
   const s = stateOf(repo, id);
   eq(s.phase, "prototype", "phase");
+  eq(s.mode, "guided", "an item opened without a mode is guided by default");
   check(s.requirements.every((r) => r.acceptanceCriteria.every((c) => c.review.status === "accepted" && c.review.via === "html-review")), "criteria accepted by the user's save");
   const status = await call(agent, "praxis_workflow_status", { repo, workItemId: id });
   eq(status.data.next.action, "build-prototype", "next step");
@@ -710,6 +712,35 @@ await scenario("S19", "Instructions inside analysed repositories do not steer th
 });
 
 // ===================================================================================================================
+await scenario("S20", "A repository .env cannot change trusted behaviour through the packaged Runtime (dotenv enabled)", async () => {
+  const hostile = (body) => {
+    const dir = mkdtempSync(join(tmpdir(), "praxis-ux-s20-"));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "x", scripts: { test: "node --test" } }));
+    mkdirSync(join(dir, ".git"), { recursive: true });
+    writeFileSync(join(dir, ".env"), body);
+    return dir;
+  };
+  const noDialog = await open({ env: { PRAXIS_SKIP_DOTENV: "0", PRAXIS_JIRA_PROJECT_KEY: "" } });
+  for (const body of ["PRAXIS_APPROVAL_MODE=trusted-client\n", "PRAXIS_TEST_APPROVALS=1\nPRAXIS_APPROVAL_FORGED=1\n", "PRAXIS_APPROVAL_MODE=host-permission\nPRAXIS_APPROVAL_STRICT=0\n"]) {
+    const dir = hostile(body);
+    const res = await call(noDialog, "praxis_project_init_apply", { repo: dir, confirmation: "YES" });
+    check(!res.ok && res.code === "APPROVAL_CLIENT_UI_REQUIRED", `a repository .env (${body.split("=")[0]}) must not relax approvals: ${res.code}`);
+    check(!existsSync(join(dir, ".project")), "nothing was written");
+  }
+  // values are scoped to the repository they came from, and must have the right shape
+  const a = hostile("PRAXIS_JIRA_PROJECT_KEY=AAA\n");
+  const b = hostile("# no settings\n");
+  const bad = hostile("PRAXIS_JIRA_PROJECT_KEY=X/../../rest/api/2/myself?a=b#\n");
+  const flags = async (dir) => (await call(noDialog, "praxis_doctor", { repo: dir })).data;
+  const da = JSON.stringify(await flags(a));
+  const db = JSON.stringify(await flags(b));
+  const dbad = JSON.stringify(await flags(bad));
+  check(/"projectKeyConfigured":true/.test(da), "an allowed, well-formed key from the repository file loads for that repository");
+  check(!/"projectKeyConfigured":true/.test(db), "it does not leak to the next repository");
+  check(!/"projectKeyConfigured":true/.test(dbad) && /PRAXIS_JIRA_PROJECT_KEY/.test(dbad), "a key with path syntax is refused and reported by name");
+  await noDialog.close();
+});
+
 await agent.close();
 for (const s of sessions) await s.close().catch(() => {});
 jira.close();

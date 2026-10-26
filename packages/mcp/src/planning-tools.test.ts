@@ -582,3 +582,41 @@ describe("every user decision is refused when it comes from the agent (all revie
     expect(previewed.ok).toBe(false);
   });
 });
+
+describe("S10 and the link: the browser is opened once, and the secret link never appears in an argument", () => {
+  it("opens a short-lived file (not the link) with the platform opener, and reuses an open review instead of opening more tabs", async () => {
+    const { chmodSync, readdirSync } = await import("node:fs");
+    const bin = mkdtempSync(join(tmpdir(), "praxis-shim-"));
+    const log = mkdtempSync(join(tmpdir(), "praxis-shimlog-"));
+    const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
+    writeFileSync(join(bin, opener), `#!/bin/sh\necho "$@" >> "${log}/argv.txt"\ncp "$1" "${log}/page-$$.html"\n`);
+    chmodSync(join(bin, opener), 0o755);
+    const savedPath = process.env.PATH;
+    const savedFlag = process.env.PRAXIS_TEST_REVIEW_NO_BROWSER;
+    process.env.PATH = `${bin}:${savedPath}`;
+    delete process.env.PRAXIS_TEST_REVIEW_NO_BROWSER;
+    try {
+      const { repo } = await project();
+      const first = (await call("praxis_review_render", repo, { view: "requirements" })).data as any;
+      expect(first.openedInBrowser).toBe(true);
+      expect(first.reused).toBeUndefined();
+      const again = (await call("praxis_review_render", repo, { view: "requirements" })).data as any;
+      expect(again.reused).toBe(true);
+      for (let i = 0; i < 5; i += 1) await call("praxis_review_render", repo, { view: "requirements" });
+      for (let i = 0; i < 60 && !(existsSync(join(log, "argv.txt")) && readdirSync(log).some((f) => f.startsWith("page-"))); i += 1) await new Promise((r) => setTimeout(r, 50));
+      const argv = readFileSync(join(log, "argv.txt"), "utf8");
+      expect(argv.trim().split("\n").length).toBe(1);
+      expect(argv).not.toMatch(/\?t=|127\.0\.0\.1/);
+      const copied = readdirSync(log).filter((f) => f.startsWith("page-"));
+      expect(readFileSync(join(log, copied[0]), "utf8")).toMatch(/http:\/\/127\.0\.0\.1:\d+\/r\/[a-f0-9]{16}\?t=[a-f0-9]{48}/);
+      const reopened = (await call("praxis_review_render", repo, { view: "requirements", reopen: true })).data as any;
+      expect(reopened.reused).toBeUndefined();
+      expect(readFileSync(join(log, "argv.txt"), "utf8").trim().split("\n").length).toBe(2);
+      expect(JSON.stringify([first, again, reopened])).not.toMatch(/\?t=/);
+    } finally {
+      process.env.PATH = savedPath;
+      if (savedFlag !== undefined) process.env.PRAXIS_TEST_REVIEW_NO_BROWSER = savedFlag;
+      stopReviewServer();
+    }
+  });
+});

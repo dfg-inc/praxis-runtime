@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ApprovalError, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
+import { tmpdir } from "node:os";
+import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
 import { inspectionPlan, runProjectChecks, type Finding, type Scenario } from "./generic-verification.js";
 import { inspectService, type ProjectProfile, type ServiceLocation } from "./project-profile.js";
 import { loadWorkflow } from "./workflow-store.js";
@@ -49,29 +51,10 @@ function safeFile(root: string, relative: string): string {
   return absolute;
 }
 
-async function loadAdapter(workflowRepo: string): Promise<{
-  verify?: (ctx: unknown) => Promise<{ scenarios: Scenario[]; findings: Finding[] }>;
-  propose?: (serviceId: string) => Proposal | null;
-} | undefined> {
+/** The project adapter runs in its own process with a scrubbed environment (see project-code-runner.ts); only JSON crosses. */
+function adapterFile(workflowRepo: string): string | undefined {
   const file = join(workflowRepo, ".praxis", "quality", "adapter.mjs");
-  if (!existsSync(file)) return undefined;
-  return import(`${pathToFileURL(file).href}?v=${Date.now()}-${Math.random()}`) as Promise<{
-    verify?: (ctx: unknown) => Promise<{ scenarios: Scenario[]; findings: Finding[] }>;
-    propose?: (serviceId: string) => Proposal | null;
-  }>;
-}
-
-async function loadModule(service: ServiceLocation, relative: string) {
-  if (!service.localPath) {
-    return { missingLocation: true, repository: service.repository, file: relative };
-  }
-  const file = safeFile(service.localPath, relative);
-  if (!existsSync(file)) return { missingModule: true, repository: service.repository, file };
-  const mod = (await import(`${pathToFileURL(file).href}?v=${Date.now()}-${Math.random()}`)) as Record<
-    string,
-    unknown
-  >;
-  return { mod, repository: service.repository, file };
+  return existsSync(file) ? file : undefined;
 }
 
 function testsAreGreen(services: ServiceLocation[]): boolean {
@@ -86,6 +69,7 @@ function testsAreGreen(services: ServiceLocation[]): boolean {
         const result = spawnSync(process.execPath, ["--test", ...tests.map((name) => join("src", name))], {
           cwd: service.localPath,
           encoding: "utf8",
+          env: scrubbedEnv(tmpdir()),
         });
         if ((result.status ?? 1) !== 0) return false;
       }
@@ -99,6 +83,7 @@ function testsAreGreen(services: ServiceLocation[]): boolean {
       const result = spawnSync("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
         cwd: service.localPath,
         encoding: "utf8",
+        env: scrubbedEnv(tmpdir()),
       });
       if ((result.status ?? 1) !== 0) return false;
     }
@@ -140,15 +125,16 @@ export async function buildStoryVerification(
   if (!stories.length && !requirements.length) throw new Error("STORY_MISSING");
   const services = state.services as ServiceLocation[];
   const profiles = services.map((service) => inspectService(service));
-  const adapter = await loadAdapter(repo);
+  const adapter = adapterFile(repo);
   let scenarios: Scenario[] = [];
   let findings: Finding[] = [];
   let strategy: VerificationMeta["strategy"] = "inspection-only";
   let evidenceLevel: VerificationMeta["evidenceLevel"] = "static";
   let limitations: string[] = [];
   let plan: VerificationMeta["plan"] = [];
-  if (adapter?.verify) {
-    const verified = await adapter.verify({ state, independentRerun, loadModule });
+  const adapterResult = adapter ? await runIsolated<{ scenarios: Scenario[]; findings: Finding[] } | null>({ file: adapter, cwd: repo, op: "verify", state, independentRerun }) : null;
+  if (adapterResult) {
+    const verified = adapterResult;
     scenarios = verified.scenarios;
     findings = verified.findings;
     strategy = "project-adapter";
@@ -243,8 +229,8 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
   const branch = existingBranch ?? `quality/${serviceId}-story-fix`;
   if (PROTECTED.has(branch)) throw new Error("PROTECTED_BRANCH");
   const hostProposal = readHostProposal(repo, serviceId);
-  const adapter = hostProposal ? undefined : await loadAdapter(repo);
-  const proposal = hostProposal ?? adapter?.propose?.(serviceId) ?? null;
+  const adapter = hostProposal ? undefined : adapterFile(repo);
+  const proposal = hostProposal ?? (adapter ? await runIsolated<Proposal | null>({ file: adapter, cwd: repo, op: "propose", serviceId }) : null);
   if (!proposal) {
     throw new Error(
       "HOST_EDIT_UNAVAILABLE: no coding-agent patch is available. Write .praxis/quality/proposals/" +

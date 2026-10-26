@@ -799,6 +799,7 @@ export const TOOLS: ToolDef[] = [
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         view: { type: "string", enum: ["requirements", "prototype", "story-plan", "stories", "contracts"], description: "Which review to build." },
         serve: { type: "boolean", description: "Serve the live page on loopback (default true). False writes only the offline file." },
+        reopen: { type: "boolean", description: "Open a fresh page even if this review was opened less than ten minutes ago (by default the open one is reused and no new tab is opened)." },
       },
       required: ["view"],
       additionalProperties: false,
