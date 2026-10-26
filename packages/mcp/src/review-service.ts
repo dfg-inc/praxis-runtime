@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import {
@@ -144,9 +144,14 @@ export async function applyHandedOver(repo: string, workItemId: string | undefin
 }
 
 export function readSubmissionFile(repo: string, file: string): unknown {
-  const root = resolve(repo);
-  const path = resolve(root, file);
-  if (path !== root && !path.startsWith(`${root}${sep}`) && !path.startsWith(join(homedir(), "Downloads") + sep)) throw new Error("INVALID_INPUT: the decisions file must be inside the repository or in Downloads");
+  // Resolve symlinks first: a link inside the repository must not lead outside it.
+  const root = realpathSync(resolve(repo));
+  const downloads = join(homedir(), "Downloads");
+  const path = realpathSync(resolve(root, file));
+  const inside = path === root || path.startsWith(`${root}${sep}`);
+  const inDownloads = existsSync(downloads) && path.startsWith(`${realpathSync(downloads)}${sep}`);
+  if (!inside && !inDownloads) throw new Error("INVALID_INPUT: the decisions file must be inside the repository or in Downloads");
+  if (statSync(path).size > MAX_BODY) throw new Error("INVALID_INPUT: the decisions file is too large");
   return JSON.parse(readFileSync(path, "utf8"));
 }
 

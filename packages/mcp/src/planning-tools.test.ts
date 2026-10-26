@@ -372,3 +372,22 @@ describe("state written by alpha.48 (contract 1.0.0)", () => {
     expect(state(repo, id).stories.length).toBe(1);
   });
 });
+
+describe("decisions file hardening", () => {
+  it("a symlink inside the repository that points outside is refused", async () => {
+    const { repo } = await project();
+    const outside = join(mkdtempSync(join(tmpdir(), "praxis-outside-")), "d.json");
+    writeFileSync(outside, "{}");
+    const { symlinkSync } = await import("node:fs");
+    symlinkSync(outside, join(repo, "decisions.json"));
+    const res = await call("praxis_review_apply", repo, { file: "decisions.json" });
+    expect(res.ok).toBe(false);
+    expect(res.code).toBe("INVALID_INPUT");
+  });
+  it("a missing file is reported as unreadable decisions", async () => {
+    const { repo } = await project();
+    const res = await call("praxis_review_apply", repo, { file: "nope.json" });
+    expect(res.ok).toBe(false);
+    expect(res.code).toBe("INVALID_INPUT");
+  });
+});

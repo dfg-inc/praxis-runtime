@@ -5621,7 +5621,8 @@ function advancePhase(state2, command, now) {
     throw missing("PHASE_GATE", `cannot enter ${command.to}: ${failures.map((f) => `${f.phase} needs ${f.missing.join("; ")}`).join(" | ")}`, { failures });
   }
   const entry = { at: iso(now), kind: "advance", from, to: command.to, reason: command.reason ?? "", invalidated: [] };
-  const next = touch({ ...state2, phase: command.to, phaseHistory: [...state2.phaseHistory, entry].slice(-200) }, now, `phase ${from} -> ${command.to}`);
+  let next = touch({ ...state2, phase: command.to, phaseHistory: [...state2.phaseHistory, entry].slice(-200) }, now, `phase ${from} -> ${command.to}`);
+  next = { ...next, sessionLog: [...next.sessionLog, { at: iso(now), summary: `moved from ${from} to ${command.to}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep(next).summary }].slice(-200) };
   return { state: next, duplicate: false, result: { phase: command.to, gatesMissing: failures, warnings: [...new Set(warnings)], enforced: state2.mode === "guided" } };
 }
 function returnToPhase(state2, command, now) {
@@ -78612,7 +78613,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"26261a38213d31ab3d9bb086aedcbdc8ffcbbdcb36d5e61795442adc87a24d05","coreBaseline":"d38549aa4472d5216e968dc07767b52626d2ca45","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"eb1cd41ee1ddab0176c35625df295e120569a39175bbd197ff6a997ddfe80c34","coreBaseline":"1c2efdcae78c7050357db0de2af57cd803e40cc2","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81018,10 +81019,15 @@ ${request.description}` }, { confirmation, repo });
   return outcome(repo, id, submission.view, applied, conflicts, plan.stale, plan.summary);
 }
 function readSubmissionFile(repo, file2) {
-  const root = (0, import_node_path33.resolve)(repo);
-  const path = (0, import_node_path33.resolve)(root, file2);
-  if (path !== root && !path.startsWith(`${root}${import_node_path33.sep}`) && !path.startsWith((0, import_node_path33.join)((0, import_node_os3.homedir)(), "Downloads") + import_node_path33.sep))
+  const root = (0, import_node_fs28.realpathSync)((0, import_node_path33.resolve)(repo));
+  const downloads = (0, import_node_path33.join)((0, import_node_os3.homedir)(), "Downloads");
+  const path = (0, import_node_fs28.realpathSync)((0, import_node_path33.resolve)(root, file2));
+  const inside = path === root || path.startsWith(`${root}${import_node_path33.sep}`);
+  const inDownloads = (0, import_node_fs28.existsSync)(downloads) && path.startsWith(`${(0, import_node_fs28.realpathSync)(downloads)}${import_node_path33.sep}`);
+  if (!inside && !inDownloads)
     throw new Error("INVALID_INPUT: the decisions file must be inside the repository or in Downloads");
+  if ((0, import_node_fs28.statSync)(path).size > MAX_BODY)
+    throw new Error("INVALID_INPUT: the decisions file is too large");
   return JSON.parse((0, import_node_fs28.readFileSync)(path, "utf8"));
 }
 function json2(res, status, body2) {
