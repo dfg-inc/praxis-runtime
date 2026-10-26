@@ -797,7 +797,7 @@ export const TOOLS: ToolDef[] = [
       properties: {
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
-        view: { type: "string", enum: ["requirements", "prototype", "story-plan", "stories"], description: "Which review to build." },
+        view: { type: "string", enum: ["requirements", "prototype", "story-plan", "stories", "contracts"], description: "Which review to build." },
         serve: { type: "boolean", description: "Serve the live page on loopback (default true). False writes only the offline file." },
       },
       required: ["view"],

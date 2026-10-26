@@ -487,3 +487,69 @@ describe("waivers are the user's", () => {
   });
 });
 
+
+describe("default mode, switching and contract agreement through the tools", () => {
+  it("a new work item opened without a mode is guided; one opened as classic stays classic and is told so", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-mode-"));
+    const g = (await must(repo, { action: "open", projectId: "p", title: "Guided one", request: "r" })).data.workItemId as string;
+    const c = (await must(repo, { action: "open", projectId: "p", title: "Classic one", request: "r", mode: "classic" })).data.workItemId as string;
+    expect(state(repo, g).mode).toBe("guided");
+    expect(state(repo, c).mode).toBe("classic");
+    const sg = (await call("praxis_workflow_status", repo, { workItemId: g })).data as any;
+    const sc = (await call("praxis_workflow_status", repo, { workItemId: c })).data as any;
+    expect(sg.modeNote).toBeUndefined();
+    expect(sc.modeNote).toMatch(/classic mode/);
+  });
+
+  it("the agent can move an item to guided; moving back to classic needs the user's approval", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-mode2-"));
+    const id = (await must(repo, { action: "open", projectId: "p", title: "Old item", request: "r", mode: "classic" })).data.workItemId as string;
+    await must(repo, { action: "add-requirement", id: "REQ-A-001", statement: "View", acceptanceCriteria: ["List shows"] }, id).catch(() => undefined);
+    const up = await record(repo, { action: "set-mode", mode: "guided", reason: "new flow" }, id);
+    expect(up.ok, JSON.stringify(up.errors)).toBe(true);
+    expect((up.data.result as any).report.dataKept.requirements).toBe(1);
+    expect(state(repo, id).mode).toBe("guided");
+    const down = await record(repo, { action: "set-mode", mode: "classic" }, id);
+    expect(down.code).toBe("USER_DECISION_REQUIRED");
+    expect(state(repo, id).mode).toBe("guided");
+    const rendered = (await call("praxis_review_render", repo, { view: "requirements", serve: false, workItemId: id })).data as { fingerprint: string };
+    const submission = JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "m", view: "requirements", workItemId: id, baseFingerprint: rendered.fingerprint, modeChange: { to: "classic", reason: "I prefer it" } });
+    const declined = await call("praxis_review_apply", repo, { submission, confirmation: "YES", workItemId: id }, dialog({ answer: "reject" }).channel);
+    expect(declined.code).toBe("APPROVAL_REJECTED");
+    expect(state(repo, id).mode).toBe("guided");
+    const { channel, seen } = dialog({ answer: "approve" });
+    const done = await call("praxis_review_apply", repo, { submission, confirmation: "YES", workItemId: id }, channel);
+    expect(done.ok, JSON.stringify(done.errors)).toBe(true);
+    expect(seen[0].description).toMatch(/SWITCH this work item from guided to classic/);
+    expect(state(repo, id).mode).toBe("classic");
+  });
+
+  it("an agent cannot agree its own contract; the user agrees it on the contracts page and the development gate opens", async () => {
+    const { repo, id } = await project();
+    const svc = (sid: string, deps: string[]) => ({ action: "set-service", service: { id: sid, name: sid, kind: "module", responsibilities: ["x"], requirementIds: ["REQ-ORD-001"], dependsOn: deps, status: "in_progress" } });
+    await must(repo, svc("svc-api", []));
+    await must(repo, svc("svc-web", ["svc-api"]));
+    const contract = { id: "C-1", name: "Orders API", providerServiceId: "svc-api", consumerServiceIds: ["svc-web"], schemaRef: "openapi.json" };
+    expect((await record(repo, { action: "set-contract", contract: { ...contract, status: "agreed" } })).code).toBe("USER_DECISION_REQUIRED");
+    await must(repo, { action: "set-contract", contract });
+    expect(state(repo, id).contracts[0].status).toBe("proposed");
+    const brief = (await call("praxis_repository_brief", repo, {})).data as any;
+    expect(JSON.stringify(brief)).toBeDefined();
+    const status = (await call("praxis_workflow_status", repo, {})).data as any;
+    expect(status.briefing).toBeDefined();
+    // the page
+    const rendered = await call("praxis_review_render", repo, { view: "contracts" });
+    expect(rendered.ok, JSON.stringify(rendered.errors)).toBe(true);
+    const { readFileSync: rf } = await import("node:fs");
+    const secret = rf(join(dirname((rendered.data as any).file), "contracts.url"), "utf8");
+    const html = await (await fetch(secret)).text();
+    const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)![1]);
+    const origin = new URL(secret).origin;
+    const post = (headers: Record<string, string>) => fetch(`${secret.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", "x-praxis-review-token": data.token, ...headers }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "contracts", workItemId: id, baseFingerprint: data.baseFingerprint, contracts: { agree: ["C-1"] } }) });
+    expect((await post({})).status).toBe(403);
+    const ok = await post({ origin });
+    expect(ok.status).toBe(200);
+    expect(state(repo, id).contracts[0]).toMatchObject({ status: "agreed", agreement: { via: "html-review" } });
+    stopReviewServer();
+  });
+});

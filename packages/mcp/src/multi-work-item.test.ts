@@ -36,7 +36,7 @@ async function step(repo: string, role: string, command: object, workItemId?: st
 }
 
 const open = (title: string, extra: Record<string, unknown> = {}) => ({
-  action: "open",
+  action: "open", mode: "classic",
   projectId: "mwi",
   title,
   request: `Work on ${title}`,

@@ -4438,7 +4438,9 @@ var init_planning_schemas = __esm({
       schemaRef: external_exports.string().optional(),
       requirementIds: external_exports.array(RequirementIdSchema).default([]),
       storyIds: external_exports.array(StoryIdSchema).default([]),
-      status: external_exports.enum(["proposed", "agreed"]).default("proposed")
+      status: external_exports.enum(["proposed", "agreed"]).default("proposed"),
+      /** Who agreed it: only the user can (see isUserDecision). Absent while proposed. */
+      agreement: external_exports.object({ at: external_exports.string(), via: external_exports.enum(["html-review", "approved", "system"]) }).optional()
     });
     EvidenceRefSchema = external_exports.object({
       repositoryId: RepositoryIdSchema,
@@ -4868,6 +4870,9 @@ function requirementsFingerprint(state2) {
     scope: r.scope,
     ac: r.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement }))
   })));
+}
+function contractsFingerprint(state2) {
+  return hash(state2.contracts.map(({ status: _s, agreement: _a7, ...content }) => content));
 }
 function prototypeFingerprint(prototype) {
   if (!prototype)
@@ -5637,6 +5642,8 @@ function phaseGates(state2, to) {
         for (const dep of service.dependsOn)
           if (!state2.services.some((s) => s.id === dep))
             missingItems.push(`service ${service.id} depends on unknown ${dep}`);
+      for (const contract of state2.contracts)
+        need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user: implementation across services waits for it`);
       const cyc = implementationOrderOf(state2);
       need(cyc.length === 0, `services depend on each other in a cycle: ${cyc.join(", ")}`);
       for (const repo of state2.repositories) {
@@ -5756,8 +5763,10 @@ function nextStep(state2) {
         blockers: [...state2.blockers, ...coverage.ok ? [] : ["coverage gaps"]]
       };
     }
-    case "architecture":
-      return { ...base, role: "architect", action: "design-services", summary: "Map requirements to services and repositories, agree cross-service contracts and implementation order.", tools: ["praxis_workflow_apply", "praxis_repository_inspect"], skills: ["praxis-architect:local-workflow"], userDecision: true };
+    case "architecture": {
+      const proposed = state2.contracts.filter((c) => c.status !== "agreed");
+      return { ...base, role: "architect", action: proposed.length ? "agree-contracts" : "design-services", summary: proposed.length ? `Ask the user to agree ${proposed.length} contract(s) (${proposed.map((c) => c.id).join(", ")}) in the contracts review; implementation waits for it.` : "Map requirements to services and repositories, propose cross-service contracts and implementation order.", tools: proposed.length ? ["praxis_review_render", "praxis_review_apply"] : ["praxis_workflow_apply", "praxis_repository_inspect"], skills: ["praxis-architect:local-workflow"], userDecision: true };
+    }
     case "development": {
       const pending = state2.services.filter((s) => !state2.implementationUnits.some((u) => u.serviceId === s.id && !u.stale));
       return { ...base, role: "developer", action: pending.length ? "implement-service" : "advance-to-quality", summary: pending.length ? `Implement in order; pending: ${pending.map((s) => s.id).join(", ")}.` : "All services have implementation records: hand over to Quality.", tools: ["praxis_repository_brief", "praxis_workflow_apply"], skills: ["praxis-developer:local-workflow"], userDecision: false };
@@ -5794,6 +5803,10 @@ function isUserDecision(command) {
     case "review-stories":
     case "waive-coverage":
       return true;
+    case "set-contract":
+      return command.contract.status === "agreed";
+    case "set-mode":
+      return command.mode === "classic";
     case "review-requirements":
       return command.decisions.some((d) => (d.acceptance ?? []).some((a) => a.status !== void 0));
     case "update-story-plan":
@@ -5813,6 +5826,28 @@ function verifiedVia(command, channel) {
     throw new WorkflowError("USER_DECISION_REQUIRED", "this decision is not part of what the user approved");
   }
   return "approved";
+}
+function modeSwitchReport(state2, to) {
+  const planIds = new Set((state2.storyPlan?.entries ?? []).map((e) => e.id));
+  const stagesWithoutAcceptance = ACCEPTABLE_PHASES.filter((phase) => {
+    const exists = phase === "requirements_review" ? activeRequirements(state2).length > 0 : phase === "prototype" ? Boolean(state2.prototype) : phase === "story_plan" ? Boolean(state2.storyPlan) : activeStories(state2).length > 0;
+    return exists && acceptanceStatus(state2, phase) !== "accepted";
+  });
+  return {
+    from: state2.mode,
+    to,
+    phase: state2.phase,
+    dataKept: { requirements: activeRequirements(state2).length, stories: activeStories(state2).length, services: state2.services.length, implementationRecords: state2.implementationUnits.length, verdicts: state2.verdicts.length },
+    ...to === "guided" ? {
+      storiesWithoutPlanLine: activeStories(state2).filter((s) => !planIds.has(s.id)).map((s) => s.id),
+      stagesWithoutUserAcceptance: stagesWithoutAcceptance,
+      gatesAtCurrentPhase: phaseGates(state2, state2.phase),
+      notes: [
+        "Nothing is deleted or rewritten; existing requirements, stories, services and records stay valid.",
+        "New stories need an agreed story plan and a plan line. Moving to the next stage needs its conditions: stages listed above have no acceptance by the user yet and will ask for it when you move on."
+      ]
+    } : { notes: ["The stage is still recorded; gates, plan-before-stories and coverage checks are no longer enforced. Nothing is deleted."] }
+  };
 }
 function applyPlanningCommand(state2, rawCommand, options2 = {}) {
   const now = options2.now;
@@ -6188,7 +6223,15 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       for (const id of contract.consumerServiceIds)
         if (!state2.services.some((s) => s.id === id))
           throw missing("SERVICE_NOT_FOUND", `consumer service ${id} not found`);
-      const contracts = [...state2.contracts.filter((c) => c.id !== contract.id), contract];
+      const previous = state2.contracts.find((c) => c.id === contract.id);
+      const stripped = (c) => {
+        const { status: _s, agreement: _a7, ...rest } = c;
+        return hash(rest);
+      };
+      const agreedNow = contract.status === "agreed";
+      const kept = previous?.status === "agreed" && !agreedNow && stripped(previous) === stripped(contract);
+      const next1 = { ...contract, status: agreedNow || kept ? "agreed" : "proposed", ...agreedNow ? { agreement: { at: iso(now), via: command.via === "approved" ? "approved" : "html-review" } } : kept && previous?.agreement ? { agreement: previous.agreement } : {} };
+      const contracts = [...state2.contracts.filter((c) => c.id !== contract.id), next1];
       return { state: touch({ ...state2, contracts }, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
     }
     case "remove-contract": {
@@ -6216,6 +6259,14 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
         requirementOf(state2, command.requirementId);
       const waiver = CoverageWaiverSchema.parse({ id: `W-${String(state2.waivers.length + 1).padStart(3, "0")}`, kind: command.kind, requirementId: command.requirementId, reason: command.reason, at: iso(now) });
       return { state: touch({ ...state2, waivers: [...state2.waivers, waiver] }, now, `waived ${command.kind}${command.requirementId ? ` for ${command.requirementId}` : ""}: ${command.reason}`), duplicate: false, result: { waiverId: waiver.id } };
+    }
+    case "set-mode": {
+      if (state2.mode === command.mode)
+        return { state: state2, duplicate: true, result: { mode: state2.mode, unchanged: true } };
+      const report = modeSwitchReport(state2, command.mode);
+      const note2 = { at: iso(now), summary: `mode changed from ${state2.mode} to ${command.mode}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep({ ...state2, mode: command.mode }).summary };
+      const next = touch({ ...state2, mode: command.mode, sessionLog: [...state2.sessionLog, note2].slice(-200) }, now, `mode ${state2.mode} -> ${command.mode}`);
+      return { state: next, duplicate: false, result: { from: state2.mode, to: command.mode, report } };
     }
     case "set-work-item-kind":
       return { state: touch({ ...state2, workItem: { ...state2.workItem, kind: command.kind } }, now, `work item kind: ${command.kind}`), duplicate: state2.workItem.kind === command.kind, result: { kind: command.kind } };
@@ -6399,7 +6450,8 @@ var init_planning = __esm({
       external_exports.object({ action: external_exports.literal("register-repository"), repository: RepositorySchema.pick({ id: true, name: true }).extend({ role: external_exports.string().default(""), localPath: external_exports.string().optional(), remoteUrl: external_exports.string().optional(), branch: external_exports.string().optional(), notes: external_exports.string().optional() }) }),
       external_exports.object({ action: external_exports.literal("assign-repositories"), repositoryIds: external_exports.array(RepositoryIdSchema).min(1), storyIds: external_exports.array(StoryIdSchema).default([]), requirementIds: external_exports.array(RequirementIdSchema).default([]), serviceIds: external_exports.array(external_exports.string()).default([]) }),
       external_exports.object({ action: external_exports.literal("record-repository-inspection"), repositoryId: RepositoryIdSchema, inspection: RepositoryInspectionSchema }),
-      external_exports.object({ action: external_exports.literal("set-contract"), contract: ServiceContractSchema }),
+      external_exports.object({ action: external_exports.literal("set-contract"), via: Via, contract: ServiceContractSchema.omit({ agreement: true }) }),
+      external_exports.object({ action: external_exports.literal("set-mode"), mode: WorkflowModeSchema, reason: external_exports.string().optional() }),
       external_exports.object({ action: external_exports.literal("remove-contract"), id: external_exports.string().min(1) }),
       external_exports.object({ action: external_exports.literal("record-impact"), impact: ImpactSchema.omit({ revision: true, recordedAt: true }) }),
       external_exports.object({ action: external_exports.literal("advance-phase"), to: PhaseSchema, reason: external_exports.string().optional() }),
@@ -6483,7 +6535,7 @@ function openLocalWorkflow(input2) {
       revision: 1,
       kind: input2.changeKind ?? "feature"
     },
-    mode: input2.mode ?? "classic",
+    mode: input2.mode ?? "guided",
     phase: "request",
     requirements: [],
     services: [],
@@ -8297,6 +8349,8 @@ function fingerprintFor(state2, view) {
       return prototypeFingerprint(state2.prototype);
     case "story-plan":
       return storyPlanFingerprint(state2.storyPlan);
+    case "contracts":
+      return contractsFingerprint(state2);
     default:
       return storiesFingerprint(state2);
   }
@@ -8515,6 +8569,30 @@ function submissionToCommands(state2, raw) {
       }
     }
   }
+  if (submission.view === "contracts" && submission.contracts) {
+    for (const id of submission.contracts.agree) {
+      const contract = state2.contracts.find((c) => c.id === id);
+      if (!contract) {
+        conflicts.push({ item: id, reason: "the contract no longer exists" });
+        continue;
+      }
+      if (stale) {
+        conflicts.push({ item: id, reason: "the contracts changed since the page was rendered: re-open it so you agree what is there now" });
+        continue;
+      }
+      if (contract.status === "agreed")
+        continue;
+      const { status: _s, agreement: _a7, ...content } = contract;
+      commands.push({ action: "set-contract", via, contract: { ...content, status: "agreed" } });
+      summary.push(`contract ${id} agreed`);
+      details.push(`AGREE contract ${id} '${contract.name}': provider ${contract.providerServiceId}, consumers ${contract.consumerServiceIds.join(", ") || "none"}${contract.schemaRef ? `, schema ${contract.schemaRef}` : ""}`);
+    }
+  }
+  if (submission.modeChange && submission.modeChange.to !== state2.mode) {
+    commands.push({ action: "set-mode", via, mode: submission.modeChange.to, ...submission.modeChange.reason ? { reason: submission.modeChange.reason } : {} });
+    summary.push(`mode -> ${submission.modeChange.to}`);
+    details.push(`SWITCH this work item from ${state2.mode} to ${submission.modeChange.to}${submission.modeChange.to === "classic" ? ": stage gates, plan-before-stories and coverage checks stop being enforced (nothing is deleted)" : ""}`);
+  }
   for (const w of submission.waivers) {
     commands.push({ action: "waive-coverage", kind: w.kind, ...w.requirementId ? { requirementId: w.requirementId } : {}, reason: w.reason });
     summary.push(`waive ${w.kind}`);
@@ -8529,7 +8607,7 @@ var init_review_submission = __esm({
     init_ids();
     init_planning();
     init_planning_schemas();
-    REVIEW_VIEWS = ["requirements", "prototype", "story-plan", "stories"];
+    REVIEW_VIEWS = ["requirements", "prototype", "story-plan", "stories", "contracts"];
     ReviewViewSchema = external_exports.enum(REVIEW_VIEWS);
     Mark = external_exports.enum(["pending", "accepted", "rejected"]);
     RequirementsPayload = external_exports.object({
@@ -8591,6 +8669,10 @@ var init_review_submission = __esm({
       prototype: PrototypePayload.optional(),
       plan: PlanPayload.optional(),
       stories: StoriesPayload.optional(),
+      /** Contracts the user agrees. Implementation across services waits for it; an agent can propose a contract, never agree it. */
+      contracts: external_exports.object({ agree: external_exports.array(external_exports.string().min(1)).default([]) }).optional(),
+      /** Leaving guided mode switches the gates off, so it is the user's call. */
+      modeChange: external_exports.object({ to: external_exports.enum(["classic", "guided"]), reason: external_exports.string().max(1e3).optional() }).optional(),
       /** Gaps the user chooses not to cover (a prototype for a pure refactor, a capability a requirement does not need). Only the user may waive. */
       waivers: external_exports.array(external_exports.object({ kind: external_exports.string().min(1).max(100), requirementId: RequirementIdSchema.optional(), reason: external_exports.string().min(3).max(1e3) })).default([])
     });
@@ -8768,6 +8850,17 @@ ${out ? `<p class="meta">Excluded: ${esc3(story.excludedReason ?? "")}</p><label
 ${cards || `<p class="muted">No stories yet.</p>`}`;
   return shell(state2, "stories", "User stories review", body2, {}, options2, `<label class="marks"><input type="checkbox" id="accept-stories"> Accept the stories</label>`);
 }
+function renderContractsReview(state2, options2 = {}) {
+  const cards = state2.contracts.map((c) => {
+    const agreed = c.status === "agreed";
+    return `<section class="card" data-contract="${esc3(c.id)}">
+<div class="row"><h2 class="grow">${esc3(c.id)} ${esc3(c.name)} ${pill(c.status, agreed ? "ok" : "warn")}</h2>${agreed ? `<span class="meta">agreed ${esc3(c.agreement?.at ?? "")}${c.agreement ? " (" + esc3(c.agreement.via) + ")" : ""}</span>` : `<label class="marks"><input type="checkbox" data-f="agree"> I agree this contract</label>`}</div>
+<p>${esc3(c.description)}</p>
+<div class="kv"><span class="muted">Provider</span><span>${esc3(c.providerServiceId)}</span><span class="muted">Consumers</span><span>${esc3(c.consumerServiceIds.join(", ") || "-")}</span><span class="muted">Schema</span><span>${esc3(c.schemaRef ?? "-")}</span><span class="muted">Requirements</span><span>${esc3(c.requirementIds.join(", ") || "-")}</span><span class="muted">Stories</span><span>${esc3(c.storyIds.join(", ") || "-")}</span></div>
+${agreed ? "" : `<p class="meta">Agreeing lets implementation start in the services that use it. Changing the contract afterwards makes it proposed again.</p>`}</section>`;
+  }).join("");
+  return shell(state2, "contracts", "Contracts review", `<p class="meta">A contract is what services promise each other. The architect proposes it; only you agree it.</p>${cards || `<p class="muted">There are no contracts yet.</p>`}`, {}, options2, "");
+}
 function renderReview(state2, view, options2 = {}) {
   switch (view) {
     case "requirements":
@@ -8776,6 +8869,8 @@ function renderReview(state2, view, options2 = {}) {
       return renderPrototypeReview(state2, options2);
     case "story-plan":
       return renderStoryPlanReview(state2, options2);
+    case "contracts":
+      return renderContractsReview(state2, options2);
     default:
       return renderStoriesReview(state2, options2);
   }
@@ -8873,6 +8968,10 @@ function collect(){
       if(ch)es.push(e)
     });
     s.plan={entries:es,agree:!!($('#agree-plan')&&$('#agree-plan').checked)};
+  }
+  if(D.view==='contracts'){
+    var ag=[];$$('[data-contract]').forEach(function(card){var c=$('[data-f=agree]',card);if(c&&c.checked)ag.push(card.getAttribute('data-contract'))});
+    s.contracts={agree:ag};
   }
   if(D.view==='stories'){
     var items=[],sts=[];
@@ -9290,6 +9389,7 @@ var init_command_catalog = __esm({
       "record-implementation": { action: "record-implementation", id: "IMPL-1", serviceId: "svc-web", requirementIds: ["REQ-ORD-001"], path: "src/pages/Orders.tsx", summary: "orders list with search" },
       "review-requirements": { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "Managers can view, search and filter orders", addAcceptance: [{ statement: "Filtering by status works" }] }] },
       "set-requirement-scope": { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "deferred", note: "next release" },
+      "set-mode": { action: "set-mode", mode: "guided", reason: "use the guided flow for this item" },
       "advance-phase": { action: "advance-phase", to: "prototype" },
       "return-to-phase": { action: "return-to-phase", to: "requirements_review", reason: "the user changed the search requirement" },
       "log-session": { action: "log-session", summary: "Requirements accepted", nextAction: "build the prototype", role: "ba" },
@@ -25099,6 +25199,7 @@ __export(operations_exports, {
   developerReleaseOp: () => developerReleaseOp,
   developerStatusOp: () => developerStatusOp,
   doctorOp: () => doctorOp,
+  dotenvKeyAllowed: () => dotenvKeyAllowed,
   dotenvRejectedKeys: () => dotenvRejectedKeys,
   jiraConfigFlags: () => jiraConfigFlags,
   jiraDiscoverOp: () => jiraDiscoverOp,
@@ -25141,13 +25242,14 @@ function scrubUnexpandedPlaceholders(env = process.env) {
   }
   return removed;
 }
+function dotenvKeyAllowed(key) {
+  return DOTENV_ALLOWED_KEYS.has(key) || DOTENV_ALLOWED_PREFIXES.some((prefix2) => key.startsWith(prefix2));
+}
 function dotenvRejectedKeys() {
   return dotenvRejected;
 }
 function dotenvKeyForbidden(key) {
-  if (!key.startsWith("PRAXIS_"))
-    return true;
-  return DOTENV_FORBIDDEN_PREFIXES.some((prefix2) => key.startsWith(prefix2));
+  return !dotenvKeyAllowed(key);
 }
 function loadPraxisDotenv(repo) {
   const removed = scrubUnexpandedPlaceholders();
@@ -25168,7 +25270,7 @@ function loadPraxisDotenv(repo) {
       if (!m)
         continue;
       if (dotenvKeyForbidden(m[1])) {
-        if (!dotenvRejected.includes(m[1]))
+        if (m[1].startsWith("PRAXIS_") && !dotenvRejected.includes(m[1]))
           dotenvRejected = [...dotenvRejected, m[1]].sort();
         continue;
       }
@@ -26467,7 +26569,7 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto14, import_node_child_process6, import_node_fs22, import_node_path25, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_FORBIDDEN_PREFIXES, dotenvRejected, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto14, import_node_child_process6, import_node_fs22, import_node_path25, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, dotenvRejected, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
     import_node_crypto14 = require("node:crypto");
@@ -26591,14 +26693,23 @@ var init_operations = __esm({
     };
     HOST_PLACEHOLDER_RE = /^\$\{[^}]*\}$/;
     hostPlaceholdersIgnored = [];
-    DOTENV_FORBIDDEN_PREFIXES = [
-      "PRAXIS_APPROVAL_",
-      "PRAXIS_ALLOW_",
-      "PRAXIS_FIXTURE_",
-      "PRAXIS_TEST_",
-      "PRAXIS_REVIEW_",
-      "PRAXIS_STATE_HOME"
-    ];
+    DOTENV_ALLOWED_KEYS = /* @__PURE__ */ new Set([
+      "PRAXIS_JIRA_PROJECT_KEY",
+      "PRAXIS_JIRA_EPIC_TYPE",
+      "PRAXIS_JIRA_EPIC_TYPE_ID",
+      "PRAXIS_JIRA_STORY_TYPE",
+      "PRAXIS_JIRA_STORY_TYPE_ID",
+      "PRAXIS_JIRA_TASK_TYPE",
+      "PRAXIS_JIRA_TASK_TYPE_ID",
+      "PRAXIS_JIRA_BUG_TYPE",
+      "PRAXIS_JIRA_BUG_TYPE_ID",
+      "PRAXIS_JIRA_WORK_PACKAGE_TYPE",
+      "PRAXIS_JIRA_STORY_POINTS_FIELD",
+      "PRAXIS_JIRA_ARCHITECT_ESTIMATE_FIELD",
+      "PRAXIS_GIT_PROVIDER",
+      "PRAXIS_WORK_PACKAGE_MAX_HOURS"
+    ]);
+    DOTENV_ALLOWED_PREFIXES = ["PRAXIS_JIRA_TRANSITION_"];
     dotenvRejected = [];
     describeConnect = (ctx) => async () => {
       const p = gitConnectPreviewData(gitCtx(ctx));
@@ -78828,7 +78939,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"7218a92395bb8be172e07ecd61292f106181018f0b12bc30a8820e52c2d221af","coreBaseline":"9347cc3e5fc857e51b0270e3da3d1f71955c3f3e","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"e3c4f43966d6576f573fb27b1a651677263040846845b72d8db7e914f3384414","coreBaseline":"646e2731d7df8077efd09023c23b0c85287fd4e1","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

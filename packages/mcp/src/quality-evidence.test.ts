@@ -57,7 +57,7 @@ describe("Quality evidence through MCP workflow tools", () => {
       }),
     );
 
-    await step(repo, { action: "open", projectId: "qev", title: "Evidence", request: "Evidence consistency" }, "ba");
+    await step(repo, { action: "open", mode: "classic", projectId: "qev", title: "Evidence", request: "Evidence consistency" }, "ba");
     await step(
       repo,
       {

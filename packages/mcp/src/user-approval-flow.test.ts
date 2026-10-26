@@ -78,7 +78,7 @@ const state = (repo: string) => readPersistedState<Persisted>(repo);
 
 async function setup() {
   const repo = mkdtempSync(join(tmpdir(), "praxis-flow-"));
-  await must(repo, { action: "open", projectId: "flow", title: "User approval", request: "r" });
+  await must(repo, { action: "open", mode: "classic", projectId: "flow", title: "User approval", request: "r" });
   await must(repo, { action: "add-requirement", id: "REQ-FLW-101", statement: "The user approves.", acceptanceCriteria: ["Done."] });
   for (const n of [1, 2]) {
     await must(repo, {
