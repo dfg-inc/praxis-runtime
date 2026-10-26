@@ -110,8 +110,14 @@ prove(`installed praxis-ba carries ${baSkills.length} skills including capture-c
   const ba = installed.find((p) => p.name === "praxis-ba");
   expect(existsSync(join(ba.path, "canon-graph/dist/cli.js")) && existsSync(join(ba.path, "bin/praxis-ba.cjs")), "installed praxis-ba lacks canon-graph/dist or bin/praxis-ba.cjs");
   const bare = mkdtempSync(join(work, "canon-"));
-  const status = spawnSync(process.execPath, [join(ba.path, "bin/praxis-ba.cjs"), "status", "--repo", bare], { cwd: bare, encoding: "utf8", env: { PATH: process.env.PATH } });
+  const baCli = (...cliArgs) => spawnSync(process.execPath, [join(ba.path, "bin/praxis-ba.cjs"), ...cliArgs, "--repo", bare], { cwd: bare, encoding: "utf8", env: { PATH: process.env.PATH } });
+  const noCanon = baCli("status");
+  expect(/no canon here: run praxis-ba init/.test(`${noCanon.stdout}${noCanon.stderr}`), `a new project: status must say to run init: ${noCanon.stdout}${noCanon.stderr}`);
+  const init = baCli("init");
+  expect(init.status === 0, `installed BA CLI init: ${init.stdout}${init.stderr}`);
+  const status = baCli("status");
   expect(/VERIFY-OK/.test(status.stdout), `installed BA CLI: ${status.stdout}${status.stderr}`);
+  expect(baCli("id", "next", "--scope", "cr").status === 0, "a canon created by the installed plugin's init can allocate ids");
   for (const role of ["ba", "architect", "developer", "quality"]) {
     const plugin = installed.find((p) => p.name === `praxis-${role}`);
     const dir = mkdtempSync(join(work, `${role}-`));
