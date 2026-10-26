@@ -254,7 +254,7 @@ export function stopReviewServer(): void {
 
 /** Opens a URL in the user's default browser without a shell. False when there is no way to do it here. */
 function openInBrowser(url: string): boolean {
-  if (process.env.PRAXIS_REVIEW_NO_BROWSER === "1") return false;
+  if (process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1") return false;
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
   try {
     const child = spawn(opener, [url], { detached: true, stdio: "ignore" });
@@ -284,7 +284,7 @@ export async function renderReviewTool(repo: string, input: { view: string; work
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
     // The link that can open and save the page goes to the user's browser, never into the agent's tool result: an agent that held it could Save for the user.
     opened = openInBrowser(secretUrl);
-    if (!opened && process.env.PRAXIS_REVIEW_NO_BROWSER === "1") writeFileSync(join(dir, `${view}.url`), secretUrl);
+    if (!opened && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1") writeFileSync(join(dir, `${view}.url`), secretUrl);
     url = `http://127.0.0.1:${p}/r/${id}`;
   }
   return {

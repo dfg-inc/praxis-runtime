@@ -1,5 +1,5 @@
 import { diagnosticsPath } from "./diagnostics-log.js";
-import { readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
 import {
@@ -474,8 +474,9 @@ function assertImplementationPath(repo: string, command: Record<string, unknown>
   let target: string;
   try {
     target = realpathSync(resolve(root, String(command.path ?? "")));
+    if (!statSync(target).isFile()) throw new Error("not a file");
   } catch {
-    throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} does not exist in ${service.id}'s checkout (${root}); record real work only`);
+    throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is not an existing file in ${service.id}'s checkout (${root}); record real work only`);
   }
   if (target !== root && !target.startsWith(`${root}${sep}`)) throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
 }

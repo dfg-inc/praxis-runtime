@@ -56,7 +56,7 @@ async function open({ elicit, bundle, env = {} } = {}) {
     command: process.execPath,
     args,
     cwd: extracted.dest,
-    env: { ...hostedCleanEnv(extracted.dest), PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/local/bin`, PRAXIS_SKIP_DOTENV: "1", PRAXIS_REVIEW_NO_BROWSER: "1", ...jiraEnv, ...env },
+    env: { ...hostedCleanEnv(extracted.dest), PATH: `${dirname(process.execPath)}:/usr/bin:/bin:/usr/local/bin`, PRAXIS_SKIP_DOTENV: "1", PRAXIS_TEST_REVIEW_NO_BROWSER: "1", ...jiraEnv, ...env },
     versionNegotiation: versionNegotiationLegacy(),
     elicit,
     timeoutMs: 20_000,

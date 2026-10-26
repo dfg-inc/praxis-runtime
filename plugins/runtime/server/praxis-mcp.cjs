@@ -5248,7 +5248,7 @@ function assertNoRealSecrets(value, where) {
       assertNoRealSecrets(v, `${where}.${k}`);
 }
 function validatePrototype(state2, prototype) {
-  assertNoRealSecrets({ mock: prototype.mock, endpoints: prototype.endpoints, notes: prototype.notes }, "the prototype");
+  assertNoRealSecrets(prototype, "the prototype");
   const screenIds = /* @__PURE__ */ new Set();
   for (const screen of prototype.screens) {
     if (screenIds.has(screen.id))
@@ -8337,15 +8337,15 @@ function submissionToCommands(state2, raw) {
         const unchanged = (criterion.status === void 0 || criterion.status === live.review.status) && (criterion.comment === void 0 || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === void 0 || criterion.statement === live.statement);
         if (unchanged)
           continue;
-        details.push(`${criterion.id} '${live.statement.slice(0, 80)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== void 0 ? `edit to '${criterion.statement.slice(0, 80)}'` : "", criterion.comment ? `comment '${criterion.comment.slice(0, 80)}'` : ""].filter(Boolean).join(", ")}`);
+        details.push(`${criterion.id} '${live.statement.slice(0, 400)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== void 0 ? `edit to '${criterion.statement.slice(0, 400)}'` : "", criterion.comment ? `comment '${criterion.comment.slice(0, 400)}'` : ""].filter(Boolean).join(", ")}`);
         acceptance.push({ id: criterion.id, ...criterion.status ? { status: criterion.status } : {}, ...criterion.comment !== void 0 ? { comment: criterion.comment } : {}, ...criterion.statement !== void 0 ? { statement: criterion.statement } : {} });
       }
       if (item.statement !== void 0)
-        details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 80)}'`);
+        details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 400)}'`);
       if (item.scope !== void 0 && item.scope !== current.scope)
         details.push(`${item.id}: scope ${current.scope} -> ${item.scope}`);
       for (const a of item.addCriteria)
-        details.push(`${item.id}: add criterion '${a.statement.slice(0, 80)}'`);
+        details.push(`${item.id}: add criterion '${a.statement.slice(0, 400)}'`);
       for (const r of item.removeCriteria)
         details.push(`${item.id}: remove criterion ${r}`);
       if (acceptance.length === 0 && item.statement === void 0 && item.scope === void 0 && item.scopeNote === void 0 && item.comment === void 0 && item.addCriteria.length === 0 && item.removeCriteria.length === 0)
@@ -8384,7 +8384,7 @@ function submissionToCommands(state2, raw) {
         commands.push({ action: "prototype-feedback", via, items: p.feedback, resolve: p.resolve });
         summary.push(`${p.feedback.length} comment(s)`);
         for (const f of p.feedback)
-          details.push(`prototype comment on ${f.target}: '${f.comment.slice(0, 100)}'`);
+          details.push(`prototype comment on ${f.target}: '${f.comment.slice(0, 400)}'`);
         for (const r of p.resolve)
           details.push(`prototype feedback ${r} resolved`);
       }
@@ -8485,7 +8485,7 @@ function submissionToCommands(state2, raw) {
       }
       if (current === item.status && (item.comment === void 0 || item.comment === (live?.review[item.key]?.comment ?? "")))
         return false;
-      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 80)}')` : ""}`);
+      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 400)}')` : ""}`);
       return true;
     });
     const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).map((x) => ({ storyId: x.storyId, revision: x.revision }));
@@ -8508,7 +8508,7 @@ function submissionToCommands(state2, raw) {
   for (const w of submission.waivers) {
     commands.push({ action: "waive-coverage", kind: w.kind, ...w.requirementId ? { requirementId: w.requirementId } : {}, reason: w.reason });
     summary.push(`waive ${w.kind}`);
-    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 120)}'`);
+    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 400)}'`);
   }
   return { commands, conflicts, stale, summary, details };
 }
@@ -26570,6 +26570,7 @@ var init_operations = __esm({
       "PRAXIS_ALLOW_",
       "PRAXIS_FIXTURE_",
       "PRAXIS_TEST_",
+      "PRAXIS_REVIEW_",
       "PRAXIS_STATE_HOME"
     ];
     dotenvRejected = [];
@@ -78801,7 +78802,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"b0b3445bf92883f193eb99589347dde1c3218355821b99a1dd98ee0faa4761d8","coreBaseline":"2cfaed4fd6351dc312fe927ab762c34c79fb4d54","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"b3abd72321673343aee1a74562faec122244ca0e34b08d55c9c22f94ae6c11e3","coreBaseline":"15a5c5a6388fd62e13b2b8516662de017af2abb2","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81328,7 +81329,7 @@ async function ensureServer() {
   return port;
 }
 function openInBrowser(url4) {
-  if (process.env.PRAXIS_REVIEW_NO_BROWSER === "1")
+  if (process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
     return false;
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
   try {
@@ -81358,7 +81359,7 @@ async function renderReviewTool(repo, input2) {
     sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now() });
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
     opened = openInBrowser(secretUrl);
-    if (!opened && process.env.PRAXIS_REVIEW_NO_BROWSER === "1")
+    if (!opened && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
       (0, import_node_fs28.writeFileSync)((0, import_node_path33.join)(dir, `${view}.url`), secretUrl);
     url4 = `http://127.0.0.1:${p}/r/${id}`;
   }
@@ -81702,8 +81703,10 @@ function assertImplementationPath(repo, command, workItemId) {
   let target;
   try {
     target = (0, import_node_fs29.realpathSync)((0, import_node_path34.resolve)(root, String(command.path ?? "")));
+    if (!(0, import_node_fs29.statSync)(target).isFile())
+      throw new Error("not a file");
   } catch {
-    throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} does not exist in ${service.id}'s checkout (${root}); record real work only`);
+    throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is not an existing file in ${service.id}'s checkout (${root}); record real work only`);
   }
   if (target !== root && !target.startsWith(`${root}${import_node_path34.sep}`))
     throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);

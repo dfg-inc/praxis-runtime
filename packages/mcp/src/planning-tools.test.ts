@@ -13,7 +13,7 @@ import type { McpEnvelope } from "./workflow-test-helpers.js";
 beforeAll(() => {
   process.env.PRAXIS_TEST_APPROVALS = "1";
   // the Runtime opens the review in the user's browser; tests read the link from the file it writes instead
-  process.env.PRAXIS_REVIEW_NO_BROWSER = "1";
+  process.env.PRAXIS_TEST_REVIEW_NO_BROWSER = "1";
 });
 
 const call = async (tool: string, repo: string, args: Record<string, unknown> = {}, channel?: UserApprovalChannel, role = "ba"): Promise<McpEnvelope> =>
@@ -484,5 +484,14 @@ describe("waivers are the user's", () => {
     expect(res.ok, JSON.stringify(res.errors)).toBe(true);
     expect(seen[0].description).toMatch(/WAIVE prototype: 'pure refactor, nothing to show'/);
     expect(state(repo, id).waivers[0]).toMatchObject({ kind: "prototype" });
+  });
+});
+
+describe("N1: a repository .env cannot turn on the link-file test hook", () => {
+  it("PRAXIS_TEST_ and PRAXIS_REVIEW_ keys from a repository .env are rejected", async () => {
+    const { readFileSync: rf } = await import("node:fs");
+    const src = rf(join(__dirname, "../../../../praxis-core/packages/cli/src/operations.ts"), "utf8").toString();
+    expect(src).toMatch(/"PRAXIS_TEST_",\s*"PRAXIS_REVIEW_"/);
+    expect(rf(join(__dirname, "review-service.ts"), "utf8")).toContain("PRAXIS_TEST_REVIEW_NO_BROWSER");
   });
 });
