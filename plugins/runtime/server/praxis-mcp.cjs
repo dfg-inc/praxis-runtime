@@ -5119,7 +5119,13 @@ function keepArtifact(state2, kind, id, revision, value, now) {
   const all = [...kept, entry];
   const protos = all.filter((h) => h.kind === "prototype");
   const drop = new Set(protos.slice(0, Math.max(0, protos.length - 10)));
-  return { ...state2, artifactHistory: all.filter((h) => !drop.has(h)).slice(-150) };
+  let kept2 = all.filter((h) => !drop.has(h)).slice(-150);
+  let bytes = kept2.reduce((n, h) => n + h.snapshot.length, 0);
+  while (bytes > 1e6 && kept2.length > 1) {
+    bytes -= kept2[0].snapshot.length;
+    kept2 = kept2.slice(1);
+  }
+  return { ...state2, artifactHistory: kept2 };
 }
 function applyRequirementDecisions(state2, command, now) {
   let next = state2;
@@ -8342,6 +8348,10 @@ function submissionToCommands(state2, raw) {
       }
       if (item.statement !== void 0)
         details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 400)}'`);
+      if (item.comment)
+        details.push(`${item.id}: comment '${item.comment.slice(0, 400)}'`);
+      if (item.scopeNote !== void 0 && item.scopeNote !== (current.scopeNote ?? ""))
+        details.push(`${item.id}: scope note '${item.scopeNote.slice(0, 400)}'`);
       if (item.scope !== void 0 && item.scope !== current.scope)
         details.push(`${item.id}: scope ${current.scope} -> ${item.scope}`);
       for (const a of item.addCriteria)
@@ -78802,7 +78812,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"b3abd72321673343aee1a74562faec122244ca0e34b08d55c9c22f94ae6c11e3","coreBaseline":"15a5c5a6388fd62e13b2b8516662de017af2abb2","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"fd7b019c418a2199f4971e3c39b10dd6adb853aa8740eed6eb9eaf839e622c52","coreBaseline":"fa3b68180019e0a9cf52e7e2f32b2dc09dc4b256","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -79585,6 +79595,7 @@ function workflowStatus(repo, workItemId) {
     mode: state2.mode,
     next: nextStep(state2),
     briefing: buildResumeBriefing(state2),
+    ...state2.mode === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {},
     ...items.length > 1 ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} "${item.title}" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` } : {}
   };
 }
@@ -81328,18 +81339,29 @@ async function ensureServer() {
   server.unref();
   return port;
 }
-function openInBrowser(url4) {
+async function openInBrowser(url4) {
   if (process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
     return false;
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
-  try {
-    const child = (0, import_node_child_process8.spawn)(opener, [url4], { detached: true, stdio: "ignore" });
-    child.on("error", () => void 0);
-    child.unref();
-    return child.pid !== void 0;
-  } catch {
-    return false;
-  }
+  return new Promise((done) => {
+    try {
+      const child = (0, import_node_child_process8.spawn)(opener, [url4], { detached: true, stdio: "ignore" });
+      const timer = setTimeout(() => {
+        child.unref();
+        done(true);
+      }, 800);
+      child.on("error", () => {
+        clearTimeout(timer);
+        done(false);
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timer);
+        done(code === 0);
+      });
+    } catch {
+      done(false);
+    }
+  });
 }
 async function renderReviewTool(repo, input2) {
   if (!isReviewView(input2.view))
@@ -81358,7 +81380,7 @@ async function renderReviewTool(repo, input2) {
     const loadToken = (0, import_node_crypto15.randomBytes)(24).toString("hex");
     sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now() });
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
-    opened = openInBrowser(secretUrl);
+    opened = await openInBrowser(secretUrl);
     if (!opened && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
       (0, import_node_fs28.writeFileSync)((0, import_node_path33.join)(dir, `${view}.url`), secretUrl);
     url4 = `http://127.0.0.1:${p}/r/${id}`;

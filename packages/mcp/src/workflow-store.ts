@@ -383,6 +383,7 @@ export function workflowStatus(repo: string, workItemId?: string): {
   briefing?: ReturnType<typeof buildResumeBriefing>;
   /** When several work items are candidates: what each one is and where it stands, so the user can choose. */
   choose?: string;
+  modeNote?: string;
 } {
   const layout = readLayout(repo);
   if (layout && workItemId === undefined && layout.index.current === null && layout.index.items.length > 1) {
@@ -422,6 +423,7 @@ export function workflowStatus(repo: string, workItemId?: string): {
     mode: state.mode,
     next: nextStep(state),
     briefing: buildResumeBriefing(state),
+    ...(state.mode === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {}),
     ...(items.length > 1
       ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} \"${item.title}\" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` }
       : {}),
