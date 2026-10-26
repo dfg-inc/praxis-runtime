@@ -553,3 +553,32 @@ describe("default mode, switching and contract agreement through the tools", () 
     stopReviewServer();
   });
 });
+
+describe("every user decision is refused when it comes from the agent (all review stages)", () => {
+  it("accepting, marking, agreeing, waiving, agreeing contracts and leaving guided mode through praxis_workflow_apply", async () => {
+    const { repo } = await project();
+    await must(repo, { action: "set-service", service: { id: "a", name: "a", kind: "module", responsibilities: ["x"], requirementIds: ["REQ-ORD-001"], dependsOn: [], status: "in_progress" } });
+    const commands = [
+      { action: "accept-requirements" },
+      { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "accepted" }] }] },
+      { action: "accept-prototype" },
+      { action: "agree-story-plan" },
+      { action: "update-story-plan", operations: [{ op: "review", id: "US-X-001", status: "accepted" }] },
+      { action: "review-stories", items: [{ storyId: "US-X-001", revision: 1, key: "step:0", status: "accepted" }] },
+      { action: "accept-stories" },
+      { action: "waive-coverage", kind: "prototype", reason: "because" },
+      { action: "set-contract", contract: { id: "C-1", name: "c", providerServiceId: "a", status: "agreed" } },
+      { action: "set-mode", mode: "classic" },
+    ];
+    for (const command of commands) {
+      for (const via of [undefined, "html-review", "approved", "system"]) {
+        const res = await record(repo, via ? { ...command, via } : command);
+        expect(res.ok, `${command.action} via ${via}`).toBe(false);
+        expect(res.code, `${command.action} via ${via}`).toBe("USER_DECISION_REQUIRED");
+      }
+    }
+    // the same commands as plain records are not smuggled in through preview either
+    const previewed = await call("praxis_workflow_preview", repo, { command: JSON.stringify({ action: "accept-requirements", via: "html-review" }) });
+    expect(previewed.ok).toBe(false);
+  });
+});
