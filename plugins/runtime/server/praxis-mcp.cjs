@@ -5680,8 +5680,8 @@ function nextStep(state2) {
       return {
         ...base,
         role: "ba",
-        action: !state2.storyPlan ? "write-story-plan" : acceptanceStatus(state2, "story_plan") === "accepted" ? "detail-stories" : "review-story-plan",
-        summary: !state2.storyPlan ? "Write a short story plan: one line per story, what it covers, which REQ and AC." : acceptanceStatus(state2, "story_plan") === "accepted" ? "Plan agreed: write the detailed stories." : "Review and agree the story plan.",
+        action: !state2.storyPlan ? "write-story-plan" : acceptanceStatus(state2, "story_plan") !== "accepted" ? "review-story-plan" : state2.storyPlan.entries.every((e) => e.status !== "planned") ? "advance-to-stories-review" : "detail-stories",
+        summary: !state2.storyPlan ? "Write a short story plan: one line per story, what it covers, which REQ and AC." : acceptanceStatus(state2, "story_plan") !== "accepted" ? "Review and agree the story plan." : state2.storyPlan.entries.every((e) => e.status !== "planned") ? "Every planned story is detailed: move on to the stories review." : `Plan agreed: write the detailed stories (${state2.storyPlan.entries.filter((e) => e.status === "planned").length} left).`,
         tools: ["praxis_workflow_apply", "praxis_review_render"],
         skills: ["praxis-ba:story-plan"],
         userDecision: Boolean(state2.storyPlan) && acceptanceStatus(state2, "story_plan") !== "accepted"
@@ -7020,22 +7020,29 @@ function applyWorkflowCommand(state2, raw, options2) {
       throw new WorkflowError("DUPLICATE_STORY", `story ${command.id} already exists`);
     }
     if (state2.mode === "guided") {
-      const entry = state2.storyPlan?.entries.find((item) => item.id === command.id);
+      const entry2 = state2.storyPlan?.entries.find((item) => item.id === command.id);
       if (acceptanceStatus(state2, "story_plan") !== "accepted") {
         throw new WorkflowError("STORY_PLAN_NOT_AGREED", "write and agree the story plan first (set-story-plan, then agree-story-plan); detailed stories follow the agreed plan");
       }
-      if (!entry || entry.status === "excluded") {
+      if (!entry2 || entry2.status === "excluded") {
         throw new WorkflowError("STORY_NOT_IN_PLAN", `story ${command.id} is not a line of the agreed plan; add it to the plan first (update-story-plan)`);
       }
     }
+    const entry = state2.storyPlan?.entries.find((item) => item.id === command.id);
+    const inherit = (given, planned2) => given.length > 0 ? given : planned2 ?? [];
     const story = UserStorySchema.parse({
       ...command,
+      title: command.title ?? entry?.title,
+      capabilities: inherit(command.capabilities, entry?.capabilities),
+      screenRefs: inherit(command.screenRefs, entry?.screenRefs),
+      repositoryIds: inherit(command.repositoryIds, entry?.repositoryIds),
+      serviceIds: inherit(command.serviceIds, entry?.serviceIds),
       revision: 1,
       confirmedBehavior: false,
       status: "proposed",
       stale: false
     });
-    const planned = state2.storyPlan ? { ...state2.storyPlan, entries: state2.storyPlan.entries.map((entry) => entry.id === story.id ? { ...entry, status: "detailed" } : entry) } : void 0;
+    const planned = state2.storyPlan ? { ...state2.storyPlan, entries: state2.storyPlan.entries.map((entry2) => entry2.id === story.id ? { ...entry2, status: "detailed" } : entry2) } : void 0;
     return {
       state: { ...state2, stories: [...state2.stories, story], ...planned ? { storyPlan: planned } : {} },
       duplicate: false,
@@ -7757,6 +7764,11 @@ var init_workflow = __esm({
         assumptionIds: external_exports.array(external_exports.string()).default([]),
         unresolvedDecisionIds: external_exports.array(external_exports.string()).default([]),
         serviceIds: external_exports.array(external_exports.string()).default([]),
+        /** Short name shown in the plan and in reviews. */
+        title: external_exports.string().min(1).optional(),
+        capabilities: external_exports.array(StoryCapabilitySchema).default([]),
+        screenRefs: external_exports.array(external_exports.string()).default([]),
+        repositoryIds: external_exports.array(external_exports.string()).default([]),
         confirmedBehavior: external_exports.boolean()
       }),
       external_exports.object({
@@ -78600,7 +78612,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"1c024baed077540e94d48ae511e3e2f408a6331bec3566e9d7b10acf11708df7","coreBaseline":"4a16d4c8418516e55de80bc7161c8c865b2ae8f7","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"b33aa2a20878b231818fe157747bf7db26899a2526332ff862bc73459097df4a","coreBaseline":"41b7347840e68ec783e621fcda3eb356ecdc19d1","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
