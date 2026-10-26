@@ -58877,7 +58877,7 @@ var TOOLS = [
       properties: {
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
-        view: { type: "string", enum: ["requirements", "prototype", "story-plan", "stories"], description: "Which review to build." },
+        view: { type: "string", enum: ["requirements", "prototype", "story-plan", "stories", "contracts"], description: "Which review to build." },
         serve: { type: "boolean", description: "Serve the live page on loopback (default true). False writes only the offline file." }
       },
       required: ["view"],
@@ -78939,7 +78939,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"e3c4f43966d6576f573fb27b1a651677263040846845b72d8db7e914f3384414","coreBaseline":"646e2731d7df8077efd09023c23b0c85287fd4e1","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"eb50e652efe02b8fcf9c062a2d6de3d43041637753651ecdae4fe29383bfd664","coreBaseline":"093d90eda66d83f41d2d142bbcb751f6ce177073","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
