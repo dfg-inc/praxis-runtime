@@ -9,6 +9,7 @@ import {
   logDecision,
   subjectDigest,
   withApprovalChannel,
+  WorkflowError,
   type UserApprovalChannel,
   type WorkflowRole,
 } from "@praxis/contracts";
@@ -19,7 +20,11 @@ import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
 import { developerWorkItemStatus, inspectWorkflow } from "./workflow-inspect.js";
 import { sessionStart } from "./session-start.js";
-import { applyResolved, applyWorkflow, applyWorkflowApproved, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
+import { diagnoseContextTool } from "./context-tool.js";
+import { discoverFrontend } from "./frontend-discover.js";
+import { inspectRepository, repositoryBrief } from "./repository-tools.js";
+import { applyHandedOver, readSubmissionFile, renderReviewTool } from "./review-service.js";
+import { applyResolved, applyWorkflow, applyWorkflowApproved, capabilityRoute, loadWorkflow, previewWorkflow, workflowStatus } from "./workflow-store.js";
 
 export {
   TOOLS,
@@ -300,6 +305,9 @@ async function callToolInner(
         ...withApprovalNote(name, await runWorkflowTool(name, args, ctx.repo, opts.version)),
       });
     }
+    if (name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
+      return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await runPlanningTool(name, args, ctx.repo, opts.role) });
+    }
     if (name === "praxis_developer_status" && str(args.workItemId)) {
       if (str(args.workPackage) ?? str(args.wp) ?? str(args.workPackageId)) {
         return mcpEnvelope({
@@ -354,8 +362,13 @@ async function callToolInner(
     if (err instanceof ApprovalNeedsInput) throw err;
     const message = ops.redact(err instanceof Error ? err.message : String(err));
     const coded = err as { code?: unknown };
+    const prefixed = message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH):/)?.[1];
     const code =
-      err instanceof ops.PraxisOpError
+      err instanceof WorkflowError
+        ? err.code
+        : prefixed
+          ? prefixed
+          : err instanceof ops.PraxisOpError
         ? err.code
         : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code)
           ? coded.code
@@ -365,7 +378,9 @@ async function callToolInner(
               ? "INVALID_INPUT"
               : "EXTERNAL_SERVICE_ERROR";
     const details =
-      err instanceof ops.PraxisOpError
+      err instanceof WorkflowError
+        ? { ...(err.details ?? {}) }
+        : err instanceof ops.PraxisOpError
         ? {
             ...(err.stage ? { stage: err.stage } : {}),
             ...(typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {}),
@@ -400,6 +415,43 @@ function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
   return command;
 }
 
+async function runPlanningTool(name: string, args: Record<string, unknown>, repo: string, role: PraxisRole): Promise<unknown> {
+  const workItemId = str(args.workItemId);
+  switch (name) {
+    case "praxis_review_render":
+      return renderReviewTool(repo, { view: str(args.view) ?? "", workItemId, serve: args.serve === false ? false : true });
+    case "praxis_review_apply": {
+      const text = str(args.submission);
+      const file = str(args.file);
+      if ((text === undefined) === (file === undefined)) throw new Error("INVALID_INPUT: pass exactly one of submission or file");
+      let raw: unknown;
+      try {
+        raw = text !== undefined ? JSON.parse(text) : readSubmissionFile(repo, file as string);
+      } catch (error) {
+        throw new Error(`INVALID_INPUT: the decisions could not be read: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return applyHandedOver(repo, workItemId, raw, str(args.confirmation));
+    }
+    case "praxis_frontend_discover": {
+      const registered = str(args.repositoryId);
+      let target = str(args.path) ?? repo;
+      if (registered) {
+        const state = loadWorkflow(repo, workItemId);
+        const entry = state?.repositories.find((r) => r.id === registered);
+        if (!entry?.localPath) throw new Error(`INVALID_INPUT: repository ${registered} is not registered with a local path`);
+        target = resolve(repo, entry.localPath);
+      }
+      return discoverFrontend(target);
+    }
+    case "praxis_repository_inspect":
+      return inspectRepository(repo, { repositoryId: str(args.repositoryId) ?? "", workItemId });
+    case "praxis_repository_brief":
+      return repositoryBrief(repo, { repositoryId: str(args.repositoryId), workItemId });
+    default:
+      return diagnoseContextTool(repo, { workItemId, role: (["ba", "architect", "developer", "quality"] as const).find((r) => r === str(args.role)) ?? (role === "runtime" ? undefined : role) });
+  }
+}
+
 async function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string, version: string): Promise<unknown> {
   const workItemId = str(args.workItemId);
   if (name === "praxis_workflow_inspect") {
@@ -414,6 +466,9 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
     return capabilityRoute({ request: str(args.request) ?? "", role: resolved });
   }
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? "")) as Record<string, unknown>;
+  if (parsed.action === "record-repository-inspection") {
+    throw new Error("INVALID_INPUT: a repository inspection is read by the Runtime, not written by an agent: call praxis_repository_inspect");
+  }
   if (parsed.action === "verify-stories") {
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
     const meta = recorded.meta;

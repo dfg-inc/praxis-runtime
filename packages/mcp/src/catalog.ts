@@ -777,6 +777,108 @@ export const TOOLS: ToolDef[] = [
     kind: "read",
   },
   {
+    name: "praxis_review_render",
+    description:
+      "Build the standard HTML review for one stage and return a link the USER opens: view requirements (every acceptance criterion with its own accept/reject/comment control, edit by id, add/remove criteria, scope: in / deferred / out), prototype (clickable screens on mock data with states and roles, comments on elements), story-plan (one line per planned story, edit, exclude, agree), or stories (a checkbox for every criterion, step, rule and result). Writes an offline copy under .praxis/workflow/reviews and serves a live copy on 127.0.0.1 so the user's Save records their decisions directly. The page is a view, never the source of truth. Does not change workflow state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        view: { type: "string", enum: ["requirements", "prototype", "story-plan", "stories"], description: "Which review to build." },
+        serve: { type: "boolean", description: "Serve the live page on loopback (default true). False writes only the offline file." },
+      },
+      required: ["view"],
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_review_apply",
+    description:
+      "Record the decisions a user made in an HTML review when the page could not save them itself (they copied or downloaded the decisions file). Pass the JSON text as submission or the downloaded file as file. Edits are applied; whatever records that the user ACCEPTED or REJECTED something is shown to the user in the client's approval dialog first, bound to exactly those decisions, and is refused without a dialog. Items that changed since the page was rendered are skipped and reported as conflicts; the rest is applied. The agent cannot record the user's acceptance any other way.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        submission: { type: "string", description: "The decisions JSON (contract praxis.review.submission) copied from the review page." },
+        file: { type: "string", description: "Path of the downloaded decisions file (inside the repository or ~/Downloads)." },
+        confirmation: confirmProp,
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_frontend_discover",
+    description:
+      "READ-ONLY look at a repository's frontend before building a prototype: framework, style files, component directories, screen candidates and the design tokens (colors, font, radius) found in its styles and theme files, with the files they came from. Returns only values it parsed; file contents are not passed back. Reports when no tokens were found so the prototype says it uses neutral styles, and when there is no frontend so a backend task gets an API prototype instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        repositoryId: { type: "string", description: "A registered repository of the work item to look at. Omitted means repo itself." },
+        path: { type: "string", description: "Directory to look at instead (for a checkout that is not registered)." },
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_repository_inspect",
+    description:
+      "Inspect a REGISTERED repository of the work item (register it first with the register-repository workflow command) and record what the Runtime itself reads: head commit, branch, manifests, frameworks, frontend, and which agent-instruction files exist (listed, never followed). The inspection cannot be typed in by the agent. Read-only on the repository; writes the inspection record into the work item.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        repositoryId: { type: "string", description: "Id of the registered repository." },
+      },
+      required: ["repositoryId"],
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_repository_brief",
+    description:
+      "READ-ONLY brief of one repository (or of all) in a work item that spans several: its requirements and stories, the services there, contracts it provides or consumes, what it waits for in other repositories, the implementation order across repositories, regression checks, and what Developer and Quality must do there. Also reports per repository whether anyone has actually implemented or verified anything there.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        repositoryId: { type: "string", description: "Repository to brief. Omitted returns the overview of all repositories." },
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_context_diagnose",
+    description:
+      "READ-ONLY explanation of what steers the agent: the order of instruction sources (host system instructions first, repository content last as data), the Praxis skills the current role and stage load, the context the work item restores, and agent-instruction files (CLAUDE.md, AGENTS.md, skills, rules) found in the repository or in analysed repositories, with any text in them aimed at the agent flagged. Never returns file contents.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        role: { type: "string", enum: ["ba", "architect", "developer", "quality"], description: "Role to list tools for." },
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
     name: "praxis_session_start",
     description:
       "READ-ONLY role initialisation for hosts that cannot run the plugin's bootstrap script: `.project` status, knowledge rules for the role, Work Items, the role's tools and next steps. Same information as the CLI session-bootstrap. Starts nothing, writes nothing.",

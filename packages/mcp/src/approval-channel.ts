@@ -166,7 +166,7 @@ export function hostPermissionChannel(planText: string | undefined): UserApprova
 export const trustedClientMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
 
 /** Acts only a person may perform. A standing "always allow" is not the person doing them. */
-const PERSONAL_ACTS = new Set(["confirm-story", "confirm-decision", "approve-service"]);
+const PERSONAL_ACTS = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions"]);
 
 export const trustedClientChannel: UserApprovalChannel = {
   kind: "trusted-client",

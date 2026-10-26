@@ -4,7 +4,10 @@ import { createHash } from "node:crypto";
 import { humanApprovalView, requireUserApproval } from "./human-approval.js";
 import {
   applyWorkflowCommand,
+  buildResumeBriefing,
   commandFingerprint,
+  migrateWorkflowState,
+  nextStep,
   redactPersistent,
   requireMutationLease,
   resumeWorkflow,
@@ -14,6 +17,7 @@ import {
   WorkflowStateSchema,
   workItemIdFor,
   type Capability,
+  type ReviewChannel,
   type UserApproval,
   type WorkflowCommand,
   type WorkItemLink,
@@ -97,6 +101,7 @@ export const PRAXIS_CAPABILITIES: Capability[] = [
 const INDEX_CONTRACT = "praxis.workflow.index";
 const MIGRATED_CONTRACT = "praxis.workflow.migrated";
 const LOCK_STALE_MS = 30_000;
+const WORKFLOW_STATE_VERSION = "1.1.0";
 const LOCK_WAIT_MS = 10_000;
 const WORK_ITEM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -107,6 +112,10 @@ export type WorkItemSummary = {
   title: string;
   jiraIssueKey?: string;
   stage: string;
+  /** Where the work is in the end-to-end flow (request ... delivery). Absent in summaries written before 1.1.0. */
+  phase?: string;
+  mode?: string;
+  kind?: string;
   revision: number;
   updatedAt: string;
   links: WorkItemLink[];
@@ -165,6 +174,9 @@ function summarize(state: WorkflowState): WorkItemSummary {
     title: state.workItem.title,
     ...(state.workItem.jiraIssueKey ? { jiraIssueKey: state.workItem.jiraIssueKey } : {}),
     stage: state.stage,
+    phase: state.phase,
+    mode: state.mode,
+    kind: state.workItem.kind,
     revision: state.workItem.revision,
     updatedAt: new Date().toISOString(),
     links: state.workItem.links ?? [],
@@ -213,7 +225,7 @@ function readLegacy(repo: string): WorkflowState | null {
     throw err;
   }
   if ((raw as { contract?: string })?.contract === MIGRATED_CONTRACT) return null;
-  return toAbsolute(repo, WorkflowStateSchema.parse(raw));
+  return toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(raw)));
 }
 
 function itemFiles(repo: string): string[] {
@@ -328,7 +340,7 @@ function resolveId(layout: Layout, explicit?: string): string | null {
 
 function readItem(repo: string, layout: Layout, id: string): WorkflowState {
   if (layout.legacy) return readLegacy(repo) as WorkflowState;
-  return toAbsolute(repo, WorkflowStateSchema.parse(readJson(itemPath(repo, id))));
+  return toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id)))));
 }
 
 export function loadWorkflow(repo: string, workItemId?: string): WorkflowState | null {
@@ -364,6 +376,13 @@ export function workflowStatus(repo: string, workItemId?: string): {
   guidance?: Array<{ id: string; description: string }>;
   suggested?: string[];
   executed?: [];
+  /** Where the work is in the end-to-end flow, what to do next, and what a new chat needs to continue. */
+  phase?: string;
+  mode?: string;
+  next?: ReturnType<typeof nextStep>;
+  briefing?: ReturnType<typeof buildResumeBriefing>;
+  /** When several work items are candidates: what each one is and where it stands, so the user can choose. */
+  choose?: string;
 } {
   const layout = readLayout(repo);
   if (layout && workItemId === undefined && layout.index.current === null && layout.index.items.length > 1) {
@@ -372,6 +391,7 @@ export function workflowStatus(repo: string, workItemId?: string): {
       currentWorkItemId: null,
       selectionRequired: true,
       workItems: layout.index.items.map((item) => ({ ...item, current: false })),
+      choose: "Several work items exist and none is selected. Ask the user which one to continue, listing: " + layout.index.items.map((item) => `${item.workItemId} \"${item.title}\" (${item.phase ?? item.stage})`).join("; ") + ". Then select it with select-work-item or pass workItemId.",
     };
   }
   const state = loadWorkflow(repo, workItemId);
@@ -398,6 +418,10 @@ export function workflowStatus(repo: string, workItemId?: string): {
     guidance: routed.guidance.map((item) => ({ id: item.id, description: item.description })),
     suggested: routed.suggested.map((item) => item.id),
     executed: routed.executed,
+    phase: state.phase,
+    mode: state.mode,
+    next: nextStep(state),
+    briefing: buildResumeBriefing(state),
   };
 }
 
@@ -478,9 +502,21 @@ function writeIndex(repo: string, index: WorkflowIndex): void {
   writeAtomic(indexPath(repo), index);
 }
 
+/** The first write after an upgrade keeps the file as the previous Runtime wrote it, next to the new one. */
+function keepPreviousVersion(path: string): void {
+  try {
+    const previous = readJson(path) as { version?: string };
+    const backup = `${path}.v${previous.version ?? "unknown"}.bak`;
+    if (previous.version && previous.version !== WORKFLOW_STATE_VERSION && !existsSync(backup)) writeFileSync(backup, readFileSync(path));
+  } catch {
+    /* no previous file, or not readable: nothing to keep */
+  }
+}
+
 function writeItem(repo: string, state: WorkflowState): string {
   requireMutationLease();
   const path = itemPath(repo, state.workItem.id);
+  keepPreviousVersion(path);
   writeAtomic(path, redactPersistent(toPortable(repo, state)));
   return path;
 }
@@ -627,7 +663,7 @@ export type WorkflowApplyResult = {
 };
 
 /** One locked read-modify-write of a single work item (or the index, for select/reopen). */
-function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval): WorkflowApplyResult {
+function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel): WorkflowApplyResult {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
     const finalCommand = WorkflowCommandSchema.parse(final);
@@ -663,7 +699,7 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
     }
     // A human act carries the user's approval (made by the Runtime, never part of the command); the contract verifies
     // it against the exact content again before it changes anything.
-    const applied = applyWorkflowCommand(resolved.state, resolved.command, userApproval ? { userApproval } : undefined);
+    const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...(userApproval ? { userApproval } : {}), ...(channel ? { channel } : {}) });
     const path = writeItem(repo, applied.state);
     const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1 as const, current: null, items: [] };
     const entry = summarize(applied.state);
@@ -743,4 +779,14 @@ export function capabilityRoute(input: {
     stage: input.stage ?? "in_progress",
     capabilities: PRAXIS_CAPABILITIES,
   });
+}
+
+/**
+ * Writes made by the Runtime itself, or on the user's own decision: the review page (channel html-review) or a batch the
+ * user approved in the client's dialog (channel approved). Not reachable with an agent-supplied fingerprint: callers are
+ * Runtime modules that built the command from verified input.
+ */
+export function applyRuntimeCommand(repo: string, command: Record<string, unknown>, workItemId?: string, channel?: ReviewChannel): WorkflowApplyResult {
+  const parsed = WorkflowCommandSchema.parse(command);
+  return runWorkflowRecordWrite(() => writeCommand(repo, parsed, parsed, workItemId, undefined, channel));
 }
