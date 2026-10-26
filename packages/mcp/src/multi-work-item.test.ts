@@ -5,6 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { openLocalWorkflow, WorkflowStateSchema } from "@praxis/contracts";
+import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool } from "./tools.js";
 import { readPersistedState, type McpEnvelope } from "./workflow-test-helpers.js";
 
@@ -16,7 +17,7 @@ function repoDir(): string {
 }
 
 async function call(tool: string, repo: string, role: string, args: Record<string, unknown>): Promise<McpEnvelope> {
-  return (await callTool(tool, { repo, ...args }, { role, version: VERSION })) as McpEnvelope;
+  return (await callTool(tool, { repo, ...args }, { role, version: VERSION, approvalChannel: channelForOpenClassic(tool, args) })) as McpEnvelope;
 }
 
 /** Real MCP preview then apply with a scoped host approval bound to the preview fingerprint. */

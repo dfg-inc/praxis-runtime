@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
+import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool } from "./tools.js";
 import type { McpEnvelope } from "./workflow-test-helpers.js";
 
@@ -49,7 +50,7 @@ describe("the project adapter and check modules run outside the Runtime process"
 
   it("through verify-stories: a hostile adapter cannot read the operator's token and the verification still works for a legitimate one", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-iso3-"));
-    const call = async (name: string, args: Record<string, unknown>) => (await callTool(name, { repo, ...args }, { role: "quality", version: "test" })) as McpEnvelope;
+    const call = async (name: string, args: Record<string, unknown>) => (await callTool(name, { repo, ...args }, { role: "quality", version: "test", approvalChannel: channelForOpenClassic(name, args) })) as McpEnvelope;
     const open = await call("praxis_workflow_preview", { command: JSON.stringify({ action: "open", projectId: "p", title: "Iso", request: "r", mode: "classic" }) });
     const applied = await call("praxis_workflow_apply", { command: JSON.stringify({ action: "open", projectId: "p", title: "Iso", request: "r", mode: "classic" }), confirmation: "YES", previewFingerprint: open.data.fingerprint });
     const wi = applied.data.workItemId as string;

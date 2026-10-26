@@ -5784,7 +5784,7 @@ function nextStep(state2) {
   }
 }
 function withoutVia(command) {
-  const { via: _via, ...rest } = command;
+  const { via: _via, sequence: _sequence, ...rest } = command;
   return rest;
 }
 function reviewBatchSubject(batch) {
@@ -5832,6 +5832,9 @@ function verifiedVia(command, channel) {
     throw new WorkflowError("USER_DECISION_REQUIRED", "this decision is not part of what the user approved");
   }
   return "approved";
+}
+function verifyUserChannel(command, channel) {
+  return verifiedVia(command, channel);
 }
 function modeSwitchReport(state2, to) {
   const planIds = new Set((state2.storyPlan?.entries ?? []).map((e) => e.id));
@@ -6522,8 +6525,11 @@ function transition(state2, to, note2) {
     history: [...state2.history, { revision, stage: to, note: note2 }]
   };
 }
+function latin(title) {
+  return [...title.toLowerCase()].map((ch) => TRANSLIT[ch] ?? ch).join("");
+}
 function workItemIdFor(title, sequence = 1) {
-  const slug = title.toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
+  const slug = latin(title).toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 24);
   return `WI-${slug || "WORK"}-${String(sequence).padStart(3, "0")}`;
 }
 function openLocalWorkflow(input2) {
@@ -6995,6 +7001,9 @@ function applyWorkflowCommand(state2, raw, options2) {
   if (command.action === "open") {
     if (state2)
       return { state: state2, duplicate: true, result: { workflowId: state2.workflowId } };
+    if (command.mode === "classic" && !verifyUserChannel(command, options2?.channel)) {
+      throw new WorkflowError("USER_DECISION_REQUIRED", "opening a work item in classic mode turns the stage gates off, so the user chooses it (the Runtime asks them in the approval dialog). Open it without a mode to get the guided flow.");
+    }
     const opened = openLocalWorkflow(command);
     return { state: opened, duplicate: false, result: { workflowId: opened.workflowId, workItemId: opened.workItem.id, mode: opened.mode, ...opened.mode === "classic" ? { note: "This work item is classic: stage gates, plan-before-stories and coverage checks are not enforced (user decisions still are). Tell the user." } : {} } };
   }
@@ -7485,7 +7494,7 @@ function evaluateFeature(state2) {
   }
   return { verdict: gaps.length === 0 ? "PASS" : "FAIL", gaps };
 }
-var import_node_crypto3, WORKFLOW_CONTRACT_VERSION, SUPPORTED_WORKFLOW_VERSIONS, WorkflowStageSchema, WorkflowRoleSchema, ClarificationClassSchema, SideEffectSchema, QualityVerdictSchema, WorkItemSourceSchema, WorkTrackingProviderSchema, TRANSITIONS, WorkItemRelationSchema, WorkItemLinkSchema, WorkItemSchema, AcceptanceCriterionSchema, RequirementSchema, ServiceSchema, ArtifactRefSchema, RoleHandoffSchema, FindingSchema, VerdictRecordSchema, CapabilitySchema, WorkflowStateSchema, SECRET_KEY, bullet, PARTIAL_SUCCESS, WorkflowCommandSchema;
+var import_node_crypto3, WORKFLOW_CONTRACT_VERSION, SUPPORTED_WORKFLOW_VERSIONS, WorkflowStageSchema, WorkflowRoleSchema, ClarificationClassSchema, SideEffectSchema, QualityVerdictSchema, WorkItemSourceSchema, WorkTrackingProviderSchema, TRANSITIONS, WorkItemRelationSchema, WorkItemLinkSchema, WorkItemSchema, AcceptanceCriterionSchema, RequirementSchema, ServiceSchema, ArtifactRefSchema, RoleHandoffSchema, FindingSchema, VerdictRecordSchema, CapabilitySchema, WorkflowStateSchema, SECRET_KEY, TRANSLIT, bullet, PARTIAL_SUCCESS, WorkflowCommandSchema;
 var init_workflow = __esm({
   "node_modules/@praxis/contracts/dist/workflow.js"() {
     import_node_crypto3 = require("node:crypto");
@@ -7496,6 +7505,7 @@ var init_workflow = __esm({
     init_planning();
     init_human_acts();
     init_user_approval();
+    init_planning();
     init_story();
     WORKFLOW_CONTRACT_VERSION = "1.1.0";
     SUPPORTED_WORKFLOW_VERSIONS = ["1.0.0", "1.1.0"];
@@ -7760,6 +7770,7 @@ var init_workflow = __esm({
       ...PlanningStateFields
     });
     SECRET_KEY = /token|secret|password|authorization|api[_-]?key|private[_-]?key/i;
+    TRANSLIT = { \u0430: "a", \u0431: "b", \u0432: "v", \u0433: "g", \u0434: "d", \u0435: "e", \u0451: "e", \u0436: "zh", \u0437: "z", \u0438: "i", \u0439: "y", \u043A: "k", \u043B: "l", \u043C: "m", \u043D: "n", \u043E: "o", \u043F: "p", \u0440: "r", \u0441: "s", \u0442: "t", \u0443: "u", \u0444: "f", \u0445: "h", \u0446: "ts", \u0447: "ch", \u0448: "sh", \u0449: "sch", \u044A: "", \u044B: "y", \u044C: "", \u044D: "e", \u044E: "yu", \u044F: "ya", \u0456: "i", \u0457: "yi", \u0454: "ye", \u0491: "g" };
     bullet = (items) => items.length ? items.map((item) => `  - ${item}`).join("\n") : "  (none)";
     PARTIAL_SUCCESS = /invalid[^.]*must not (?:prevent|block)[^.]*valid|never prevent valid rows|not all-or-nothing|each row has its own outcome/i;
     WorkflowCommandSchema = external_exports.discriminatedUnion("action", [
@@ -7773,6 +7784,8 @@ var init_workflow = __esm({
         sequence: external_exports.number().int().positive().optional(),
         /** guided enforces the stage gates (requirements accepted, prototype, story plan, ...); classic keeps the alpha.48 behaviour. */
         mode: WorkflowModeSchema.optional(),
+        /** Create a new item although one with this title exists (the store otherwise refuses: stable ids, explicit choice). */
+        newItem: external_exports.boolean().optional(),
         /** feature, change to existing behaviour, extension, fix or technical change. */
         changeKind: WorkItemKindSchema.optional()
       }),
@@ -21612,6 +21625,11 @@ var init_identity = __esm({
 });
 
 // node_modules/@praxis/cli/dist/diagnostics.js
+function classifyDotenvRefusal(key, valueRefused) {
+  if (DOTENV_TRUST_KEY.test(key))
+    return "trust";
+  return valueRefused ? "bad-value-shape" : "not-allowed";
+}
 function checkHttpUrl(raw) {
   const value = (raw ?? "").trim();
   if (!value)
@@ -21725,15 +21743,38 @@ function doctorNextSteps(input2) {
   if (input2.approval.mode === "no-dialog") {
     steps.push("This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them. Some hosts (Claude Desktop) have their own tool-permission prompt instead of a dialog: praxis_doctor approval.client shows what yours declared, and the optional host-permission setting (docs/user-approval.md) uses that prompt with the exact plan in the tool arguments; it is weaker, because Praxis cannot see whether the prompt was shown.");
   }
-  if (input2.dotenvRejected?.length) {
-    steps.push(`A repository .env file tried to set ${input2.dotenvRejected.join(", ")}. Approval settings are only read from the real environment, so they were ignored. Remove them from the file.`);
+  if (input2.dotenvRefused?.length) {
+    steps.push(...dotenvRefusalSteps(input2.dotenvRefused));
+  } else if (input2.dotenvRejected?.length) {
+    steps.push(`A repository .env file tried to set ${input2.dotenvRejected.join(", ")}. These settings are only read from the real environment, so they were ignored. Remove them from the file.`);
   }
   return steps;
 }
-var present;
+function dotenvRefusalSteps(refused) {
+  const names = (reason) => refused.filter((r) => r.reason === reason).map((r) => r.key).sort();
+  const notAllowed = names("not-allowed");
+  const trust = names("trust");
+  const badShape = names("bad-value-shape");
+  const steps = [];
+  if (notAllowed.length) {
+    steps.push(`Ignored, move to the operator environment: the repository .env file sets ${notAllowed.join(", ")}. A repository file may not carry URLs, tokens, e-mail, authentication or Quality service settings, so these were NOT loaded. Set them in the Claude Desktop extension settings (Praxis Runtime), or export them in the shell that launches Claude Code, or register the Runtime with \`claude mcp add -e KEY=...\`. Never put them in chat or in a repository file.`);
+  }
+  if (trust.length) {
+    steps.push(`Never allowed from a repository: the repository .env file sets ${trust.join(", ")} (approval, test, state-location or skip switches). They were ignored and cannot be enabled from a file. Delete them from the file; if you really need one, the operator sets it in the real environment.`);
+  }
+  if (badShape.length) {
+    steps.push(`Refused for a malformed value: ${badShape.join(", ")} in the repository .env file. The key is allowed but the value does not have the expected shape (for example a project key such as PRX, a numeric issue-type id, github or gitlab), so it was not loaded. Correct the value in the file.`);
+  }
+  if (notAllowed.length || trust.length) {
+    steps.push("To migrate: copy the ignored lines from the repository .env into the operator environment, delete them from the file, restart the Claude session, and run praxis_doctor again. See docs/repository-env.md.");
+  }
+  return steps;
+}
+var DOTENV_TRUST_KEY, present;
 var init_diagnostics = __esm({
   "node_modules/@praxis/cli/dist/diagnostics.js"() {
     init_dist();
+    DOTENV_TRUST_KEY = /^(PRAXIS_(APPROVAL|TEST|FIXTURE|ALLOW)_|PRAXIS_QA_ALLOW|PRAXIS_STATE_HOME$|PRAXIS_SKIP_DOTENV$)/;
     present = (value) => Boolean(value && value.trim());
   }
 });
@@ -25224,6 +25265,8 @@ __export(operations_exports, {
   developerStatusOp: () => developerStatusOp,
   doctorOp: () => doctorOp,
   dotenvKeyAllowed: () => dotenvKeyAllowed,
+  dotenvLoadedKeys: () => dotenvLoadedKeys,
+  dotenvRefusalList: () => dotenvRefusalList,
   dotenvRejectedKeys: () => dotenvRejectedKeys,
   dotenvValueValid: () => dotenvValueValid,
   jiraConfigFlags: () => jiraConfigFlags,
@@ -25277,6 +25320,12 @@ function dotenvKeyAllowed(key) {
 function dotenvRejectedKeys() {
   return dotenvRejected;
 }
+function dotenvRefusalList() {
+  return dotenvRefusals;
+}
+function dotenvLoadedKeys() {
+  return [...fileSourced.keys()].sort();
+}
 function dotenvKeyForbidden(key) {
   return !dotenvKeyAllowed(key);
 }
@@ -25302,6 +25351,7 @@ function loadPraxisDotenv(repo) {
     if (process.env[key] === value)
       delete process.env[key];
   fileSourced.clear();
+  dotenvRefusals = [];
   if (process.env.PRAXIS_SKIP_DOTENV === "1")
     return;
   const resolved = (0, import_node_path26.resolve)(repo);
@@ -25326,6 +25376,9 @@ function loadPraxisDotenv(repo) {
       if (dotenvKeyForbidden(key) || !dotenvValueValid(key, value)) {
         if (key.startsWith("PRAXIS_") && !dotenvRejected.includes(key))
           dotenvRejected = [...dotenvRejected, key].sort();
+        if (key.startsWith("PRAXIS_") && !dotenvRefusals.some((r) => r.key === key)) {
+          dotenvRefusals = [...dotenvRefusals, { key, reason: classifyDotenvRefusal(key, !dotenvKeyForbidden(key)) }].sort((a, b) => a.key.localeCompare(b.key));
+        }
         continue;
       }
       if (process.env[key])
@@ -25623,6 +25676,8 @@ async function doctorOp(ctx, version4) {
     capabilities,
     hostPlaceholdersIgnored,
     dotenvRejected,
+    dotenvRefused: dotenvRefusals,
+    dotenvLoaded: dotenvLoadedKeys(),
     providers,
     approval,
     nextSteps: [
@@ -25633,7 +25688,9 @@ async function doctorOp(ctx, version4) {
         quality: { status: qualityProbe.status, logPath: qualityProbe.logPath },
         providers,
         approval,
-        dotenvRejected
+        dotenvRejected,
+        dotenvRefused: dotenvRefusals,
+        dotenvLoaded: dotenvLoadedKeys()
       })
     ],
     codes: {
@@ -26624,7 +26681,7 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto14, import_node_child_process7, import_node_fs23, import_node_path26, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto14, import_node_child_process7, import_node_fs23, import_node_path26, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
     import_node_crypto14 = require("node:crypto");
@@ -26775,6 +26832,7 @@ var init_operations = __esm({
       [/^PRAXIS_WORK_PACKAGE_MAX_HOURS$/, /^\d{1,3}$/]
     ];
     dotenvRejected = [];
+    dotenvRefusals = [];
     fileSourced = /* @__PURE__ */ new Map();
     DOTENV_MAX_BYTES = 64 * 1024;
     describeConnect = (ctx) => async () => {
@@ -79006,7 +79064,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"7c047207c7e42e695eb69fb89669e769e771f528eed992948b64152f7e0dfc24","coreBaseline":"faa90762bdb8b054d640e337a37a0d9c02820f15","inputs":30}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"a3b6349b375faaa7a3cf9d326cd5489abe3844b02e98f165be047ab5511d6ca1","coreBaseline":"6c898d14ebfa49c99e57fae96e0432ddef085baf","inputs":30}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -79990,8 +80048,12 @@ function resolveCommand(repo, command, workItemId) {
   if (command.action === "open") {
     const items = layout?.index.items ?? [];
     const same = items.find((item) => item.projectId === command.projectId && item.title === command.title && (item.jiraIssueKey ?? null) === (command.jiraIssueKey ?? null));
-    if (same && layout)
-      return { command, state: null, reopen: readItem(repo, layout, same.workItemId) };
+    if (same && layout && !command.newItem) {
+      const existing = readItem(repo, layout, same.workItemId);
+      if ((existing.history[0]?.note ?? "") === command.request.slice(0, 500))
+        return { command, state: null, reopen: existing };
+      throw new WorkItemError("WORK_ITEM_TITLE_EXISTS", `a work item titled "${command.title}" already exists (${same.workItemId}) and was opened with a different request. To continue that one: select-work-item with workItemId ${same.workItemId}. To start a separate one: open again with "newItem": true (it gets its own id) or use a different title.`);
+    }
     let sequence = 1;
     while (items.some((item) => item.workItemId === workItemIdFor(command.title, sequence)))
       sequence += 1;
@@ -80004,6 +80066,9 @@ function previewWorkflow(repo, raw, workItemId) {
   const resolved = resolveCommand(repo, command, workItemId);
   const fingerprint2 = fingerprintFor2(repo, command, workItemId);
   const current = listWorkItems(repo).current;
+  if (command.action === "open" && command.mode === "classic" && !resolved.reopen) {
+    return { fingerprint: fingerprint2, duplicate: false, result: { awaitingUserApproval: "open-classic-work-item" }, resume: null, currentWorkItemId: current, humanApproval: openClassicView(command) };
+  }
   if (resolved.select) {
     return {
       fingerprint: fingerprint2,
@@ -80096,13 +80161,13 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel) {
     };
   });
 }
-function guarded(repo, fingerprint2, planned, final, workItemId, userApproval) {
+function guarded(repo, fingerprint2, planned, final, workItemId, userApproval, channel) {
   const command = WorkflowCommandSchema.parse(planned);
   const expected = fingerprintFor2(repo, command, workItemId);
   if (fingerprint2 !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
-  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval));
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel));
 }
 function applyResolved(repo, fingerprint2, planned, final, workItemId) {
   return guarded(repo, fingerprint2, planned, final, workItemId);
@@ -80110,12 +80175,30 @@ function applyResolved(repo, fingerprint2, planned, final, workItemId) {
 function applyWorkflow(repo, raw, fingerprint2, workItemId, userApproval) {
   return guarded(repo, fingerprint2, raw, raw, workItemId, userApproval);
 }
+function openClassicView(command) {
+  const request = reviewApprovalRequest([{ action: "open" }], `Open "${command.title}" in classic mode`);
+  return {
+    required: true,
+    kind: "requirement_acceptance",
+    action: "open-classic-work-item",
+    summary: `Open the work item "${command.title}" in classic mode`,
+    description: `OPEN a new work item "${command.title}" (project ${command.projectId}) in CLASSIC mode: stage gates, plan-before-stories and coverage checks are not enforced from the start (your decisions still are). Without this choice it would be opened in the guided flow.`,
+    risks: request.risks,
+    explanation: "Applying this asks you in the client's own approval dialog. A client without a dialog cannot open a classic item; open it without a mode to get the guided flow."
+  };
+}
 async function applyWorkflowApproved(repo, raw, fingerprint2, workItemId, confirmation) {
   const command = WorkflowCommandSchema.parse(raw);
   const expected = fingerprintFor2(repo, command, workItemId);
   if (fingerprint2 !== expected)
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   const resolved = resolveCommand(repo, command, workItemId);
+  if (command.action === "open" && command.mode === "classic" && !resolved.reopen) {
+    const view = openClassicView(command);
+    const batch = [JSON.parse(JSON.stringify(raw))];
+    const approval = await obtainUserApproval({ ...reviewApprovalRequest(batch, view.summary), description: view.description }, { confirmation, repo });
+    return guarded(repo, fingerprint2, raw, raw, workItemId, void 0, { via: "approved", approval, batch });
+  }
   const userApproval = resolved.state ? await requireUserApproval(repo, resolved.state, resolved.command, confirmation) : void 0;
   return guarded(repo, fingerprint2, raw, raw, workItemId, userApproval);
 }

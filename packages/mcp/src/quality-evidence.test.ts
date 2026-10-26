@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool } from "./tools.js";
 import { readPersistedState } from "./workflow-test-helpers.js";
 
@@ -25,7 +26,7 @@ async function step(repo: string, command: object, role: string): Promise<Envelo
   const applied = (await callTool(
     "praxis_workflow_apply",
     { repo, command: JSON.stringify(command), confirmation: "YES", previewFingerprint: fingerprint },
-    { role, version: VERSION },
+    { role, version: VERSION, approvalChannel: channelForOpenClassic("praxis_workflow_apply", { command: JSON.stringify(command) }) },
   )) as Envelope;
   expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
   return applied;

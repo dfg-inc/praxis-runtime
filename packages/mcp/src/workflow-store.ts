@@ -8,7 +8,9 @@ import {
   commandFingerprint,
   migrateWorkflowState,
   nextStep,
+  obtainUserApproval,
   redactState,
+  reviewApprovalRequest,
   requireMutationLease,
   resumeWorkflow,
   routeCapabilities,
@@ -595,7 +597,16 @@ function resolveCommand(repo: string, command: WorkflowCommand, workItemId?: str
         item.title === command.title &&
         (item.jiraIssueKey ?? null) === (command.jiraIssueKey ?? null),
     );
-    if (same && layout) return { command, state: null, reopen: readItem(repo, layout, same.workItemId) };
+    if (same && layout && !command.newItem) {
+      const existing = readItem(repo, layout, same.workItemId);
+      // the same command again (same request) is a replay and returns the item; a different request under the same title is
+      // ambiguous: never silently hand back the old item, ask for an explicit choice
+      if ((existing.history[0]?.note ?? "") === command.request.slice(0, 500)) return { command, state: null, reopen: existing };
+      throw new WorkItemError(
+        "WORK_ITEM_TITLE_EXISTS",
+        `a work item titled "${command.title}" already exists (${same.workItemId}) and was opened with a different request. To continue that one: select-work-item with workItemId ${same.workItemId}. To start a separate one: open again with "newItem": true (it gets its own id) or use a different title.`,
+      );
+    }
     let sequence = 1;
     while (items.some((item) => item.workItemId === workItemIdFor(command.title, sequence))) sequence += 1;
     return { command: { ...command, sequence }, state: null };
@@ -616,6 +627,10 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
   const resolved = resolveCommand(repo, command, workItemId);
   const fingerprint = fingerprintFor(repo, command, workItemId);
   const current = listWorkItems(repo).current;
+  if (command.action === "open" && command.mode === "classic" && !resolved.reopen) {
+    // a new classic item is the user's choice: show what they will be asked, write nothing
+    return { fingerprint, duplicate: false, result: { awaitingUserApproval: "open-classic-work-item" }, resume: null, currentWorkItemId: current, humanApproval: openClassicView(command) as never };
+  }
   if (resolved.select) {
     return {
       fingerprint,
@@ -729,14 +744,14 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
   });
 }
 
-function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval): WorkflowApplyResult {
+function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel): WorkflowApplyResult {
   const command = WorkflowCommandSchema.parse(planned);
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
   // Agent-authored records need no approval. Human acts are protected by the user's approval, verified inside the write.
-  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval));
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel));
 }
 
 export function applyResolved(
@@ -758,6 +773,19 @@ export function applyWorkflow(repo: string, raw: unknown, fingerprint: string, w
  * run), then a human act (confirm a Story or decision, approve a service) asks the user, then the write verifies that
  * approval. Everything else is an agent-authored record and is written as before.
  */
+function openClassicView(command: { title: string; projectId: string; request: string }) {
+  const request = reviewApprovalRequest([{ action: "open" }], `Open "${command.title}" in classic mode`);
+  return {
+    required: true,
+    kind: "requirement_acceptance",
+    action: "open-classic-work-item",
+    summary: `Open the work item "${command.title}" in classic mode`,
+    description: `OPEN a new work item "${command.title}" (project ${command.projectId}) in CLASSIC mode: stage gates, plan-before-stories and coverage checks are not enforced from the start (your decisions still are). Without this choice it would be opened in the guided flow.`,
+    risks: request.risks,
+    explanation: "Applying this asks you in the client's own approval dialog. A client without a dialog cannot open a classic item; open it without a mode to get the guided flow.",
+  };
+}
+
 export async function applyWorkflowApproved(
   repo: string,
   raw: unknown,
@@ -769,6 +797,12 @@ export async function applyWorkflowApproved(
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   const resolved = resolveCommand(repo, command, workItemId);
+  if (command.action === "open" && command.mode === "classic" && !resolved.reopen) {
+    const view = openClassicView(command);
+    const batch = [JSON.parse(JSON.stringify(raw)) as Record<string, unknown>];
+    const approval = await obtainUserApproval({ ...reviewApprovalRequest(batch, view.summary), description: view.description }, { confirmation, repo });
+    return guarded(repo, fingerprint, raw, raw, workItemId, undefined, { via: "approved", approval, batch });
+  }
   const userApproval = resolved.state ? await requireUserApproval(repo, resolved.state, resolved.command, confirmation) : undefined;
   return guarded(repo, fingerprint, raw, raw, workItemId, userApproval);
 }

@@ -51,6 +51,7 @@ async function project(): Promise<{ repo: string; id: string }> {
   return { repo, id: opened.data.workItemId as string };
 }
 
+const listItemsOf = (repo: string) => { try { return JSON.parse(readFileSync(join(repo, ".praxis", "workflow", "index.json"), "utf8")); } catch { return {}; } };
 const state = (repo: string, id: string) => loadWorkflow(repo, id)!;
 
 describe("agents cannot record the user's acceptance", () => {
@@ -492,7 +493,20 @@ describe("default mode, switching and contract agreement through the tools", () 
   it("a new work item opened without a mode is guided; one opened as classic stays classic and is told so", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-mode-"));
     const g = (await must(repo, { action: "open", projectId: "p", title: "Guided one", request: "r" })).data.workItemId as string;
-    const c = (await must(repo, { action: "open", projectId: "p", title: "Classic one", request: "r", mode: "classic" })).data.workItemId as string;
+    const classic = { action: "open", projectId: "p", title: "Classic one", request: "r", mode: "classic" };
+    // the agent cannot open a classic item: the preview already says the user decides, and an apply without the user's yes refuses
+    const preview = await call("praxis_workflow_preview", repo, { command: JSON.stringify(classic) });
+    expect((preview.data as any).humanApproval.action).toBe("open-classic-work-item");
+    const noDialog = await call("praxis_workflow_apply", repo, { command: JSON.stringify(classic), confirmation: "YES", previewFingerprint: (preview.data as any).fingerprint });
+    expect(noDialog.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    const rejected = dialog({ answer: "reject" });
+    expect((await call("praxis_workflow_apply", repo, { command: JSON.stringify(classic), confirmation: "YES", previewFingerprint: (preview.data as any).fingerprint }, rejected.channel)).code).toBe("APPROVAL_REJECTED");
+    expect(rejected.seen[0].description).toMatch(/CLASSIC mode/);
+    expect(JSON.stringify(listItemsOf(repo))).not.toMatch(/Classic one/);
+    const chosen = dialog({ answer: "approve" });
+    const opened = await call("praxis_workflow_apply", repo, { command: JSON.stringify(classic), confirmation: "YES", previewFingerprint: (preview.data as any).fingerprint }, chosen.channel);
+    expect(opened.ok, JSON.stringify(opened.errors)).toBe(true);
+    const c = opened.data.workItemId as string;
     expect(state(repo, g).mode).toBe("guided");
     expect(state(repo, c).mode).toBe("classic");
     const sg = (await call("praxis_workflow_status", repo, { workItemId: g })).data as any;
@@ -503,7 +517,9 @@ describe("default mode, switching and contract agreement through the tools", () 
 
   it("the agent can move an item to guided; moving back to classic needs the user's approval", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-mode2-"));
-    const id = (await must(repo, { action: "open", projectId: "p", title: "Old item", request: "r", mode: "classic" })).data.workItemId as string;
+    const oldItem = { action: "open", projectId: "p", title: "Old item", request: "r", mode: "classic" };
+    const oldPreview = await call("praxis_workflow_preview", repo, { command: JSON.stringify(oldItem) });
+    const id = (await call("praxis_workflow_apply", repo, { command: JSON.stringify(oldItem), confirmation: "YES", previewFingerprint: (oldPreview.data as any).fingerprint }, dialog({ answer: "approve" }).channel)).data.workItemId as string;
     await must(repo, { action: "add-requirement", id: "REQ-A-001", statement: "View", acceptanceCriteria: ["List shows"] }, id).catch(() => undefined);
     const up = await record(repo, { action: "set-mode", mode: "guided", reason: "new flow" }, id);
     expect(up.ok, JSON.stringify(up.errors)).toBe(true);
@@ -618,5 +634,35 @@ describe("S10 and the link: the browser is opened once, and the secret link neve
       if (savedFlag !== undefined) process.env.PRAXIS_TEST_REVIEW_NO_BROWSER = savedFlag;
       stopReviewServer();
     }
+  });
+});
+
+describe("work item titles: no silent reuse, stable ids, explicit choice", () => {
+  it("the same open again is a replay; a different request under the same title is refused with the choices; newItem creates a separate item; the first one is untouched", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-title-"));
+    const first = await must(repo, { action: "open", projectId: "p", title: "Order list", request: "first request" });
+    const id1 = first.data.workItemId as string;
+    const replay = await must(repo, { action: "open", projectId: "p", title: "Order list", request: "first request" });
+    expect(replay.data.workItemId).toBe(id1);
+    expect(replay.data.duplicate).toBe(true);
+    const clash = await record(repo, { action: "open", projectId: "p", title: "Order list", request: "SECOND different request" });
+    expect(clash.ok).toBe(false);
+    expect(clash.code).toBe("WORK_ITEM_TITLE_EXISTS");
+    expect(clash.errors?.join(" ")).toMatch(new RegExp(`select-work-item with workItemId ${id1}`));
+    expect(clash.errors?.join(" ")).toMatch(/newItem/);
+    const second = await must(repo, { action: "open", projectId: "p", title: "Order list", request: "SECOND different request", newItem: true });
+    const id2 = second.data.workItemId as string;
+    expect(id2).not.toBe(id1);
+    expect(id1).toBe("WI-ORDER-LIST-001");
+    expect(id2).toBe("WI-ORDER-LIST-002");
+    expect(state(repo, id1).history[0].note).toBe("first request");
+    expect(state(repo, id2).history[0].note).toBe("SECOND different request");
+    expect(JSON.parse(readFileSync(join(repo, ".praxis", "workflow", "index.json"), "utf8")).items.length).toBe(2);
+  });
+
+  it("a Cyrillic title gets a descriptive Latin id", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-title2-"));
+    const r = await must(repo, { action: "open", projectId: "p", title: "Список заказов", request: "r" });
+    expect(r.data.workItemId).toBe("WI-SPISOK-ZAKAZOV-001");
   });
 });

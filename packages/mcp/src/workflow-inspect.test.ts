@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool, toolsForRole } from "./tools.js";
 import { readPersistedState, type McpEnvelope } from "./workflow-test-helpers.js";
 
 const VERSION = "test";
 
 async function call(tool: string, repo: string, role: string, args: Record<string, unknown> = {}): Promise<McpEnvelope> {
-  return (await callTool(tool, { repo, ...args }, { role: role as "ba", version: VERSION })) as McpEnvelope;
+  return (await callTool(tool, { repo, ...args }, { role: role as "ba", version: VERSION, approvalChannel: channelForOpenClassic(tool, args) })) as McpEnvelope;
 }
 
 /** Real MCP preview then apply with a host approval bound to the preview fingerprint. */

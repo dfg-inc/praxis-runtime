@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApprovalNeedsInput, decisionContentFingerprint, decisionLogPath, storyContentFingerprint, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
 import { createFixtureJiraProvider, createMockFetch, createMockJiraState, type JiraConfig } from "@praxis/jira";
 import { approvalKey, elicitationChannel, roundTripChannel } from "./approval-channel.js";
+import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool } from "./tools.js";
 import { readPersistedState, type McpEnvelope } from "./workflow-test-helpers.js";
 
@@ -43,7 +44,7 @@ function dialog(answers: AskAnswer[] | AskAnswer) {
 }
 
 const call = async (tool: string, repo: string, args: Record<string, unknown>, role = "ba", channel?: UserApprovalChannel, extra?: object): Promise<McpEnvelope> =>
-  (await callTool(tool, { repo, ...args }, { role: role as "ba", version: VERSION, approvalChannel: channel, ...(extra ? { extra } : {}) })) as McpEnvelope;
+  (await callTool(tool, { repo, ...args }, { role: role as "ba", version: VERSION, approvalChannel: channel ?? channelForOpenClassic(tool, args), ...(extra ? { extra } : {}) })) as McpEnvelope;
 
 async function preview(repo: string, command: object, role = "ba") {
   const previewed = await call("praxis_workflow_preview", repo, { command: JSON.stringify(command) }, role);
