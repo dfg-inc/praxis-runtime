@@ -76,16 +76,20 @@ describe("the Runtime creates the same canon root as `praxis-ba init`", () => {
 
   it("the result is a canon the BA CLI accepts (when the BA repository is next to this one)", () => {
     const cli = join(here, "../../../../praxis-ba/plugins/ba/canon-graph/bin/praxis-ba.mjs");
-    if (!existsSync(cli)) return;
+    // the BA repository is a sibling checkout only in the split workspace; elsewhere this check has nothing to run against
+    const present = existsSync(cli);
     const repo = mkdtempSync(join(tmpdir(), "praxis-canon5-"));
     const plan = planCanonInit(repo);
     for (const item of plan.create) {
       if (item.kind === "dir") mkdirSync(join(plan.repo, item.path));
       else writeFileSync(join(plan.repo, item.path), item.content ?? "");
     }
-    const status = spawnSync(process.execPath, [cli, "status", "--repo", repo], { encoding: "utf8" });
-    expect(status.stdout + status.stderr).not.toMatch(/no canon here/);
-    const id = spawnSync(process.execPath, [cli, "id", "next", "--scope", "cr", "--repo", repo], { encoding: "utf8" });
-    expect(id.status, id.stdout + id.stderr).toBe(0);
+    if (present) {
+      const status = spawnSync(process.execPath, [cli, "status", "--repo", repo], { encoding: "utf8" });
+      expect(status.stdout + status.stderr).not.toMatch(/no canon here/);
+      const id = spawnSync(process.execPath, [cli, "id", "next", "--scope", "cr", "--repo", repo], { encoding: "utf8" });
+      expect(id.status, id.stdout + id.stderr).toBe(0);
+    }
+    expect(plan.create.length).toBeGreaterThan(0);
   });
 });
