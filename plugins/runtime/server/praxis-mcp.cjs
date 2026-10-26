@@ -25145,6 +25145,8 @@ function dotenvRejectedKeys() {
   return dotenvRejected;
 }
 function dotenvKeyForbidden(key) {
+  if (!key.startsWith("PRAXIS_"))
+    return true;
   return DOTENV_FORBIDDEN_PREFIXES.some((prefix2) => key.startsWith(prefix2));
 }
 function loadPraxisDotenv(repo) {
@@ -78826,7 +78828,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"ae59a4cca9106d805590a5083022be23e62d6f87816bf918cde1f0b31536bb0c","coreBaseline":"f8c70582ac66379ec0d606741038430f21f0f83c","inputs":29}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"7218a92395bb8be172e07ecd61292f106181018f0b12bc30a8820e52c2d221af","coreBaseline":"9347cc3e5fc857e51b0270e3da3d1f71955c3f3e","inputs":29}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

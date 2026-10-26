@@ -124,6 +124,9 @@ await must({ action: "advance-phase", to: "architecture" }, wi);
 step("BA: requirements, prototype, plan and stories accepted by the user (page saves); stories carry repositories and services from the plan");
 
 // ===== Architect ========================================================================================================
+const found = (await call(agent, "praxis_frontend_discover", { repo, repositoryId: "web", workItemId: wi })).data;
+eq(found.styles.colors.primary, "#0b6bcb", "the web repository's own css supplies the prototype styles");
+check(found.screenCandidates.includes("src/pages/Orders.jsx"), "its screens are found");
 const heads = Object.fromEntries(stateOf(wi).repositories.map((r) => [r.id, r.inspection.headSha]));
 eq(heads.api, git(backend, "rev-parse", "HEAD").trim(), "the Runtime read the backend's head commit itself");
 await must({ action: "assign-repositories", repositoryIds: ["api"], storyIds: ["US-ORD-001"], requirementIds: ["REQ-ORD-001"] }, wi);

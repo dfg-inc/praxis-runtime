@@ -252,6 +252,10 @@ await scenario("S02", "Change request of an existing application: impact and exi
   await must(agent, repo, { action: "record-impact", impact: { baseline: { summary: "orders list exists", behaviors: [{ id: "B1", statement: "The list shows orders", evidence: [{ repositoryId: "web", path: "src/pages/Orders.tsx" }] }] }, affected: [{ repositoryId: "web", path: "src/pages/Orders.tsx", area: "orders page", change: "add export button", risk: "list rendering" }], regressionChecks: [{ id: "R1", statement: "The list still shows all orders", requirementIds: ["REQ-ORD-010"] }] } }, id);
   await must(agent, repo, { action: "advance-phase", to: "prototype" }, id);
   eq(stateOf(repo, id).phase, "prototype", "phase after impact");
+  await must(agent, repo, { action: "set-service", service: { id: "svc-web", name: "Web", kind: "frontend", repositoryId: "web", responsibilities: ["orders page"], requirementIds: ["REQ-ORD-010"], dependsOn: [], status: "in_progress" } }, id);
+  const brief = (await call(agent, "praxis_repository_brief", { repo, workItemId: id, repositoryId: "web" })).data.brief;
+  check(brief.forQuality.some((l) => /Regression: The list still shows all orders/.test(l)), "the regression check reaches Quality through the repository brief");
+  eq(brief.impact.affected[0].area, "orders page", "and the affected area reaches Developer");
 });
 
 await scenario("S03", "Per-criterion acceptance in the HTML review: marks, edits, comments; the agent cannot do it", async () => {
@@ -271,6 +275,12 @@ await scenario("S03", "Per-criterion acceptance in the HTML review: marks, edits
   eq(r.acceptanceCriteria.map((c) => c.review.status), ["accepted", "rejected", "pending"], "marks per criterion");
   eq(r.acceptanceCriteria[1].review.comment, "also by phone", "comment kept");
   eq(r.acceptanceCriteria[2].statement, "Filtering by status works", "criterion added from the page");
+  // the save endpoint refuses a request that does not come from the page: no Origin, or a foreign one
+  const secretUrl = readFileSync(join(dirname(saved.rendered.file), "requirements.url"), "utf8");
+  for (const headers of [{}, { origin: "http://evil.example" }]) {
+    const r = await fetch(`${secretUrl.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", "x-praxis-review-token": saved.data.token, ...headers }, body: "{}" });
+    check(r.status === 403, `save without the page's Origin must be refused (${JSON.stringify(headers)} -> ${r.status})`);
+  }
   const offline = readFileSync(saved.rendered.file, "utf8");
   check(offline.includes("Requirements review") && !/saveUrl":"http/.test(offline), "the offline copy has no live save address");
 });

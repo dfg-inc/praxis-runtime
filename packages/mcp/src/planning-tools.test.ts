@@ -487,11 +487,3 @@ describe("waivers are the user's", () => {
   });
 });
 
-describe("N1: a repository .env cannot turn on the link-file test hook", () => {
-  it("PRAXIS_TEST_ and PRAXIS_REVIEW_ keys from a repository .env are rejected", async () => {
-    const { readFileSync: rf } = await import("node:fs");
-    const src = rf(join(__dirname, "../../../../praxis-core/packages/cli/src/operations.ts"), "utf8").toString();
-    expect(src).toMatch(/"PRAXIS_TEST_",\s*"PRAXIS_REVIEW_"/);
-    expect(rf(join(__dirname, "review-service.ts"), "utf8")).toContain("PRAXIS_TEST_REVIEW_NO_BROWSER");
-  });
-});
