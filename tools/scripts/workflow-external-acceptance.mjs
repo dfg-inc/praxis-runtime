@@ -89,6 +89,7 @@ try {
 
   const opened = await apply({
     action: "open",
+    mode: "classic",
     projectId: "bulk-user-import",
     title: "Bulk User Import",
     request: "Import users from a CSV file. Columns are email, name, and role.",

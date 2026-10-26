@@ -407,7 +407,11 @@ await scenario("S08", "One work item across three repositories (API, web, iOS) w
   await must(agent, repo, svc("svc-web", "web", ["svc-api"]), id);
   await must(agent, repo, svc("svc-ios", "ios", ["svc-api"]), id);
   await must(agent, repo, { action: "assign-repositories", repositoryIds: ["api", "web", "ios"], requirementIds: ["REQ-ORD-001"] }, id);
-  await must(agent, repo, { action: "set-contract", contract: { id: "C-1", name: "Orders API", providerServiceId: "svc-api", consumerServiceIds: ["svc-web", "svc-ios"], schemaRef: "openapi.yaml", requirementIds: ["REQ-ORD-001"], status: "agreed" } }, id);
+  await must(agent, repo, { action: "set-contract", contract: { id: "C-1", name: "Orders API", providerServiceId: "svc-api", consumerServiceIds: ["svc-web", "svc-ios"], schemaRef: "openapi.yaml", requirementIds: ["REQ-ORD-001"], status: "proposed" } }, id);
+  const agentAgree = await record(agent, repo, { action: "set-contract", contract: { id: "C-1", name: "Orders API", providerServiceId: "svc-api", consumerServiceIds: ["svc-web", "svc-ios"], schemaRef: "openapi.json", requirementIds: ["REQ-ORD-001"], status: "agreed" } }, id);
+  check(!agentAgree.ok && agentAgree.code === "USER_DECISION_REQUIRED", "an agent cannot agree a contract");
+  await userSaves(agent, repo, "contracts", id, () => ({ contracts: { agree: ["C-1"] } }));
+  eq(stateOf(repo, id).contracts[0].status, "agreed", "the user agrees the contract on the contracts page");
   const overview = (await call(agent, "praxis_repository_brief", { repo, workItemId: id })).data;
   eq(overview.order.order[0], "svc-api", "the API comes first");
   check(overview.progress.every((p) => p.entered === false && p.implemented === false && p.verified === false), "nothing is marked done for repositories nobody entered");
@@ -614,6 +618,18 @@ await scenario("S16", "Upgrade from alpha.48: existing work items are read witho
   await must(upgraded, repo, story("US-LEG-002", ["REQ-LEG-002"], "As a manager, I want export, so that I share them."), id);
   const inspect = await call(upgraded, "praxis_workflow_inspect", { repo, workItemId: id, view: "stories" });
   check(inspect.ok, "the old inspect tool keeps working");
+  // the alpha.48 item stays classic until someone switches it; switching keeps the data and reports what changes
+  eq(stateOf(repo, id).mode, "classic", "the migrated item is still classic");
+  const toGuided = await record(upgraded, repo, { action: "set-mode", mode: "guided", reason: "try the new flow" }, id);
+  check(toGuided.ok, `switch to guided: ${JSON.stringify(toGuided.errors)}`);
+  const rep = toGuided.data.result.report;
+  check(rep.storiesWithoutPlanLine.includes("US-LEG-001") && rep.dataKept.requirements === 2, "the report names the stories without a plan line and the data kept");
+  eq(stateOf(repo, id).requirements.map((r) => r.id), ["REQ-LEG-001", "REQ-LEG-002"], "no requirement was touched by the switch");
+  const noPlan = await record(upgraded, repo, story("US-LEG-009", ["REQ-LEG-001"], "As a manager, I want x, so that y."), id);
+  check(!noPlan.ok && noPlan.code === "STORY_PLAN_NOT_AGREED", "after the switch the gates apply");
+  const back = await record(upgraded, repo, { action: "set-mode", mode: "classic" }, id);
+  check(!back.ok && back.code === "USER_DECISION_REQUIRED", "the agent cannot switch an item back to classic");
+  eq(stateOf(repo, id).mode, "guided", "still guided");
   await upgraded.close();
 });
 

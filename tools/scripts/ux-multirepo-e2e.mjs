@@ -136,7 +136,13 @@ const svc = (id, rid, kind, deps) => ({ action: "set-service", service: { id, na
 await must(svc("svc-api", "api", "api", []), wi);
 await must(svc("svc-web", "web", "frontend", ["svc-api"]), wi);
 await must(svc("svc-mobile", "mobile", "frontend", ["svc-api"]), wi);
-await must({ action: "set-contract", contract: { id: "C-ORDERS", name: "Orders search", providerServiceId: "svc-api", consumerServiceIds: ["svc-web", "svc-mobile"], schemaRef: "openapi.json#/paths/~1orders", requirementIds: ["REQ-ORD-001"], storyIds: ["US-ORD-001"], status: "agreed" } }, wi);
+await must({ action: "set-contract", contract: { id: "C-ORDERS", name: "Orders search", providerServiceId: "svc-api", consumerServiceIds: ["svc-web", "svc-mobile"], schemaRef: "openapi.json#/paths/~1orders", requirementIds: ["REQ-ORD-001"], storyIds: ["US-ORD-001"], status: "proposed" } }, wi);
+const agentAgrees = await call(agent, "praxis_workflow_preview", { repo, workItemId: wi, command: JSON.stringify({ action: "set-contract", contract: { id: "C-ORDERS", name: "Orders search", providerServiceId: "svc-api", consumerServiceIds: ["svc-web", "svc-mobile"], status: "agreed" } }) });
+check(!agentAgrees.ok && agentAgrees.code === "USER_DECISION_REQUIRED", "the agent cannot agree its own contract");
+const blockedDev = await call(agent, "praxis_workflow_preview", { repo, workItemId: wi, command: JSON.stringify({ action: "advance-phase", to: "development" }) });
+check(!blockedDev.ok && blockedDev.code === "PHASE_GATE" && /not agreed by the user/.test(blockedDev.errors.join()), "development waits for the user's agreement of the contract");
+await userSave("contracts", wi, { contracts: { agree: ["C-ORDERS"] } });
+eq(stateOf(wi).contracts[0].status, "agreed", "the user agreed the contract on the contracts page");
 await must({ action: "advance-phase", to: "development" }, wi);
 const overview = (await call(agent, "praxis_repository_brief", { repo, workItemId: wi })).data;
 eq(overview.order.order[0], "svc-api", "the backend is implemented first");

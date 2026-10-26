@@ -169,6 +169,7 @@ try {
 
   await apply({
     action: "open",
+    mode: "classic",
     projectId: "desk-booking",
     title: "Desk booking",
     request: "Reserve a desk for a day",

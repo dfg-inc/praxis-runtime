@@ -131,7 +131,7 @@ const repoWithPackageJson = () => {
     };
     next = answer("accept", "approve");
     const askedBefore = session.elicited.length;
-    await record({ action: "open", projectId: "ux", title: "Approval UX", request: "r" });
+    await record({ action: "open", projectId: "ux", title: "Approval UX", request: "r", mode: "classic" });
     await record({ action: "add-requirement", id: "REQ-UX-001", statement: "The user approves.", acceptanceCriteria: ["Done."] });
     await record({
       action: "add-story",

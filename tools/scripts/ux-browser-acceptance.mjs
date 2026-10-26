@@ -324,6 +324,29 @@ await scenario("B05", "Stories review in Chrome: per-item checkboxes, edit one s
   for (const sx of fin.stories) check(sx.requirementIds.every((id) => fin.requirements.some((rq) => rq.id === id)), "story requirement ids exist");
 });
 
+await scenario("B06", "Contracts review in Chrome: the user agrees a contract; reopening shows it agreed; the agent cannot", async () => {
+  const wi6 = await newGuided("Contracts item");
+  const svc = (id, deps) => ({ action: "set-service", service: { id, name: id, kind: "module", responsibilities: ["x"], requirementIds: ["REQ-ORD-001"], dependsOn: deps, status: "in_progress" } });
+  await must(svc("svc-api", []), wi6);
+  await must(svc("svc-web", ["svc-api"]), wi6);
+  await must({ action: "set-contract", contract: { id: "C-1", name: "Orders API", providerServiceId: "svc-api", consumerServiceIds: ["svc-web"], schemaRef: "openapi.json", status: "proposed" } }, wi6);
+  const forged = await call(agent, "praxis_workflow_preview", { repo, workItemId: wi6, command: JSON.stringify({ action: "set-contract", contract: { id: "C-1", name: "Orders API", providerServiceId: "svc-api", consumerServiceIds: ["svc-web"], status: "agreed" } }) });
+  check(!forged.ok && forged.code === "USER_DECISION_REQUIRED", "the agent cannot agree it");
+  const link = await linkOf("contracts", wi6);
+  const p = await page(link.secret);
+  check((await p.locator('[data-contract="C-1"]').innerText()).includes("svc-api"), "provider is shown");
+  eq(stateOf(wi6).contracts[0].status, "proposed", "nothing is agreed before Save");
+  await p.locator('[data-contract="C-1"] [data-f=agree]').check();
+  eq(stateOf(wi6).contracts[0].status, "proposed", "ticking is not enough: nothing is written before Save");
+  await p.locator("#btn-save").click();
+  await p.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  eq(stateOf(wi6).contracts[0].status, "agreed", "agreed by the user's Save");
+  eq(stateOf(wi6).contracts[0].agreement.via, "html-review", "recorded as the user's");
+  const q = await page((await linkOf("contracts", wi6)).secret);
+  check((await q.locator('[data-contract="C-1"]').innerText()).includes("agreed"), "reopened: shown as agreed");
+  eq(await q.locator('[data-contract="C-1"] [data-f=agree]').count(), 0, "no Agree box once agreed");
+});
+
 await browser.close();
 await agent.close();
 const failed = results.filter((r) => r.status !== "PASS");

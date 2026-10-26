@@ -120,6 +120,7 @@ test("existing suite is green", () => { assert.equal(1 + 1, 2); });
 
   await apply({
     action: "open",
+    mode: "classic",
     projectId: "bulk-user-import",
     title: "Bulk User Import",
     request: "Import users from CSV",
