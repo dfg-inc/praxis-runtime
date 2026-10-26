@@ -91,6 +91,19 @@ for (const p of installed.filter((item) => item.name.startsWith("praxis-") && it
 }
 prove("every role plugin ships local-workflow and present-plan skills");
 
+const baInstalled = installed.find((p) => p.name === "praxis-ba");
+const baSkills = readdirSync(join(baInstalled.path, "skills")).filter((s) => existsSync(join(baInstalled.path, "skills", s, "SKILL.md")));
+const wantedBa = ["capture-cr", "grill-cr", "ba-plan-slice", "shape-requirement", "prepare-wp", "approve-plan", "accept", "ba-lint", "one-pager", "requirements-review", "prototype", "story-plan", "stories-review", "change-request", "resume-work"];
+expect(wantedBa.every((s) => baSkills.includes(s)), `installed praxis-ba lacks: ${wantedBa.filter((s) => !baSkills.includes(s)).join(", ")}`);
+// every file a BA skill points at exists in the installed plugin
+for (const s of baSkills) {
+  for (const m of readFileSync(join(baInstalled.path, "skills", s, "SKILL.md"), "utf8").matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([A-Za-z0-9_./-]+)/g)) {
+    const rel = m[1].replace(/[.,;:)]+$/, "");
+    expect(existsSync(join(baInstalled.path, rel)), `BA skill ${s} points at ${rel}, which the installed plugin does not contain`);
+  }
+}
+prove(`installed praxis-ba carries ${baSkills.length} skills including capture-cr, grill-cr, ba-plan-slice, shape-requirement, prepare-wp, approve-plan, accept and the review skills; every ${"$"}{CLAUDE_PLUGIN_ROOT} path they use exists`);
+
 // Generated build outputs must be in what a user installs (they are build products, not source): BA's validator CLI and every
 // role's session bootstrap, runnable with no npm install.
 {
