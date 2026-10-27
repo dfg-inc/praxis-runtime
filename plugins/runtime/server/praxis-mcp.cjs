@@ -5191,6 +5191,9 @@ function applyRequirementDecisions(state2, command, now) {
         const statusChanged = ac.status !== void 0 && ac.status !== old.status;
         const nextComment = ac.comment !== void 0 ? ac.comment === "" ? void 0 : ac.comment : old.comment;
         const commentChanged = ac.comment !== void 0 && nextComment !== old.comment;
+        if (commentChanged && command.via === "chat" && old.comment && (old.commentVia === "html-review" || old.commentVia === "approved" || old.commentVia === void 0 && old.via !== void 0 && old.via !== "chat")) {
+          throw new WorkflowError("USER_DECISION_REQUIRED", `${ac.id} carries a remark the user wrote; only the user changes or clears it (in the review page). Propose a new text for the criterion instead.`);
+        }
         const decided = statusChanged ? { at: iso(now), via: command.via } : { ...old.at ? { at: old.at } : {}, ...old.via ? { via: old.via } : {} };
         const commented = commentChanged ? { commentAt: iso(now), commentVia: command.via } : { ...old.commentAt ? { commentAt: old.commentAt } : {}, ...old.commentVia ? { commentVia: old.commentVia } : {} };
         criterion = {
@@ -5908,7 +5911,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       let next = state2;
       next = {
         ...next,
-        requirements: next.requirements.map((r) => ids.includes(r.id) && r.scope === "in" && r.status !== "superseded" ? { ...r, status: "approved", acceptanceCriteria: r.acceptanceCriteria.map((c) => c.review.status === "pending" ? { ...c, review: { status: "accepted", at: iso(now), via: command.via } } : c) } : r)
+        requirements: next.requirements.map((r) => ids.includes(r.id) && r.scope === "in" && r.status !== "superseded" ? { ...r, status: "approved", acceptanceCriteria: r.acceptanceCriteria.map((c) => c.review.status === "pending" ? { ...c, review: { ...c.review, status: "accepted", at: iso(now), via: command.via } } : c) } : r)
       };
       const progress = reviewProgress(next);
       if (progress.complete)
@@ -8454,7 +8457,7 @@ function submissionToCommands(state2, raw) {
         const unchanged = (criterion.status === void 0 || criterion.status === live.review.status) && (criterion.comment === void 0 || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === void 0 || criterion.statement === live.statement);
         if (unchanged)
           continue;
-        details.push(`${criterion.id} '${live.statement.slice(0, 400)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== void 0 ? `edit to '${criterion.statement.slice(0, 400)}'` : "", criterion.comment ? `comment '${criterion.comment.slice(0, 400)}'` : ""].filter(Boolean).join(", ")}`);
+        details.push(`${criterion.id} '${live.statement.slice(0, 400)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== void 0 ? `edit to '${criterion.statement.slice(0, 400)}'` : "", criterion.comment !== void 0 && criterion.comment !== (live.review.comment ?? "") ? (criterion.comment ? `comment '${criterion.comment.slice(0, 400)}'` : "clear the comment") + (live.review.comment ? ` (now '${live.review.comment.slice(0, 200)}')` : "") : ""].filter(Boolean).join(", ")}`);
         acceptance.push({ id: criterion.id, ...criterion.status ? { status: criterion.status } : {}, ...criterion.comment !== void 0 ? { comment: criterion.comment } : {}, ...criterion.statement !== void 0 ? { statement: criterion.statement } : {} });
       }
       if (item.statement !== void 0)
@@ -8796,7 +8799,7 @@ function renderRequirementsReview(state2, options2 = {}) {
     const out = req.scope !== "in";
     const criteria = req.acceptanceCriteria.map((ac) => `<div class="ac" data-ac="${esc3(ac.id)}" data-rev="${ac.revision}" data-initial-status="${esc3(ac.review.status)}">
 <div><strong>${esc3(ac.id)}</strong></div>
-<div><textarea data-f="ac-statement" data-initial="${esc3(ac.statement)}" aria-label="Text of ${esc3(ac.id)}">${esc3(ac.statement)}</textarea>${ac.review.previous ? `
+<div><textarea data-f="ac-statement" data-initial="${esc3(ac.statement)}" aria-label="Text of ${esc3(ac.id)}">${esc3(ac.statement)}</textarea>${ac.review.previous && ac.review.status === "pending" ? `
 <div class="meta" data-previous>Before this revision: ${esc3(ac.review.previous.status)}${ac.review.previous.comment ? ` - "${esc3(ac.review.previous.comment)}"` : ""}</div>` : ""}
 <div class="row" style="margin-top:4px">${marks(`m-${ac.id}`, ac.review.status)}<input type="text" data-f="ac-comment" data-initial="${esc3(ac.review.comment ?? "")}" placeholder="Comment" value="${esc3(ac.review.comment ?? "")}" aria-label="Comment on ${esc3(ac.id)}" style="flex:1;min-width:160px">
 <label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>`).join("");
@@ -58998,7 +59001,7 @@ var TOOLS = [
   },
   {
     name: "praxis_workflow_inspect",
-    description: "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria and the user's review of each criterion (status, comment, who and when; `requirementReview` lists the rejected and commented ones, so a BA can act on the user's remarks), User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA\u2192Architect\u2192Developer\u2192Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | all. id narrows requirements/stories/decisions/work/handoffs to one record.",
+    description: "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria and the user's review of each criterion (status, comment, who and when; `requirementReview` (view requirements) lists the rejected and commented ones, so a BA can act on the user's remarks), User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA\u2192Architect\u2192Developer\u2192Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | all. id narrows requirements/stories/decisions/work/handoffs to one record.",
     inputSchema: {
       type: "object",
       properties: {
@@ -79120,7 +79123,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"c435621b38def01e8e9013bf2f4007a897681d81007ec0ed1f8fcf1769633ccd","coreBaseline":"90e0c0518d188bb2ac4c8d1e182db8fc489a2fe1","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"b539c10140e0a08d465a500fb40bb4fdefad4c8d690bb11d912548a1c0fb2e45","coreBaseline":"11ac4f721c4fda64bb55a2a351565408a295d89e","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80605,7 +80608,7 @@ var INSPECT_VIEWS = [
   "links",
   "all"
 ];
-var SECRET_VALUE = /\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
+var SECRET_VALUE = /(?:sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)|\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
 function scrub(repo, value) {
   const root = (0, import_node_path27.resolve)(repo);
   const clean = (input2) => {
@@ -80691,7 +80694,7 @@ function reviewOf(review) {
   };
 }
 function requirementReview(state2) {
-  const rows = state2.requirements.filter((req) => req.status !== "superseded").flatMap((req) => req.acceptanceCriteria.map((c) => ({
+  const rows = state2.requirements.filter((req) => req.status !== "superseded" && req.scope === "in").flatMap((req) => req.acceptanceCriteria.map((c) => ({
     requirementId: req.id,
     scope: req.scope,
     criterionId: c.id,
@@ -80706,7 +80709,7 @@ function requirementReview(state2) {
     rejected: rows.filter((r) => r.status === "rejected"),
     commented: rows.filter((r) => r.comment !== null),
     pending: rows.filter((r) => r.status === "pending").map((r) => r.criterionId),
-    requirementComments: state2.requirements.filter((req) => req.status !== "superseded" && req.comment).map((req) => ({ requirementId: req.id, comment: req.comment }))
+    requirementComments: state2.requirements.filter((req) => req.status !== "superseded" && req.scope === "in" && req.comment).map((req) => ({ requirementId: req.id, comment: req.comment }))
   };
 }
 function requirements(state2) {

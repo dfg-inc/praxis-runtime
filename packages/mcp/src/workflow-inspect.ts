@@ -40,7 +40,7 @@ export const INSPECT_VIEWS = [
 ] as const;
 export type InspectView = (typeof INSPECT_VIEWS)[number];
 
-const SECRET_VALUE = /\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
+const SECRET_VALUE = /(?:sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)|\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
 
 function scrub<T>(repo: string, value: T): T {
   const root = resolve(repo);
@@ -140,8 +140,9 @@ function reviewOf(review: WorkflowState["requirements"][number]["acceptanceCrite
 
 /** What the user said in the requirements review: the list a BA works through. Derived from the same stored marks as the page. */
 function requirementReview(state: WorkflowState) {
+  // only what is in scope: progress counts the same set, so the lists and the numbers agree
   const rows = state.requirements
-    .filter((req) => req.status !== "superseded")
+    .filter((req) => req.status !== "superseded" && req.scope === "in")
     .flatMap((req) =>
       req.acceptanceCriteria.map((c) => ({
         requirementId: req.id,
@@ -160,7 +161,7 @@ function requirementReview(state: WorkflowState) {
     commented: rows.filter((r) => r.comment !== null),
     pending: rows.filter((r) => r.status === "pending").map((r) => r.criterionId),
     requirementComments: state.requirements
-      .filter((req) => req.status !== "superseded" && req.comment)
+      .filter((req) => req.status !== "superseded" && req.scope === "in" && req.comment)
       .map((req) => ({ requirementId: req.id, comment: req.comment as string })),
   };
 }
@@ -368,6 +369,7 @@ export async function inspectWorkflow(
   const body: Record<string, unknown> = {};
   if (view === "all") {
     for (const name of INSPECT_VIEWS.filter((v) => v !== "all")) body[name] = await section(name);
+    body.requirementReview = requirementReview(state);
   } else {
     const value = await section(view);
     if (id && Array.isArray(value) && value.length === 0) {

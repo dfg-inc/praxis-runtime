@@ -715,6 +715,17 @@ describe("the user's remarks on criteria reach the BA through praxis_workflow_in
     expect(one.requirements[0].acceptanceCriteria[1].review.comment).toBe("Лимит нужен настраиваемый");
   });
 
+  it("lists cover only in-scope criteria (as progress does) and a token-shaped comment is redacted in inspect", async () => {
+    const { repo, id } = await project();
+    await must(repo, { action: "add-requirement", id: "REQ-ORD-002", statement: "Export", acceptanceCriteria: ["Exports rows"] });
+    await save(repo, id, [{ id: "REQ-ORD-001-AC-02", revision: 1, status: "rejected", comment: "see sk-abcdefghijklmnopqrstuvwxyz1234 for details" }]);
+    await must(repo, { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "deferred", note: "later" });
+    const view = await inspect(repo, id);
+    expect(view.requirementReview.pending).toEqual(["REQ-ORD-001-AC-01"]); // the deferred requirement's criterion is not listed
+    expect(JSON.stringify(view)).not.toContain("sk-abcdefghijklmnopqrstuvwxyz1234");
+    expect((await inspect(repo, id, "all")).requirementReview.rejected.length).toBe(1);
+  });
+
   it("an item stored by alpha.48 (marks with only status, comment, at, via) is read without error", async () => {
     const { repo, id } = await project();
     await save(repo, id, [{ id: "REQ-ORD-001-AC-02", revision: 1, status: "rejected", comment: "old remark" }]);
