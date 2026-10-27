@@ -79086,7 +79086,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"6a841e55b52198d5ef662ac273802aaf2d8d008ff3baaccee2694c7c1670edb2","coreBaseline":"1ecfed0fe000e390983da233d5f8035100922394","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"84e2b79522ab3778dcc5c3528f9b59ed47de99e4689c293ead207790372c740f","coreBaseline":"de8c37bb5b5cf1fe5e89836d32c99c37aa642c52","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80069,7 +80069,7 @@ function resolveCommand(repo, command, workItemId) {
   }
   if (command.action === "open") {
     const items = layout?.index.items ?? [];
-    const same = items.find((item) => item.projectId === command.projectId && item.title === command.title && (item.jiraIssueKey ?? null) === (command.jiraIssueKey ?? null));
+    const same = items.find((item) => item.projectId === command.projectId && item.title.trim().toLowerCase() === command.title.trim().toLowerCase() && (item.jiraIssueKey ?? null) === (command.jiraIssueKey ?? null));
     if (same && layout && !command.newItem) {
       const existing = readItem(repo, layout, same.workItemId);
       if ((existing.history[0]?.note ?? "") === command.request.slice(0, 500))

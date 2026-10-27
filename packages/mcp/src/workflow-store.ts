@@ -594,7 +594,7 @@ function resolveCommand(repo: string, command: WorkflowCommand, workItemId?: str
     const same = items.find(
       (item) =>
         item.projectId === command.projectId &&
-        item.title === command.title &&
+        item.title.trim().toLowerCase() === command.title.trim().toLowerCase() &&
         (item.jiraIssueKey ?? null) === (command.jiraIssueKey ?? null),
     );
     if (same && layout && !command.newItem) {

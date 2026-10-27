@@ -638,6 +638,13 @@ describe("S10 and the link: the browser is opened once, and the secret link neve
 });
 
 describe("work item titles: no silent reuse, stable ids, explicit choice", () => {
+  it("titles that differ only by case or surrounding spaces count as the same title", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "praxis-title-case-"));
+    await must(repo, { action: "open", projectId: "p", title: "Orders", request: "first request" });
+    const clash = await record(repo, { action: "open", projectId: "p", title: " orders ", request: "another request" });
+    expect(clash.code).toBe("WORK_ITEM_TITLE_EXISTS");
+  });
+
   it("the same open again is a replay; a different request under the same title is refused with the choices; newItem creates a separate item; the first one is untouched", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-title-"));
     const first = await must(repo, { action: "open", projectId: "p", title: "Order list", request: "first request" });
