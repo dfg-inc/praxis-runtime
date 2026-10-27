@@ -70,7 +70,7 @@ async function openPage(repo: string, id: string) {
   return {
     html,
     async save(requirements: Array<Record<string, unknown>>) {
-      const body = { contract: "praxis.review.submission", version: 1, reviewId: page.reviewId, view: "requirements", workItemId: id, baseFingerprint: page.baseFingerprint, requirements: { requirements, acceptAll: false } };
+      const body = { contract: "praxis.review.submission", version: 1, reviewId: page.reviewId, view: "requirements", workItemId: id, baseFingerprint: page.baseFingerprint, baseStamp: page.baseStamp, requirements: { requirements, acceptAll: false } };
       const sent = await fetch(`${data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": page.token }, body: JSON.stringify(body) });
       expect(sent.status).toBe(200);
       return (await sent.json()) as { applied?: number; conflicts?: Array<{ item: string; reason: string }> };

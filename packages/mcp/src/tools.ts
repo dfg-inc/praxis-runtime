@@ -17,9 +17,9 @@ import {
   type WorkflowRole,
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
-import { hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannel, trustedClientMode } from "./approval-channel.js";
+import { PERSONAL_ACTS, hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannel, trustedClientMode } from "./approval-channel.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
-import { toolsForRole, type PraxisRole } from "./catalog.js";
+import { TOOLS as CATALOG_TOOLS, toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
 import { developerWorkItemStatus, inspectWorkflow } from "./workflow-inspect.js";
 import { sessionStart } from "./session-start.js";
@@ -130,6 +130,15 @@ export type ClientReport = {
  * What the user would be asked for a protected apply tool, computed from the live state, running nothing: the apply tool
  * runs against a channel that never answers, and everything that changes something asks before it changes anything.
  */
+/** An argument the tool does not declare, named with its accepted neighbours; null when every argument is declared. */
+function strayArguments(name: string, def: { inputSchema: { properties: Record<string, unknown> } }, args: Record<string, unknown>): string | null {
+  const accepted = Object.keys(def.inputSchema.properties);
+  const stray = Object.keys(args).filter((key) => !accepted.includes(key) && args[key] !== undefined);
+  if (stray.length === 0) return null;
+  const suggest = (key: string) => accepted.find((a) => a.toLowerCase() === key.toLowerCase()) ?? accepted.find((a) => key.length > 3 && (a.toLowerCase().startsWith(key.toLowerCase().slice(0, 4)) || key.toLowerCase().startsWith(a.toLowerCase().slice(0, 4))));
+  return `${name} does not take ${stray.map((key) => `"${key}"${suggest(key) ? ` (did you mean "${suggest(key)}"?)` : ""}`).join(", ")}. Accepted arguments: ${accepted.join(", ")}. Nothing was changed.`;
+}
+
 async function approvalPlan(args: Record<string, unknown>, ctx: OpContext, opts: { role: PraxisRole; version: string; extra?: Partial<OpContext>; client?: ClientReport }): Promise<unknown> {
   const target = str(args.tool);
   if (!target || !PROTECTED_TOOLS.has(target)) throw new Error(`INVALID_INPUT: tool must be one of ${[...PROTECTED_TOOLS].join(", ")}`);
@@ -144,10 +153,15 @@ async function approvalPlan(args: Record<string, unknown>, ctx: OpContext, opts:
     action: request.action,
     kind: request.kind,
     summary: request.summary,
-    planText: planTextOf(request as never),
+    // an act only a person may perform has no plan text to hand to the host's prompt: that prompt cannot stand for the person
+    ...(hostPermissionMode() && PERSONAL_ACTS.has(request.action) ? { planText: null, available: false, reason: "this act needs a client with an approval dialog; host-permission mode does not cover it" } : { planText: planTextOf(request as never) }),
     ...(request.subject ? { subjectDigest: subjectDigest(request.subject) } : {}),
     note: "This is what the user is asked to approve. It runs nothing.",
   });
+  // the arguments the plan is for are held to the target tool's own list: a misspelt workItemId must not plan the current item
+  const targetDef = CATALOG_TOOLS.find((t) => t.name === target);
+  const strayTarget = targetDef ? strayArguments(target, targetDef, targetArgs) : null;
+  if (strayTarget) throw new Error(`INVALID_INPUT: ${strayTarget}`);
   if (target === "praxis_workflow_apply") {
     // an agent-authored record needs no approval; only a human act does
     const command = JSON.parse(String(targetArgs.command ?? "{}")) as Record<string, unknown>;
@@ -279,19 +293,9 @@ async function callToolInner(
   }
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
   // An argument the tool does not declare is refused, never dropped: a misspelt workItemId must not run the action on the current work item.
-  const accepted = Object.keys(def.inputSchema.properties);
-  const stray = Object.keys(args).filter((key) => !accepted.includes(key) && args[key] !== undefined);
-  if (stray.length > 0) {
-    const suggest = (key: string) => accepted.find((a) => a.toLowerCase() === key.toLowerCase()) ?? accepted.find((a) => key.length > 3 && (a.toLowerCase().startsWith(key.toLowerCase().slice(0, 4)) || key.toLowerCase().startsWith(a.toLowerCase().slice(0, 4))));
-    return mcpEnvelope({
-      ok: false,
-      operation: name,
-      version: opts.version,
-      code: "INVALID_INPUT",
-      errors: [
-        `${name} does not take ${stray.map((key) => `"${key}"${suggest(key) ? ` (did you mean "${suggest(key)}"?)` : ""}`).join(", ")}. Accepted arguments: ${accepted.join(", ")}. Nothing was changed.`,
-      ],
-    });
+  const strayMessage = strayArguments(name, def, args);
+  if (strayMessage) {
+    return mcpEnvelope({ ok: false, operation: name, version: opts.version, code: "INVALID_INPUT", errors: [strayMessage] });
   }
   const ctx = ctxFromArgs(args, {
     ...opts.extra,
@@ -382,7 +386,7 @@ async function callToolInner(
     if (err instanceof ApprovalNeedsInput) throw err;
     const message = ops.redact(explainCommandError(err) ?? (err instanceof Error ? err.message : String(err)));
     const coded = err as { code?: unknown };
-    const prefixed = explainCommandError(err) ? "INVALID_INPUT" : message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH):/)?.[1];
+    const prefixed = explainCommandError(err) ? "INVALID_INPUT" : message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH|REVIEW_CHANGED):/)?.[1];
     const code =
       err instanceof WorkflowError
         ? err.code

@@ -89,7 +89,7 @@ async function userSave(view, wi, payload) {
   const secret = readFileSync(join(dirname(r.data.file), `${view}.url`), "utf8");
   const html = await (await fetch(secret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
-  const res = await fetch(`${secret.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: wi, baseFingerprint: data.baseFingerprint, ...payload }) });
+  const res = await fetch(`${secret.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: wi, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, ...payload }) });
   const body = await res.json();
   check(res.status === 200 && body.conflicts.length === 0, `save ${view}: ${res.status} ${JSON.stringify(body)}`);
   return body;

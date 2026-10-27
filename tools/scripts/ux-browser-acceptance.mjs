@@ -99,7 +99,7 @@ async function httpSave(view, workItemId, payload) {
   const l = await linkOf(view, workItemId);
   const html = await (await fetch(l.secret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
-  const r = await fetch(l.secret.split("?")[0] + "/submit", { method: "POST", headers: { "content-type": "application/json", origin: new URL(l.secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId, baseFingerprint: data.baseFingerprint, ...payload }) });
+  const r = await fetch(l.secret.split("?")[0] + "/submit", { method: "POST", headers: { "content-type": "application/json", origin: new URL(l.secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, ...payload }) });
   if (r.status !== 200) throw new Error("setup save " + view + ": " + r.status);
   return r.json();
 }
@@ -189,7 +189,7 @@ await scenario("B02", "Offline copy and arbitrary requests do not write; handed-
   const page2 = await page(link.secret);
   const res = await page2.evaluate(async ({ base }) => {
     const data = JSON.parse(document.getElementById("praxis-data").textContent);
-    const body = { contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "requirements", workItemId: "../../../tmp/evil", baseFingerprint: data.baseFingerprint, requirements: { requirements: [], acceptAll: false } };
+    const body = { contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "requirements", workItemId: "../../../tmp/evil", baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, requirements: { requirements: [], acceptAll: false } };
     const r = await fetch(`${base}/submit`, { method: "POST", headers: { "content-type": "application/json", "x-praxis-review-token": data.token }, body: JSON.stringify(body) });
     return r.status;
   }, { base });

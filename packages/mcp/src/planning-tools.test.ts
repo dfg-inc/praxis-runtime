@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it } from "vitest";
 import type { ApprovalRequest, AskAnswer, UserApprovalChannel } from "@praxis/contracts";
+import { reviewStamp } from "@praxis/contracts";
 import { callTool } from "./tools.js";
 import { stopReviewServer } from "./review-service.js";
 import { loadWorkflow } from "./workflow-store.js";
@@ -125,7 +126,7 @@ describe("the review page", () => {
       reviewId: data.reviewId,
       view: "requirements",
       workItemId: id,
-      baseFingerprint: data.baseFingerprint,
+      baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp,
       requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, criteria: [{ id: "REQ-ORD-001-AC-01", revision: 1, status: "accepted" }], addCriteria: [], removeCriteria: [] }], acceptAll: false },
     };
     const origin = new URL(base).origin;
@@ -178,6 +179,7 @@ describe("decisions handed over outside the page", () => {
       view: "requirements",
       workItemId: id,
       baseFingerprint: rendered.fingerprint,
+      baseStamp: reviewStamp(state(repo, id), "requirements"),
       requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, criteria: [{ id: "REQ-ORD-001-AC-01", revision: 1, status: "accepted" }, { id: "REQ-ORD-001-AC-02", revision: 1, status: "rejected", comment: "also by phone" }], addCriteria: [], removeCriteria: [] }], acceptAll: false },
     });
   }
@@ -561,7 +563,7 @@ describe("default mode, switching and contract agreement through the tools", () 
     const html = await (await fetch(secret)).text();
     const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)![1]);
     const origin = new URL(secret).origin;
-    const post = (headers: Record<string, string>) => fetch(`${secret.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", "x-praxis-review-token": data.token, ...headers }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "contracts", workItemId: id, baseFingerprint: data.baseFingerprint, contracts: { agree: ["C-1"] } }) });
+    const post = (headers: Record<string, string>) => fetch(`${secret.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", "x-praxis-review-token": data.token, ...headers }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "contracts", workItemId: id, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, contracts: { agree: ["C-1"] } }) });
     expect((await post({})).status).toBe(403);
     const ok = await post({ origin });
     expect(ok.status).toBe(200);
@@ -682,7 +684,7 @@ describe("the user's remarks on criteria reach the BA through praxis_workflow_in
     const secret = readFileSync(join(dirname(data.file), "requirements.url"), "utf8");
     const html = await (await fetch(secret)).text();
     const page = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)![1]);
-    const body = { contract: "praxis.review.submission", version: 1, reviewId: page.reviewId, view: "requirements", workItemId: id, baseFingerprint: page.baseFingerprint, requirements: { requirements: [{ id: "REQ-ORD-001", revision: state(repo, id).requirements[0].revision, criteria, addCriteria: [], removeCriteria: [] }], acceptAll: false } };
+    const body = { contract: "praxis.review.submission", version: 1, reviewId: page.reviewId, view: "requirements", workItemId: id, baseFingerprint: page.baseFingerprint, baseStamp: page.baseStamp, requirements: { requirements: [{ id: "REQ-ORD-001", revision: state(repo, id).requirements[0].revision, criteria, addCriteria: [], removeCriteria: [] }], acceptAll: false } };
     const sent = await fetch(`${data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": page.token }, body: JSON.stringify(body) });
     expect(sent.status).toBe(200);
     return sent.json();

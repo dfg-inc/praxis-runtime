@@ -134,7 +134,7 @@ async function userSaves(session, repo, view, workItemId, payload) {
   const secret = readFileSync(join(dirname(rendered.data.file), `${view}.url`), "utf8");
   const html = await (await fetch(secret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
-  const submission = { contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: data.workItemId, baseFingerprint: data.baseFingerprint, ...payload(data) };
+  const submission = { contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: data.workItemId, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, ...payload(data) };
   const res = await fetch(`${rendered.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify(submission) });
   const body = await res.json();
   check(res.status === 200, `save ${view}: ${res.status} ${JSON.stringify(body)}`);
@@ -548,7 +548,9 @@ await scenario("S14", "The user rejects: protected actions and review decisions 
   const id = await openItem(agent, repo, "Order list");
   await must(agent, repo, { action: "add-requirement", id: "REQ-ORD-001", statement: "View orders", acceptanceCriteria: ["List shows orders"] }, id);
   const rendered = (await call(agent, "praxis_review_render", { repo, workItemId: id, view: "requirements", serve: false })).data;
-  const submission = JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: id, baseFingerprint: rendered.fingerprint, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, criteria: [{ id: "REQ-ORD-001-AC-01", revision: 1, status: "accepted" }], addCriteria: [], removeCriteria: [] }], acceptAll: true } });
+  // what the page's "Copy decisions" produces carries the stamp of what the page showed
+  const offline = JSON.parse(readFileSync(rendered.file, "utf8").match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
+  const submission = JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: id, baseFingerprint: rendered.fingerprint, baseStamp: offline.baseStamp, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, criteria: [{ id: "REQ-ORD-001-AC-01", revision: 1, status: "accepted" }], addCriteria: [], removeCriteria: [] }], acceptAll: true } });
   const rejecting = await open({ elicit: decline });
   const declined = await call(rejecting, "praxis_review_apply", { repo, workItemId: id, submission, confirmation: "YES" });
   check(!declined.ok && declined.code === "APPROVAL_REJECTED", `declined: ${declined.code}`);
@@ -674,7 +676,7 @@ await scenario("S18", "Negative cases: invalid data, incomplete results, repeats
   const html = await (await fetch(staleSecret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
   await must(agent, repo, { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "View and filter orders" }] }, id);
-  const submit = await fetch(`${stale.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(staleSecret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "requirements", workItemId: id, baseFingerprint: data.baseFingerprint, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, statement: "My stale edit", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } }) });
+  const submit = await fetch(`${stale.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(staleSecret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "requirements", workItemId: id, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, statement: "My stale edit", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } }) });
   const body = await submit.json();
   eq(body.conflicts.map((c) => c.item), ["REQ-ORD-001"], "the stale edit is reported");
   eq(stateOf(repo, id).requirements[0].statement, "View and filter orders", "the other edit is not overwritten");
@@ -864,7 +866,7 @@ await scenario("S22", "Two criteria are reworded by id: exact preview, confirmat
     const secret = readFileSync(join(dirname(r.data.file), "requirements.url"), "utf8");
     const d = JSON.parse((await (await fetch(secret)).text()).match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
     return async (criterion) => {
-      const body = { contract: "praxis.review.submission", version: 1, reviewId: d.reviewId, view: "requirements", workItemId: id, baseFingerprint: d.baseFingerprint, requirements: { requirements: [{ id: "REQ-ORD-003", revision: stateOf(repo, id).requirements.find((q) => q.id === "REQ-ORD-003").revision, criteria: [criterion], addCriteria: [], removeCriteria: [] }], acceptAll: false } };
+      const body = { contract: "praxis.review.submission", version: 1, reviewId: d.reviewId, view: "requirements", workItemId: id, baseFingerprint: d.baseFingerprint, baseStamp: d.baseStamp, requirements: { requirements: [{ id: "REQ-ORD-003", revision: stateOf(repo, id).requirements.find((q) => q.id === "REQ-ORD-003").revision, criteria: [criterion], addCriteria: [], removeCriteria: [] }], acceptAll: false } };
       return (await fetch(`${r.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": d.token }, body: JSON.stringify(body) })).json();
     };
   };

@@ -137,6 +137,13 @@ export function hostPermissionChannel(planText: string | undefined): UserApprova
   return {
     kind: "host-permission",
     async ask(request: ApprovalRequest): Promise<AskAnswer> {
+      if (PERSONAL_ACTS.has(request.action)) {
+        throw new ApprovalError(
+          "APPROVAL_CLIENT_UI_REQUIRED",
+          `${request.summary} was NOT executed. Host-permission mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item): the host's tool-permission prompt can be switched to "always allow", and then the agent would have approved itself. Do it in a client that shows an approval dialog (for example Claude Code).`,
+          { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } },
+        );
+      }
       const expected = planTextOf(request);
       if (planText === undefined) {
         throw new ApprovalError(
@@ -165,8 +172,11 @@ export function hostPermissionChannel(planText: string | undefined): UserApprova
  */
 export const trustedClientMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
 
-/** Acts only a person may perform. A standing "always allow" is not the person doing them. */
-const PERSONAL_ACTS = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance"]);
+/**
+ * Acts only a person may perform. A standing "always allow", whether Trusted Client mode or the host's own tool-permission
+ * prompt, is not the person doing them: only the client's own dialog (the answer an agent cannot write) can stand for them.
+ */
+export const PERSONAL_ACTS: ReadonlySet<string> = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item"]);
 
 export const trustedClientChannel: UserApprovalChannel = {
   kind: "trusted-client",
@@ -174,7 +184,7 @@ export const trustedClientChannel: UserApprovalChannel = {
     if (PERSONAL_ACTS.has(request.action)) {
       throw new ApprovalError(
         "APPROVAL_CLIENT_UI_REQUIRED",
-        `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code), or in the praxis CLI.`,
+        `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code).`,
         { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } },
       );
     }

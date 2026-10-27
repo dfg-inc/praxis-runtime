@@ -15,6 +15,8 @@ import {
   reviewApprovalRequest,
   reviewProgress,
   ReviewSubmissionSchema,
+  parseStrict,
+  canonicalText,
   storyReviewProgress,
   submissionToCommands,
   type ReviewConflict,
@@ -98,7 +100,7 @@ function note(repo: string, workItemId: string, view: ReviewView, how: string, s
 
 /** The user clicked Save in the served page. The decisions are the user's own. */
 export function applyFromPage(repo: string, workItemId: string, view: ReviewView, raw: unknown): SubmissionOutcome {
-  const submission = ReviewSubmissionSchema.parse(raw);
+  const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   if (submission.view !== view || submission.workItemId !== workItemId) throw new Error("REVIEW_MISMATCH: this submission belongs to another review");
   const state = requireState(repo, workItemId);
   const plan = submissionToCommands(state, submission);
@@ -121,7 +123,7 @@ export function applyFromPage(repo: string, workItemId: string, view: ReviewView
  * rejected needs the user's approval in the client's dialog, bound to exactly those decisions.
  */
 export async function applyHandedOver(repo: string, workItemId: string | undefined, raw: unknown, confirmation: string | undefined): Promise<SubmissionOutcome> {
-  const submission = ReviewSubmissionSchema.parse(raw);
+  const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   const id = workItemId ?? submission.workItemId;
   const state = requireState(repo, id);
   const plan = submissionToCommands(state, submission);
@@ -130,6 +132,14 @@ export async function applyHandedOver(repo: string, workItemId: string | undefin
   if (decisions.length > 0) {
     const request = reviewApprovalRequest(decisions, `Record your ${submission.view} review decisions (${plan.details.length} decision(s))`);
     approval = await obtainUserApproval({ ...request, description: plan.details.map((s) => `- ${s}`).join("\n") }, { confirmation, repo });
+  }
+  if (approval) {
+    // The dialog can stay open for minutes. What the user approved was computed from the state at that moment; if the work item
+    // moved meanwhile, nothing is recorded and the user decides again on what is there now.
+    const fresh = submissionToCommands(requireState(repo, id), submission);
+    if (canonicalText(fresh.commands) !== canonicalText(plan.commands) || fresh.conflicts.length !== plan.conflicts.length) {
+      throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
+    }
   }
   const conflicts = [...plan.conflicts];
   let applied = 0;
