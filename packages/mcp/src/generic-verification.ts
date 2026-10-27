@@ -1,4 +1,5 @@
 import { tmpdir } from "node:os";
+import { containedPath } from "./path-guard.js";
 import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
@@ -81,12 +82,7 @@ function sameJson(left: unknown, right: unknown): boolean {
 }
 
 function safeFile(root: string, relative: string): string {
-  if (!relative || relative.startsWith("/") || relative.includes("\0") || relative.split(/[/\\]/).includes("..")) {
-    throw new Error("UNSAFE_PATH");
-  }
-  const absolute = resolve(root, relative);
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) throw new Error("UNSAFE_PATH");
-  return absolute;
+  return containedPath(root, relative);
 }
 
 const PYTHON = `import importlib.util, json, sys

@@ -18,6 +18,7 @@ import {
   parseWorkflowCommand,
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
+import { containedPath } from "./path-guard.js";
 import { PERSONAL_ACTS, hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannelWith, trustedClientMode } from "./approval-channel.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { TOOLS as CATALOG_TOOLS, toolsForRole, type PraxisRole } from "./catalog.js";
@@ -425,17 +426,24 @@ async function callToolInner(
   }
 }
 
+const MAX_IMPLEMENTATION_BYTES = 2 * 1024 * 1024;
+
 function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const command = { ...(raw as Record<string, unknown>) };
   const relative = command.implementationPath;
   if (typeof relative !== "string" || relative.length === 0) return command;
-  const root = resolve(repo);
-  const absolute = resolve(root, relative);
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
-    throw new Error("implementation path escapes the repository");
+  let real: string;
+  try {
+    real = containedPath(repo, relative);
+    const info = statSync(real);
+    if (!info.isFile()) throw new Error("UNSAFE_PATH");
+    if (info.size > MAX_IMPLEMENTATION_BYTES) throw new Error("INVALID_INPUT: the implementation file is too large to read");
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("INVALID_INPUT")) throw error;
+    throw new Error("INVALID_INPUT: implementation path escapes the repository or is not a regular file inside it");
   }
-  command.implementationSource = readFileSync(absolute, "utf8");
+  command.implementationSource = readFileSync(real, "utf8");
   delete command.implementationPath;
   return command;
 }

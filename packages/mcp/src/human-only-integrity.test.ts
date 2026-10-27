@@ -261,3 +261,88 @@ describe("trusted-client mode and the remaining approvals", () => {
     }
   });
 });
+
+describe("praxis_review_apply: what the person approves is everything that is applied", () => {
+  const writeFile = (repo: string, body: object) => {
+    writeFileSync(join(repo, "decisions.json"), JSON.stringify(body));
+    return "decisions.json";
+  };
+  const storyBody = async (repo: string, id: string, stories: Array<Record<string, unknown>>, items: Array<Record<string, unknown>> = []) => {
+    const t = await tab(repo, id, "stories");
+    return { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "stories", workItemId: id, baseFingerprint: t.page.baseFingerprint, baseStamp: t.page.baseStamp, baseState: t.page.baseState, stories: { items, stories, accept: false } };
+  };
+  const NEW = "As a manager, I want orders fast, so that I work.";
+
+  it("a story text edit alone needs the dialog: no dialog and a rejected dialog change nothing; the dialog shows the edit", async () => {
+    const { repo, id } = await lab();
+    const file = writeFile(repo, await storyBody(repo, id, [{ storyId: "US-ORD-001", revision: 1, narrative: NEW }]));
+    const before = readFileSync(itemFile(repo, id), "utf8");
+    const none = await call("praxis_review_apply", repo, { file, confirmation: "YES", workItemId: id });
+    expect(none.ok).toBe(false);
+    expect(code(none)).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    const no = dialog({ answer: "reject" });
+    expect(code(await call("praxis_review_apply", repo, { file, confirmation: "YES", workItemId: id }, no.channel))).toBe("APPROVAL_REJECTED");
+    expect(no.seen[0].description).toContain(NEW);
+    expect(no.seen[0].description).toMatch(/EDIT narrative/);
+    expect(readFileSync(itemFile(repo, id), "utf8")).toBe(before);
+    const yes = approve();
+    const done = await call("praxis_review_apply", repo, { file, confirmation: "YES", workItemId: id }, yes.channel);
+    expect(done.ok, JSON.stringify(done.errors ?? done)).toBe(true);
+    expect((done.data as { applied: number }).applied).toBe(1);
+    expect(state(repo, id).stories.find((s) => s.status !== "superseded")!.narrative).toBe(NEW);
+  });
+
+  it("a story exclusion next to a mark: one dialog, one approval for both, and the approved subject contains the exclusion", async () => {
+    const { repo, id } = await lab();
+    const body = await storyBody(repo, id, [{ storyId: "US-ORD-001", revision: 1, exclude: "not needed now" }]);
+    const yes = approve();
+    const done = await call("praxis_review_apply", repo, { file: writeFile(repo, body), confirmation: "YES", workItemId: id }, yes.channel);
+    expect(done.ok, JSON.stringify(done.errors ?? done)).toBe(true);
+    expect(yes.seen).toHaveLength(1);
+    expect(yes.seen[0].description).toMatch(/EXCLUDE from scope \(not needed now\)/);
+    expect(String(yes.seen[0].subject)).toContain("not needed now");
+    expect(state(repo, id).stories[0].status).toBe("excluded");
+  });
+
+  it("the story changes while the dialog is open: what was shown is no longer what would apply, so nothing is recorded", async () => {
+    const { repo, id } = await lab();
+    const file = writeFile(repo, await storyBody(repo, id, [{ storyId: "US-ORD-001", revision: 1, narrative: NEW }]));
+    const dlg = dialog({ answer: "approve" }, () => {
+      applyRuntimeCommand(repo, { action: "update-story", id: "US-ORD-001", patch: { objective: "changed elsewhere" }, reason: "x" }, id);
+    });
+    const res = await call("praxis_review_apply", repo, { file, confirmation: "YES", workItemId: id }, dlg.channel);
+    expect(res.ok).toBe(false);
+    expect(JSON.stringify(res)).toMatch(/REVIEW_CHANGED|changed while the approval dialog was open|story changed since/);
+    expect(state(repo, id).stories.find((s) => s.status !== "superseded")!.narrative).not.toBe(NEW);
+  });
+
+  it("a waiver or mode change is applied only to the state it was made for, and replaying the file adds nothing", async () => {
+    const { repo, id } = await lab();
+    const t = await tab(repo, id, "requirements");
+    const rendered = (await call("praxis_review_render", repo, { view: "requirements", serve: false, workItemId: id })).data as { baseState: string };
+    const body = (extra: object) => ({ contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: id, baseFingerprint: t.page.baseFingerprint, baseStamp: t.page.baseStamp, ...extra });
+    const waiver = { kind: "prototype", reason: "pure refactor, nothing to show" };
+    // no baseState at all
+    const bare = await call("praxis_review_apply", repo, { file: writeFile(repo, body({ waivers: [waiver] })), confirmation: "YES", workItemId: id }, approve().channel);
+    expect(JSON.stringify(bare.data)).toMatch(/does not say which state/);
+    expect(state(repo, id).waivers).toHaveLength(0);
+    // the item moves after the file was made
+    await record(repo, { action: "add-requirement", id: "REQ-ORD-002", statement: "More", acceptanceCriteria: ["x"] }, id);
+    const asked = approve();
+    const stale = await call("praxis_review_apply", repo, { file: writeFile(repo, body({ waivers: [waiver], modeChange: { to: "guided" }, baseState: rendered.baseState })), confirmation: "YES", workItemId: id }, asked.channel);
+    expect(JSON.stringify(stale.data)).toMatch(/work item changed since.*render the review again/);
+    expect(asked.seen).toHaveLength(0); // nothing to approve: no dialog for a plan that cannot apply
+    expect(state(repo, id).waivers).toHaveLength(0);
+    // made for the current state: shown, approved, applied once
+    const fresh = (await call("praxis_review_render", repo, { view: "requirements", serve: false, workItemId: id })).data as { baseState: string };
+    const file = writeFile(repo, body({ waivers: [waiver], baseState: fresh.baseState }));
+    const ok1 = approve();
+    const done = await call("praxis_review_apply", repo, { file, confirmation: "YES", workItemId: id }, ok1.channel);
+    expect(done.ok, JSON.stringify(done.errors ?? done)).toBe(true);
+    expect(ok1.seen[0].description).toContain("WAIVE prototype");
+    expect(state(repo, id).waivers).toHaveLength(1);
+    const again = await call("praxis_review_apply", repo, { file, confirmation: "YES", workItemId: id }, approve().channel);
+    expect(again.ok).toBe(true);
+    expect(state(repo, id).waivers).toHaveLength(1);
+  });
+});

@@ -12,16 +12,27 @@ import { join } from "node:path";
  * Runtime's memory.
  */
 const RUNNER = String.raw`
-import { existsSync, readFileSync } from "node:fs";
-import { resolve, sep } from "node:path";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 const input = JSON.parse(readFileSync(0, "utf8"));
 const out = (value) => { process.stdout.write("\n__PRAXIS_RESULT__" + JSON.stringify(value) + "\n", () => process.exit(0)); };
 function safeFile(root, relative) {
-  if (!relative || relative.startsWith("/") || relative.includes("\0") || relative.split(/[/\\]/).includes("..")) throw new Error("UNSAFE_PATH");
-  const absolute = resolve(root, relative);
-  if (absolute !== root && !absolute.startsWith(root + sep)) throw new Error("UNSAFE_PATH");
-  return absolute;
+  if (typeof relative !== "string" || !relative || relative.includes("\0") || isAbsolute(relative) || relative.split(/[/\\]/).includes("..")) throw new Error("UNSAFE_PATH");
+  const realRoot = realpathSync(resolve(root));
+  const within = (p) => p === realRoot || p.startsWith(realRoot + sep);
+  const lexical = resolve(realRoot, relative);
+  if (!within(lexical)) throw new Error("UNSAFE_PATH");
+  let existing = lexical;
+  const rest = [];
+  for (;;) {
+    try { lstatSync(existing); break; } catch { const parent = dirname(existing); if (parent === existing) throw new Error("UNSAFE_PATH"); rest.unshift(basename(existing)); existing = parent; }
+  }
+  let realExisting;
+  try { realExisting = realpathSync(existing); } catch { throw new Error("UNSAFE_PATH"); }
+  const real = resolve(realExisting, ...rest);
+  if (!within(real)) throw new Error("UNSAFE_PATH");
+  return real;
 }
 async function loadModule(service, relative) {
   if (!service.localPath) return { missingLocation: true, repository: service.repository, file: relative };

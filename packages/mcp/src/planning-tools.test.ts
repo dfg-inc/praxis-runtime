@@ -480,8 +480,8 @@ describe("waivers are the user's", () => {
   it("an agent cannot waive; a waiver the user approves in the dialog is recorded and shown to them", async () => {
     const { repo, id } = await project();
     expect((await record(repo, { action: "waive-coverage", kind: "prototype", reason: "agent says so" })).code).toBe("USER_DECISION_REQUIRED");
-    const rendered = (await call("praxis_review_render", repo, { view: "prototype", serve: false, workItemId: id })).data as { fingerprint: string };
-    const submission = JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "w", view: "prototype", workItemId: id, baseFingerprint: rendered.fingerprint, waivers: [{ kind: "prototype", reason: "pure refactor, nothing to show" }] });
+    const rendered = (await call("praxis_review_render", repo, { view: "prototype", serve: false, workItemId: id })).data as { fingerprint: string; baseState: string };
+    const submission = JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "w", view: "prototype", workItemId: id, baseFingerprint: rendered.fingerprint, baseState: rendered.baseState, waivers: [{ kind: "prototype", reason: "pure refactor, nothing to show" }] });
     const { channel, seen } = dialog({ answer: "approve" });
     const res = await call("praxis_review_apply", repo, { submission, confirmation: "YES" }, channel);
     expect(res.ok, JSON.stringify(res.errors)).toBe(true);
@@ -530,8 +530,8 @@ describe("default mode, switching and contract agreement through the tools", () 
     const down = await record(repo, { action: "set-mode", mode: "classic" }, id);
     expect(down.code).toBe("USER_DECISION_REQUIRED");
     expect(state(repo, id).mode).toBe("guided");
-    const rendered = (await call("praxis_review_render", repo, { view: "requirements", serve: false, workItemId: id })).data as { fingerprint: string };
-    const submission = JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "m", view: "requirements", workItemId: id, baseFingerprint: rendered.fingerprint, modeChange: { to: "classic", reason: "I prefer it" } });
+    const rendered = (await call("praxis_review_render", repo, { view: "requirements", serve: false, workItemId: id })).data as { fingerprint: string; baseState: string };
+    const submission = JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "m", view: "requirements", workItemId: id, baseFingerprint: rendered.fingerprint, baseState: rendered.baseState, modeChange: { to: "classic", reason: "I prefer it" } });
     const declined = await call("praxis_review_apply", repo, { submission, confirmation: "YES", workItemId: id }, dialog({ answer: "reject" }).channel);
     expect(declined.code).toBe("APPROVAL_REJECTED");
     expect(state(repo, id).mode).toBe("guided");

@@ -7,7 +7,9 @@ import { join, resolve, sep } from "node:path";
 import {
   acceptanceStatus,
   fingerprintFor,
+  workStateStamp,
   isUserDecision,
+  needsApprovalWhenHandedOver,
   nextStep,
   obtainUserApproval,
   renderReview,
@@ -16,6 +18,7 @@ import {
   reviewProgress,
   ReviewSubmissionSchema,
   parseStrict,
+  parseWorkflowCommand,
   canonicalText,
   storyReviewProgress,
   submissionToCommands,
@@ -119,33 +122,39 @@ export function applyFromPage(repo: string, workItemId: string, view: ReviewView
 }
 
 /**
- * Decisions handed over outside the page. Edits apply as the agent's records; whatever records that the user accepted or
- * rejected needs the user's approval in the client's dialog, bound to exactly those decisions.
+ * Decisions handed over outside the page. Plain edits (requirement text, plan lines, prototype comments) apply as the agent's
+ * records. When the file holds anything that needs the person (a mark or agreement, or a change to a story, a contract, the
+ * mode or a waiver), the client's dialog shows the whole plan and the approval binds every command in it.
  */
 export async function applyHandedOver(repo: string, workItemId: string | undefined, raw: unknown, confirmation: string | undefined): Promise<SubmissionOutcome> {
   const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   const id = workItemId ?? submission.workItemId;
   const state = requireState(repo, id);
   const plan = submissionToCommands(state, submission);
-  const decisions = plan.commands.filter((c) => isUserDecision(c as never));
+  // When anything in the file needs the person (a decision, or a change to a story, a contract, the mode, a waiver), the dialog
+  // shows the whole plan and the approval binds every command in it: nothing is applied next to it that the person did not see.
+  // the commands in the form the contract will see them (defaults filled in): the approval binds exactly these
+  const commands = plan.commands.map((c) => parseWorkflowCommand(c) as unknown as Record<string, unknown>);
+  const gated = commands.some((c) => needsApprovalWhenHandedOver(c as never));
+  const batch = gated ? commands : [];
   let approval;
-  if (decisions.length > 0) {
-    const request = reviewApprovalRequest(decisions, `Record your ${submission.view} review decisions (${plan.details.length} decision(s))`);
+  if (gated) {
+    const request = reviewApprovalRequest(batch, `Record your ${submission.view} review decisions and changes (${plan.details.length} item(s))`);
     approval = await obtainUserApproval({ ...request, description: plan.details.map((s) => `- ${s}`).join("\n") }, { confirmation, repo });
   }
   if (approval) {
     // The dialog can stay open for minutes. What the user approved was computed from the state at that moment; if the work item
     // moved meanwhile, nothing is recorded and the user decides again on what is there now.
     const fresh = submissionToCommands(requireState(repo, id), submission);
-    if (canonicalText(fresh.commands) !== canonicalText(plan.commands) || fresh.conflicts.length !== plan.conflicts.length) {
+    if (canonicalText(fresh.commands) !== canonicalText(plan.commands) || canonicalText(fresh.details) !== canonicalText(plan.details) || fresh.conflicts.length !== plan.conflicts.length) {
       throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
     }
   }
   const conflicts = [...plan.conflicts];
   let applied = 0;
-  for (const command of plan.commands) {
+  for (const command of commands) {
     try {
-      applyRuntimeCommand(repo, command, id, approval && isUserDecision(command as never) ? { via: "approved", approval, batch: decisions } : undefined);
+      applyRuntimeCommand(repo, command, id, approval ? { via: "approved", approval, batch } : undefined);
       applied += 1;
     } catch (error) {
       conflicts.push({ item: String(command.action), reason: error instanceof Error ? error.message.replace(/^[A-Z_]+: /, "") : String(error) });
@@ -310,7 +319,7 @@ export async function renderReviewTool(repo: string, input: { view: string; work
     // a page for this view is already open and its link still valid: do not open another browser tab on every call
     const live = [...sessions.values()].find((s) => s.repo === repo && s.workItemId === state.workItem.id && s.view === view && s.loadUntil > Date.now() && s.openedAt !== undefined);
     if (live && !input.reopen) {
-      return { view, workItemId: state.workItem.id, file, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state, view), progress: progressFor(state, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
+      return { view, workItemId: state.workItem.id, file, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state, view), baseState: workStateStamp(state), progress: progressFor(state, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
     const id = randomBytes(8).toString("hex");
     const loadToken = randomBytes(24).toString("hex");
@@ -329,6 +338,7 @@ export async function renderReviewTool(repo: string, input: { view: string; work
     file,
     ...(url ? { url, openedInBrowser: opened } : {}),
     fingerprint: fingerprintFor(state, view),
+    baseState: workStateStamp(state),
     progress: progressFor(state, view),
     how: url
       ? opened

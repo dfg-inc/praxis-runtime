@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { containedPath } from "./path-guard.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -43,12 +44,7 @@ function git(repo: string, args: string[], input?: string): string {
 }
 
 function safeFile(root: string, relative: string): string {
-  if (!relative || relative.startsWith("/") || relative.includes("\0") || relative.split(/[/\\]/).includes("..")) {
-    throw new Error("UNSAFE_PATH");
-  }
-  const absolute = resolve(root, relative);
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) throw new Error("UNSAFE_PATH");
-  return absolute;
+  return containedPath(root, relative);
 }
 
 /** The project adapter runs in its own process with a scrubbed environment (see project-code-runner.ts); only JSON crosses. */
@@ -105,6 +101,7 @@ function serviceVerdicts(scenarios: Scenario[]): VerificationMeta["serviceVerdic
 }
 
 function readHostProposal(workflowRepo: string, serviceId: string): Proposal | undefined {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serviceId) || serviceId.includes("..")) throw new Error("UNSAFE_PATH");
   const file = join(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
   if (!existsSync(file)) return undefined;
   const parsed = JSON.parse(readFileSync(file, "utf8")) as Proposal;
