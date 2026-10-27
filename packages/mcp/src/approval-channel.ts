@@ -166,7 +166,7 @@ export function hostPermissionChannel(planText: string | undefined): UserApprova
 export const trustedClientMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
 
 /** Acts only a person may perform. A standing "always allow" is not the person doing them. */
-const PERSONAL_ACTS = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions"]);
+const PERSONAL_ACTS = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance"]);
 
 export const trustedClientChannel: UserApprovalChannel = {
   kind: "trusted-client",
@@ -174,7 +174,7 @@ export const trustedClientChannel: UserApprovalChannel = {
     if (PERSONAL_ACTS.has(request.action)) {
       throw new ApprovalError(
         "APPROVAL_CLIENT_UI_REQUIRED",
-        `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code), or in the praxis CLI.`,
+        `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code), or in the praxis CLI.`,
         { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } },
       );
     }

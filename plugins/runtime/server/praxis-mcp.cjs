@@ -4773,7 +4773,8 @@ var init_human_acts = __esm({
     HUMAN_ACT_KIND = {
       "confirm-story": "story_behavior",
       "confirm-decision": "architecture_decision",
-      "approve-service": "quality_verdict"
+      "approve-service": "quality_verdict",
+      "revise-acceptance": "requirement_acceptance"
     };
   }
 });
@@ -5226,7 +5227,7 @@ function keepArtifact(state2, kind, id, revision, value, now) {
   }
   return { ...state2, artifactHistory: kept2 };
 }
-function applyRequirementDecisions(state2, command, now) {
+function applyRequirementDecisions(state2, command, now, approvedRewording = false) {
   let next = state2;
   const changed = [];
   const summary = [];
@@ -5264,6 +5265,9 @@ function applyRequirementDecisions(state2, command, now) {
       const before = criterion;
       if (ac.statement !== void 0 && ac.statement !== criterion.statement) {
         const old = criterion.review;
+        if (command.via === "chat" && !approvedRewording && old.status === "accepted") {
+          throw new WorkflowError("USER_DECISION_REQUIRED", `${ac.id} is accepted by the user; an agent does not reword it through review-requirements. Use revise-acceptance: the user is asked to approve the new wording in the client's dialog.`);
+        }
         const previous = old.status !== "pending" || old.comment ? { status: old.status, ...old.comment ? { comment: old.comment } : {}, ...old.at ? { at: old.at } : {}, ...old.via ? { via: old.via } : {}, revision: criterion.revision } : old.previous;
         criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending", ...previous ? { previous } : {} } };
         revised = true;
@@ -5319,6 +5323,9 @@ function applyRequirementDecisions(state2, command, now) {
     for (const id of decision.removeAcceptance) {
       if (!requirement.acceptanceCriteria.some((c) => c.id === id))
         throw missing("MISSING_ACCEPTANCE_CRITERION", `${id} is not an acceptance criterion of ${requirement.id}`);
+      if (command.via === "chat" && requirement.acceptanceCriteria.find((c) => c.id === id).review.status === "accepted") {
+        throw new WorkflowError("USER_DECISION_REQUIRED", `${id} is accepted by the user; an agent does not remove it. The user removes it in the review page.`);
+      }
       requirement.acceptanceCriteria = requirement.acceptanceCriteria.filter((c) => c.id !== id);
       revised = true;
       summary.push(`${id} removed`);
@@ -5998,6 +6005,8 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
     case "review-requirements":
       return applyRequirementDecisions(state2, command, now);
     case "revise-acceptance": {
+      if (!options2.approvedRewording)
+        throw new WorkflowError("APPROVAL_REQUIRED", "revise-acceptance runs only through applyWorkflowCommand, after the user's approval was verified");
       const seen = /* @__PURE__ */ new Set();
       const byRequirement = /* @__PURE__ */ new Map();
       for (const edit of command.edits) {
@@ -6014,7 +6023,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
         byRequirement.set(owner.id, [...byRequirement.get(owner.id) ?? [], { id: edit.id, statement: edit.statement }]);
       }
       const decisions2 = [...byRequirement].map(([requirementId, acceptance]) => ({ requirementId, acceptance, addAcceptance: [], removeAcceptance: [] }));
-      return applyRequirementDecisions(state2, { action: "review-requirements", via: "chat", decisions: decisions2.map((d) => RequirementDecision.parse(d)) }, now);
+      return applyRequirementDecisions(state2, { action: "review-requirements", via: "chat", decisions: decisions2.map((d) => RequirementDecision.parse(d)) }, now, true);
     }
     case "accept-requirements": {
       const ids = command.requirementIds ?? inScope(state2).map((r) => r.id);
@@ -6849,6 +6858,35 @@ ${bullet(story.expectedResults)}`,
       risks: ["Confirming records the decision as accepted. It does not confirm stories, authorize implementation or approve any service."]
     };
   }
+  if (command.action === "revise-acceptance") {
+    const rows = [];
+    for (const edit of command.edits) {
+      const owner = state2.requirements.find((r) => r.status !== "superseded" && r.acceptanceCriteria.some((c) => c.id === edit.id));
+      const criterion = owner?.acceptanceCriteria.find((c) => c.id === edit.id);
+      if (!owner || !criterion)
+        return null;
+      if (criterion.statement !== edit.statement)
+        rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...criterion.review.comment ? { comment: criterion.review.comment } : {}, from: criterion.statement, to: edit.statement });
+    }
+    if (rows.length === 0)
+      return null;
+    const content = humanActContent("revise-acceptance", { workItemId: state2.workItem.id, edits: rows });
+    const accepted = rows.filter((row) => row.status === "accepted");
+    return {
+      action: "revise-acceptance",
+      targetId: rows.map((row) => row.id).join(","),
+      content,
+      planId: idFor("revise-acceptance", content),
+      role: "ba",
+      summary: `Reword ${rows.length} acceptance criterion(a): ${rows.map((row) => row.id).join(", ")}`,
+      description: [
+        ...rows.map((row) => [`${row.id} (revision ${row.revision} -> ${row.revision + 1}, now ${row.status.toUpperCase()}${row.comment ? `, your remark: "${row.comment}"` : ""}):`, `  from: ${row.from}`, `  to:   ${row.to}`].join("\n")),
+        accepted.length ? `WARNING: ${accepted.map((row) => row.id).join(", ")} ${accepted.length === 1 ? "is" : "are"} ACCEPTED by you. Approving withdraws that acceptance: the criterion returns to pending and you decide again.` : "",
+        "Each reworded criterion returns to pending; its earlier decision and remark stay readable as 'previous'. No other criterion changes."
+      ].filter(Boolean).join("\n"),
+      risks: ["Rewording a criterion changes what you reviewed: it returns to pending and the requirement's stories, verdicts and implementation records become stale."]
+    };
+  }
   if (command.action === "set-service") {
     const approving = command.service.status === "approved" || command.service.status === "completed";
     const previous = state2.services.find((item) => item.id === command.service.id);
@@ -7156,6 +7194,13 @@ function parseWorkflowCommand(raw) {
 function commandFingerprint(command) {
   return fingerprintPayload(command);
 }
+function dryRunCommand(state2, raw) {
+  const command = parseWorkflowCommand(raw);
+  if (!PLANNING_ACTIONS.has(command.action))
+    throw new WorkflowError("DRY_RUN_UNSUPPORTED", `${command.action} has no dry run`);
+  const out = applyPlanningCommand(state2, command, { approvedRewording: true });
+  return { duplicate: out.duplicate, result: out.result };
+}
 function applyWorkflowCommand(state2, raw, options2) {
   const command = parseWorkflowCommand(raw);
   if (command.action === "open") {
@@ -7172,6 +7217,16 @@ function applyWorkflowCommand(state2, raw, options2) {
   }
   if (!state2)
     throw new WorkflowError("WORKFLOW_MISSING", "open a workflow before applying commands");
+  if (command.action === "revise-acceptance") {
+    const request = humanActRequest(state2, command);
+    if (request) {
+      if (!options2?.userApproval) {
+        throw new WorkflowError("APPROVAL_REQUIRED", "rewording acceptance criteria needs the user's approval: preview it, let the user approve in the client's dialog, then apply. An agent cannot approve it, and in a client without a dialog it is not executed.");
+      }
+      verifyUserApproval(options2.userApproval, { action: "revise-acceptance", subject: request.content });
+    }
+    return applyPlanningCommand(state2, command, { now: options2?.now, channel: options2?.channel, approvedRewording: true });
+  }
   if (PLANNING_ACTIONS.has(command.action)) {
     return applyPlanningCommand(state2, command, { now: options2?.now, channel: options2?.channel });
   }
@@ -8575,12 +8630,16 @@ function submissionToCommands(state2, raw) {
           conflicts.push({ item: criterion.id, reason: "the criterion no longer exists" });
           continue;
         }
-        if (live.revision !== criterion.revision && criterion.statement === void 0) {
-          conflicts.push({ item: criterion.id, reason: `criterion changed since the review (now revision ${live.revision})` });
+        if (live.revision !== criterion.revision) {
+          conflicts.push({ item: criterion.id, reason: `criterion changed since you opened this page (now revision ${live.revision}, the page showed ${criterion.revision}): reload the page; your edit to it was not saved` });
+          continue;
+        }
+        if (criterion.fromComment !== void 0 && criterion.comment !== void 0 && (live.review.comment ?? "") !== criterion.fromComment) {
+          conflicts.push({ item: criterion.id, reason: `the remark changed since you opened this page (now "${(live.review.comment ?? "").slice(0, 120)}"): reload the page; your remark was not saved` });
           continue;
         }
         if (criterion.from !== void 0 && criterion.status !== void 0 && live.review.status !== criterion.from) {
-          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} by someone else since the review (the page showed ${criterion.from})` });
+          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} since you opened this page (the page showed ${criterion.from}): reload the page; your decision was not saved` });
           continue;
         }
         const unchanged = (criterion.status === void 0 || criterion.status === live.review.status) && (criterion.comment === void 0 || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === void 0 || criterion.statement === live.statement);
@@ -8819,7 +8878,7 @@ var init_review_submission = __esm({
         scopeNote: external_exports.string().max(2e3).optional(),
         statement: external_exports.string().min(1).max(4e3).optional(),
         comment: external_exports.string().max(4e3).optional(),
-        criteria: external_exports.array(external_exports.object({ id: external_exports.string().min(1), revision: external_exports.number().int().positive(), from: Mark.optional(), status: Mark.optional(), comment: external_exports.string().max(4e3).optional(), statement: external_exports.string().min(1).max(4e3).optional() })).default([]),
+        criteria: external_exports.array(external_exports.object({ id: external_exports.string().min(1), revision: external_exports.number().int().positive(), from: Mark.optional(), fromComment: external_exports.string().max(4e3).optional(), status: Mark.optional(), comment: external_exports.string().max(4e3).optional(), statement: external_exports.string().min(1).max(4e3).optional() })).default([]),
         addCriteria: external_exports.array(external_exports.object({ statement: external_exports.string().min(1).max(4e3) })).default([]),
         removeCriteria: external_exports.array(external_exports.string()).default([])
       })).default([]),
@@ -9144,7 +9203,7 @@ function collect(){
         if($('[data-f=remove]',row)&&$('[data-f=remove]',row).checked){item.removeCriteria.push(aid);touched=true;return}
         var c={id:aid,revision:num(row)};var ch=false;
         var m=markOf(row,'m-'+aid);if(m&&m!==row.getAttribute('data-initial-status')){c.status=m;c.from=row.getAttribute('data-initial-status');ch=true}
-        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==cm.getAttribute('data-initial')){c.comment=val(cm);ch=true}
+        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==cm.getAttribute('data-initial')){c.comment=val(cm);c.fromComment=cm.getAttribute('data-initial')||'';ch=true}
         var ts=$('[data-f=ac-statement]',row);if(ts&&val(ts)!==ts.getAttribute('data-initial')){c.statement=val(ts);ch=true}
         if(ch){item.criteria.push(c);touched=true}
       });
@@ -9204,7 +9263,7 @@ $('#btn-save').addEventListener('click',function(){
   fetch(D.saveUrl,{method:'POST',headers:{'content-type':'application/json','x-praxis-review-token':D.token||''},body:JSON.stringify(s)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(x){
     if(!x.ok){showOut(text);toast('Not saved ('+(x.j&&x.j.error||'error')+'). Decisions are below: copy them to Claude.',true);return}
     var c=(x.j.conflicts||[]).length;
-    toast('Saved: '+(x.j.applied||0)+' change(s) applied'+(c?', '+c+' conflict(s): '+x.j.conflicts.map(function(k){return k.item+' ('+k.reason+')'}).join('; '):'')+'. Reload to see the new revision.',c>0);
+    toast(c?('Saved: '+(x.j.applied||0)+' change(s) applied. NOT saved, '+c+' conflict(s) - this page is out of date: '+x.j.conflicts.map(function(k){return k.item+' ('+k.reason+')'}).join('; ')+'. Reload the page to see the current state, then decide again.'):('Saved: '+(x.j.applied||0)+' change(s) applied. Reload to see the new revision.'),c>0);
   }).catch(function(){showOut(text);toast('Cannot reach Praxis (the review session ended). Decisions are below: copy them to Claude.',true)})
 });
 $('#btn-copy').addEventListener('click',function(){var t=summary(collect());showOut(t);if(navigator.clipboard){navigator.clipboard.writeText(t).then(function(){toast('Copied.',false)},function(){toast('Select and copy the text below.',false)})}else toast('Select and copy the text below.',false)});
@@ -59302,7 +59361,7 @@ var TOOLS = [
   },
   {
     name: "praxis_workflow_preview",
-    description: "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, revise-acceptance, set-service, quality-check). To change the text of ONE or more existing acceptance criteria by id (REQ-...-AC-nn) use revise-acceptance {edits:[{id,statement}]}: only those criteria get a new revision and return to pending (their earlier decision and remark stay as 'previous'); the result lists each criterion before and after (acceptanceChanges). A key the command does not accept is refused (UNKNOWN_COMMAND_PARAMETER), never ignored; a command that changes nothing reports noChange. A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
+    description: "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, revise-acceptance, set-service, quality-check). To change the text of ONE or more existing acceptance criteria by id (REQ-...-AC-nn) use revise-acceptance {edits:[{id,statement}]}: only those criteria get a new revision and return to pending (their earlier decision and remark stay as 'previous'); the result lists each criterion before and after (acceptanceChanges). Applying it asks the USER to approve the exact wording in the client's dialog (an agent's confirmation=YES is not enough; a client without a dialog cannot run it); an agent cannot reword an accepted criterion any other way. A key the command does not accept is refused (UNKNOWN_COMMAND_PARAMETER), never ignored; a command that changes nothing reports noChange. A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
     inputSchema: {
       type: "object",
       properties: {
@@ -59502,12 +59561,12 @@ function hostPermissionChannel(planText) {
   };
 }
 var trustedClientMode = () => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
-var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions"]);
+var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance"]);
 var trustedClientChannel = {
   kind: "trusted-client",
   async ask(request) {
     if (PERSONAL_ACTS.has(request.action)) {
-      throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code), or in the praxis CLI.`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
+      throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code), or in the praxis CLI.`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
     }
     return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
   }
@@ -79223,7 +79282,7 @@ function jsonSchemaToZod(schema) {
       field = field.optional();
     shape[key] = field;
   }
-  return external_exports2.object(shape);
+  return external_exports2.looseObject(shape);
 }
 
 // packages/mcp/dist/diagnostics-log.js
@@ -79258,7 +79317,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"0690091c2417a5b61ac2c5ae10c7a2a1e81fe97d74005b7699124ce426a9065b","coreBaseline":"cfd29d2cd130b448488c9bba6a5ff66fb40a5aab","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"3d656a4fb0af56fc43bfbc445a505f50fabe2435f8d06a9808f014bc4e090718","coreBaseline":"57018f281793f5ab920268dfe5df31cdae8ffac6","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80283,10 +80342,11 @@ function previewWorkflow(repo, raw, workItemId) {
   }
   const humanApproval = humanApprovalView(resolved.state, resolved.command);
   if (humanApproval && resolved.state) {
+    const dry = resolved.command.action === "revise-acceptance" ? dryRunCommand(resolved.state, resolved.command) : null;
     return {
       fingerprint: fingerprint2,
       duplicate: false,
-      result: { awaitingUserApproval: humanApproval.action },
+      result: { awaitingUserApproval: humanApproval.action, ...dry ? dry.result : {} },
       resume: resumeWorkflow(resolved.state),
       currentWorkItemId: workItemId ?? current,
       humanApproval
@@ -80393,6 +80453,8 @@ async function applyWorkflowApproved(repo, raw, fingerprint2, workItemId, confir
     const approval = await obtainUserApproval({ ...reviewApprovalRequest(batch, view.summary), description: view.description }, { confirmation, repo });
     return guarded(repo, fingerprint2, raw, raw, workItemId, void 0, { via: "approved", approval, batch });
   }
+  if (resolved.state && resolved.command.action === "revise-acceptance")
+    dryRunCommand(resolved.state, resolved.command);
   const userApproval = resolved.state ? await requireUserApproval(repo, resolved.state, resolved.command, confirmation) : void 0;
   return guarded(repo, fingerprint2, raw, raw, workItemId, userApproval);
 }
@@ -82339,6 +82401,20 @@ async function callToolInner(name, rawArgs, opts) {
     });
   }
   const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {};
+  const accepted = Object.keys(def.inputSchema.properties);
+  const stray = Object.keys(args).filter((key) => !accepted.includes(key) && args[key] !== void 0);
+  if (stray.length > 0) {
+    const suggest = (key) => accepted.find((a) => a.toLowerCase() === key.toLowerCase()) ?? accepted.find((a) => key.length > 3 && (a.toLowerCase().startsWith(key.toLowerCase().slice(0, 4)) || key.toLowerCase().startsWith(a.toLowerCase().slice(0, 4))));
+    return mcpEnvelope({
+      ok: false,
+      operation: name,
+      version: opts.version,
+      code: "INVALID_INPUT",
+      errors: [
+        `${name} does not take ${stray.map((key) => `"${key}"${suggest(key) ? ` (did you mean "${suggest(key)}"?)` : ""}`).join(", ")}. Accepted arguments: ${accepted.join(", ")}. Nothing was changed.`
+      ]
+    });
+  }
   const ctx = ctxFromArgs(args, {
     ...opts.extra
   });

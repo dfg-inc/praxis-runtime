@@ -16,6 +16,7 @@ import {
   routeCapabilities,
   runWorkflowRecordWrite,
   parseWorkflowCommand,
+  dryRunCommand,
   WorkflowCommandSchema,
   WorkflowStateSchema,
   workItemIdFor,
@@ -654,10 +655,12 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
   // Show what the user will be asked, built from the same state the apply will use.
   const humanApproval = humanApprovalView(resolved.state, resolved.command);
   if (humanApproval && resolved.state) {
+    // a rewording shows its exact outcome (and any conflict) before the user is asked: the dry run writes nothing
+    const dry = resolved.command.action === "revise-acceptance" ? dryRunCommand(resolved.state, resolved.command) : null;
     return {
       fingerprint,
       duplicate: false,
-      result: { awaitingUserApproval: humanApproval.action },
+      result: { awaitingUserApproval: humanApproval.action, ...(dry ? (dry.result as object) : {}) },
       resume: resumeWorkflow(resolved.state),
       currentWorkItemId: workItemId ?? current,
       humanApproval,
@@ -804,6 +807,8 @@ export async function applyWorkflowApproved(
     const approval = await obtainUserApproval({ ...reviewApprovalRequest(batch, view.summary), description: view.description }, { confirmation, repo });
     return guarded(repo, fingerprint, raw, raw, workItemId, undefined, { via: "approved", approval, batch });
   }
+  // a refusal the user could not fix by approving (unknown id, changed revision) comes before the dialog
+  if (resolved.state && resolved.command.action === "revise-acceptance") dryRunCommand(resolved.state, resolved.command);
   const userApproval = resolved.state ? await requireUserApproval(repo, resolved.state, resolved.command, confirmation) : undefined;
   return guarded(repo, fingerprint, raw, raw, workItemId, userApproval);
 }

@@ -187,7 +187,7 @@ const repoWithPackageJson = () => {
     expect(noConfirm.isError === true && !existsSync(join(repo, ".project")), `no confirmation: ${JSON.stringify(noConfirm).slice(0, 300)}`);
     for (const confirmation of ["YES", "yes", "APPROVED"]) {
       // a value outside the tool's schema is refused by the host itself (no envelope); either way nothing runs
-      const refused = await call(session, "praxis_project_init_apply", { repo, confirmation, approved: true, userApproval: { decision: "approved" } }).catch(() => null);
+      const refused = await call(session, "praxis_project_init_apply", { repo, confirmation }).catch(() => null);
       expect((refused === null || refused.ok === false) && !existsSync(join(repo, ".project")), `confirmation=${confirmation} without a dialog ran: ${JSON.stringify(refused)}`);
       if (confirmation === "YES") {
         expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && /NOT executed/.test(refused.errors.join(" ")), `refusal: ${JSON.stringify(refused)}`);

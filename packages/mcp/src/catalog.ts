@@ -601,6 +601,7 @@ export const TOOLS: ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] },
         workPackage: wpProp,
         repo: repoProp,
         remoteName: { type: "string" },
@@ -643,6 +644,7 @@ export const TOOLS: ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] },
         workPackage: wpProp,
         repo: repoProp,
         remoteName: { type: "string" },
@@ -702,7 +704,8 @@ export const TOOLS: ToolDef[] = [
       "READ-ONLY Git Delivery journal: commit SHA, remote identity, PR/MR URL, CI status if known. Does not write. Role: Developer.",
     inputSchema: {
       type: "object",
-      properties: { workPackage: wpProp, repo: repoProp },
+      properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] }, workPackage: wpProp, repo: repoProp },
       required: ["workPackage"],
       additionalProperties: false,
     },
@@ -935,7 +938,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_workflow_preview",
     description:
-      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, revise-acceptance, set-service, quality-check). To change the text of ONE or more existing acceptance criteria by id (REQ-...-AC-nn) use revise-acceptance {edits:[{id,statement}]}: only those criteria get a new revision and return to pending (their earlier decision and remark stay as 'previous'); the result lists each criterion before and after (acceptanceChanges). A key the command does not accept is refused (UNKNOWN_COMMAND_PARAMETER), never ignored; a command that changes nothing reports noChange. A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
+      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, revise-acceptance, set-service, quality-check). To change the text of ONE or more existing acceptance criteria by id (REQ-...-AC-nn) use revise-acceptance {edits:[{id,statement}]}: only those criteria get a new revision and return to pending (their earlier decision and remark stay as 'previous'); the result lists each criterion before and after (acceptanceChanges). Applying it asks the USER to approve the exact wording in the client's dialog (an agent's confirmation=YES is not enough; a client without a dialog cannot run it); an agent cannot reword an accepted criterion any other way. A key the command does not accept is refused (UNKNOWN_COMMAND_PARAMETER), never ignored; a command that changes nothing reports noChange. A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
     inputSchema: {
       type: "object",
       properties: {

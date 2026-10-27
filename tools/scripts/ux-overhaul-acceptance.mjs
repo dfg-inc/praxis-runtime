@@ -491,7 +491,8 @@ await scenario("S11", "Return to BA after a requirement changes: acceptances bec
   await userSaves(agent, repo, "prototype", id, () => ({ prototype: { feedback: [], resolve: [], accept: true } }));
   const before = stateOf(repo, id);
   await must(agent, repo, { action: "return-to-phase", to: "requirements_review", reason: "the user changed the search requirement" }, id);
-  await must(agent, repo, { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-02", statement: "A manager can search by number or customer name" }] }] }, id);
+  // the user had accepted this criterion: rewording it asks the user (the scripted dialog approves)
+  await must(agent, repo, { action: "revise-acceptance", edits: [{ id: "REQ-ORD-001-AC-02", statement: "A manager can search by number or customer name" }] }, id);
   const s = stateOf(repo, id);
   eq(s.phase, "requirements_review", "phase");
   eq(s.requirements[0].acceptanceCriteria[1].review.status, "pending", "the edited criterion is pending again");
@@ -818,7 +819,22 @@ await scenario("S22", "Two criteria are reworded by id: exact preview, confirmat
   check(p.ok, `preview: ${p.code} ${JSON.stringify(p.errors)}`);
   eq(p.data.result.acceptanceChanges.map((c) => [c.id, c.before.status, c.before.revision, c.after.revision, c.after.status]), [[AC6, "rejected", 1, 2, "pending"], [AC5, "rejected", 1, 2, "pending"]], "the preview names both criteria, their revisions and the review reset");
   eq(all(), before, "a preview writes nothing");
-  // the user confirms
+  // the agent's own "YES" is not the user's approval: a client without a dialog cannot run it, a user who declines stops it
+  const noDialogS = await open({});
+  const noDialogApply = await call(noDialogS, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify(edit), confirmation: "YES", previewFingerprint: p.data.fingerprint });
+  check(!noDialogApply.ok && noDialogApply.code === "APPROVAL_CLIENT_UI_REQUIRED", `no dialog: the rewording must not run: ${noDialogApply.code}`);
+  const decliner = await open({ elicit: decline });
+  const declined = await call(decliner, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify(edit), confirmation: "YES", previewFingerprint: p.data.fingerprint });
+  check(!declined.ok && /APPROVAL_(REJECTED|DECLINED)|REJECT/.test(`${declined.code}`), `declined dialog: the rewording must not run: ${declined.code}`);
+  const forgedArg = await call(agent, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify(edit), confirmation: "YES", previewFingerprint: p.data.fingerprint, approved: true });
+  check(!forgedArg.ok && forgedArg.code === "INVALID_INPUT", `an undeclared argument is refused: ${forgedArg.code}`);
+  const typo = await call(agent, "praxis_workflow_inspect", { repo, workitemId: id, view: "requirements" });
+  check(!typo.ok && typo.code === "INVALID_INPUT" && JSON.stringify(typo).includes("workItemId"), `a misspelt workItemId is an error: ${typo.code}`);
+  eq(all(), before, "refused attempts change nothing");
+  // an accepted criterion cannot be reworded around the dialog either
+  const around = await call(agent, "praxis_workflow_preview", { repo, workItemId: id, command: JSON.stringify({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", statement: "sneaky" }] }] }) });
+  check(!around.ok && around.code === "USER_DECISION_REQUIRED", `review-requirements must not reword an accepted criterion: ${around.code}`);
+  // the user confirms in the dialog
   const applied = await call(agent, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify(edit), confirmation: "YES", previewFingerprint: p.data.fingerprint });
   check(applied.ok, `apply: ${applied.code} ${JSON.stringify(applied.errors)}`);
   const after = all();
@@ -842,6 +858,24 @@ await scenario("S22", "Two criteria are reworded by id: exact preview, confirmat
   const stale = await call(agent, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify({ action: "revise-acceptance", edits: [{ id: AC6, statement: "other wording" }] }), confirmation: "YES", previewFingerprint: next.data.fingerprint });
   check(!stale.ok && stale.code === "FINGERPRINT_MISMATCH", `a stale preview is refused: ${stale.code}`);
   eq(all().find((c) => c.id === AC6).statement, NEW6, "the stale preview wrote nothing");
+  // two tabs opened before anyone saved: the second Save must not overwrite the first
+  const tab = async () => {
+    const r = await call(agent, "praxis_review_render", { repo, view: "requirements", workItemId: id });
+    const secret = readFileSync(join(dirname(r.data.file), "requirements.url"), "utf8");
+    const d = JSON.parse((await (await fetch(secret)).text()).match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
+    return async (criterion) => {
+      const body = { contract: "praxis.review.submission", version: 1, reviewId: d.reviewId, view: "requirements", workItemId: id, baseFingerprint: d.baseFingerprint, requirements: { requirements: [{ id: "REQ-ORD-003", revision: stateOf(repo, id).requirements.find((q) => q.id === "REQ-ORD-003").revision, criteria: [criterion], addCriteria: [], removeCriteria: [] }], acceptAll: false } };
+      return (await fetch(`${r.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": d.token }, body: JSON.stringify(body) })).json();
+    };
+  };
+  const tabA = await tab();
+  const tabB = await tab();
+  const rev3 = stateOf(repo, id).requirements.find((q) => q.id === "REQ-ORD-003").acceptanceCriteria[0];
+  const savedA = await tabA({ id: rev3.id, revision: rev3.revision, comment: "tab A remark", fromComment: rev3.review.comment ?? "" });
+  check((savedA.conflicts ?? []).length === 0, `tab A saves: ${JSON.stringify(savedA)}`);
+  const savedB = await tabB({ id: rev3.id, revision: rev3.revision, comment: "tab B remark", fromComment: rev3.review.comment ?? "" });
+  check((savedB.conflicts ?? []).length > 0 && /reload/i.test(JSON.stringify(savedB.conflicts)), `tab B must get a conflict that says to reload: ${JSON.stringify(savedB)}`);
+  eq(stateOf(repo, id).requirements.find((q) => q.id === "REQ-ORD-003").acceptanceCriteria[0].review.comment, "tab A remark", "tab A's remark survives the stale save");
   // the review page shows the current data
   const rendered = await call(agent, "praxis_review_render", { repo, view: "requirements", workItemId: id });
   const html = await (await fetch(readFileSync(join(dirname(rendered.data.file), "requirements.url"), "utf8"))).text();

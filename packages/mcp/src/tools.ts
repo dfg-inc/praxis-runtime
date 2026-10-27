@@ -278,6 +278,21 @@ async function callToolInner(
     });
   }
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
+  // An argument the tool does not declare is refused, never dropped: a misspelt workItemId must not run the action on the current work item.
+  const accepted = Object.keys(def.inputSchema.properties);
+  const stray = Object.keys(args).filter((key) => !accepted.includes(key) && args[key] !== undefined);
+  if (stray.length > 0) {
+    const suggest = (key: string) => accepted.find((a) => a.toLowerCase() === key.toLowerCase()) ?? accepted.find((a) => key.length > 3 && (a.toLowerCase().startsWith(key.toLowerCase().slice(0, 4)) || key.toLowerCase().startsWith(a.toLowerCase().slice(0, 4))));
+    return mcpEnvelope({
+      ok: false,
+      operation: name,
+      version: opts.version,
+      code: "INVALID_INPUT",
+      errors: [
+        `${name} does not take ${stray.map((key) => `"${key}"${suggest(key) ? ` (did you mean "${suggest(key)}"?)` : ""}`).join(", ")}. Accepted arguments: ${accepted.join(", ")}. Nothing was changed.`,
+      ],
+    });
+  }
   const ctx = ctxFromArgs(args, {
     ...opts.extra,
   });

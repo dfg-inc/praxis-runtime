@@ -264,7 +264,8 @@ await must({ action: "select-work-item", workItemId: wi });
 eq((await call(agent, "praxis_workflow_status", { repo })).data.workItemId, wi, "switching back selects the first item");
 // a requirement changes: return to BA, everything that depended on it goes stale, nothing is lost
 await must({ action: "return-to-phase", to: "requirements_review", reason: "the user wants search by customer too" }, wi);
-await must({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: acs[0], statement: "The backend returns orders matching a number or a customer name" }] }] }, wi);
+// the user had accepted this criterion: the rewording needs their approval in the dialog (the scripted client approves)
+await must({ action: "revise-acceptance", edits: [{ id: acs[0], statement: "The backend returns orders matching a number or a customer name" }] }, wi);
 const changed = stateOf(wi);
 eq(changed.phase, "requirements_review", "back at the requirements review");
 check(changed.verdicts.filter((v) => v.requirementIds.includes("REQ-ORD-001")).every((v) => v.stale), "earlier verdicts no longer count");
