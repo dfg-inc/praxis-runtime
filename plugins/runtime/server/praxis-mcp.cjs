@@ -8814,7 +8814,7 @@ function submissionToCommands(state2, raw) {
     for (const a of acceptStories)
       details.push(`${a.storyId}: ACCEPT everything in the story (revision ${a.revision})`);
     if (items.length > 0 || acceptStories.length > 0) {
-      commands.push({ action: "review-stories", via, items: items.map(({ from: _from, ...rest }) => rest), acceptStories });
+      commands.push({ action: "review-stories", via, items: items.map(({ from: _from, fromComment: _fromComment, ...rest }) => rest), acceptStories });
       summary.push(`${items.length} item mark(s), ${acceptStories.length} bulk accept(s)`);
     }
     if (s.accept) {
@@ -79333,7 +79333,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"e616ef48061c8df2e5579f5f3bf154123aff2287e8a7691e270f8aaadf12c56c","coreBaseline":"e4c30a1f50da7b6931c0d1c6dcce9e2f33c53a8c","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"1d05a73f8dacb5117468453c039f8e3159e73121f88815397a98295c43d6d057","coreBaseline":"98ff148a6ba6b9e8ced075c6d9a45b4a35d2cbac","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
