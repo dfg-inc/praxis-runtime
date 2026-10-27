@@ -4190,6 +4190,87 @@ var init_errors2 = __esm({
   }
 });
 
+// node_modules/@praxis/contracts/dist/command-strict.js
+function unwrap(schema) {
+  let current = schema;
+  for (let i = 0; i < 12; i += 1) {
+    if (current instanceof external_exports.ZodOptional || current instanceof external_exports.ZodNullable)
+      current = current.unwrap();
+    else if (current instanceof external_exports.ZodDefault)
+      current = current.removeDefault();
+    else if (current instanceof external_exports.ZodEffects)
+      current = current.innerType();
+    else if (current instanceof external_exports.ZodLazy)
+      current = current.schema;
+    else
+      break;
+  }
+  return current;
+}
+function walk(schema, value, path, out) {
+  const node4 = unwrap(schema);
+  if (node4 instanceof external_exports.ZodObject) {
+    if (typeof value !== "object" || value === null || Array.isArray(value))
+      return;
+    const shape = node4.shape;
+    const accepted = Object.keys(shape);
+    for (const [key, item] of Object.entries(value)) {
+      if (!(key in shape)) {
+        if (item !== void 0 && !ECHOED_STATE_FIELDS[path]?.includes(key))
+          out.push({ path, key, accepted });
+        continue;
+      }
+      walk(shape[key], item, path ? `${path}.${key}` : key, out);
+    }
+    return;
+  }
+  if (node4 instanceof external_exports.ZodArray) {
+    if (Array.isArray(value))
+      value.forEach((item, index) => walk(node4.element, item, `${path}[${index}]`, out));
+    return;
+  }
+  if (node4 instanceof external_exports.ZodDiscriminatedUnion || node4 instanceof external_exports.ZodUnion) {
+    const options2 = node4.options;
+    const match = options2.find((option) => option.safeParse(value).success);
+    if (match)
+      walk(match, value, path, out);
+  }
+}
+function unknownParameters(schema, value) {
+  const out = [];
+  walk(schema, value, "", out);
+  return out;
+}
+function parseStrict(schema, raw) {
+  const parsed = schema.parse(raw);
+  const unknown4 = unknownParameters(schema, raw);
+  if (unknown4.length > 0) {
+    const action = typeof raw?.action === "string" ? raw.action : void 0;
+    const lines = unknown4.slice(0, 6).map((item) => {
+      const hint = HINTS.find(([pattern]) => pattern.test(item.key))?.[1];
+      const where = item.path ? `${item.path}` : action ? `command ${action}` : "the command";
+      return `"${item.key}" is not a parameter of ${where} (accepted: ${item.accepted.join(", ") || "none"})${hint ? `; ${hint}` : ""}`;
+    });
+    throw new WorkflowError("UNKNOWN_COMMAND_PARAMETER", `${lines.join(". ")}. Nothing was changed. praxis_workflow_commands lists every action with its fields and an example.`, { unknown: unknown4.map((u) => ({ path: u.path, key: u.key })) });
+  }
+  return parsed;
+}
+var HINTS, ECHOED_STATE_FIELDS;
+var init_command_strict = __esm({
+  "node_modules/@praxis/contracts/dist/command-strict.js"() {
+    init_zod();
+    init_errors2();
+    HINTS = [
+      [/^(editAcceptance|editAcceptanceCriteria|editAc|updateAcceptance|reviseAcceptance|acceptanceEdits|acId|acceptanceId|criterionId)$/i, 'to change the text of one acceptance criterion use {"action":"revise-acceptance","edits":[{"id":"REQ-XXX-001-AC-01","statement":"new text"}]}']
+    ];
+    ECHOED_STATE_FIELDS = {
+      contract: ["agreement", "everAgreed"],
+      // keys that would claim the user's authority are never read from a command; they are dropped, and the command still needs the user's real channel
+      "": ["via", "approval", "userApproval", "channel", "userApproved", "authorization", "grant", "approved"]
+    };
+  }
+});
+
 // node_modules/@praxis/contracts/dist/ids.js
 var RequirementIdSchema, StoryIdSchema, RepositoryIdSchema;
 var init_ids = __esm({
@@ -5149,6 +5230,7 @@ function applyRequirementDecisions(state2, command, now) {
   let next = state2;
   const changed = [];
   const summary = [];
+  const acceptanceChanges = [];
   let contentChanged = false;
   for (const decision of command.decisions) {
     const current = requirementOf(next, decision.requirementId);
@@ -5179,12 +5261,20 @@ function applyRequirementDecisions(state2, command, now) {
       if (index < 0)
         throw missing("MISSING_ACCEPTANCE_CRITERION", `${ac.id} is not an acceptance criterion of ${requirement.id}`);
       let criterion = requirement.acceptanceCriteria[index];
+      const before = criterion;
       if (ac.statement !== void 0 && ac.statement !== criterion.statement) {
         const old = criterion.review;
         const previous = old.status !== "pending" || old.comment ? { status: old.status, ...old.comment ? { comment: old.comment } : {}, ...old.at ? { at: old.at } : {}, ...old.via ? { via: old.via } : {}, revision: criterion.revision } : old.previous;
         criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending", ...previous ? { previous } : {} } };
         revised = true;
         summary.push(`${ac.id} edited`);
+        acceptanceChanges.push({
+          id: ac.id,
+          requirementId: requirement.id,
+          before: { statement: before.statement, revision: before.revision, status: old.status, ...old.comment ? { comment: old.comment } : {} },
+          after: { statement: ac.statement, revision: criterion.revision, status: "pending" },
+          previousKept: Boolean(previous)
+        });
       }
       if (ac.status !== void 0 || ac.comment !== void 0) {
         const old = criterion.review;
@@ -5246,13 +5336,16 @@ function applyRequirementDecisions(state2, command, now) {
     next = dropDanglingRefs(next);
     next = cascadeScope(next, now).state;
   }
-  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ") || "no change"}`);
+  if (summary.length === 0 && !contentChanged) {
+    return { state: state2, duplicate: true, result: { changedRequirementIds: [], noChange: true, reviewProgress: reviewProgress(state2), accepted: acceptanceStatus(state2, "requirements_review") === "accepted" } };
+  }
+  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ")}`);
   const marked = command.decisions.some((d) => d.acceptance.some((a) => a.status !== void 0));
   if (marked && (command.via === "html-review" || command.via === "approved") && reviewProgress(next).complete && acceptanceStatus(next, "requirements_review") !== "accepted") {
     next = recordAcceptance(next, "requirements_review", command.via, now);
     next = { ...next, requirements: next.requirements.map((r) => r.scope === "in" && r.status !== "superseded" ? { ...r, status: "approved" } : r) };
   }
-  return { state: next, duplicate: false, result: { changedRequirementIds: changed, reviewProgress: reviewProgress(next), accepted: acceptanceStatus(next, "requirements_review") === "accepted" } };
+  return { state: next, duplicate: false, result: { changedRequirementIds: changed, ...acceptanceChanges.length ? { acceptanceChanges } : {}, reviewProgress: reviewProgress(next), accepted: acceptanceStatus(next, "requirements_review") === "accepted" } };
 }
 function markDownstreamStale(state2, requirementId, now) {
   let next = state2;
@@ -5904,6 +5997,25 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
   switch (command.action) {
     case "review-requirements":
       return applyRequirementDecisions(state2, command, now);
+    case "revise-acceptance": {
+      const seen = /* @__PURE__ */ new Set();
+      const byRequirement = /* @__PURE__ */ new Map();
+      for (const edit of command.edits) {
+        if (seen.has(edit.id))
+          throw new WorkflowError("DUPLICATE_ACCEPTANCE_EDIT", `${edit.id} is edited twice in one command; send one edit per criterion`);
+        seen.add(edit.id);
+        const owner = activeRequirements(state2).find((r) => r.acceptanceCriteria.some((c) => c.id === edit.id));
+        if (!owner)
+          throw missing("MISSING_ACCEPTANCE_CRITERION", `${edit.id} is not an acceptance criterion of any active requirement`);
+        const criterion = owner.acceptanceCriteria.find((c) => c.id === edit.id);
+        if (edit.expectedRevision !== void 0 && edit.expectedRevision !== criterion.revision) {
+          throw new WorkflowError("ACCEPTANCE_REVISION_CONFLICT", `${edit.id} is at revision ${criterion.revision}, not ${edit.expectedRevision}: it changed after you read it. Read it again (praxis_workflow_inspect, view requirements) and propose the edit again.`);
+        }
+        byRequirement.set(owner.id, [...byRequirement.get(owner.id) ?? [], { id: edit.id, statement: edit.statement }]);
+      }
+      const decisions2 = [...byRequirement].map(([requirementId, acceptance]) => ({ requirementId, acceptance, addAcceptance: [], removeAcceptance: [] }));
+      return applyRequirementDecisions(state2, { action: "review-requirements", via: "chat", decisions: decisions2.map((d) => RequirementDecision.parse(d)) }, now);
+    }
     case "accept-requirements": {
       const ids = command.requirementIds ?? inScope(state2).map((r) => r.id);
       for (const id of ids)
@@ -6474,6 +6586,8 @@ var init_planning = __esm({
     });
     PlanningCommandSchemas = [
       external_exports.object({ action: external_exports.literal("review-requirements"), via: Via, decisions: external_exports.array(RequirementDecision).min(1) }),
+      /** Changes the text of single acceptance criteria by their stable id; nothing else is touched. */
+      external_exports.object({ action: external_exports.literal("revise-acceptance"), edits: external_exports.array(external_exports.object({ id: external_exports.string().min(1), statement: external_exports.string().min(1), expectedRevision: external_exports.number().int().positive().optional() })).min(1) }),
       external_exports.object({ action: external_exports.literal("accept-requirements"), via: Via, requirementIds: external_exports.array(RequirementIdSchema).optional() }),
       external_exports.object({ action: external_exports.literal("set-requirement-scope"), requirementIds: external_exports.array(RequirementIdSchema).min(1), scope: ScopeSchema, note: external_exports.string().optional() }),
       external_exports.object({ action: external_exports.literal("set-prototype"), prototype: PrototypeInput, summary: external_exports.string().optional() }),
@@ -7029,11 +7143,14 @@ function routeCapabilities(input2) {
   const suggested = matched.filter((cap) => cap.sideEffect !== "read" || cap.activation === "explicit");
   return { guidance, suggested, executed: [] };
 }
+function parseWorkflowCommand(raw) {
+  return parseStrict(WorkflowCommandSchema, raw);
+}
 function commandFingerprint(command) {
   return fingerprintPayload(command);
 }
 function applyWorkflowCommand(state2, raw, options2) {
-  const command = WorkflowCommandSchema.parse(raw);
+  const command = parseWorkflowCommand(raw);
   if (command.action === "open") {
     if (state2)
       return { state: state2, duplicate: true, result: { workflowId: state2.workflowId } };
@@ -7067,6 +7184,10 @@ function applyWorkflowCommand(state2, raw, options2) {
     return { state: next2, duplicate: false, result: { requirementId: command.id } };
   }
   if (command.action === "revise-requirement") {
+    const existing = state2.requirements.find((r) => r.id === command.id && r.status !== "superseded");
+    if (existing && existing.statement === command.statement) {
+      return { state: state2, duplicate: true, result: { requirementId: command.id, noChange: true, revision: existing.revision } };
+    }
     const next2 = reviseRequirement(state2, command.id, command.statement);
     return { state: next2, duplicate: false, result: { requirementId: command.id } };
   }
@@ -7536,6 +7657,7 @@ var init_workflow = __esm({
     import_node_crypto3 = require("node:crypto");
     init_zod();
     init_errors2();
+    init_command_strict();
     init_ids();
     init_planning_schemas();
     init_planning();
@@ -8616,7 +8738,7 @@ function submissionToCommands(state2, raw) {
     for (const a of acceptStories)
       details.push(`${a.storyId}: ACCEPT everything in the story (revision ${a.revision})`);
     if (items.length > 0 || acceptStories.length > 0) {
-      commands.push({ action: "review-stories", via, items, acceptStories });
+      commands.push({ action: "review-stories", via, items: items.map(({ from: _from, ...rest }) => rest), acceptStories });
       summary.push(`${items.length} item mark(s), ${acceptStories.length} bulk accept(s)`);
     }
     if (s.accept) {
@@ -9431,7 +9553,7 @@ function commandCatalog() {
       userOnly = false;
     }
     const userOnlyWhen = { "set-contract": "contract.status is agreed", "set-mode": "mode is classic", "remove-contract": "the contract was agreed by the user", "review-requirements": "a criterion status is set (marks)", "update-story-plan": "an operation is review" }[action];
-    return { action, required: required4, optional: optional4, userOnly: userOnly || userOnlyWhen !== void 0 ? userOnly : false, ...userOnlyWhen ? { userOnlyWhen } : {}, ...EXAMPLES[action] ? { example: EXAMPLES[action] } : {} };
+    return { action, required: required4, optional: optional4, userOnly: userOnly || userOnlyWhen !== void 0 ? userOnly : false, ...userOnlyWhen ? { userOnlyWhen } : {}, ...EXAMPLES[action] ? { example: EXAMPLES[action] } : {}, ...USE[action] ? { use: USE[action] } : {} };
   });
 }
 function explainCommandError(error64) {
@@ -9440,7 +9562,7 @@ function explainCommandError(error64) {
   const lines = error64.issues.slice(0, 8).map((issue4) => `${issue4.path.join(".") || "(command)"}: ${issue4.message}`);
   return `the command is invalid: ${lines.join("; ")}. praxis_workflow_commands lists every action with its fields and an example.`;
 }
-var optionalish, EXAMPLES;
+var optionalish, EXAMPLES, USE;
 var init_command_catalog = __esm({
   "node_modules/@praxis/contracts/dist/command-catalog.js"() {
     init_zod();
@@ -9462,12 +9584,18 @@ var init_command_catalog = __esm({
       "record-impact": { action: "record-impact", impact: { baseline: { summary: "orders list exists", behaviors: [{ id: "B1", statement: "The list shows orders", evidence: [{ repositoryId: "web", path: "src/pages/Orders.tsx" }] }] }, affected: [{ repositoryId: "web", path: "src/pages/Orders.tsx", area: "orders page", change: "add export button" }], regressionChecks: [{ id: "R1", statement: "The list still shows all orders" }] } },
       "record-implementation": { action: "record-implementation", id: "IMPL-1", serviceId: "svc-web", requirementIds: ["REQ-ORD-001"], path: "src/pages/Orders.tsx", summary: "orders list with search" },
       "review-requirements": { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "Managers can view, search and filter orders", addAcceptance: [{ statement: "Filtering by status works" }] }] },
+      "revise-acceptance": { action: "revise-acceptance", edits: [{ id: "REQ-ORD-002-AC-06", statement: "The side panel shows only the current order status; the status history is not shown", expectedRevision: 1 }, { id: "REQ-ORD-005-AC-05", statement: "The filter and the order card use the current status value; status history is not required" }] },
       "set-requirement-scope": { action: "set-requirement-scope", requirementIds: ["REQ-ORD-002"], scope: "deferred", note: "next release" },
       "set-mode": { action: "set-mode", mode: "guided", reason: "use the guided flow for this item" },
       "advance-phase": { action: "advance-phase", to: "prototype" },
       "return-to-phase": { action: "return-to-phase", to: "requirements_review", reason: "the user changed the search requirement" },
       "log-session": { action: "log-session", summary: "Requirements accepted", nextAction: "build the prototype", role: "ba" },
       "waive-coverage": { action: "waive-coverage", kind: "prototype", reason: "pure refactor, nothing to show" }
+    };
+    USE = {
+      "revise-acceptance": "Change the TEXT of one or more existing acceptance criteria, each by its stable id (REQ-...-AC-nn). Only those criteria change: their revision goes up, their review returns to pending, and the earlier decision and remark are kept as 'previous'. Other criteria are not touched. expectedRevision (optional) refuses the edit if the criterion changed since you read it.",
+      "revise-requirement": "Change the statement of a whole requirement (its id is REQ-...). It does not take an acceptance criterion id; for one criterion use revise-acceptance.",
+      "review-requirements": "Record marks and remarks on criteria, change scope, add or remove criteria. To only reword existing criteria prefer revise-acceptance."
     };
   }
 });
@@ -59167,7 +59295,7 @@ var TOOLS = [
   },
   {
     name: "praxis_workflow_preview",
-    description: "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
+    description: "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, revise-acceptance, set-service, quality-check). To change the text of ONE or more existing acceptance criteria by id (REQ-...-AC-nn) use revise-acceptance {edits:[{id,statement}]}: only those criteria get a new revision and return to pending (their earlier decision and remark stay as 'previous'); the result lists each criterion before and after (acceptanceChanges). A key the command does not accept is refused (UNKNOWN_COMMAND_PARAMETER), never ignored; a command that changes nothing reports noChange. A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
     inputSchema: {
       type: "object",
       properties: {
@@ -79123,7 +79251,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"b539c10140e0a08d465a500fb40bb4fdefad4c8d690bb11d912548a1c0fb2e45","coreBaseline":"11ac4f721c4fda64bb55a2a351565408a295d89e","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"2df538025064c01abc246ce6771f592230b00196c4767de6ac81d33da20fb4e8","coreBaseline":"96e36aa60668c3bfce9a318a0fcf7c286b2e79a9","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -79533,7 +79661,7 @@ function inspectionPlan(input2) {
 var import_node_fs6 = require("node:fs");
 var import_node_path5 = require("node:path");
 var SKIP = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", "coverage"]);
-function walk(root, dir, out, depth) {
+function walk2(root, dir, out, depth) {
   if (depth > 4 || out.length >= 200)
     return;
   let entries = [];
@@ -79553,7 +79681,7 @@ function walk(root, dir, out, depth) {
       continue;
     }
     if (info.isDirectory())
-      walk(root, absolute, out, depth + 1);
+      walk2(root, absolute, out, depth + 1);
     else if (info.isFile())
       out.push(absolute.slice(root.length + 1));
   }
@@ -79582,7 +79710,7 @@ function inspectService(service) {
     };
   }
   const files = [];
-  walk(service.localPath, service.localPath, files, 0);
+  walk2(service.localPath, service.localPath, files, 0);
   const names = new Set(files.map((file2) => file2.split("/").pop() ?? file2));
   const languages = [];
   const frameworks = [];
@@ -80121,7 +80249,7 @@ function resolveCommand(repo, command, workItemId) {
   return { command, state: loadWorkflow(repo, workItemId) };
 }
 function previewWorkflow(repo, raw, workItemId) {
-  const command = WorkflowCommandSchema.parse(raw);
+  const command = parseWorkflowCommand(raw);
   const resolved = resolveCommand(repo, command, workItemId);
   const fingerprint2 = fingerprintFor2(repo, command, workItemId);
   const current = listWorkItems(repo).current;
@@ -80169,7 +80297,7 @@ function previewWorkflow(repo, raw, workItemId) {
 function writeCommand(repo, planned, final, workItemId, userApproval, channel) {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
-    const finalCommand = WorkflowCommandSchema.parse(final);
+    const finalCommand = parseWorkflowCommand(final);
     const resolved = resolveCommand(repo, finalCommand, workItemId);
     const layout = readLayout(repo);
     const previousCurrent = layout?.index.current ?? null;
@@ -80221,7 +80349,7 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel) {
   });
 }
 function guarded(repo, fingerprint2, planned, final, workItemId, userApproval, channel) {
-  const command = WorkflowCommandSchema.parse(planned);
+  const command = parseWorkflowCommand(planned);
   const expected = fingerprintFor2(repo, command, workItemId);
   if (fingerprint2 !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
@@ -80247,7 +80375,7 @@ function openClassicView(command) {
   };
 }
 async function applyWorkflowApproved(repo, raw, fingerprint2, workItemId, confirmation) {
-  const command = WorkflowCommandSchema.parse(raw);
+  const command = parseWorkflowCommand(raw);
   const expected = fingerprintFor2(repo, command, workItemId);
   if (fingerprint2 !== expected)
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
@@ -80270,7 +80398,7 @@ function capabilityRoute(input2) {
   });
 }
 function applyRuntimeCommand(repo, command, workItemId, channel) {
-  const parsed = WorkflowCommandSchema.parse(command);
+  const parsed = parseWorkflowCommand(command);
   return runWorkflowRecordWrite(() => writeCommand(repo, parsed, parsed, workItemId, void 0, channel));
 }
 
@@ -81428,7 +81556,7 @@ var COLOR_VALUE = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([\d\s.,%\/-]{1,40}\))$/;
 var FONT_VALUE = /^[A-Za-z0-9 ,'"_-]{1,60}$/;
 var LENGTH_VALUE = /^[\d.]{1,6}(px|rem|em|%)?$/;
 var fontOk = (v) => FONT_VALUE.test(v) && v.split(",").length <= 6 && v.trim().split(/\s+/).length <= 10;
-function walk2(root) {
+function walk3(root) {
   const out = [];
   let truncated = false;
   const visit2 = (dir, depth) => {
@@ -81553,7 +81681,7 @@ function discoverFrontend(repoPath) {
   const root = (0, import_node_fs27.existsSync)(repoPath) ? (0, import_node_fs27.realpathSync)((0, import_node_path32.resolve)(repoPath)) : (0, import_node_path32.resolve)(repoPath);
   if (!(0, import_node_fs27.existsSync)(root) || !(0, import_node_fs27.statSync)(root).isDirectory())
     throw new Error(`INSPECT_PATH_INVALID: ${repoPath} is not a directory`);
-  const { files, truncated } = walk2(root);
+  const { files, truncated } = walk3(root);
   const names = /* @__PURE__ */ new Set();
   const packageFiles = files.filter((f) => !f.dir && /(^|\/)package\.json$/.test(f.rel) && f.rel.split("/").length <= 4);
   for (const pkg of packageFiles) {
@@ -82410,12 +82538,12 @@ async function runWorkflowTool(name, args, repo, version4) {
   }
   if (parsed.action === "verify-stories") {
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
-    const meta5 = recorded.meta;
+    const { meta: meta5, ...command } = recorded;
     if (name === "praxis_workflow_preview") {
-      const preview = previewWorkflow(repo, recorded, workItemId);
+      const preview = previewWorkflow(repo, command, workItemId);
       return { ...preview, result: { ...preview.result, ...meta5 } };
     }
-    const applied = applyWorkflow(repo, recorded, str2(args.previewFingerprint) ?? "", workItemId);
+    const applied = applyWorkflow(repo, command, str2(args.previewFingerprint) ?? "", workItemId);
     return { ...applied, result: { ...applied.result, ...meta5 } };
   }
   if (parsed.action === "prepare-fix") {

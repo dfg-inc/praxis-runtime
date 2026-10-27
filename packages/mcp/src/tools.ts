@@ -524,12 +524,12 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
   }
   if (parsed.action === "verify-stories") {
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
-    const meta = recorded.meta;
+    const { meta, ...command } = recorded;
     if (name === "praxis_workflow_preview") {
-      const preview = previewWorkflow(repo, recorded, workItemId);
+      const preview = previewWorkflow(repo, command, workItemId);
       return { ...preview, result: { ...(preview.result as object), ...meta } };
     }
-    const applied = applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "", workItemId);
+    const applied = applyWorkflow(repo, command, str(args.previewFingerprint) ?? "", workItemId);
     return { ...applied, result: { ...(applied.result as object), ...meta } };
   }
   if (parsed.action === "prepare-fix") {

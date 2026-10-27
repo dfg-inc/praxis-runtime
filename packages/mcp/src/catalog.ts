@@ -935,7 +935,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_workflow_preview",
     description:
-      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
+      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, revise-acceptance, set-service, quality-check). To change the text of ONE or more existing acceptance criteria by id (REQ-...-AC-nn) use revise-acceptance {edits:[{id,statement}]}: only those criteria get a new revision and return to pending (their earlier decision and remark stay as 'previous'); the result lists each criterion before and after (acceptanceChanges). A key the command does not accept is refused (UNKNOWN_COMMAND_PARAMETER), never ignored; a command that changes nothing reports noChange. A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
     inputSchema: {
       type: "object",
       properties: {

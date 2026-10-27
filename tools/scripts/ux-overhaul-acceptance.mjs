@@ -782,6 +782,72 @@ await scenario("S21", "A user's remark on a criterion reaches the BA through pra
   check(stateOf(repo, id).requirements[0].acceptanceCriteria[0].review.status === "accepted", "the state on disk is what the tool reported");
 });
 
+await scenario("S22", "Two criteria are reworded by id: exact preview, confirmation, r2 + pending, previous kept, the other 29 untouched, page updated", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "praxis-ux-s22-"));
+  const id = await openItem(agent, repo, "Order status");
+  const SIZES = { "REQ-ORD-001": 6, "REQ-ORD-002": 6, "REQ-ORD-003": 5, "REQ-ORD-004": 5, "REQ-ORD-005": 6, "REQ-ORD-006": 3 }; // 31 criteria
+  for (const [req, n] of Object.entries(SIZES)) {
+    await must(agent, repo, { action: "add-requirement", id: req, statement: `Requirement ${req}`, acceptanceCriteria: Array.from({ length: n }, (_, i) => `${req} criterion ${i + 1}`) }, id);
+  }
+  const AC6 = "REQ-ORD-002-AC-06";
+  const AC5 = "REQ-ORD-005-AC-05";
+  const NEW6 = "В боковой панели отображается только текущий статус заказа. История изменений статуса в панели не выводится";
+  const NEW5 = "Для работы фильтра и карточки заказа используется текущее значение status. Данные истории смены статусов для этой функциональности не требуются";
+  const all = () => stateOf(repo, id).requirements.flatMap((r) => r.acceptanceCriteria);
+  eq(all().length, 31, "31 criteria");
+  // the user accepts 29 and rejects two with a remark
+  await userSaves(agent, repo, "requirements", id, () => ({
+    requirements: {
+      requirements: stateOf(repo, id).requirements.map((r) => ({ id: r.id, revision: r.revision, criteria: r.acceptanceCriteria.map((c) => ({ id: c.id, revision: c.revision, ...(c.id === AC6 || c.id === AC5 ? { status: "rejected", comment: `Не нравится: ${c.id}` } : { status: "accepted" }) })), addCriteria: [], removeCriteria: [] })),
+      acceptAll: false,
+    },
+  }));
+  const before = all();
+  // the old, silently-ignored shape is refused with the way out
+  const wrong = await call(agent, "praxis_workflow_preview", { repo, workItemId: id, command: JSON.stringify({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", editAcceptance: [{ id: AC6, statement: NEW6 }] }] }) });
+  check(!wrong.ok && wrong.code === "UNKNOWN_COMMAND_PARAMETER" && JSON.stringify(wrong).includes("revise-acceptance"), `editAcceptance must be refused with a pointer: ${wrong.code}`);
+  const wrong2 = await call(agent, "praxis_workflow_preview", { repo, workItemId: id, command: JSON.stringify({ action: "revise-requirement", id: "REQ-ORD-002", acceptanceId: AC6, statement: NEW6 }) });
+  check(!wrong2.ok && wrong2.code === "UNKNOWN_COMMAND_PARAMETER", "an acceptance id on revise-requirement must be refused");
+  eq(all(), before, "a refused command changes nothing");
+  // the catalog tells the agent which command to use
+  const catalog = await call(agent, "praxis_workflow_commands", { repo, action: "revise-acceptance" });
+  check(catalog.ok && JSON.stringify(catalog.data).includes("edits"), "praxis_workflow_commands documents revise-acceptance");
+  // preview shows exactly what changes and writes nothing
+  const edit = { action: "revise-acceptance", edits: [{ id: AC6, statement: NEW6, expectedRevision: 1 }, { id: AC5, statement: NEW5, expectedRevision: 1 }] };
+  const p = await call(agent, "praxis_workflow_preview", { repo, workItemId: id, command: JSON.stringify(edit) });
+  check(p.ok, `preview: ${p.code} ${JSON.stringify(p.errors)}`);
+  eq(p.data.result.acceptanceChanges.map((c) => [c.id, c.before.status, c.before.revision, c.after.revision, c.after.status]), [[AC6, "rejected", 1, 2, "pending"], [AC5, "rejected", 1, 2, "pending"]], "the preview names both criteria, their revisions and the review reset");
+  eq(all(), before, "a preview writes nothing");
+  // the user confirms
+  const applied = await call(agent, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify(edit), confirmation: "YES", previewFingerprint: p.data.fingerprint });
+  check(applied.ok, `apply: ${applied.code} ${JSON.stringify(applied.errors)}`);
+  const after = all();
+  for (const [cid, text] of [[AC6, NEW6], [AC5, NEW5]]) {
+    const c = after.find((x) => x.id === cid);
+    eq([c.statement, c.revision, c.review.status, c.review.previous.status, c.review.previous.comment, c.review.previous.revision], [text, 2, "pending", "rejected", `Не нравится: ${cid}`, 1], `${cid} is r2, pending, with the rejection kept`);
+  }
+  const untouched = before.filter((c) => c.id !== AC6 && c.id !== AC5);
+  eq(untouched.length, 29, "29 other criteria");
+  check(untouched.every((c) => JSON.stringify(after.find((x) => x.id === c.id)) === JSON.stringify(c)), "the other 29 criteria are byte-for-byte unchanged");
+  // repeating it changes nothing
+  const stored = readFileSync(join(repo, ".praxis", "workflow", "items", `${id}.json`), "utf8");
+  const again = await call(agent, "praxis_workflow_preview", { repo, workItemId: id, command: JSON.stringify({ action: "revise-acceptance", edits: edit.edits.map(({ expectedRevision, ...e }) => e) }) });
+  check(again.ok && again.data.duplicate === true && again.data.result.noChange === true, "the repeat reports noChange");
+  const againApplied = await call(agent, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify({ action: "revise-acceptance", edits: edit.edits.map(({ expectedRevision, ...e }) => e) }), confirmation: "YES", previewFingerprint: again.data.fingerprint });
+  check(againApplied.ok, "the repeat applies as a no-op");
+  eq(readFileSync(join(repo, ".praxis", "workflow", "items", `${id}.json`), "utf8"), stored, "a no-op leaves the stored item as it was");
+  // a preview made before the user's next click is stale
+  const next = await call(agent, "praxis_workflow_preview", { repo, workItemId: id, command: JSON.stringify({ action: "revise-acceptance", edits: [{ id: AC6, statement: "other wording" }] }) });
+  await userSaves(agent, repo, "requirements", id, () => ({ requirements: { requirements: [{ id: "REQ-ORD-001", revision: stateOf(repo, id).requirements[0].revision, criteria: [{ id: "REQ-ORD-001-AC-01", revision: 1, comment: "note" }], addCriteria: [], removeCriteria: [] }], acceptAll: false } }));
+  const stale = await call(agent, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify({ action: "revise-acceptance", edits: [{ id: AC6, statement: "other wording" }] }), confirmation: "YES", previewFingerprint: next.data.fingerprint });
+  check(!stale.ok && stale.code === "FINGERPRINT_MISMATCH", `a stale preview is refused: ${stale.code}`);
+  eq(all().find((c) => c.id === AC6).statement, NEW6, "the stale preview wrote nothing");
+  // the review page shows the current data
+  const rendered = await call(agent, "praxis_review_render", { repo, view: "requirements", workItemId: id });
+  const html = await (await fetch(readFileSync(join(dirname(rendered.data.file), "requirements.url"), "utf8"))).text();
+  check(html.includes("История изменений статуса в панели не выводится") && html.includes("Данные истории смены статусов для этой функциональности не требуются") && html.includes("Before this revision: rejected") && html.includes(`Не нравится: ${AC6}`), "the page shows both new texts and the earlier rejections");
+});
+
 await agent.close();
 for (const s of sessions) await s.close().catch(() => {});
 jira.close();

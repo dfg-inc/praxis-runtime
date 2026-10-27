@@ -15,6 +15,7 @@ import {
   resumeWorkflow,
   routeCapabilities,
   runWorkflowRecordWrite,
+  parseWorkflowCommand,
   WorkflowCommandSchema,
   WorkflowStateSchema,
   workItemIdFor,
@@ -623,7 +624,7 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
   /** Present when the command is a human act: what the user will be asked to approve. */
   humanApproval?: ReturnType<typeof humanApprovalView>;
 } {
-  const command = WorkflowCommandSchema.parse(raw);
+  const command = parseWorkflowCommand(raw);
   const resolved = resolveCommand(repo, command, workItemId);
   const fingerprint = fingerprintFor(repo, command, workItemId);
   const current = listWorkItems(repo).current;
@@ -686,7 +687,7 @@ export type WorkflowApplyResult = {
 function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel): WorkflowApplyResult {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
-    const finalCommand = WorkflowCommandSchema.parse(final);
+    const finalCommand = parseWorkflowCommand(final);
     const resolved = resolveCommand(repo, finalCommand, workItemId);
     const layout = readLayout(repo);
     const previousCurrent = layout?.index.current ?? null;
@@ -745,7 +746,7 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
 }
 
 function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel): WorkflowApplyResult {
-  const command = WorkflowCommandSchema.parse(planned);
+  const command = parseWorkflowCommand(planned);
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
@@ -793,7 +794,7 @@ export async function applyWorkflowApproved(
   workItemId: string | undefined,
   confirmation: string | undefined,
 ): Promise<WorkflowApplyResult> {
-  const command = WorkflowCommandSchema.parse(raw);
+  const command = parseWorkflowCommand(raw);
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   const resolved = resolveCommand(repo, command, workItemId);
@@ -826,6 +827,6 @@ export function capabilityRoute(input: {
  * Runtime modules that built the command from verified input.
  */
 export function applyRuntimeCommand(repo: string, command: Record<string, unknown>, workItemId?: string, channel?: ReviewChannel): WorkflowApplyResult {
-  const parsed = WorkflowCommandSchema.parse(command);
+  const parsed = parseWorkflowCommand(command);
   return runWorkflowRecordWrite(() => writeCommand(repo, parsed, parsed, workItemId, undefined, channel));
 }
