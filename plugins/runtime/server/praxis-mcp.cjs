@@ -5263,20 +5263,20 @@ function applyRequirementDecisions(state2, command, now, approvedRewording = fal
         throw missing("MISSING_ACCEPTANCE_CRITERION", `${ac.id} is not an acceptance criterion of ${requirement.id}`);
       let criterion = requirement.acceptanceCriteria[index];
       const before = criterion;
-      if (ac.statement !== void 0 && ac.statement !== criterion.statement) {
+      if (ac.statement !== void 0 && ac.statement.trim() !== criterion.statement.trim()) {
         const old = criterion.review;
         if (command.via === "chat" && !approvedRewording && old.status === "accepted") {
           throw new WorkflowError("USER_DECISION_REQUIRED", `${ac.id} is accepted by the user; an agent does not reword it through review-requirements. Use revise-acceptance: the user is asked to approve the new wording in the client's dialog.`);
         }
         const previous = old.status !== "pending" || old.comment ? { status: old.status, ...old.comment ? { comment: old.comment } : {}, ...old.at ? { at: old.at } : {}, ...old.via ? { via: old.via } : {}, revision: criterion.revision } : old.previous;
-        criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending", ...previous ? { previous } : {} } };
+        criterion = { ...criterion, statement: ac.statement.trim(), revision: criterion.revision + 1, review: { status: "pending", ...previous ? { previous } : {} } };
         revised = true;
         summary.push(`${ac.id} edited`);
         acceptanceChanges.push({
           id: ac.id,
           requirementId: requirement.id,
           before: { statement: before.statement, revision: before.revision, status: old.status, ...old.comment ? { comment: old.comment } : {} },
-          after: { statement: ac.statement, revision: criterion.revision, status: "pending" },
+          after: { statement: ac.statement.trim(), revision: criterion.revision, status: "pending" },
           previousKept: Boolean(previous)
         });
       }
@@ -6534,11 +6534,11 @@ var init_planning = __esm({
       id: external_exports.string().min(1),
       status: ReviewStatus.optional(),
       comment: external_exports.string().optional(),
-      statement: external_exports.string().trim().min(1).optional()
+      statement: external_exports.string().min(1).refine((v) => v.trim().length > 0, "must not be blank").optional()
     });
     RequirementDecision = external_exports.object({
       requirementId: RequirementIdSchema,
-      statement: external_exports.string().trim().min(1).optional(),
+      statement: external_exports.string().min(1).refine((v) => v.trim().length > 0, "must not be blank").optional(),
       scope: ScopeSchema.optional(),
       scopeNote: external_exports.string().optional(),
       comment: external_exports.string().optional(),
@@ -6603,7 +6603,7 @@ var init_planning = __esm({
     PlanningCommandSchemas = [
       external_exports.object({ action: external_exports.literal("review-requirements"), via: Via, decisions: external_exports.array(RequirementDecision).min(1) }),
       /** Changes the text of single acceptance criteria by their stable id; nothing else is touched. */
-      external_exports.object({ action: external_exports.literal("revise-acceptance"), edits: external_exports.array(external_exports.object({ id: external_exports.string().min(1), statement: external_exports.string().trim().min(1), expectedRevision: external_exports.number().int().positive().optional() })).min(1) }),
+      external_exports.object({ action: external_exports.literal("revise-acceptance"), edits: external_exports.array(external_exports.object({ id: external_exports.string().min(1), statement: external_exports.string().min(1).refine((v) => v.trim().length > 0, "must not be blank"), expectedRevision: external_exports.number().int().positive().optional() })).min(1) }),
       external_exports.object({ action: external_exports.literal("accept-requirements"), via: Via, requirementIds: external_exports.array(RequirementIdSchema).optional() }),
       external_exports.object({ action: external_exports.literal("set-requirement-scope"), requirementIds: external_exports.array(RequirementIdSchema).min(1), scope: ScopeSchema, note: external_exports.string().optional() }),
       external_exports.object({ action: external_exports.literal("set-prototype"), prototype: PrototypeInput, summary: external_exports.string().optional() }),
@@ -6865,8 +6865,8 @@ ${bullet(story.expectedResults)}`,
       const criterion = owner?.acceptanceCriteria.find((c) => c.id === edit.id);
       if (!owner || !criterion)
         return null;
-      if (criterion.statement !== edit.statement)
-        rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...criterion.review.comment ? { comment: criterion.review.comment } : {}, from: criterion.statement, to: edit.statement });
+      if (criterion.statement.trim() !== edit.statement.trim())
+        rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...criterion.review.comment ? { comment: criterion.review.comment } : {}, from: criterion.statement, to: edit.statement.trim() });
     }
     if (rows.length === 0)
       return null;
@@ -8619,7 +8619,8 @@ function submissionToCommands(state2, raw) {
         continue;
       }
       const textChanged = item.statement !== void 0 || item.criteria.some((c) => c.statement !== void 0) || item.addCriteria.length > 0 || item.removeCriteria.length > 0 || item.scope !== void 0 && item.scope !== current.scope;
-      if (current.revision !== item.revision && textChanged) {
+      const remarkChanged = item.comment !== void 0 || item.scopeNote !== void 0 && item.scopeNote !== (current.scopeNote ?? "");
+      if (current.revision !== item.revision && (textChanged || remarkChanged)) {
         conflicts.push({ item: item.id, reason: `edited since the review (now revision ${current.revision}, the page showed ${item.revision}): re-open the review` });
         continue;
       }
@@ -8791,6 +8792,15 @@ function submissionToCommands(state2, raw) {
         return false;
       const live = state2.stories.find((x) => x.id === item.storyId && x.status !== "superseded");
       const current = live?.review[item.key]?.status ?? "pending";
+      const liveStory = state2.stories.find((x) => x.id === item.storyId && x.status !== "superseded");
+      if (liveStory && liveStory.revision !== item.revision) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the story changed since you opened this page (now revision ${liveStory.revision}, the page showed ${item.revision}): reload the page; your mark was not saved` });
+        return false;
+      }
+      if (item.fromComment !== void 0 && item.comment !== void 0 && (live?.review[item.key]?.comment ?? "") !== item.fromComment) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the remark changed since you opened this page: reload the page; your remark was not saved` });
+        return false;
+      }
       if (item.from !== void 0 && current !== item.from) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} by someone else since the review (the page showed ${item.from})` });
         return false;
@@ -8904,7 +8914,7 @@ var init_review_submission = __esm({
       agree: external_exports.boolean().default(false)
     });
     StoriesPayload = external_exports.object({
-      items: external_exports.array(external_exports.object({ storyId: StoryIdSchema, revision: external_exports.number().int().positive(), key: external_exports.string().min(1), from: Mark.optional(), status: Mark, comment: external_exports.string().max(4e3).optional() })).default([]),
+      items: external_exports.array(external_exports.object({ storyId: StoryIdSchema, revision: external_exports.number().int().positive(), key: external_exports.string().min(1), from: Mark.optional(), fromComment: external_exports.string().max(4e3).optional(), status: Mark, comment: external_exports.string().max(4e3).optional() })).default([]),
       stories: external_exports.array(external_exports.object({
         storyId: StoryIdSchema,
         revision: external_exports.number().int().positive(),
@@ -9194,17 +9204,17 @@ function collect(){
     var reqs=[];
     $$('[data-req]').forEach(function(card){
       var id=card.getAttribute('data-req');var item={id:id,revision:num(card),criteria:[],addCriteria:[],removeCriteria:[]};var touched=false;
-      var st=$('[data-f=statement]',card);if(st&&val(st)!==st.getAttribute('data-initial')){item.statement=val(st);touched=true}
-      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==sc.getAttribute('data-initial')){item.scope=sc.value;touched=true}
-      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==sn.getAttribute('data-initial')){item.scopeNote=val(sn);touched=true}
+      var st=$('[data-f=statement]',card);if(st&&val(st)!==(st.getAttribute('data-initial')||'').trim()){item.statement=val(st);touched=true}
+      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==(sc.getAttribute('data-initial')||'').trim()){item.scope=sc.value;touched=true}
+      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==(sn.getAttribute('data-initial')||'').trim()){item.scopeNote=val(sn);touched=true}
       var rc=$('[data-f=comment]',card);if(rc&&val(rc)!==''){item.comment=val(rc);touched=true}
       $$('[data-ac]',card).forEach(function(row){
         var aid=row.getAttribute('data-ac');
         if($('[data-f=remove]',row)&&$('[data-f=remove]',row).checked){item.removeCriteria.push(aid);touched=true;return}
         var c={id:aid,revision:num(row)};var ch=false;
         var m=markOf(row,'m-'+aid);if(m&&m!==row.getAttribute('data-initial-status')){c.status=m;c.from=row.getAttribute('data-initial-status');ch=true}
-        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==cm.getAttribute('data-initial')){c.comment=val(cm);c.fromComment=cm.getAttribute('data-initial')||'';ch=true}
-        var ts=$('[data-f=ac-statement]',row);if(ts&&val(ts)!==ts.getAttribute('data-initial')){c.statement=val(ts);ch=true}
+        var cm=$('[data-f=ac-comment]',row);if(cm&&val(cm)!==(cm.getAttribute('data-initial')||'').trim()){c.comment=val(cm);c.fromComment=cm.getAttribute('data-initial')||'';ch=true}
+        var ts=$('[data-f=ac-statement]',row);if(ts&&val(ts)!==(ts.getAttribute('data-initial')||'').trim()){c.statement=val(ts);ch=true}
         if(ch){item.criteria.push(c);touched=true}
       });
       var add=$('[data-f=add-ac]',card);if(add&&val(add)){val(add).split(/\\n+/).forEach(function(l){l=l.trim();if(l)item.addCriteria.push({statement:l})});touched=true}
@@ -9223,7 +9233,7 @@ function collect(){
       var id=card.getAttribute('data-entry');var e={id:id};var ch=false;
       var m=markOf(card,'m-'+id);if(m&&m!==card.getAttribute('data-initial-status')){e.status=m;ch=true}
       var cm=$('[data-f=comment]',card);if(cm&&val(cm)){e.comment=val(cm);ch=true}
-      ['title','implementation','userGets'].forEach(function(f){var t=$('[data-f='+f+']',card);if(t&&val(t)!==t.getAttribute('data-initial')){e[f]=val(t);ch=true}});
+      ['title','implementation','userGets'].forEach(function(f){var t=$('[data-f='+f+']',card);if(t&&val(t)!==(t.getAttribute('data-initial')||'').trim()){e[f]=val(t);ch=true}});
       var ex=$('[data-f=exclude]',card);if(ex&&val(ex)){e.exclude=val(ex);ch=true}
       var rt=$('[data-f=restore]',card);if(rt&&rt.checked){e.restore=true;ch=true}
       if(ch)es.push(e)
@@ -9241,10 +9251,10 @@ function collect(){
       $$('[data-key]',card).forEach(function(row){
         var key=row.getAttribute('data-key');var m=markOf(row,'m-'+id+'-'+key);
         var cm=$('[data-f=comment]',row);
-        if(m&&(m!==row.getAttribute('data-initial-status')||(cm&&val(cm)))){var it={storyId:id,revision:rev,key:key,from:row.getAttribute('data-initial-status'),status:m};if(cm&&val(cm))it.comment=val(cm);items.push(it)}
+        if(m&&(m!==row.getAttribute('data-initial-status')||(cm&&val(cm)))){var it={storyId:id,revision:rev,key:key,from:row.getAttribute('data-initial-status'),status:m};if(cm&&val(cm)){it.comment=val(cm);it.fromComment=(cm.getAttribute('data-initial')||'').trim()}items.push(it)}
       });
-      var n=$('[data-f=narrative]',card);if(n&&val(n)!==n.getAttribute('data-initial')){st.narrative=val(n);ch=true}
-      var o=$('[data-f=objective]',card);if(o&&val(o)!==o.getAttribute('data-initial')){st.objective=val(o);ch=true}
+      var n=$('[data-f=narrative]',card);if(n&&val(n)!==(n.getAttribute('data-initial')||'').trim()){st.narrative=val(n);ch=true}
+      var o=$('[data-f=objective]',card);if(o&&val(o)!==(o.getAttribute('data-initial')||'').trim()){st.objective=val(o);ch=true}
       var ex=$('[data-f=exclude]',card);if(ex&&val(ex)){st.exclude=val(ex);ch=true}
       var rt=$('[data-f=restore]',card);if(rt&&rt.checked){st.restore=true;ch=true}
       var all=$('[data-f=accept-story]',card);if(all&&all.checked){st.acceptAll=true;ch=true}
@@ -59047,6 +59057,7 @@ var TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] },
         workPackage: wpProp,
         repo: repoProp,
         remoteName: { type: "string" },
@@ -59087,6 +59098,7 @@ var TOOLS = [
     inputSchema: {
       type: "object",
       properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] },
         workPackage: wpProp,
         repo: repoProp,
         remoteName: { type: "string" },
@@ -59143,7 +59155,11 @@ var TOOLS = [
     description: "READ-ONLY Git Delivery journal: commit SHA, remote identity, PR/MR URL, CI status if known. Does not write. Role: Developer.",
     inputSchema: {
       type: "object",
-      properties: { workPackage: wpProp, repo: repoProp },
+      properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] },
+        workPackage: wpProp,
+        repo: repoProp
+      },
       required: ["workPackage"],
       additionalProperties: false
     },
@@ -79317,7 +79333,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"3d656a4fb0af56fc43bfbc445a505f50fabe2435f8d06a9808f014bc4e090718","coreBaseline":"57018f281793f5ab920268dfe5df31cdae8ffac6","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"e616ef48061c8df2e5579f5f3bf154123aff2287e8a7691e270f8aaadf12c56c","coreBaseline":"e4c30a1f50da7b6931c0d1c6dcce9e2f33c53a8c","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
