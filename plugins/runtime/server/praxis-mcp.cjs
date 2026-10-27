@@ -6039,6 +6039,13 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
         ...next,
         requirements: next.requirements.map((r) => command.requirementIds.includes(r.id) && r.status !== "superseded" ? { ...r, scope: command.scope, ...command.note !== void 0 ? { scopeNote: command.note } : {}, revision: r.scope === command.scope ? r.revision : r.revision + 1 } : r)
       };
+      const same = command.requirementIds.every((id) => {
+        const before = state2.requirements.find((r) => r.id === id);
+        const after = next.requirements.find((r) => r.id === id);
+        return before.status === "superseded" || before.scope === after.scope && before.scopeNote === after.scopeNote;
+      });
+      if (same)
+        return { state: state2, duplicate: true, result: { scope: command.scope, noChange: true, excludedStories: [], restoredStories: [], reviewProgress: reviewProgress(state2) } };
       const cascade = cascadeScope(next, now);
       next = touch(cascade.state, now, `scope ${command.scope}: ${command.requirementIds.join(", ")}${command.note ? ` (${command.note})` : ""}`);
       return { state: next, duplicate: false, result: { scope: command.scope, excludedStories: cascade.excluded, restoredStories: cascade.restored, reviewProgress: reviewProgress(next) } };
@@ -6518,11 +6525,11 @@ var init_planning = __esm({
       id: external_exports.string().min(1),
       status: ReviewStatus.optional(),
       comment: external_exports.string().optional(),
-      statement: external_exports.string().min(1).optional()
+      statement: external_exports.string().trim().min(1).optional()
     });
     RequirementDecision = external_exports.object({
       requirementId: RequirementIdSchema,
-      statement: external_exports.string().min(1).optional(),
+      statement: external_exports.string().trim().min(1).optional(),
       scope: ScopeSchema.optional(),
       scopeNote: external_exports.string().optional(),
       comment: external_exports.string().optional(),
@@ -6587,7 +6594,7 @@ var init_planning = __esm({
     PlanningCommandSchemas = [
       external_exports.object({ action: external_exports.literal("review-requirements"), via: Via, decisions: external_exports.array(RequirementDecision).min(1) }),
       /** Changes the text of single acceptance criteria by their stable id; nothing else is touched. */
-      external_exports.object({ action: external_exports.literal("revise-acceptance"), edits: external_exports.array(external_exports.object({ id: external_exports.string().min(1), statement: external_exports.string().min(1), expectedRevision: external_exports.number().int().positive().optional() })).min(1) }),
+      external_exports.object({ action: external_exports.literal("revise-acceptance"), edits: external_exports.array(external_exports.object({ id: external_exports.string().min(1), statement: external_exports.string().trim().min(1), expectedRevision: external_exports.number().int().positive().optional() })).min(1) }),
       external_exports.object({ action: external_exports.literal("accept-requirements"), via: Via, requirementIds: external_exports.array(RequirementIdSchema).optional() }),
       external_exports.object({ action: external_exports.literal("set-requirement-scope"), requirementIds: external_exports.array(RequirementIdSchema).min(1), scope: ScopeSchema, note: external_exports.string().optional() }),
       external_exports.object({ action: external_exports.literal("set-prototype"), prototype: PrototypeInput, summary: external_exports.string().optional() }),
@@ -79251,7 +79258,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"2df538025064c01abc246ce6771f592230b00196c4767de6ac81d33da20fb4e8","coreBaseline":"96e36aa60668c3bfce9a318a0fcf7c286b2e79a9","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"0690091c2417a5b61ac2c5ae10c7a2a1e81fe97d74005b7699124ce426a9065b","coreBaseline":"cfd29d2cd130b448488c9bba6a5ff66fb40a5aab","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -82550,10 +82557,11 @@ async function runWorkflowTool(name, args, repo, version4) {
     if (parsed.authorized !== true)
       throw new Error("AUTHORIZATION_REQUIRED");
     const planned = await planServiceFix(repo, String(parsed.serviceId ?? ""), typeof parsed.existingBranch === "string" ? parsed.existingBranch : void 0, workItemId);
+    const asCommand = ({ proposal: _proposal, ...command }) => command;
     if (name === "praxis_workflow_preview")
-      return previewWorkflow(repo, planned, workItemId);
+      return previewWorkflow(repo, asCommand(planned), workItemId);
     const committed = await commitServiceFix(repo, planned, workItemId, str2(args.confirmation));
-    return applyResolved(repo, str2(args.previewFingerprint) ?? "", planned, committed, workItemId);
+    return applyResolved(repo, str2(args.previewFingerprint) ?? "", asCommand(planned), asCommand(committed), workItemId);
   }
   if (name === "praxis_workflow_preview")
     return previewWorkflow(repo, parsed, workItemId);

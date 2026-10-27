@@ -540,9 +540,11 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
       typeof parsed.existingBranch === "string" ? parsed.existingBranch : undefined,
       workItemId,
     );
-    if (name === "praxis_workflow_preview") return previewWorkflow(repo, planned, workItemId);
+    // the patch travels with the Runtime's own plan; the workflow command is only the change record
+    const asCommand = ({ proposal: _proposal, ...command }: typeof planned) => command;
+    if (name === "praxis_workflow_preview") return previewWorkflow(repo, asCommand(planned), workItemId);
     const committed = await commitServiceFix(repo, planned, workItemId, str(args.confirmation));
-    return applyResolved(repo, str(args.previewFingerprint) ?? "", planned, committed, workItemId);
+    return applyResolved(repo, str(args.previewFingerprint) ?? "", asCommand(planned), asCommand(committed), workItemId);
   }
   if (name === "praxis_workflow_preview") return previewWorkflow(repo, parsed, workItemId);
   return applyWorkflowApproved(repo, parsed, str(args.previewFingerprint) ?? "", workItemId, str(args.confirmation));
