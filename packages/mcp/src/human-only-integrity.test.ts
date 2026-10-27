@@ -406,7 +406,7 @@ describe("the dialog shows everything it binds, or the action is refused", () =>
   });
 });
 
-describe("a Quality patch may touch only the file it was approved for; discovery stays inside the repository", () => {
+describe("a Quality patch may touch only the file it was approved for", () => {
   it("diffPaths and assertDiffTouchesOnly: other files, renames, copies and links are refused", async () => {
     const { diffPaths, assertDiffTouchesOnly } = await import("./story-engine.js");
     const { repo, outside } = (() => {
@@ -428,21 +428,5 @@ describe("a Quality patch may touch only the file it was approved for; discovery
     expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: escape })).toThrow();
     symlinkSync(outside, join(repo, "out-link"));
     expect(() => assertDiffTouchesOnly(repo, { path: "out-link/x.txt", diff: "--- a/out-link/x.txt\n+++ b/out-link/x.txt\n" })).toThrow("UNSAFE_PATH");
-  });
-
-  it("praxis_frontend_discover refuses a path outside the repository, absolute or through a link", async () => {
-    const outside = mkdtempSync(join(tmpdir(), "praxis-disc-out-"));
-    writeFileSync(join(outside, "theme.css"), ":root{--c:#123456}");
-    const repo = mkdtempSync(join(tmpdir(), "praxis-disc-"));
-    mkdirSync(join(repo, "web"));
-    writeFileSync(join(repo, "web", "app.css"), ":root{--brand:#abcdef}");
-    symlinkSync(outside, join(repo, "web", "link"));
-    const run = (path: string) => call("praxis_frontend_discover", repo, { path });
-    for (const path of [outside, "../x", "web/link"]) {
-      const res = await run(path);
-      expect(res.ok, path).toBe(false);
-      expect(JSON.stringify(res), path).not.toContain("123456");
-    }
-    expect((await run("web")).ok).toBe(true);
   });
 });
