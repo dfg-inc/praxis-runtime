@@ -1,11 +1,11 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { ApprovalRequest, AskAnswer, UserApprovalChannel } from "@praxis/contracts";
-import { configText, countersText, planCanonInit, visionText } from "./canon-init.js";
+import { applyCanonInit, configText, countersText, planCanonInit, visionText } from "./canon-init.js";
 import { callTool } from "./tools.js";
 import type { McpEnvelope } from "./workflow-test-helpers.js";
 
@@ -91,5 +91,41 @@ describe("the Runtime creates the same canon root as `praxis-ba init`", () => {
       expect(id.status, id.stdout + id.stderr).toBe(0);
     }
     expect(plan.create.length).toBeGreaterThan(0);
+  });
+});
+
+describe("existing user files are validated, product is bounded, writes are all-or-nothing", () => {
+  const fresh = () => mkdtempSync(join(tmpdir(), "praxis-canon-v-"));
+  it("an existing valid config/counters is kept byte for byte", () => {
+    const repo = fresh();
+    mkdirSync(join(repo, ".ba"));
+    writeFileSync(join(repo, ".ba", "config.yaml"), "canon_roots:\n  - vision.md\n  - custom/\n");
+    const plan = planCanonInit(repo);
+    expect(plan.skipped).toContain(".ba/config.yaml");
+    applyCanonInit(plan);
+    expect(readFileSync(join(repo, ".ba", "config.yaml"), "utf8")).toBe("canon_roots:\n  - vision.md\n  - custom/\n");
+  });
+  it("an invalid existing config or counters refuses the whole plan and nothing is written", () => {
+    for (const [name, text] of [["config.yaml", "nothing: here\n"], ["config.yaml", "canon_roots: vision.md\n"], ["counters.yaml", "product:\n  epic: x\n"]] as const) {
+      const repo = fresh();
+      mkdirSync(join(repo, ".ba"));
+      writeFileSync(join(repo, ".ba", name), text);
+      expect(() => planCanonInit(repo)).toThrow(/not a valid canon file/);
+      expect(readdirSync(repo)).toEqual([".ba"]);
+      expect(readFileSync(join(repo, ".ba", name), "utf8")).toBe(text);
+    }
+  });
+  it("a product name over the limit is refused", () => {
+    expect(() => planCanonInit(fresh(), { product: "x".repeat(121) })).toThrow(/longer than 120/);
+    expect(() => planCanonInit(fresh(), { product: "x".repeat(120) })).not.toThrow();
+  });
+  it("a failure while writing leaves the project as it was", () => {
+    const repo = fresh();
+    const plan = planCanonInit(repo);
+    mkdirSync(join(repo, "wp")); // appears after planning: the later step fails
+    const before = readdirSync(repo).sort();
+    expect(() => applyCanonInit(plan)).toThrow();
+    expect(readdirSync(repo).sort()).toEqual(before);
+    chmodSync(repo, 0o755);
   });
 });
