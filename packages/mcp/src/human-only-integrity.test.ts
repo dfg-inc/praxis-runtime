@@ -239,6 +239,9 @@ describe("trusted-client mode and the remaining approvals", () => {
     const done = await call("praxis_workflow_apply", repo, { command: JSON.stringify(reword), confirmation: "YES", previewFingerprint: p.data.fingerprint, workItemId: id }, ok.channel);
     expect(done.ok, JSON.stringify(done.errors ?? done)).toBe(true);
     expect(ok.seen).toHaveLength(1);
+    // the person's answer is labelled as the dialog's (client-ui), not as the standing Trusted Client permission
+    expect(JSON.stringify(done.data)).toMatch(/"assurance":"client-ui"/);
+    expect(JSON.stringify(done.data)).not.toMatch(/"assurance":"trusted-client"/);
     expect(state(repo, id).requirements[0].acceptanceCriteria[0].statement).toBe("A manager sees every order");
     const none = await call("praxis_workflow_apply", repo, { command: JSON.stringify({ action: "revise-acceptance", edits: [{ id: "REQ-ORD-001-AC-02", statement: "Search by number or customer" }] }), confirmation: "YES", previewFingerprint: "x", workItemId: id });
     expect(none.ok).toBe(false);

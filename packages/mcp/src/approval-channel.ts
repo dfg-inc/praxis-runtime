@@ -184,11 +184,18 @@ export const PERSONAL_ACTS: ReadonlySet<string> = new Set(["confirm-story", "con
  * has none they are refused.
  */
 export function trustedClientChannelWith(dialog: UserApprovalChannel | undefined): UserApprovalChannel {
+  let delegated = false;
   return {
-    kind: "trusted-client",
+    // the person's own answer is recorded as the dialog's, not as the weaker standing permission
+    get kind() {
+      return delegated && dialog ? dialog.kind : ("trusted-client" as const);
+    },
     async ask(request: ApprovalRequest): Promise<AskAnswer> {
       if (PERSONAL_ACTS.has(request.action)) {
-        if (dialog) return dialog.ask(request);
+        if (dialog) {
+          delegated = true;
+          return dialog.ask(request);
+        }
         throw new ApprovalError(
           "APPROVAL_CLIENT_UI_REQUIRED",
           `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code).`,
