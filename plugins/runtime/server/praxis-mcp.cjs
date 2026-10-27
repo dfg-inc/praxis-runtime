@@ -4193,7 +4193,7 @@ var init_errors2 = __esm({
 // node_modules/@praxis/contracts/dist/command-strict.js
 function unwrap(schema) {
   let current = schema;
-  for (let i = 0; i < 12; i += 1) {
+  for (let i = 0; i < 16; i += 1) {
     if (current instanceof external_exports.ZodOptional || current instanceof external_exports.ZodNullable)
       current = current.unwrap();
     else if (current instanceof external_exports.ZodDefault)
@@ -4202,12 +4202,20 @@ function unwrap(schema) {
       current = current.innerType();
     else if (current instanceof external_exports.ZodLazy)
       current = current.schema;
+    else if (current instanceof external_exports.ZodBranded)
+      current = current.unwrap();
+    else if (current instanceof external_exports.ZodReadonly)
+      current = current._def.innerType;
+    else if (current instanceof external_exports.ZodCatch)
+      current = current._def.innerType;
+    else if (current instanceof external_exports.ZodPipeline)
+      current = current._def.in;
     else
       break;
   }
   return current;
 }
-function walk(schema, value, path, out) {
+function walk(schema, value, path, out, tolerate) {
   const node4 = unwrap(schema);
   if (node4 instanceof external_exports.ZodObject) {
     if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -4216,34 +4224,62 @@ function walk(schema, value, path, out) {
     const accepted = Object.keys(shape);
     for (const [key, item] of Object.entries(value)) {
       if (!(key in shape)) {
-        if (item !== void 0 && !ECHOED_STATE_FIELDS[path]?.includes(key))
+        if (item !== void 0 && !(tolerate && ECHOED_STATE_FIELDS[path]?.includes(key)))
           out.push({ path, key, accepted });
         continue;
       }
-      walk(shape[key], item, path ? `${path}.${key}` : key, out);
+      walk(shape[key], item, path ? `${path}.${key}` : key, out, tolerate);
     }
     return;
   }
   if (node4 instanceof external_exports.ZodArray) {
     if (Array.isArray(value))
-      value.forEach((item, index) => walk(node4.element, item, `${path}[${index}]`, out));
+      value.forEach((item, index) => walk(node4.element, item, `${path}[${index}]`, out, tolerate));
+    return;
+  }
+  if (node4 instanceof external_exports.ZodTuple) {
+    if (Array.isArray(value))
+      node4.items.forEach((item, index) => walk(item, value[index], `${path}[${index}]`, out, tolerate));
+    return;
+  }
+  if (node4 instanceof external_exports.ZodRecord) {
+    if (typeof value === "object" && value !== null && !Array.isArray(value))
+      for (const [key, item] of Object.entries(value))
+        walk(node4.valueSchema, item, path ? `${path}.${key}` : key, out, tolerate);
+    return;
+  }
+  if (node4 instanceof external_exports.ZodIntersection) {
+    const left = [];
+    const right = [];
+    walk(node4._def.left, value, path, left, tolerate);
+    walk(node4._def.right, value, path, right, tolerate);
+    const rightKeys = new Set(right.map((u) => `${u.path}\0${u.key}`));
+    for (const u of left)
+      if (rightKeys.has(`${u.path}\0${u.key}`))
+        out.push(u);
     return;
   }
   if (node4 instanceof external_exports.ZodDiscriminatedUnion || node4 instanceof external_exports.ZodUnion) {
-    const options2 = node4.options;
-    const match = options2.find((option) => option.safeParse(value).success);
-    if (match)
-      walk(match, value, path, out);
+    const matches = node4.options.filter((option) => option.safeParse(value).success);
+    let best = null;
+    for (const option of matches) {
+      const found = [];
+      walk(option, value, path, found, tolerate);
+      if (best === null || found.length < best.length)
+        best = found;
+    }
+    if (best)
+      out.push(...best);
   }
 }
-function unknownParameters(schema, value) {
+function unknownParameters(schema, value, tolerate = true) {
   const out = [];
-  walk(schema, value, "", out);
+  walk(schema, value, "", out, tolerate);
   return out;
 }
-function parseStrict(schema, raw) {
+function parseStrict(schema, raw, options2 = {}) {
   const parsed = schema.parse(raw);
-  const unknown4 = unknownParameters(schema, raw);
+  const unknown4 = unknownParameters(schema, raw, options2.tolerate ?? true);
   if (unknown4.length > 0) {
     const action = typeof raw?.action === "string" ? raw.action : void 0;
     const lines = unknown4.slice(0, 6).map((item) => {
@@ -8585,6 +8621,14 @@ var init_human_act_testing = __esm({
 });
 
 // node_modules/@praxis/contracts/dist/review-submission.js
+function planEntryBase(entry) {
+  const text = JSON.stringify([entry.title, entry.implementation, entry.userGets, entry.status, entry.excludedReason ?? "", entry.review.status, entry.review.comment ?? ""]);
+  return (0, import_node_crypto5.createHash)("sha256").update(text).digest("hex").slice(0, 24);
+}
+function reviewStamp(state2, view) {
+  const slice = view === "requirements" ? state2.requirements : view === "story-plan" ? state2.storyPlan : view === "contracts" ? state2.contracts : view === "prototype" ? state2.prototype : state2.stories;
+  return (0, import_node_crypto5.createHash)("sha256").update(canonicalText({ view, mode: state2.mode, slice })).digest("hex").slice(0, 24);
+}
 function fingerprintFor(state2, view) {
   switch (view) {
     case "requirements":
@@ -8600,7 +8644,7 @@ function fingerprintFor(state2, view) {
   }
 }
 function submissionToCommands(state2, raw) {
-  const submission = ReviewSubmissionSchema.parse(raw);
+  const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   const conflicts = [];
   const commands = [];
   const summary = [];
@@ -8610,6 +8654,9 @@ function submissionToCommands(state2, raw) {
     return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state2.workItem.id}` }], stale: true, summary: [], details: [] };
   }
   const via = "html-review";
+  const outdated = submission.baseStamp === void 0 || submission.baseStamp !== reviewStamp(state2, submission.view);
+  const reload = "reload the page and decide again";
+  const unbased = (what) => `this page is out of date and does not say what it showed for ${what}: ${reload}`;
   if (submission.view === "requirements" && submission.requirements) {
     const decisions2 = [];
     for (const item of submission.requirements.requirements) {
@@ -8619,9 +8666,23 @@ function submissionToCommands(state2, raw) {
         continue;
       }
       const textChanged = item.statement !== void 0 || item.criteria.some((c) => c.statement !== void 0) || item.addCriteria.length > 0 || item.removeCriteria.length > 0 || item.scope !== void 0 && item.scope !== current.scope;
-      const remarkChanged = item.comment !== void 0 || item.scopeNote !== void 0 && item.scopeNote !== (current.scopeNote ?? "");
-      if (current.revision !== item.revision && (textChanged || remarkChanged)) {
-        conflicts.push({ item: item.id, reason: `edited since the review (now revision ${current.revision}, the page showed ${item.revision}): re-open the review` });
+      const commentChanged = item.comment !== void 0 && item.comment !== (current.comment ?? "");
+      const noteChanged = item.scopeNote !== void 0 && item.scopeNote !== (current.scopeNote ?? "");
+      const scopeChanged = item.scope !== void 0 && item.scope !== current.scope;
+      if (current.revision !== item.revision && (textChanged || commentChanged || noteChanged)) {
+        conflicts.push({ item: item.id, reason: `edited since you opened this page (now revision ${current.revision}, the page showed ${item.revision}): ${reload}` });
+        continue;
+      }
+      const staleField = (changed, sent, from, live, what) => {
+        if (!changed)
+          return null;
+        if (from === void 0)
+          return outdated ? unbased(`${item.id} ${what}`) : null;
+        return from !== live ? `${item.id}: the ${what} changed since you opened this page (now "${String(live ?? "").slice(0, 120)}"): ${reload}` : null;
+      };
+      const fieldConflict = staleField(scopeChanged, item.scope, item.fromScope, current.scope, "scope") ?? staleField(noteChanged, item.scopeNote, item.fromScopeNote, current.scopeNote ?? "", "scope note") ?? staleField(commentChanged, item.comment, item.fromComment, current.comment ?? "", "remark");
+      if (fieldConflict) {
+        conflicts.push({ item: item.id, reason: fieldConflict });
         continue;
       }
       const acceptance = [];
@@ -8635,12 +8696,23 @@ function submissionToCommands(state2, raw) {
           conflicts.push({ item: criterion.id, reason: `criterion changed since you opened this page (now revision ${live.revision}, the page showed ${criterion.revision}): reload the page; your edit to it was not saved` });
           continue;
         }
-        if (criterion.fromComment !== void 0 && criterion.comment !== void 0 && (live.review.comment ?? "") !== criterion.fromComment) {
-          conflicts.push({ item: criterion.id, reason: `the remark changed since you opened this page (now "${(live.review.comment ?? "").slice(0, 120)}"): reload the page; your remark was not saved` });
+        const liveComment = live.review.comment ?? "";
+        const commentEdit = criterion.comment !== void 0 && criterion.comment !== liveComment;
+        if (commentEdit && criterion.fromComment === void 0 && outdated) {
+          conflicts.push({ item: criterion.id, reason: unbased(`the remark on ${criterion.id}`) });
+          continue;
+        }
+        if (criterion.fromComment !== void 0 && criterion.comment !== void 0 && liveComment !== criterion.fromComment) {
+          conflicts.push({ item: criterion.id, reason: `the remark changed since you opened this page (now "${liveComment.slice(0, 120)}"): ${reload}; your remark was not saved` });
+          continue;
+        }
+        const statusEdit = criterion.status !== void 0 && criterion.status !== live.review.status;
+        if (statusEdit && criterion.from === void 0 && outdated) {
+          conflicts.push({ item: criterion.id, reason: unbased(`the decision on ${criterion.id}`) });
           continue;
         }
         if (criterion.from !== void 0 && criterion.status !== void 0 && live.review.status !== criterion.from) {
-          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} since you opened this page (the page showed ${criterion.from}): reload the page; your decision was not saved` });
+          conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} since you opened this page (the page showed ${criterion.from}): ${reload}; your decision was not saved` });
           continue;
         }
         const unchanged = (criterion.status === void 0 || criterion.status === live.review.status) && (criterion.comment === void 0 || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === void 0 || criterion.statement === live.statement);
@@ -8720,6 +8792,15 @@ function submissionToCommands(state2, raw) {
         conflicts.push({ item: entry.id, reason: "the plan line no longer exists" });
         continue;
       }
+      const edits = entry.title !== void 0 && entry.title !== current.title || entry.implementation !== void 0 && entry.implementation !== current.implementation || entry.userGets !== void 0 && entry.userGets !== current.userGets || entry.exclude !== void 0 || entry.restore === true || entry.status !== void 0 && entry.status !== current.review.status || entry.status !== void 0 && entry.comment !== void 0 && entry.comment !== (current.review.comment ?? "");
+      if (edits && entry.base === void 0 && outdated) {
+        conflicts.push({ item: entry.id, reason: unbased(`plan line ${entry.id}`) });
+        continue;
+      }
+      if (edits && entry.base !== void 0 && entry.base !== planEntryBase(current)) {
+        conflicts.push({ item: entry.id, reason: `the plan line changed since you opened this page: ${reload}; your edit was not saved` });
+        continue;
+      }
       const patch = {};
       if (entry.title !== void 0 && entry.title !== current.title)
         patch.title = entry.title;
@@ -8797,12 +8878,21 @@ function submissionToCommands(state2, raw) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the story changed since you opened this page (now revision ${liveStory.revision}, the page showed ${item.revision}): reload the page; your mark was not saved` });
         return false;
       }
-      if (item.fromComment !== void 0 && item.comment !== void 0 && (live?.review[item.key]?.comment ?? "") !== item.fromComment) {
-        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the remark changed since you opened this page: reload the page; your remark was not saved` });
+      const itemComment = live?.review[item.key]?.comment ?? "";
+      if (item.comment !== void 0 && item.comment !== itemComment && item.fromComment === void 0 && outdated) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: unbased(`the remark on ${item.storyId} ${item.key}`) });
+        return false;
+      }
+      if (item.fromComment !== void 0 && item.comment !== void 0 && itemComment !== item.fromComment) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the remark changed since you opened this page: ${reload}; your remark was not saved` });
+        return false;
+      }
+      if (item.status !== current && item.from === void 0 && outdated) {
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: unbased(`the decision on ${item.storyId} ${item.key}`) });
         return false;
       }
       if (item.from !== void 0 && current !== item.from) {
-        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} by someone else since the review (the page showed ${item.from})` });
+        conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} since you opened this page (the page showed ${item.from}): ${reload}; your decision was not saved` });
         return false;
       }
       if (current === item.status && (item.comment === void 0 || item.comment === (live?.review[item.key]?.comment ?? "")))
@@ -8810,7 +8900,12 @@ function submissionToCommands(state2, raw) {
       details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 400)}')` : ""}`);
       return true;
     });
-    const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).map((x) => ({ storyId: x.storyId, revision: x.revision }));
+    const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).filter((x) => {
+      if (!outdated)
+        return true;
+      conflicts.push({ item: x.storyId, reason: `accept-all is not applied from an out-of-date page (marks may have changed since): ${reload}` });
+      return false;
+    }).map((x) => ({ storyId: x.storyId, revision: x.revision }));
     for (const a of acceptStories)
       details.push(`${a.storyId}: ACCEPT everything in the story (revision ${a.revision})`);
     if (items.length > 0 || acceptStories.length > 0) {
@@ -8853,6 +8948,10 @@ function submissionToCommands(state2, raw) {
         conflicts.push({ item: id, reason: "the contract no longer exists" });
         continue;
       }
+      if (stale) {
+        conflicts.push({ item: id, reason: `the contracts changed since you opened this page: ${reload}, so you remove what is there now` });
+        continue;
+      }
       commands.push({ action: "remove-contract", via, id });
       summary.push(`contract ${id} removed`);
       details.push(`REMOVE contract ${id} '${contract.name}' (${contract.status})`);
@@ -8870,10 +8969,13 @@ function submissionToCommands(state2, raw) {
   }
   return { commands, conflicts, stale, summary, details };
 }
-var REVIEW_VIEWS, ReviewViewSchema, Mark, RequirementsPayload, PrototypePayload, PlanPayload, StoriesPayload, ReviewSubmissionSchema;
+var import_node_crypto5, REVIEW_VIEWS, ReviewViewSchema, Mark, RequirementsPayload, PrototypePayload, PlanPayload, StoriesPayload, ReviewSubmissionSchema;
 var init_review_submission = __esm({
   "node_modules/@praxis/contracts/dist/review-submission.js"() {
+    import_node_crypto5 = require("node:crypto");
     init_zod();
+    init_command_strict();
+    init_human_acts();
     init_ids();
     init_planning();
     init_planning_schemas();
@@ -8888,6 +8990,10 @@ var init_review_submission = __esm({
         scopeNote: external_exports.string().max(2e3).optional(),
         statement: external_exports.string().min(1).max(4e3).optional(),
         comment: external_exports.string().max(4e3).optional(),
+        /** What the page showed for the fields it sends back: a changed live value is a conflict, never an overwrite. */
+        fromScope: ScopeSchema.optional(),
+        fromScopeNote: external_exports.string().max(2e3).optional(),
+        fromComment: external_exports.string().max(4e3).optional(),
         criteria: external_exports.array(external_exports.object({ id: external_exports.string().min(1), revision: external_exports.number().int().positive(), from: Mark.optional(), fromComment: external_exports.string().max(4e3).optional(), status: Mark.optional(), comment: external_exports.string().max(4e3).optional(), statement: external_exports.string().min(1).max(4e3).optional() })).default([]),
         addCriteria: external_exports.array(external_exports.object({ statement: external_exports.string().min(1).max(4e3) })).default([]),
         removeCriteria: external_exports.array(external_exports.string()).default([])
@@ -8909,7 +9015,9 @@ var init_review_submission = __esm({
         implementation: external_exports.string().min(1).max(4e3).optional(),
         userGets: external_exports.string().min(1).max(4e3).optional(),
         exclude: external_exports.string().min(1).max(2e3).optional(),
-        restore: external_exports.boolean().optional()
+        restore: external_exports.boolean().optional(),
+        /** planEntryBase of the line as the page showed it (see there). */
+        base: external_exports.string().max(100).optional()
       })).default([]),
       agree: external_exports.boolean().default(false)
     });
@@ -8934,6 +9042,8 @@ var init_review_submission = __esm({
       workItemId: external_exports.string().min(1),
       /** Fingerprint of the artifact when the page was rendered. */
       baseFingerprint: external_exports.string().min(1),
+      /** reviewStamp of what the page showed. A save whose stamp is not the live one is from an out-of-date page. */
+      baseStamp: external_exports.string().max(100).optional(),
       submittedAt: external_exports.string().optional(),
       requirements: RequirementsPayload.optional(),
       prototype: PrototypePayload.optional(),
@@ -8962,6 +9072,7 @@ function shell(state2, view, title, body2, data, options2, barExtra) {
     view,
     workItemId: state2.workItem.id,
     baseFingerprint: fingerprintFor(state2, view),
+    baseStamp: reviewStamp(state2, view),
     saveUrl: options2.saveUrl,
     token: options2.token,
     ...data
@@ -9009,7 +9120,7 @@ function renderRequirementsReview(state2, options2 = {}) {
 <h3>Acceptance criteria <button type="button" data-accept-card>Accept all in this requirement</button></h3>
 ${criteria || `<p class="muted">No acceptance criteria yet.</p>`}
 <label class="meta">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
-<label class="meta">Comment on the requirement<input type="text" data-f="comment"></label>
+<label class="meta">Comment on the requirement<input type="text" data-f="comment" data-initial="${esc3(req.comment ?? "")}" value="${esc3(req.comment ?? "")}"></label>
 </section>`;
   }).join("");
   const body2 = `${staleBanner(state2, "requirements_review")}
@@ -9065,7 +9176,7 @@ function renderStoryPlanReview(state2, options2 = {}) {
   const coverage = analyzeStoryCoverage(state2);
   const cards = plan.entries.map((e) => {
     const out = e.status === "excluded";
-    return `<section class="card${out ? " out" : ""}" data-entry="${esc3(e.id)}" data-initial-status="${esc3(e.review.status)}">
+    return `<section class="card${out ? " out" : ""}" data-entry="${esc3(e.id)}" data-initial-status="${esc3(e.review.status)}" data-base="${planEntryBase(e)}">
 <div class="row"><h2 class="grow">${esc3(e.id)} ${pill(e.status, out ? "warn" : e.status === "detailed" ? "ok" : "")}</h2>${marks(`m-${e.id}`, e.review.status)}</div>
 <label class="meta">Title<input type="text" data-f="title" data-initial="${esc3(e.title)}" value="${esc3(e.title)}"></label>
 <label class="meta">What is implemented<textarea data-f="implementation" data-initial="${esc3(e.implementation)}">${esc3(e.implementation)}</textarea></label>
@@ -9199,15 +9310,15 @@ function val(el){return el?el.value.trim():''}
 function num(el){return parseInt(el.getAttribute('data-rev'),10)}
 function markOf(root,name){var c=$('input[name="'+name+'"]:checked',root);return c?c.value:null}
 function collect(){
-  var s={contract:'praxis.review.submission',version:1,reviewId:D.reviewId,view:D.view,workItemId:D.workItemId,baseFingerprint:D.baseFingerprint,submittedAt:new Date().toISOString()};
+  var s={contract:'praxis.review.submission',version:1,reviewId:D.reviewId,view:D.view,workItemId:D.workItemId,baseFingerprint:D.baseFingerprint,baseStamp:D.baseStamp,submittedAt:new Date().toISOString()};
   if(D.view==='requirements'){
     var reqs=[];
     $$('[data-req]').forEach(function(card){
       var id=card.getAttribute('data-req');var item={id:id,revision:num(card),criteria:[],addCriteria:[],removeCriteria:[]};var touched=false;
       var st=$('[data-f=statement]',card);if(st&&val(st)!==(st.getAttribute('data-initial')||'').trim()){item.statement=val(st);touched=true}
-      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==(sc.getAttribute('data-initial')||'').trim()){item.scope=sc.value;touched=true}
-      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==(sn.getAttribute('data-initial')||'').trim()){item.scopeNote=val(sn);touched=true}
-      var rc=$('[data-f=comment]',card);if(rc&&val(rc)!==''){item.comment=val(rc);touched=true}
+      var sc=$('[data-f=scope]',card);if(sc&&sc.value!==(sc.getAttribute('data-initial')||'').trim()){item.scope=sc.value;item.fromScope=(sc.getAttribute('data-initial')||'').trim();touched=true}
+      var sn=$('[data-f=scopeNote]',card);if(sn&&val(sn)!==(sn.getAttribute('data-initial')||'').trim()){item.scopeNote=val(sn);item.fromScopeNote=(sn.getAttribute('data-initial')||'').trim();touched=true}
+      var rc=$('[data-f=comment]',card);if(rc&&val(rc)!==(rc.getAttribute('data-initial')||'').trim()){item.comment=val(rc);item.fromComment=(rc.getAttribute('data-initial')||'').trim();touched=true}
       $$('[data-ac]',card).forEach(function(row){
         var aid=row.getAttribute('data-ac');
         if($('[data-f=remove]',row)&&$('[data-f=remove]',row).checked){item.removeCriteria.push(aid);touched=true;return}
@@ -9230,7 +9341,7 @@ function collect(){
   if(D.view==='story-plan'){
     var es=[];
     $$('[data-entry]').forEach(function(card){
-      var id=card.getAttribute('data-entry');var e={id:id};var ch=false;
+      var id=card.getAttribute('data-entry');var e={id:id,base:card.getAttribute('data-base')};var ch=false;
       var m=markOf(card,'m-'+id);if(m&&m!==card.getAttribute('data-initial-status')){e.status=m;ch=true}
       var cm=$('[data-f=comment]',card);if(cm&&val(cm)){e.comment=val(cm);ch=true}
       ['title','implementation','userGets'].forEach(function(f){var t=$('[data-f='+f+']',card);if(t&&val(t)!==(t.getAttribute('data-initial')||'').trim()){e[f]=val(t);ch=true}});
@@ -9696,6 +9807,8 @@ var init_dist = __esm({
     init_workflow();
     init_story();
     init_review_submission();
+    init_command_strict();
+    init_human_acts();
     init_review_html();
     init_context_trust();
     init_briefing();
@@ -19623,7 +19736,7 @@ var init_artifact_id = __esm({
 
 // node_modules/@praxis/jira/dist/ba-write.js
 function contentFingerprint(spec) {
-  return (0, import_node_crypto7.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto8.createHash)("sha256").update(JSON.stringify({
     summary: spec.summary,
     userStory: spec.userStory,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -19852,10 +19965,10 @@ async function planAndApplyBaStories(opts) {
     flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey)
   };
 }
-var import_node_crypto7;
+var import_node_crypto8;
 var init_ba_write = __esm({
   "node_modules/@praxis/jira/dist/ba-write.js"() {
-    import_node_crypto7 = require("node:crypto");
+    import_node_crypto8 = require("node:crypto");
     init_artifact_id();
     init_managed_scope();
     init_write_journal();
@@ -20285,7 +20398,7 @@ ${paths.qualityHandoffPath}`
   };
 }
 function fingerprint(value) {
-  return `sha256:${(0, import_node_crypto8.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto9.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 async function previewDeveloperCompleteRecovery(opts) {
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
@@ -20386,10 +20499,10 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto8, import_node_fs14, import_node_path15, import_node_child_process4, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto9, import_node_fs14, import_node_path15, import_node_child_process4, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
-    import_node_crypto8 = require("node:crypto");
+    import_node_crypto9 = require("node:crypto");
     import_node_fs14 = require("node:fs");
     import_node_path15 = require("node:path");
     import_node_child_process4 = require("node:child_process");
@@ -20416,10 +20529,10 @@ var init_developer_complete = __esm({
 
 // node_modules/@praxis/jira/dist/quality-apply.js
 function digest(value) {
-  return (0, import_node_crypto9.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
+  return (0, import_node_crypto10.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sha256Text(text) {
-  return (0, import_node_crypto9.createHash)("sha256").update(text).digest("hex");
+  return (0, import_node_crypto10.createHash)("sha256").update(text).digest("hex");
 }
 function qualityApplyFingerprint(plan) {
   return `sha256:${digest({
@@ -21093,10 +21206,10 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto9, import_node_fs15, import_node_path16, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto10, import_node_fs15, import_node_path16, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
-    import_node_crypto9 = require("node:crypto");
+    import_node_crypto10 = require("node:crypto");
     import_node_fs15 = require("node:fs");
     import_node_path16 = require("node:path");
     init_mutation_auth();
@@ -21622,7 +21735,7 @@ async function claimWorkPackage(opts) {
       workItemId: opts.wpKey
     }), () => claimWorkPackage(opts));
   }
-  const token = (0, import_node_crypto10.randomUUID)();
+  const token = (0, import_node_crypto11.randomUUID)();
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
     ...manifest?.storyKeys ?? [],
@@ -21765,10 +21878,10 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto10, import_node_fs16, import_node_path17, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto11, import_node_fs16, import_node_path17, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
-    import_node_crypto10 = require("node:crypto");
+    import_node_crypto11 = require("node:crypto");
     import_node_fs16 = require("node:fs");
     import_node_path17 = require("node:path");
     init_dist();
@@ -22308,13 +22421,13 @@ function fileSha256(repo, rel2) {
   const abs = (0, import_node_path19.join)(repo, rel2);
   if (!(0, import_node_fs18.existsSync)(abs) || !(0, import_node_fs18.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto11.createHash)("sha256").update((0, import_node_fs18.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto12.createHash)("sha256").update((0, import_node_fs18.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel2) {
   const r = runGit(repo, ["show", `${rev}:${rel2}`]);
   if (r.status !== 0)
     return null;
-  return (0, import_node_crypto11.createHash)("sha256").update(r.stdout).digest("hex");
+  return (0, import_node_crypto12.createHash)("sha256").update(r.stdout).digest("hex");
 }
 function listCommitFiles(repo, rev) {
   const r = runGit(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]);
@@ -22475,10 +22588,10 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto11, import_node_fs18, import_node_path19, import_node_child_process5;
+var import_node_crypto12, import_node_fs18, import_node_path19, import_node_child_process5;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
-    import_node_crypto11 = require("node:crypto");
+    import_node_crypto12 = require("node:crypto");
     import_node_fs18 = require("node:fs");
     import_node_path19 = require("node:path");
     import_node_child_process5 = require("node:child_process");
@@ -22629,7 +22742,7 @@ function compareToQualitySnapshot(repo, selected, snapshot2) {
       consistency = "mismatch";
     return { path, liveSha256, snapshotSha256, consistency };
   });
-  const liveDigest = (0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
+  const liveDigest = (0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
     const live = liveFileHash(repo, path);
     return live ? { path, sha256: live } : { path, missing: true };
   }))).digest("hex");
@@ -22639,12 +22752,12 @@ function compareToQualitySnapshot(repo, selected, snapshot2) {
     liveDigest
   };
 }
-var import_node_fs20, import_node_path21, import_node_crypto12;
+var import_node_fs20, import_node_path21, import_node_crypto13;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
     import_node_fs20 = require("node:fs");
     import_node_path21 = require("node:path");
-    import_node_crypto12 = require("node:crypto");
+    import_node_crypto13 = require("node:crypto");
     init_git_local();
   }
 });
@@ -23059,12 +23172,12 @@ var init_journal = __esm({
 
 // node_modules/@praxis/vcs/dist/fingerprint.js
 function deliveryFingerprint(value) {
-  return `sha256:${(0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto14.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
 }
-var import_node_crypto13;
+var import_node_crypto14;
 var init_fingerprint = __esm({
   "node_modules/@praxis/vcs/dist/fingerprint.js"() {
-    import_node_crypto13 = require("node:crypto");
+    import_node_crypto14 = require("node:crypto");
   }
 });
 
@@ -25533,7 +25646,7 @@ __export(operations_exports, {
   workPackageShowOp: () => workPackageShowOp
 });
 function previewFingerprint(plan) {
-  return `sha256:${(0, import_node_crypto14.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto15.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 function redact(text) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
@@ -26922,10 +27035,10 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto14, import_node_child_process7, import_node_fs23, import_node_path26, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto15, import_node_child_process7, import_node_fs23, import_node_path26, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
-    import_node_crypto14 = require("node:crypto");
+    import_node_crypto15 = require("node:crypto");
     import_node_child_process7 = require("node:child_process");
     import_node_fs23 = require("node:fs");
     import_node_path26 = require("node:path");
@@ -59565,6 +59678,9 @@ function hostPermissionChannel(planText) {
   return {
     kind: "host-permission",
     async ask(request) {
+      if (PERSONAL_ACTS.has(request.action)) {
+        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Host-permission mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item): the host's tool-permission prompt can be switched to "always allow", and then the agent would have approved itself. Do it in a client that shows an approval dialog (for example Claude Code).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
+      }
       const expected = planTextOf(request);
       if (planText === void 0) {
         throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. This client has no approval dialog; in host-permission mode call praxis_approval_plan for this action, show the plan to the user, then call this tool with that exact text as planText so the host's permission prompt shows what will run.`, { executed: false, planText: expected });
@@ -59577,12 +59693,12 @@ function hostPermissionChannel(planText) {
   };
 }
 var trustedClientMode = () => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
-var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance"]);
+var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item"]);
 var trustedClientChannel = {
   kind: "trusted-client",
   async ask(request) {
     if (PERSONAL_ACTS.has(request.action)) {
-      throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code), or in the praxis CLI.`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
+      throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
     }
     return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
   }
@@ -79328,12 +79444,12 @@ var import_node_path36 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/build-info.js
-var import_node_crypto5 = require("node:crypto");
+var import_node_crypto6 = require("node:crypto");
 var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"1d05a73f8dacb5117468453c039f8e3159e73121f88815397a98295c43d6d057","coreBaseline":"98ff148a6ba6b9e8ced075c6d9a45b4a35d2cbac","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"a0b5f5dee963ec779383424298c6f11c34e80380ad191d516d2831d697b57e4e","coreBaseline":"095882da3efa009e2f1c81bf70e338d22ca49f29","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -79344,7 +79460,7 @@ function runtimeBuildInfo(version4) {
   const entry = process.argv[1];
   if (embedded && entry && /\.cjs$/.test(entry)) {
     try {
-      bundleSha256 = (0, import_node_crypto5.createHash)("sha256").update((0, import_node_fs3.readFileSync)(entry)).digest("hex");
+      bundleSha256 = (0, import_node_crypto6.createHash)("sha256").update((0, import_node_fs3.readFileSync)(entry)).digest("hex");
       bundlePath = entry;
     } catch {
       bundleSha256 = null;
@@ -79362,7 +79478,7 @@ function runtimeBuildInfo(version4) {
 }
 function toolOrigin(role) {
   const names = toolsForRole(role).map((tool) => tool.name).sort();
-  return { role, count: names.length, digest: (0, import_node_crypto5.createHash)("sha256").update(names.join("\n")).digest("hex"), names };
+  return { role, count: names.length, digest: (0, import_node_crypto6.createHash)("sha256").update(names.join("\n")).digest("hex"), names };
 }
 
 // packages/mcp/dist/envelope.js
@@ -79882,7 +79998,7 @@ function inspectService(service) {
 // packages/mcp/dist/workflow-store.js
 var import_node_fs7 = require("node:fs");
 var import_node_path6 = require("node:path");
-var import_node_crypto6 = require("node:crypto");
+var import_node_crypto7 = require("node:crypto");
 
 // packages/mcp/dist/human-approval.js
 init_dist();
@@ -80123,7 +80239,7 @@ function fingerprintFor2(repo, command, workItemId) {
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state2 = loadWorkflow(repo, workItemId);
-    token = state2 ? `state:${(0, import_node_crypto6.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
+    token = state2 ? `state:${(0, import_node_crypto7.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token });
 }
@@ -81977,7 +82093,7 @@ function repositoryBrief(repo, input2) {
 // packages/mcp/dist/review-service.js
 var import_node_child_process9 = require("node:child_process");
 var import_node_http = require("node:http");
-var import_node_crypto15 = require("node:crypto");
+var import_node_crypto16 = require("node:crypto");
 var import_node_fs30 = require("node:fs");
 var import_node_os6 = require("node:os");
 var import_node_path35 = require("node:path");
@@ -82013,7 +82129,7 @@ function progressFor(state2, view) {
 function safeEqual(a, b) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
-  return x.length === y.length && (0, import_node_crypto15.timingSafeEqual)(x, y);
+  return x.length === y.length && (0, import_node_crypto16.timingSafeEqual)(x, y);
 }
 function outcome(repo, workItemId, view, applied, conflicts, stale, summary) {
   const state2 = requireState2(repo, workItemId);
@@ -82027,7 +82143,7 @@ function note(repo, workItemId, view, how, summary) {
   }
 }
 function applyFromPage(repo, workItemId, view, raw) {
-  const submission = ReviewSubmissionSchema.parse(raw);
+  const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   if (submission.view !== view || submission.workItemId !== workItemId)
     throw new Error("REVIEW_MISMATCH: this submission belongs to another review");
   const state2 = requireState2(repo, workItemId);
@@ -82047,7 +82163,7 @@ function applyFromPage(repo, workItemId, view, raw) {
   return outcome(repo, workItemId, view, applied, conflicts, plan.stale, plan.summary);
 }
 async function applyHandedOver(repo, workItemId, raw, confirmation) {
-  const submission = ReviewSubmissionSchema.parse(raw);
+  const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   const id = workItemId ?? submission.workItemId;
   const state2 = requireState2(repo, id);
   const plan = submissionToCommands(state2, submission);
@@ -82056,6 +82172,12 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
   if (decisions2.length > 0) {
     const request = reviewApprovalRequest(decisions2, `Record your ${submission.view} review decisions (${plan.details.length} decision(s))`);
     approval = await obtainUserApproval({ ...request, description: plan.details.map((s) => `- ${s}`).join("\n") }, { confirmation, repo });
+  }
+  if (approval) {
+    const fresh = submissionToCommands(requireState2(repo, id), submission);
+    if (canonicalText(fresh.commands) !== canonicalText(plan.commands) || fresh.conflicts.length !== plan.conflicts.length) {
+      throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
+    }
   }
   const conflicts = [...plan.conflicts];
   let applied = 0;
@@ -82122,7 +82244,7 @@ async function handle(req, res) {
       return json2(res, 403, { error: "bad or expired link" });
     try {
       const state2 = requireState2(session.repo, session.workItemId);
-      const saveToken = (0, import_node_crypto15.randomBytes)(24).toString("hex");
+      const saveToken = (0, import_node_crypto16.randomBytes)(24).toString("hex");
       session.saveTokens.add(saveToken);
       if (session.saveTokens.size > 20)
         session.saveTokens.delete(session.saveTokens.values().next().value);
@@ -82218,8 +82340,8 @@ async function renderReviewTool(repo, input2) {
     if (live && !input2.reopen) {
       return { view, workItemId: state2.workItem.id, file: file2, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state2, view), progress: progressFor(state2, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
-    const id = (0, import_node_crypto15.randomBytes)(8).toString("hex");
-    const loadToken = (0, import_node_crypto15.randomBytes)(24).toString("hex");
+    const id = (0, import_node_crypto16.randomBytes)(8).toString("hex");
+    const loadToken = (0, import_node_crypto16.randomBytes)(24).toString("hex");
     sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now() });
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
     opened = await openInBrowser(secretUrl);
@@ -82294,6 +82416,14 @@ var PROTECTED_TOOLS = /* @__PURE__ */ new Set([
   "praxis_workflow_apply",
   "praxis_canon_init_apply"
 ]);
+function strayArguments(name, def, args) {
+  const accepted = Object.keys(def.inputSchema.properties);
+  const stray = Object.keys(args).filter((key) => !accepted.includes(key) && args[key] !== void 0);
+  if (stray.length === 0)
+    return null;
+  const suggest = (key) => accepted.find((a) => a.toLowerCase() === key.toLowerCase()) ?? accepted.find((a) => key.length > 3 && (a.toLowerCase().startsWith(key.toLowerCase().slice(0, 4)) || key.toLowerCase().startsWith(a.toLowerCase().slice(0, 4))));
+  return `${name} does not take ${stray.map((key) => `"${key}"${suggest(key) ? ` (did you mean "${suggest(key)}"?)` : ""}`).join(", ")}. Accepted arguments: ${accepted.join(", ")}. Nothing was changed.`;
+}
 async function approvalPlan(args, ctx, opts) {
   const target = str2(args.tool);
   if (!target || !PROTECTED_TOOLS.has(target))
@@ -82309,10 +82439,15 @@ async function approvalPlan(args, ctx, opts) {
     action: request.action,
     kind: request.kind,
     summary: request.summary,
-    planText: planTextOf(request),
+    // an act only a person may perform has no plan text to hand to the host's prompt: that prompt cannot stand for the person
+    ...hostPermissionMode() && PERSONAL_ACTS.has(request.action) ? { planText: null, available: false, reason: "this act needs a client with an approval dialog; host-permission mode does not cover it" } : { planText: planTextOf(request) },
     ...request.subject ? { subjectDigest: subjectDigest(request.subject) } : {},
     note: "This is what the user is asked to approve. It runs nothing."
   });
+  const targetDef = TOOLS.find((t) => t.name === target);
+  const strayTarget = targetDef ? strayArguments(target, targetDef, targetArgs) : null;
+  if (strayTarget)
+    throw new Error(`INVALID_INPUT: ${strayTarget}`);
   if (target === "praxis_workflow_apply") {
     const command = JSON.parse(String(targetArgs.command ?? "{}"));
     const view = previewWorkflow(ctx.repo, command, str2(targetArgs.workItemId)).humanApproval;
@@ -82417,19 +82552,9 @@ async function callToolInner(name, rawArgs, opts) {
     });
   }
   const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {};
-  const accepted = Object.keys(def.inputSchema.properties);
-  const stray = Object.keys(args).filter((key) => !accepted.includes(key) && args[key] !== void 0);
-  if (stray.length > 0) {
-    const suggest = (key) => accepted.find((a) => a.toLowerCase() === key.toLowerCase()) ?? accepted.find((a) => key.length > 3 && (a.toLowerCase().startsWith(key.toLowerCase().slice(0, 4)) || key.toLowerCase().startsWith(a.toLowerCase().slice(0, 4))));
-    return mcpEnvelope({
-      ok: false,
-      operation: name,
-      version: opts.version,
-      code: "INVALID_INPUT",
-      errors: [
-        `${name} does not take ${stray.map((key) => `"${key}"${suggest(key) ? ` (did you mean "${suggest(key)}"?)` : ""}`).join(", ")}. Accepted arguments: ${accepted.join(", ")}. Nothing was changed.`
-      ]
-    });
+  const strayMessage = strayArguments(name, def, args);
+  if (strayMessage) {
+    return mcpEnvelope({ ok: false, operation: name, version: opts.version, code: "INVALID_INPUT", errors: [strayMessage] });
   }
   const ctx = ctxFromArgs(args, {
     ...opts.extra
@@ -82497,7 +82622,7 @@ async function callToolInner(name, rawArgs, opts) {
       throw err;
     const message = ops.redact(explainCommandError(err) ?? (err instanceof Error ? err.message : String(err)));
     const coded = err;
-    const prefixed = explainCommandError(err) ? "INVALID_INPUT" : message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH):/)?.[1];
+    const prefixed = explainCommandError(err) ? "INVALID_INPUT" : message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH|REVIEW_CHANGED):/)?.[1];
     const code = err instanceof WorkflowError ? err.code : typeof prefixed === "string" && prefixed ? prefixed : err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
     const details = err instanceof WorkflowError ? { ...err.details ?? {} } : err instanceof ops.PraxisOpError ? {
       ...err.stage ? { stage: err.stage } : {},

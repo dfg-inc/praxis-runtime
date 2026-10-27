@@ -833,6 +833,11 @@ await scenario("S22", "Two criteria are reworded by id: exact preview, confirmat
   const typo = await call(agent, "praxis_workflow_inspect", { repo, workitemId: id, view: "requirements" });
   check(!typo.ok && typo.code === "INVALID_INPUT" && JSON.stringify(typo).includes("workItemId"), `a misspelt workItemId is an error: ${typo.code}`);
   eq(all(), before, "refused attempts change nothing");
+  // host-permission mode (the host's own prompt, possibly "always allow") does not stand in for the person either
+  const hostPerm = await open({ env: { PRAXIS_APPROVAL_MODE: "host-permission" } });
+  const hostApply = await call(hostPerm, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify(edit), confirmation: "YES", previewFingerprint: p.data.fingerprint, planText: "Reword 2 acceptance criterion(a)" });
+  check(!hostApply.ok && hostApply.code === "APPROVAL_CLIENT_UI_REQUIRED", `host-permission must not run a rewording: ${hostApply.code}`);
+  eq(all(), before, "host-permission attempt changes nothing");
   // an accepted criterion cannot be reworded around the dialog either
   const around = await call(agent, "praxis_workflow_preview", { repo, workItemId: id, command: JSON.stringify({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", statement: "sneaky" }] }] }) });
   check(!around.ok && around.code === "USER_DECISION_REQUIRED", `review-requirements must not reword an accepted criterion: ${around.code}`);

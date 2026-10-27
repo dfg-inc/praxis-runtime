@@ -347,6 +347,32 @@ await scenario("B06", "Contracts review in Chrome: the user agrees a contract; r
   eq(await q.locator('[data-contract="C-1"] [data-f=agree]').count(), 0, "no Agree box once agreed");
 });
 
+await scenario("B07", "Two tabs in Chrome: the second Save does not overwrite the first, says the page is out of date, and a reload shows the current state", async () => {
+  const w = await newGuided("Two tabs item");
+  const tabA = await page((await linkOf("requirements", w)).secret);
+  const tabB = await page((await linkOf("requirements", w)).secret);
+  // tab A: a remark on a criterion and on the requirement, a decision on the other criterion
+  await tabA.locator('[data-ac="REQ-ORD-001-AC-01"] [data-f=ac-comment]').fill("tab A remark");
+  await tabA.locator('[data-ac="REQ-ORD-001-AC-02"] input[value=rejected]').check();
+  await tabA.locator('[data-req="REQ-ORD-001"] [data-f=comment]').fill("tab A requirement remark");
+  await tabA.locator("#btn-save").click();
+  await tabA.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  // tab B, opened before A saved, edits the same three things
+  await tabB.locator('[data-ac="REQ-ORD-001-AC-01"] [data-f=ac-comment]').fill("tab B remark");
+  await tabB.locator('[data-ac="REQ-ORD-001-AC-02"] input[value=pending]').check();
+  await tabB.locator('[data-req="REQ-ORD-001"] [data-f=comment]').fill("tab B requirement remark");
+  await tabB.locator("#btn-save").click();
+  await tabB.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  const toast = await tabB.locator("#toast").innerText();
+  check(/out of date/.test(toast) && /Reload the page/.test(toast), `tab B must be told the page is out of date and to reload: ${toast.slice(0, 300)}`);
+  const stored = stateOf(w).requirements[0];
+  eq([stored.acceptanceCriteria[0].review.comment, stored.acceptanceCriteria[1].review.status, stored.comment], ["tab A remark", "rejected", "tab A requirement remark"], "tab A's remarks and decision survive tab B's Save");
+  // a reload shows what is stored now
+  const fresh = await page((await linkOf("requirements", w)).secret);
+  eq(await fresh.locator('[data-ac="REQ-ORD-001-AC-01"] [data-f=ac-comment]').inputValue(), "tab A remark", "the reloaded page shows tab A's remark");
+  eq(await fresh.locator('[data-ac="REQ-ORD-001-AC-02"] input[value=rejected]').isChecked(), true, "and tab A's decision");
+});
+
 await browser.close();
 await agent.close();
 const failed = results.filter((r) => r.status !== "PASS");
