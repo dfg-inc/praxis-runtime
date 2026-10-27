@@ -17,7 +17,10 @@ export type ElicitInput = (params: {
   requestedSchema: { type: "object"; properties: Record<string, unknown>; required: string[] };
 }, options?: { timeout?: number }) => Promise<ElicitResult>;
 
-/** A long preview (a Story, a plan) must still be readable; the dialog gets all of it, bounded. */
+/**
+ * The dialog must show the whole action: Approve binds everything in it. A message the dialog cannot carry in full is therefore
+ * refused, never cut (a cut message leaves out the lines the person most needs, and the Approve button still binds them).
+ */
 const MAX_MESSAGE = 12_000;
 
 export function approvalMessage(request: ApprovalRequest): string {
@@ -32,7 +35,14 @@ export function approvalMessage(request: ApprovalRequest): string {
     "Choose Approve to run exactly this. Choose Reject (or decline) to stop it.",
   ];
   const text = lines.join("\n");
-  return text.length <= MAX_MESSAGE ? text : `${text.slice(0, MAX_MESSAGE)}\n… (truncated: ask the agent to show the full preview before you approve)`;
+  if (text.length > MAX_MESSAGE) {
+    throw new ApprovalError(
+      "APPROVAL_TOO_LARGE",
+      `${request.summary} was NOT executed: what you would approve is ${text.length} characters, more than one approval dialog can show in full (${MAX_MESSAGE}). Approving something that is only partly shown is not allowed. Split it into smaller steps (fewer items per file or per command) and ask again.`,
+      { executed: false },
+    );
+  }
+  return text;
 }
 
 /** Error text that means "this connection cannot show the dialog", as opposed to a failure while showing it. */

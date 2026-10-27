@@ -492,7 +492,8 @@ async function runPlanningTool(name: string, args: Record<string, unknown>, repo
     }
     case "praxis_frontend_discover": {
       const registered = str(args.repositoryId);
-      let target = str(args.path) ?? repo;
+      // a path is relative to the repository and is judged by where it really is: discovery does not walk outside it
+      let target = str(args.path) !== undefined ? containedPath(repo, str(args.path)) : repo;
       if (registered) {
         const state = loadWorkflow(repo, workItemId);
         const entry = state?.repositories.find((r) => r.id === registered);

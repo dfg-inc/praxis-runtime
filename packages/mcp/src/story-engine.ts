@@ -102,7 +102,12 @@ function serviceVerdicts(scenarios: Scenario[]): VerificationMeta["serviceVerdic
 
 function readHostProposal(workflowRepo: string, serviceId: string): Proposal | undefined {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serviceId) || serviceId.includes("..")) throw new Error("UNSAFE_PATH");
-  const file = join(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
+  let file: string;
+  try {
+    file = containedPath(workflowRepo, join(".praxis", "quality", "proposals", `${serviceId}.json`));
+  } catch {
+    return undefined; // a link that leaves the repository is not a proposal
+  }
   if (!existsSync(file)) return undefined;
   const parsed = JSON.parse(readFileSync(file, "utf8")) as Proposal;
   if (!Array.isArray(parsed.files) || parsed.files.length === 0) throw new Error("PROPOSAL_INVALID");
@@ -234,7 +239,10 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
         `${serviceId}.json and authorize prepare-fix. No files were changed.`,
     );
   }
-  for (const file of proposal.files) safeFile(service.localPath, file.path);
+  for (const file of proposal.files) {
+    safeFile(service.localPath, file.path);
+    assertDiffTouchesOnly(service.localPath, file);
+  }
   const findings = state.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
   const branchRef = spawnSync("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
   const baseSha = (branchRef.status ?? 1) === 0 ? branchRef.stdout.trim() : git(service.localPath, ["rev-parse", "HEAD"]);
@@ -259,9 +267,37 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
   };
 }
 
+/** Every path a unified diff touches (headers, renames, copies, mode lines), as written in the diff. */
+export function diffPaths(diff: string): string[] {
+  const paths = new Set<string>();
+  const clean = (raw: string) => raw.replace(/\t.*$/, "").replace(/^"(.*)"$/, "$1").replace(/^[ab]\//, "");
+  for (const line of diff.split("\n")) {
+    let m: RegExpMatchArray | null;
+    if ((m = line.match(/^diff --git (.+) (.+)$/))) {
+      paths.add(clean(m[1]));
+      paths.add(clean(m[2]));
+    } else if ((m = line.match(/^(?:---|\+\+\+) (.+)$/))) {
+      if (m[1] !== "/dev/null") paths.add(clean(m[1]));
+    } else if ((m = line.match(/^(?:rename|copy) (?:from|to) (.+)$/))) {
+      paths.add(clean(m[1]));
+    }
+  }
+  return [...paths];
+}
+
+/** A diff may only touch the file it was proposed for (and that file must stay inside the checkout): the approval lists exactly these files. */
+export function assertDiffTouchesOnly(root: string, file: { path: string; diff?: string }): void {
+  if (!file.diff) return;
+  const allowed = containedPath(root, file.path);
+  for (const touched of diffPaths(file.diff)) {
+    if (containedPath(root, touched) !== allowed) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${touched}`);
+  }
+}
+
 function applyProposal(root: string, proposal: Proposal): void {
   for (const file of proposal.files) {
     const absolute = safeFile(root, file.path);
+    assertDiffTouchesOnly(root, file);
     if (file.diff) {
       git(root, ["apply", "--whitespace=nowarn"], file.diff);
       continue;

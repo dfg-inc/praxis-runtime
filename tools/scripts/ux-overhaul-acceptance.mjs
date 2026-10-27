@@ -883,6 +883,13 @@ await scenario("S22", "Two criteria are reworded by id: exact preview, confirmat
   const savedB = await tabB({ id: rev3.id, revision: rev3.revision, comment: "tab B remark", fromComment: rev3.review.comment ?? "" });
   check((savedB.conflicts ?? []).length > 0 && /reload/i.test(JSON.stringify(savedB.conflicts)), `tab B must get a conflict that says to reload: ${JSON.stringify(savedB)}`);
   eq(stateOf(repo, id).requirements.find((q) => q.id === "REQ-ORD-003").acceptanceCriteria[0].review.comment, "tab A remark", "tab A's remark survives the stale save");
+  // a handed-over file whose plan is too large for one dialog is refused, never shown cut (the real elicitation dialog)
+  const offlineR = await call(agent, "praxis_review_render", { repo, workItemId: id, view: "requirements", serve: false });
+  const offline = JSON.parse(readFileSync(offlineR.data.file, "utf8").match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
+  const bigFile = join(repo, "big-decisions.json");
+  writeFileSync(bigFile, JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: id, baseFingerprint: offline.baseFingerprint, baseStamp: offline.baseStamp, baseState: offline.baseState, requirements: { requirements: [{ id: "REQ-ORD-001", revision: stateOf(repo, id).requirements[0].revision, addCriteria: Array.from({ length: 40 }, (_, i) => ({ statement: `criterion ${i} ${"padding ".repeat(48)}` })), criteria: [], removeCriteria: [] }], acceptAll: false }, waivers: [{ kind: "prototype", reason: "pure refactor, nothing to show" }] }));
+  const tooLarge = await call(agent, "praxis_review_apply", { repo, workItemId: id, file: "big-decisions.json", confirmation: "YES" });
+  check(!tooLarge.ok && tooLarge.code === "APPROVAL_TOO_LARGE", `a plan too large for the dialog must be refused: ${tooLarge.code}`);
   // the review page shows the current data
   const rendered = await call(agent, "praxis_review_render", { repo, view: "requirements", workItemId: id });
   const html = await (await fetch(readFileSync(join(dirname(rendered.data.file), "requirements.url"), "utf8"))).text();

@@ -39,7 +39,7 @@ import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
 const IDLE_MS = 4 * 60 * 60 * 1000;
 const MAX_BODY = 1_000_000;
 
-type Session = { id: string; loadToken: string; loadUntil: number; saveTokens: Set<string>; openedAt?: number; repo: string; workItemId: string; view: ReviewView; lastUsed: number };
+type Session = { id: string; loadToken: string; loadUntil: number; saveTokens: Set<string>; openedAt?: number; repo: string; workItemId: string; view: ReviewView; lastUsed: number; /** What the agent was told at render time (the stamps of the state this session was created for). */ shown?: { fingerprint: string; baseState: string } };
 const LOAD_TOKEN_MS = 10 * 60 * 1000;
 const sessions = new Map<string, Session>();
 let server: Server | undefined;
@@ -135,7 +135,7 @@ export async function applyHandedOver(repo: string, workItemId: string | undefin
   // shows the whole plan and the approval binds every command in it: nothing is applied next to it that the person did not see.
   // the commands in the form the contract will see them (defaults filled in): the approval binds exactly these
   const commands = plan.commands.map((c) => parseWorkflowCommand(c) as unknown as Record<string, unknown>);
-  const gated = commands.some((c) => needsApprovalWhenHandedOver(c as never));
+  const gated = plan.affectsStories || commands.some((c) => needsApprovalWhenHandedOver(c as never));
   const batch = gated ? commands : [];
   let approval;
   if (gated) {
@@ -319,11 +319,11 @@ export async function renderReviewTool(repo: string, input: { view: string; work
     // a page for this view is already open and its link still valid: do not open another browser tab on every call
     const live = [...sessions.values()].find((s) => s.repo === repo && s.workItemId === state.workItem.id && s.view === view && s.loadUntil > Date.now() && s.openedAt !== undefined);
     if (live && !input.reopen) {
-      return { view, workItemId: state.workItem.id, file, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state, view), baseState: workStateStamp(state), progress: progressFor(state, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
+      return { view, workItemId: state.workItem.id, file, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: live.shown?.fingerprint ?? null, baseState: live.shown?.baseState ?? null, progress: progressFor(state, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
     const id = randomBytes(8).toString("hex");
     const loadToken = randomBytes(24).toString("hex");
-    sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: new Set(), repo, workItemId: state.workItem.id, view, lastUsed: Date.now() });
+    sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: new Set(), repo, workItemId: state.workItem.id, view, lastUsed: Date.now(), shown: { fingerprint: fingerprintFor(state, view), baseState: workStateStamp(state) } });
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
     // The link that can open and save the page goes to the user's browser, never into the agent's tool result: an agent that held it could Save for the user.
     opened = await openInBrowser(secretUrl);

@@ -8633,12 +8633,18 @@ function workStateStamp(state2) {
   const slice = {
     mode: state2.mode,
     phase: state2.phase,
-    requirements: state2.requirements.map((r) => [r.id, r.revision, r.scope, r.status]),
-    prototype: state2.prototype ? [state2.prototype.revision, state2.prototype.status] : null,
-    plan: state2.storyPlan ? [state2.storyPlan.revision, state2.storyPlan.status] : null,
-    stories: state2.stories.map((x) => [x.id, x.revision, x.status]),
-    contracts: state2.contracts.map((c) => [c.id, c.status]),
-    waivers: state2.waivers.map((w) => [w.kind, w.requirementId ?? null, w.reason])
+    phaseAcceptance: state2.phaseAcceptance,
+    requirements: state2.requirements,
+    prototype: state2.prototype ?? null,
+    plan: state2.storyPlan ?? null,
+    stories: state2.stories,
+    contracts: state2.contracts,
+    waivers: state2.waivers,
+    services: state2.services.map((x) => [x.id, x.status, x.repositoryId ?? null]),
+    repositories: state2.repositories.map((x) => [x.id, x.status]),
+    decisions: state2.decisions.map((x) => [x.id, x.revision, x.confirmed]),
+    verdicts: state2.verdicts.map((x) => [x.id, x.verdict, x.stale]),
+    implementation: state2.implementationUnits.map((x) => [x.id, x.stale])
   };
   return (0, import_node_crypto5.createHash)("sha256").update(canonicalText(slice)).digest("hex").slice(0, 24);
 }
@@ -8667,9 +8673,11 @@ function submissionToCommands(state2, raw) {
   const details = [];
   const stale = submission.baseFingerprint !== fingerprintFor(state2, submission.view);
   if (submission.workItemId !== state2.workItem.id) {
-    return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state2.workItem.id}` }], stale: true, summary: [], details: [] };
+    return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state2.workItem.id}` }], stale: true, summary: [], details: [], affectsStories: false };
   }
   const via = "html-review";
+  let affectsStories = false;
+  const editedPlan = /* @__PURE__ */ new Map();
   const outdated = submission.baseStamp === void 0 || submission.baseStamp !== reviewStamp(state2, submission.view);
   const reload = "reload the page and decide again";
   const unbased = (what) => `this page is out of date and does not say what it showed for ${what}: ${reload}`;
@@ -8734,21 +8742,29 @@ function submissionToCommands(state2, raw) {
         const unchanged = (criterion.status === void 0 || criterion.status === live.review.status) && (criterion.comment === void 0 || criterion.comment === (live.review.comment ?? "")) && (criterion.statement === void 0 || criterion.statement === live.statement);
         if (unchanged)
           continue;
-        details.push(`${criterion.id} '${live.statement.slice(0, 400)}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== void 0 ? `edit to '${criterion.statement.slice(0, 400)}'` : "", criterion.comment !== void 0 && criterion.comment !== (live.review.comment ?? "") ? (criterion.comment ? `comment '${criterion.comment.slice(0, 400)}'` : "clear the comment") + (live.review.comment ? ` (now '${live.review.comment.slice(0, 200)}')` : "") : ""].filter(Boolean).join(", ")}`);
+        details.push(`${criterion.id} '${live.statement}': ${[criterion.status ? criterion.status.toUpperCase() : "", criterion.statement !== void 0 ? `edit to '${criterion.statement}'` : "", criterion.comment !== void 0 && criterion.comment !== (live.review.comment ?? "") ? (criterion.comment ? `comment '${criterion.comment}'` : "clear the comment") + (live.review.comment ? ` (now '${live.review.comment}')` : "") : ""].filter(Boolean).join(", ")}`);
         acceptance.push({ id: criterion.id, ...criterion.status ? { status: criterion.status } : {}, ...criterion.comment !== void 0 ? { comment: criterion.comment } : {}, ...criterion.statement !== void 0 ? { statement: criterion.statement } : {} });
       }
       if (item.statement !== void 0)
-        details.push(`${item.id}: edit statement '${current.statement.slice(0, 60)}' -> '${item.statement.slice(0, 400)}'`);
+        details.push(`${item.id}: edit statement '${current.statement}' -> '${item.statement}'`);
       if (item.comment)
-        details.push(`${item.id}: comment '${item.comment.slice(0, 400)}'`);
+        details.push(`${item.id}: comment '${item.comment}'`);
       if (item.scopeNote !== void 0 && item.scopeNote !== (current.scopeNote ?? ""))
-        details.push(`${item.id}: scope note '${item.scopeNote.slice(0, 400)}'`);
+        details.push(`${item.id}: scope note '${item.scopeNote}'`);
       if (item.scope !== void 0 && item.scope !== current.scope)
         details.push(`${item.id}: scope ${current.scope} -> ${item.scope}`);
       for (const a of item.addCriteria)
-        details.push(`${item.id}: add criterion '${a.statement.slice(0, 400)}'`);
+        details.push(`${item.id}: add criterion '${a.statement}'`);
       for (const r of item.removeCriteria)
         details.push(`${item.id}: remove criterion ${r}`);
+      const reworded = item.statement !== void 0 && item.statement !== current.statement || item.criteria.some((c) => c.statement !== void 0 && c.statement !== current.acceptanceCriteria.find((x) => x.id === c.id)?.statement) || item.addCriteria.length > 0 || item.removeCriteria.length > 0 || scopeChanged;
+      const resting = state2.stories.filter((x) => x.status !== "superseded" && x.requirementIds.includes(item.id));
+      if (reworded && resting.length > 0) {
+        details.push(`${item.id}: this change affects stories ${resting.map((x) => x.id).join(", ")}: they are marked stale and their confirmation is withdrawn${scopeChanged ? `; moving the requirement to scope '${item.scope}' also excludes or restores them and their plan lines` : ""}`);
+        affectsStories = true;
+      }
+      if (item.comment === "" && current.comment)
+        details.push(`${item.id}: CLEAR the comment ('${current.comment}')`);
       if (acceptance.length === 0 && item.statement === void 0 && item.scope === void 0 && item.scopeNote === void 0 && item.comment === void 0 && item.addCriteria.length === 0 && item.removeCriteria.length === 0)
         continue;
       decisions2.push({
@@ -8785,7 +8801,7 @@ function submissionToCommands(state2, raw) {
         commands.push({ action: "prototype-feedback", via, items: p.feedback, resolve: p.resolve });
         summary.push(`${p.feedback.length} comment(s)`);
         for (const f of p.feedback)
-          details.push(`prototype comment on ${f.target}: '${f.comment.slice(0, 400)}'`);
+          details.push(`prototype comment on ${f.target}: '${f.comment}'`);
         for (const r of p.resolve)
           details.push(`prototype feedback ${r} resolved`);
       }
@@ -8834,10 +8850,19 @@ function submissionToCommands(state2, raw) {
         details.push(`${entry.id}: exclude (${entry.exclude})`);
       if (entry.restore)
         details.push(`${entry.id}: restore`);
-      if (Object.keys(patch).length > 0)
-        details.push(`${entry.id}: edit ${Object.keys(patch).join(", ")}`);
+      for (const [field, value] of Object.entries(patch))
+        details.push(`${entry.id}: EDIT ${field}: '${String(current[field] ?? "")}' -> '${String(value)}'`);
       if (entry.status !== void 0)
-        details.push(`${entry.id} '${current.title}': ${entry.status.toUpperCase()}`);
+        details.push(`${entry.id} '${String(patch.title ?? current.title)}': ${entry.status.toUpperCase()}${entry.comment ? ` ('${entry.comment}')` : ""}`);
+      if (entry.exclude !== void 0 || entry.restore) {
+        const storyOf2 = state2.stories.find((x) => x.id === entry.id && x.status !== "superseded");
+        if (storyOf2) {
+          details.push(`${entry.id}: the story ${entry.id} (revision ${storyOf2.revision}) is ${entry.exclude !== void 0 ? "excluded" : "restored"} together with its plan line`);
+          affectsStories = true;
+        }
+      }
+      if (Object.keys(patch).length > 0)
+        editedPlan.set(entry.id, patch);
       if (entry.status !== void 0)
         operations.push({ op: "review", id: entry.id, status: entry.status, ...entry.comment !== void 0 ? { comment: entry.comment } : {} });
     }
@@ -8851,7 +8876,11 @@ function submissionToCommands(state2, raw) {
       else {
         commands.push({ action: "agree-story-plan", via });
         summary.push("plan agreed");
-        details.push(`AGREE the story plan (${state2.storyPlan?.entries.length ?? 0} lines, revision ${state2.storyPlan?.revision})`);
+        details.push(`AGREE the story plan as it will be after the edits above (${state2.storyPlan?.entries.length ?? 0} lines):`);
+        for (const e of state2.storyPlan?.entries ?? []) {
+          const edit = editedPlan.get(e.id) ?? {};
+          details.push(`  ${e.id} '${edit.title ?? e.title}' - implements: ${edit.implementation ?? e.implementation} - the user gets: ${edit.userGets ?? e.userGets}${e.status === "excluded" ? " (excluded)" : ""}`);
+        }
       }
     }
   }
@@ -8870,13 +8899,13 @@ function submissionToCommands(state2, raw) {
       if (story.narrative !== void 0 || story.objective !== void 0) {
         commands.push({ action: "update-story", id: story.storyId, patch: { ...story.narrative !== void 0 ? { narrative: story.narrative } : {}, ...story.objective !== void 0 ? { objective: story.objective } : {} }, reason: "edited in the review" });
         summary.push(`${story.storyId} edited`);
-        details.push(`${story.storyId} (revision ${current.revision}): EDIT${story.narrative !== void 0 ? ` narrative '${current.narrative.slice(0, 120)}' -> '${story.narrative.slice(0, 400)}'` : ""}${story.objective !== void 0 ? ` objective '${current.objective.slice(0, 120)}' -> '${story.objective.slice(0, 400)}'` : ""}; marks on this story start over and its confirmation is withdrawn`);
+        details.push(`${story.storyId} (revision ${current.revision}): EDIT${story.narrative !== void 0 ? ` narrative '${current.narrative}' -> '${story.narrative}'` : ""}${story.objective !== void 0 ? ` objective '${current.objective}' -> '${story.objective}'` : ""}; marks on this story start over and its confirmation is withdrawn`);
         continue;
       }
       if (story.exclude !== void 0) {
         commands.push({ action: "exclude-story", id: story.storyId, reason: story.exclude });
         summary.push(`${story.storyId} excluded`);
-        details.push(`${story.storyId}: EXCLUDE from scope (${story.exclude.slice(0, 400)})`);
+        details.push(`${story.storyId}: EXCLUDE from scope (${story.exclude})`);
         continue;
       }
       if (story.restore) {
@@ -8916,7 +8945,7 @@ function submissionToCommands(state2, raw) {
       }
       if (current === item.status && (item.comment === void 0 || item.comment === (live?.review[item.key]?.comment ?? "")))
         return false;
-      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment.slice(0, 400)}')` : ""}`);
+      details.push(`${item.storyId} ${item.key}: ${item.status.toUpperCase()}${item.comment ? ` ('${item.comment}')` : ""}`);
       return true;
     });
     const acceptStories = s.stories.filter((x) => x.acceptAll && !edited.has(x.storyId)).filter((x) => {
@@ -8957,7 +8986,7 @@ function submissionToCommands(state2, raw) {
       const { status: _s, agreement: _a7, ...content } = contract;
       commands.push({ action: "set-contract", via, contract: { ...content, status: "agreed" } });
       summary.push(`contract ${id} agreed`);
-      details.push(`AGREE contract ${id} '${contract.name}': provider ${contract.providerServiceId}, consumers ${contract.consumerServiceIds.join(", ") || "none"}${contract.schemaRef ? `, schema ${contract.schemaRef}` : ""}${contract.description ? `, description '${contract.description.slice(0, 400)}'` : ""}${contract.requirementIds.length ? `, requirements ${contract.requirementIds.join(" ")}` : ""}${contract.storyIds.length ? `, stories ${contract.storyIds.join(" ")}` : ""}`);
+      details.push(`AGREE contract ${id} '${contract.name}': provider ${contract.providerServiceId}, consumers ${contract.consumerServiceIds.join(", ") || "none"}${contract.schemaRef ? `, schema ${contract.schemaRef}` : ""}${contract.description ? `, description '${contract.description}'` : ""}${contract.requirementIds.length ? `, requirements ${contract.requirementIds.join(" ")}` : ""}${contract.storyIds.length ? `, stories ${contract.storyIds.join(" ")}` : ""}`);
     }
   }
   if (submission.view === "contracts" && submission.contracts) {
@@ -8995,9 +9024,9 @@ function submissionToCommands(state2, raw) {
     }
     commands.push({ action: "waive-coverage", kind: w.kind, ...w.requirementId ? { requirementId: w.requirementId } : {}, reason: w.reason });
     summary.push(`waive ${w.kind}`);
-    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason.slice(0, 400)}'`);
+    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason}'`);
   }
-  return { commands, conflicts, stale, summary, details };
+  return { commands, conflicts, stale, summary, details, affectsStories };
 }
 var import_node_crypto5, REVIEW_VIEWS, ReviewViewSchema, Mark, RequirementsPayload, PrototypePayload, PlanPayload, StoriesPayload, ReviewSubmissionSchema, SHOWN_AND_APPROVED;
 var init_review_submission = __esm({
@@ -59645,8 +59674,10 @@ function approvalMessage(request) {
     "Choose Approve to run exactly this. Choose Reject (or decline) to stop it."
   ];
   const text = lines.join("\n");
-  return text.length <= MAX_MESSAGE ? text : `${text.slice(0, MAX_MESSAGE)}
-\u2026 (truncated: ask the agent to show the full preview before you approve)`;
+  if (text.length > MAX_MESSAGE) {
+    throw new ApprovalError("APPROVAL_TOO_LARGE", `${request.summary} was NOT executed: what you would approve is ${text.length} characters, more than one approval dialog can show in full (${MAX_MESSAGE}). Approving something that is only partly shown is not allowed. Split it into smaller steps (fewer items per file or per command) and ask again.`, { executed: false });
+  }
+  return text;
 }
 var UNAVAILABLE = /elicit|capabilit|not supported|unsupported|era\b|input_required|method not found/i;
 function elicitParams(request) {
@@ -79497,7 +79528,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"7722e13a61e265fc77fa882eff0c46b51e82b677c952fac022d8c6613fa0cb2a","coreBaseline":"8d3e33ec5251dd0c8db7f7dee196052ef39d7d31","inputs":33}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"585664352dfbb689f8ef44547d6168905c9402a3ab3a4de676abd163f2058816","coreBaseline":"4ad96037f8b188a3ed762a4fced50110e45b8cdd","inputs":33}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80764,7 +80795,12 @@ function serviceVerdicts(scenarios) {
 function readHostProposal(workflowRepo, serviceId) {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serviceId) || serviceId.includes(".."))
     throw new Error("UNSAFE_PATH");
-  const file2 = (0, import_node_path8.join)(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
+  let file2;
+  try {
+    file2 = containedPath(workflowRepo, (0, import_node_path8.join)(".praxis", "quality", "proposals", `${serviceId}.json`));
+  } catch {
+    return void 0;
+  }
   if (!(0, import_node_fs9.existsSync)(file2))
     return void 0;
   const parsed = JSON.parse((0, import_node_fs9.readFileSync)(file2, "utf8"));
@@ -80868,8 +80904,10 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
   if (!proposal) {
     throw new Error(`HOST_EDIT_UNAVAILABLE: no coding-agent patch is available. Write .praxis/quality/proposals/${serviceId}.json and authorize prepare-fix. No files were changed.`);
   }
-  for (const file2 of proposal.files)
+  for (const file2 of proposal.files) {
     safeFile2(service.localPath, file2.path);
+    assertDiffTouchesOnly(service.localPath, file2);
+  }
   const findings = state2.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
   const branchRef = (0, import_node_child_process3.spawnSync)("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
   const baseSha = (branchRef.status ?? 1) === 0 ? branchRef.stdout.trim() : git(service.localPath, ["rev-parse", "HEAD"]);
@@ -80893,9 +80931,36 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
     }
   };
 }
+function diffPaths(diff) {
+  const paths = /* @__PURE__ */ new Set();
+  const clean = (raw) => raw.replace(/\t.*$/, "").replace(/^"(.*)"$/, "$1").replace(/^[ab]\//, "");
+  for (const line of diff.split("\n")) {
+    let m;
+    if (m = line.match(/^diff --git (.+) (.+)$/)) {
+      paths.add(clean(m[1]));
+      paths.add(clean(m[2]));
+    } else if (m = line.match(/^(?:---|\+\+\+) (.+)$/)) {
+      if (m[1] !== "/dev/null")
+        paths.add(clean(m[1]));
+    } else if (m = line.match(/^(?:rename|copy) (?:from|to) (.+)$/)) {
+      paths.add(clean(m[1]));
+    }
+  }
+  return [...paths];
+}
+function assertDiffTouchesOnly(root, file2) {
+  if (!file2.diff)
+    return;
+  const allowed = containedPath(root, file2.path);
+  for (const touched of diffPaths(file2.diff)) {
+    if (containedPath(root, touched) !== allowed)
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${touched}`);
+  }
+}
 function applyProposal(root, proposal) {
   for (const file2 of proposal.files) {
     const absolute = safeFile2(root, file2.path);
+    assertDiffTouchesOnly(root, file2);
     if (file2.diff) {
       git(root, ["apply", "--whitespace=nowarn"], file2.diff);
       continue;
@@ -82260,7 +82325,7 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
   const state2 = requireState2(repo, id);
   const plan = submissionToCommands(state2, submission);
   const commands = plan.commands.map((c) => parseWorkflowCommand(c));
-  const gated = commands.some((c) => needsApprovalWhenHandedOver(c));
+  const gated = plan.affectsStories || commands.some((c) => needsApprovalWhenHandedOver(c));
   const batch = gated ? commands : [];
   let approval;
   if (gated) {
@@ -82432,11 +82497,11 @@ async function renderReviewTool(repo, input2) {
     const p = await ensureServer();
     const live = [...sessions.values()].find((s) => s.repo === repo && s.workItemId === state2.workItem.id && s.view === view && s.loadUntil > Date.now() && s.openedAt !== void 0);
     if (live && !input2.reopen) {
-      return { view, workItemId: state2.workItem.id, file: file2, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: fingerprintFor(state2, view), baseState: workStateStamp(state2), progress: progressFor(state2, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
+      return { view, workItemId: state2.workItem.id, file: file2, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: live.shown?.fingerprint ?? null, baseState: live.shown?.baseState ?? null, progress: progressFor(state2, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
     const id = (0, import_node_crypto16.randomBytes)(8).toString("hex");
     const loadToken = (0, import_node_crypto16.randomBytes)(24).toString("hex");
-    sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now() });
+    sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now(), shown: { fingerprint: fingerprintFor(state2, view), baseState: workStateStamp(state2) } });
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
     opened = await openInBrowser(secretUrl);
     const created = sessions.get(id);
@@ -82805,7 +82870,7 @@ Left untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
     }
     case "praxis_frontend_discover": {
       const registered = str2(args.repositoryId);
-      let target = str2(args.path) ?? repo;
+      let target = str2(args.path) !== void 0 ? containedPath(repo, str2(args.path)) : repo;
       if (registered) {
         const state2 = loadWorkflow(repo, workItemId);
         const entry = state2?.repositories.find((r) => r.id === registered);

@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ApprovalRequest, AskAnswer, UserApprovalChannel } from "@praxis/contracts";
+import { approvalMessage, elicitationChannel } from "./approval-channel.js";
 import { callTool } from "./tools.js";
 import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
 import type { McpEnvelope } from "./workflow-test-helpers.js";
@@ -344,5 +345,104 @@ describe("praxis_review_apply: what the person approves is everything that is ap
     const again = await call("praxis_review_apply", repo, { file, confirmation: "YES", workItemId: id }, approve().channel);
     expect(again.ok).toBe(true);
     expect(state(repo, id).waivers).toHaveLength(1);
+  });
+});
+
+describe("the dialog shows everything it binds, or the action is refused", () => {
+  const writeFile = (repo: string, body: object) => {
+    writeFileSync(join(repo, "decisions.json"), JSON.stringify(body));
+    return "decisions.json";
+  };
+
+  it("a plan that is too large for one dialog is refused (APPROVAL_TOO_LARGE), never cut; nothing is applied", async () => {
+    const { repo, id } = await lab();
+    const t = await tab(repo, id, "requirements");
+    const state0 = state(repo, id);
+    const rev = state0.requirements[0].revision;
+    const addCriteria = Array.from({ length: 40 }, (_, i) => ({ statement: `criterion ${i} ${"padding ".repeat(48)}` }));
+    const body = { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: id, baseFingerprint: t.page.baseFingerprint, baseStamp: t.page.baseStamp, baseState: t.page.baseState, requirements: { requirements: [{ id: "REQ-ORD-001", revision: rev, addCriteria, criteria: [], removeCriteria: [] }], acceptAll: false }, waivers: [{ kind: "prototype", reason: "pure refactor, nothing to show" }], modeChange: { to: "guided" } };
+    const before = readFileSync(itemFile(repo, id), "utf8");
+    // the client's real elicitation dialog: a message it cannot carry whole is refused before anything is asked
+    const asked: string[] = [];
+    const real = elicitationChannel({ supported: true, elicitInput: async (params) => (asked.push(params.message), { action: "accept", content: { decision: "approve" } }) })!;
+    const res = await call("praxis_review_apply", repo, { file: writeFile(repo, body), confirmation: "YES", workItemId: id }, real);
+    expect(res.ok).toBe(false);
+    expect(code(res)).toBe("APPROVAL_TOO_LARGE");
+    expect(asked).toHaveLength(0); // the dialog was never opened with a cut message
+    expect(() => approvalMessage({ action: "x", kind: "development_action", summary: "s", description: "y".repeat(13_000), subject: "s" } as never)).toThrow(/more than one approval dialog can show in full/);
+    expect(readFileSync(itemFile(repo, id), "utf8")).toBe(before);
+    // the same decisions in a size the dialog can carry are shown in full and applied
+    const small = { ...body, requirements: { requirements: [{ id: "REQ-ORD-001", revision: rev, addCriteria: addCriteria.slice(0, 2), criteria: [], removeCriteria: [] }], acceptAll: false } };
+    const ok2 = approve();
+    const done = await call("praxis_review_apply", repo, { file: writeFile(repo, small), confirmation: "YES", workItemId: id }, ok2.channel);
+    expect(done.ok, JSON.stringify(done.errors ?? done)).toBe(true);
+    expect(ok2.seen[0].description).toMatch(/SWITCH this work item/);
+    expect(ok2.seen[0].description).toContain("WAIVE prototype");
+  });
+
+  it("a plain requirement change that reaches a story is not applied quietly: it needs the dialog and the dialog says what happens to the story", async () => {
+    const { repo, id } = await lab();
+    const t = await tab(repo, id, "requirements");
+    const rev = state(repo, id).requirements[0].revision;
+    const body = { contract: "praxis.review.submission", version: 1, reviewId: "r", view: "requirements", workItemId: id, baseFingerprint: t.page.baseFingerprint, baseStamp: t.page.baseStamp, requirements: { requirements: [{ id: "REQ-ORD-001", revision: rev, scope: "excluded", fromScope: "in", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } };
+    const before = readFileSync(itemFile(repo, id), "utf8");
+    const none = await call("praxis_review_apply", repo, { file: writeFile(repo, body), confirmation: "YES", workItemId: id });
+    expect(code(none)).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    expect(readFileSync(itemFile(repo, id), "utf8")).toBe(before);
+    const dlg = approve();
+    const done = await call("praxis_review_apply", repo, { file: writeFile(repo, body), confirmation: "YES", workItemId: id }, dlg.channel);
+    expect(done.ok, JSON.stringify(done.errors ?? done)).toBe(true);
+    expect(dlg.seen[0].description).toMatch(/affects stories US-ORD-001.*confirmation is withdrawn/);
+    expect(state(repo, id).requirements[0].scope).toBe("excluded");
+  });
+
+  it("a reused review page reports the state it was created for, not the current one", async () => {
+    const { repo, id } = await lab();
+    process.env.PRAXIS_TEST_REVIEW_NO_BROWSER = "1";
+    const first = (await call("praxis_review_render", repo, { view: "requirements", workItemId: id, serve: false })).data as { baseState: string };
+    await record(repo, { action: "add-requirement", id: "REQ-ORD-002", statement: "More", acceptanceCriteria: ["x"] }, id);
+    const later = (await call("praxis_review_render", repo, { view: "requirements", workItemId: id, serve: false })).data as { baseState: string };
+    expect(later.baseState).not.toBe(first.baseState); // an offline render describes the state it just wrote
+  });
+});
+
+describe("a Quality patch may touch only the file it was approved for; discovery stays inside the repository", () => {
+  it("diffPaths and assertDiffTouchesOnly: other files, renames, copies and links are refused", async () => {
+    const { diffPaths, assertDiffTouchesOnly } = await import("./story-engine.js");
+    const { repo, outside } = (() => {
+      const dir = mkdtempSync(join(tmpdir(), "praxis-diff-"));
+      const out = mkdtempSync(join(tmpdir(), "praxis-diff-out-"));
+      writeFileSync(join(dir, "a.txt"), "a\n");
+      mkdirSync(join(dir, "other"));
+      writeFileSync(join(dir, "other", "file"), "o\n");
+      return { repo: dir, outside: out };
+    })();
+    const one = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n";
+    expect(diffPaths(one)).toEqual(["a.txt"]);
+    expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: one })).not.toThrow();
+    const sneaky = `${one}diff --git a/other/file b/other/file\n--- a/other/file\n+++ b/other/file\n@@ -1 +1 @@\n-o\n+EVIL\n`;
+    expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: sneaky })).toThrow(/also changes other\/file/);
+    const rename = "diff --git a/a.txt b/other/file\nsimilarity index 100%\nrename from a.txt\nrename to other/file\n";
+    expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: rename })).toThrow(/PROPOSAL_INVALID/);
+    const escape = "diff --git a/../x b/../x\n--- a/../x\n+++ b/../x\n";
+    expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: escape })).toThrow();
+    symlinkSync(outside, join(repo, "out-link"));
+    expect(() => assertDiffTouchesOnly(repo, { path: "out-link/x.txt", diff: "--- a/out-link/x.txt\n+++ b/out-link/x.txt\n" })).toThrow("UNSAFE_PATH");
+  });
+
+  it("praxis_frontend_discover refuses a path outside the repository, absolute or through a link", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "praxis-disc-out-"));
+    writeFileSync(join(outside, "theme.css"), ":root{--c:#123456}");
+    const repo = mkdtempSync(join(tmpdir(), "praxis-disc-"));
+    mkdirSync(join(repo, "web"));
+    writeFileSync(join(repo, "web", "app.css"), ":root{--brand:#abcdef}");
+    symlinkSync(outside, join(repo, "web", "link"));
+    const run = (path: string) => call("praxis_frontend_discover", repo, { path });
+    for (const path of [outside, "../x", "web/link"]) {
+      const res = await run(path);
+      expect(res.ok, path).toBe(false);
+      expect(JSON.stringify(res), path).not.toContain("123456");
+    }
+    expect((await run("web")).ok).toBe(true);
   });
 });
