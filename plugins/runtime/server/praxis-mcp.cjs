@@ -8751,8 +8751,8 @@ function submissionToCommands(state2, raw) {
       summary.push(`${decisions2.length} requirement(s) with decisions`);
     }
     if (submission.requirements.acceptAll) {
-      if (conflicts.length > 0 || stale)
-        conflicts.push({ item: "accept all", reason: "not applied: part of the review is out of date, re-open it" });
+      if (conflicts.length > 0 || stale || outdated)
+        conflicts.push({ item: "accept all", reason: `not applied: this page is out of date (marks, remarks or content changed since it was opened): ${reload}` });
       else {
         commands.push({ action: "accept-requirements", via });
         summary.push("accept all pending criteria");
@@ -8774,8 +8774,8 @@ function submissionToCommands(state2, raw) {
           details.push(`prototype feedback ${r} resolved`);
       }
       if (p.accept) {
-        if (stale)
-          conflicts.push({ item: "accept prototype", reason: "the prototype changed since the review: re-open it" });
+        if (stale || outdated)
+          conflicts.push({ item: "accept prototype", reason: `the prototype, its feedback or its marks changed since you opened this page: ${reload}` });
         else {
           commands.push({ action: "accept-prototype", via });
           summary.push("prototype accepted");
@@ -8830,8 +8830,8 @@ function submissionToCommands(state2, raw) {
       summary.push(`${operations.length} plan change(s)`);
     }
     if (submission.plan.agree) {
-      if (conflicts.length > 0 || stale)
-        conflicts.push({ item: "agree plan", reason: "not applied: part of the review is out of date or could not be applied; re-open it" });
+      if (conflicts.length > 0 || stale || outdated)
+        conflicts.push({ item: "agree plan", reason: `not applied: part of the review is out of date or could not be applied (the plan, a mark or a remark changed since you opened this page): ${reload}` });
       else {
         commands.push({ action: "agree-story-plan", via });
         summary.push("plan agreed");
@@ -8913,8 +8913,8 @@ function submissionToCommands(state2, raw) {
       summary.push(`${items.length} item mark(s), ${acceptStories.length} bulk accept(s)`);
     }
     if (s.accept) {
-      if (conflicts.length > 0 || edited.size > 0 || stale)
-        conflicts.push({ item: "accept stories", reason: "not applied: stories changed or could not be applied, review them again" });
+      if (conflicts.length > 0 || edited.size > 0 || stale || outdated)
+        conflicts.push({ item: "accept stories", reason: `not applied: stories, marks or remarks changed since you opened this page or could not be applied: ${reload}` });
       else {
         commands.push({ action: "accept-stories", via });
         summary.push("stories accepted");
@@ -59678,7 +59678,7 @@ function hostPermissionChannel(planText) {
   return {
     kind: "host-permission",
     async ask(request) {
-      if (PERSONAL_ACTS.has(request.action)) {
+      if (PERSONAL_ACTS.has(request.action) || request.action === "praxis_quality_service_fix") {
         throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Host-permission mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item): the host's tool-permission prompt can be switched to "always allow", and then the agent would have approved itself. Do it in a client that shows an approval dialog (for example Claude Code).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
       }
       const expected = planTextOf(request);
@@ -59694,15 +59694,20 @@ function hostPermissionChannel(planText) {
 }
 var trustedClientMode = () => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
 var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item"]);
-var trustedClientChannel = {
-  kind: "trusted-client",
-  async ask(request) {
-    if (PERSONAL_ACTS.has(request.action)) {
-      throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
+function trustedClientChannelWith(dialog) {
+  return {
+    kind: "trusted-client",
+    async ask(request) {
+      if (PERSONAL_ACTS.has(request.action)) {
+        if (dialog)
+          return dialog.ask(request);
+        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
+      }
+      return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
     }
-    return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
-  }
-};
+  };
+}
+var trustedClientChannel = trustedClientChannelWith(void 0);
 var planOnlyChannel = {
   kind: "client-elicitation",
   async ask(request) {
@@ -79449,7 +79454,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"a0b5f5dee963ec779383424298c6f11c34e80380ad191d516d2831d697b57e4e","coreBaseline":"095882da3efa009e2f1c81bf70e338d22ca49f29","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"ca8f6eeae79a730bc0cd77176c1d9766e842df50f6b8740186abe363a36f2d13","coreBaseline":"b161925d62564b60fb600b57296b18a3ad078483","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -82535,7 +82540,7 @@ function preflight(name, args, ctx, version4) {
 }
 async function callTool(name, rawArgs, opts) {
   const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {};
-  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannel : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str2(args.planText)) : void 0);
+  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannelWith(opts.approvalChannel) : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str2(args.planText)) : void 0);
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 async function callToolInner(name, rawArgs, opts) {
@@ -82759,6 +82764,9 @@ async function runWorkflowTool(name, args, repo, version4) {
     assertImplementationPath(repo, parsed, workItemId);
   if (parsed.action === "record-repository-inspection") {
     throw new Error("INVALID_INPUT: a repository inspection is read by the Runtime, not written by an agent: call praxis_repository_inspect");
+  }
+  if (parsed.action === "verify-stories" || parsed.action === "prepare-fix") {
+    parseWorkflowCommand(JSON.parse(str2(args.command) ?? ""));
   }
   if (parsed.action === "verify-stories") {
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);

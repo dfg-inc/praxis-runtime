@@ -15,9 +15,10 @@ import {
   explainCommandError,
   type UserApprovalChannel,
   type WorkflowRole,
+  parseWorkflowCommand,
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
-import { PERSONAL_ACTS, hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannel, trustedClientMode } from "./approval-channel.js";
+import { PERSONAL_ACTS, hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannelWith, trustedClientMode } from "./approval-channel.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { TOOLS as CATALOG_TOOLS, toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
@@ -270,7 +271,7 @@ export async function callTool(
   // exact plan in the arguments (see approval-channel.ts). Never chosen when the client has a dialog.
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
   // Trusted Client (explicit opt-in) replaces any dialog for protected tools: the owner chose not to be asked per action.
-  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannel : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
+  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannelWith(opts.approvalChannel) : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 
@@ -540,6 +541,10 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
   if (parsed.action === "record-implementation") assertImplementationPath(repo, parsed, workItemId);
   if (parsed.action === "record-repository-inspection") {
     throw new Error("INVALID_INPUT: a repository inspection is read by the Runtime, not written by an agent: call praxis_repository_inspect");
+  }
+  if (parsed.action === "verify-stories" || parsed.action === "prepare-fix") {
+    // these two are built by the Runtime from its own plan, but what the agent sent is still held to the schema: a misspelt key is an error
+    parseWorkflowCommand(JSON.parse(str(args.command) ?? ""));
   }
   if (parsed.action === "verify-stories") {
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);

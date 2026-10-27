@@ -224,3 +224,37 @@ describe("approval plans are held to the target tool's own arguments", () => {
     expect(JSON.stringify(res)).toContain("workItemId");
   });
 });
+
+describe("trusted-client mode and the remaining approvals", () => {
+  it("with a real dialog, Trusted Client still asks the person for a rewording; without one it is refused", async () => {
+    const { repo, id } = await lab();
+    process.env.PRAXIS_APPROVAL_MODE = "trusted-client";
+    const reword = { action: "revise-acceptance", edits: [{ id: "REQ-ORD-001-AC-01", statement: "A manager sees every order" }] };
+    const p = await call("praxis_workflow_preview", repo, { command: JSON.stringify(reword), workItemId: id });
+    const asked = dialog({ answer: "reject" });
+    const rejected = await call("praxis_workflow_apply", repo, { command: JSON.stringify(reword), confirmation: "YES", previewFingerprint: p.data.fingerprint, workItemId: id }, asked.channel);
+    expect(code(rejected)).toBe("APPROVAL_REJECTED");
+    expect(asked.seen).toHaveLength(1);
+    const ok = approve();
+    const done = await call("praxis_workflow_apply", repo, { command: JSON.stringify(reword), confirmation: "YES", previewFingerprint: p.data.fingerprint, workItemId: id }, ok.channel);
+    expect(done.ok, JSON.stringify(done.errors ?? done)).toBe(true);
+    expect(ok.seen).toHaveLength(1);
+    expect(state(repo, id).requirements[0].acceptanceCriteria[0].statement).toBe("A manager sees every order");
+    const none = await call("praxis_workflow_apply", repo, { command: JSON.stringify({ action: "revise-acceptance", edits: [{ id: "REQ-ORD-001-AC-02", statement: "Search by number or customer" }] }), confirmation: "YES", previewFingerprint: "x", workItemId: id });
+    expect(none.ok).toBe(false);
+  });
+
+  it("host-permission refuses the Quality fix commit approval (it needs a dialog)", async () => {
+    const { hostPermissionChannel } = await import("./approval-channel.js");
+    await expect(hostPermissionChannel("anything").ask({ action: "praxis_quality_service_fix", kind: "git_operation", summary: "Commit a Quality fix", description: "d", subject: "s" } as never)).rejects.toMatchObject({ code: "APPROVAL_CLIENT_UI_REQUIRED" });
+  });
+
+  it("verify-stories and prepare-fix are held to the command schema: a misspelt key is an error", async () => {
+    const { repo, id } = await lab();
+    for (const command of [{ action: "verify-stories", independentRerunn: true }, { action: "verify-stories", bogus: 1 }, { action: "prepare-fix", serviceId: "x", authorized: true, existingBrnch: "b" }]) {
+      const res = await call("praxis_workflow_preview", repo, { command: JSON.stringify(command), workItemId: id });
+      expect(res.ok, JSON.stringify(command)).toBe(false);
+      expect(code(res)).toBe("UNKNOWN_COMMAND_PARAMETER");
+    }
+  });
+});
