@@ -673,3 +673,62 @@ describe("work item titles: no silent reuse, stable ids, explicit choice", () =>
     expect(r.data.workItemId).toBe("WI-SPISOK-ZAKAZOV-001");
   });
 });
+
+describe("the user's remarks on criteria reach the BA through praxis_workflow_inspect", () => {
+  async function save(repo: string, id: string, criteria: Array<Record<string, unknown>>) {
+    const res = await call("praxis_review_render", repo, { view: "requirements", workItemId: id });
+    expect(res.ok, JSON.stringify(res.errors)).toBe(true);
+    const data = res.data as { url: string; file: string };
+    const secret = readFileSync(join(dirname(data.file), "requirements.url"), "utf8");
+    const html = await (await fetch(secret)).text();
+    const page = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)![1]);
+    const body = { contract: "praxis.review.submission", version: 1, reviewId: page.reviewId, view: "requirements", workItemId: id, baseFingerprint: page.baseFingerprint, requirements: { requirements: [{ id: "REQ-ORD-001", revision: state(repo, id).requirements[0].revision, criteria, addCriteria: [], removeCriteria: [] }], acceptAll: false } };
+    const sent = await fetch(`${data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": page.token }, body: JSON.stringify(body) });
+    expect(sent.status).toBe(200);
+    return sent.json();
+  }
+  const inspect = async (repo: string, id: string, view = "requirements") => (await call("praxis_workflow_inspect", repo, { workItemId: id, view })).data as any;
+
+  it("accepted, rejected and pending criteria all show their status, comment, source and time; editing the comment again is visible", async () => {
+    const { repo, id } = await project();
+    await save(repo, id, [
+      { id: "REQ-ORD-001-AC-01", revision: 1, status: "accepted" },
+      { id: "REQ-ORD-001-AC-02", revision: 1, status: "rejected", comment: "Не нравится решение" },
+    ]);
+    let view = await inspect(repo, id);
+    const [a1, a2] = view.requirements[0].acceptanceCriteria;
+    expect(a1.review).toMatchObject({ status: "accepted", comment: null, decidedVia: "html-review" });
+    expect(a2.review).toMatchObject({ status: "rejected", comment: "Не нравится решение", decidedVia: "html-review", commentVia: "html-review" });
+    expect(a2.review.decidedAt).toBeTruthy();
+    expect(view.requirementReview.rejected.map((r: any) => r.criterionId)).toEqual(["REQ-ORD-001-AC-02"]);
+    expect(view.requirementReview.progress).toMatchObject({ accepted: 1, rejected: 1, pending: 0 });
+    const decidedAt = a2.review.decidedAt;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await save(repo, id, [{ id: "REQ-ORD-001-AC-01", revision: 1, comment: "ok but fast" }, { id: "REQ-ORD-001-AC-02", revision: 1, comment: "Лимит нужен настраиваемый" }]);
+    view = await inspect(repo, id);
+    expect(view.requirements[0].acceptanceCriteria[0].review).toMatchObject({ status: "accepted", comment: "ok but fast" });
+    expect(view.requirements[0].acceptanceCriteria[1].review).toMatchObject({ status: "rejected", comment: "Лимит нужен настраиваемый", decidedAt });
+    expect(view.requirementReview.commented.length).toBe(2);
+    // the `id` filter and the all view carry the same information
+    expect((await inspect(repo, id, "all")).requirements[0].acceptanceCriteria[1].review.status).toBe("rejected"); // the all view keeps its keys and carries each criterion's review
+    const one = (await call("praxis_workflow_inspect", repo, { workItemId: id, view: "requirements", id: "REQ-ORD-001" })).data as any;
+    expect(one.requirements[0].acceptanceCriteria[1].review.comment).toBe("Лимит нужен настраиваемый");
+  });
+
+  it("an item stored by alpha.48 (marks with only status, comment, at, via) is read without error", async () => {
+    const { repo, id } = await project();
+    await save(repo, id, [{ id: "REQ-ORD-001-AC-02", revision: 1, status: "rejected", comment: "old remark" }]);
+    const file = join(repo, ".praxis", "workflow", "items", `${id}.json`);
+    const stored = JSON.parse(readFileSync(file, "utf8"));
+    for (const c of stored.requirements[0].acceptanceCriteria) {
+      delete c.review.commentAt;
+      delete c.review.commentVia;
+      delete c.review.previous;
+    }
+    writeFileSync(file, JSON.stringify(stored, null, 2));
+    const view = await inspect(repo, id);
+    expect(view.requirements[0].acceptanceCriteria[1].review).toMatchObject({ status: "rejected", comment: "old remark", commentAt: null, previous: null });
+    expect(view.requirements[0].id).toBe("REQ-ORD-001"); // the existing fields are unchanged
+    expect(Object.keys(view.requirements[0].acceptanceCriteria[0]).sort()).toEqual(["id", "review", "revision", "statement"]);
+  });
+});

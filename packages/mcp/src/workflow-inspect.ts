@@ -1,11 +1,14 @@
 import { basename, resolve } from "node:path";
 import {
+  acceptanceStatus,
   decisionContentFingerprint,
   evaluateFeature,
   featureReadiness,
   redactPersistent,
   requirementEvidence,
+  requirementsFingerprint,
   resumeWorkflow,
+  reviewProgress,
   storyContentFingerprint,
   type WorkflowState,
 } from "@praxis/contracts";
@@ -118,6 +121,50 @@ function overview(state: WorkflowState, repo: string) {
   };
 }
 
+/**
+ * The user's decision about one criterion, as stored: status, the reason they gave, and where/when. `at`/`via` are the STATUS
+ * decision (they move only when the status changes); `commentAt`/`commentVia` are the last comment change. `previous` is the decision
+ * the text had before it was revised (its reason stays readable once the criterion is back to pending).
+ */
+function reviewOf(review: WorkflowState["requirements"][number]["acceptanceCriteria"][number]["review"]) {
+  return {
+    status: review.status,
+    comment: review.comment ?? null,
+    decidedAt: review.at ?? null,
+    decidedVia: review.via ?? null,
+    commentAt: review.commentAt ?? null,
+    commentVia: review.commentVia ?? null,
+    previous: review.previous ?? null,
+  };
+}
+
+/** What the user said in the requirements review: the list a BA works through. Derived from the same stored marks as the page. */
+function requirementReview(state: WorkflowState) {
+  const rows = state.requirements
+    .filter((req) => req.status !== "superseded")
+    .flatMap((req) =>
+      req.acceptanceCriteria.map((c) => ({
+        requirementId: req.id,
+        scope: req.scope,
+        criterionId: c.id,
+        statement: c.statement,
+        revision: c.revision,
+        ...reviewOf(c.review),
+      })),
+    );
+  return {
+    acceptance: acceptanceStatus(state, "requirements_review"),
+    fingerprint: requirementsFingerprint(state),
+    progress: reviewProgress(state),
+    rejected: rows.filter((r) => r.status === "rejected"),
+    commented: rows.filter((r) => r.comment !== null),
+    pending: rows.filter((r) => r.status === "pending").map((r) => r.criterionId),
+    requirementComments: state.requirements
+      .filter((req) => req.status !== "superseded" && req.comment)
+      .map((req) => ({ requirementId: req.id, comment: req.comment as string })),
+  };
+}
+
 function requirements(state: WorkflowState) {
   return state.requirements.map((req) => {
     const evidence = requirementEvidence(state, req.id);
@@ -126,7 +173,10 @@ function requirements(state: WorkflowState) {
       statement: req.statement,
       revision: req.revision,
       status: req.status,
-      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision })),
+      scope: req.scope,
+      scopeNote: req.scopeNote ?? null,
+      comment: req.comment ?? null,
+      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision, review: reviewOf(c.review) })),
       serviceIds: req.serviceIds,
       assumptions: state.assumptions.filter((a) => req.assumptionIds.includes(a.id) || a.requirementIds.includes(req.id)),
       storyIds: state.stories.filter((s) => s.requirementIds.includes(req.id)).map((s) => s.id),
@@ -327,6 +377,7 @@ export async function inspectWorkflow(
       throw new WorkItemError("INSPECT_NOT_FOUND", `no handoff ${id} in work item ${state.workItem.id}`);
     }
     body[view] = value;
+    if (view === "requirements") body.requirementReview = requirementReview(state);
   }
   return scrub(repo, {
     schema: INSPECT_SCHEMA,

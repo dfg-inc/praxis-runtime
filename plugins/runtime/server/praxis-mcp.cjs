@@ -4268,7 +4268,18 @@ var init_story = __esm({
       status: external_exports.enum(["pending", "accepted", "rejected"]).default("pending"),
       comment: external_exports.string().optional(),
       at: external_exports.string().optional(),
-      via: external_exports.enum(["html-review", "approved", "chat", "system"]).optional()
+      via: external_exports.enum(["html-review", "approved", "chat", "system"]).optional(),
+      /** When and through which channel the comment last changed. `at`/`via` above are the STATUS decision only, so editing a comment does not look like a new decision. */
+      commentAt: external_exports.string().optional(),
+      commentVia: external_exports.enum(["html-review", "approved", "chat", "system"]).optional(),
+      /** The decision this item had before its text was revised: the reason a user gave stays readable when the item goes back to pending. */
+      previous: external_exports.object({
+        status: external_exports.enum(["pending", "accepted", "rejected"]),
+        comment: external_exports.string().optional(),
+        at: external_exports.string().optional(),
+        via: external_exports.enum(["html-review", "approved", "chat", "system"]).optional(),
+        revision: external_exports.number().int().positive().optional()
+      }).optional()
     });
     STORY_CAPABILITIES = [
       "view",
@@ -5152,30 +5163,50 @@ function applyRequirementDecisions(state2, command, now) {
       revised = true;
       summary.push(`${requirement.id} scope ${current.scope} -> ${decision.scope}`);
     } else if (decision.scopeNote !== void 0) {
+      if (decision.scopeNote !== (requirement.scopeNote ?? ""))
+        summary.push(`${requirement.id} scope note changed`);
       requirement = { ...requirement, scopeNote: decision.scopeNote };
     }
-    if (decision.comment !== void 0)
-      requirement = { ...requirement, comment: decision.comment };
+    if (decision.comment !== void 0) {
+      const next2 = decision.comment === "" ? void 0 : decision.comment;
+      if (next2 !== requirement.comment)
+        summary.push(`${requirement.id} comment ${next2 === void 0 ? "cleared" : "changed"}`);
+      const { comment: _old, ...rest } = requirement;
+      requirement = next2 === void 0 ? rest : { ...rest, comment: next2 };
+    }
     for (const ac of decision.acceptance) {
       const index = requirement.acceptanceCriteria.findIndex((c) => c.id === ac.id);
       if (index < 0)
         throw missing("MISSING_ACCEPTANCE_CRITERION", `${ac.id} is not an acceptance criterion of ${requirement.id}`);
       let criterion = requirement.acceptanceCriteria[index];
       if (ac.statement !== void 0 && ac.statement !== criterion.statement) {
-        criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending" } };
+        const old = criterion.review;
+        const previous = old.status !== "pending" || old.comment ? { status: old.status, ...old.comment ? { comment: old.comment } : {}, ...old.at ? { at: old.at } : {}, ...old.via ? { via: old.via } : {}, revision: criterion.revision } : old.previous;
+        criterion = { ...criterion, statement: ac.statement, revision: criterion.revision + 1, review: { status: "pending", ...previous ? { previous } : {} } };
         revised = true;
         summary.push(`${ac.id} edited`);
       }
       if (ac.status !== void 0 || ac.comment !== void 0) {
+        const old = criterion.review;
+        const statusChanged = ac.status !== void 0 && ac.status !== old.status;
+        const nextComment = ac.comment !== void 0 ? ac.comment === "" ? void 0 : ac.comment : old.comment;
+        const commentChanged = ac.comment !== void 0 && nextComment !== old.comment;
+        const decided = statusChanged ? { at: iso(now), via: command.via } : { ...old.at ? { at: old.at } : {}, ...old.via ? { via: old.via } : {} };
+        const commented = commentChanged ? { commentAt: iso(now), commentVia: command.via } : { ...old.commentAt ? { commentAt: old.commentAt } : {}, ...old.commentVia ? { commentVia: old.commentVia } : {} };
         criterion = {
           ...criterion,
           review: {
-            status: ac.status ?? criterion.review.status,
-            ...ac.comment !== void 0 ? { comment: ac.comment } : criterion.review.comment !== void 0 ? { comment: criterion.review.comment } : {},
-            at: iso(now),
-            via: command.via
+            status: ac.status ?? old.status,
+            ...nextComment !== void 0 ? { comment: nextComment } : {},
+            ...decided,
+            ...commented,
+            ...old.previous ? { previous: old.previous } : {}
           }
         };
+        if (statusChanged)
+          summary.push(`${ac.id} ${ac.status}`);
+        if (commentChanged)
+          summary.push(`${ac.id} comment ${nextComment === void 0 ? "cleared" : "changed"}`);
       }
       requirement.acceptanceCriteria[index] = criterion;
     }
@@ -5212,7 +5243,7 @@ function applyRequirementDecisions(state2, command, now) {
     next = dropDanglingRefs(next);
     next = cascadeScope(next, now).state;
   }
-  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ") || "marks only"}`);
+  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ") || "no change"}`);
   const marked = command.decisions.some((d) => d.acceptance.some((a) => a.status !== void 0));
   if (marked && (command.via === "html-review" || command.via === "approved") && reviewProgress(next).complete && acceptanceStatus(next, "requirements_review") !== "accepted") {
     next = recordAcceptance(next, "requirements_review", command.via, now);
@@ -5612,11 +5643,13 @@ function phaseGates(state2, to) {
       break;
     case "prototype":
       need(acceptanceStatus(state2, "requirements_review") === "accepted", "requirements accepted by the user (every criterion) and unchanged since");
+      need(reviewProgress(state2).complete, `every criterion accepted (${reviewProgress(state2).rejected} rejected, ${reviewProgress(state2).pending} pending)`);
       if (kind !== "feature")
         need(state2.impact !== void 0, `${kind} work needs the existing behaviour and impact recorded first (record-impact)`);
       break;
     case "story_plan":
       need(acceptanceStatus(state2, "requirements_review") === "accepted", "requirements accepted and unchanged since");
+      need(reviewProgress(state2).complete, "every criterion accepted (one was rejected or reopened since)");
       need(acceptanceStatus(state2, "prototype") === "accepted" || state2.waivers.some((w) => w.kind === "prototype"), "prototype accepted (or an explicit waiver with a reason)");
       break;
     case "stories_review": {
@@ -8763,7 +8796,8 @@ function renderRequirementsReview(state2, options2 = {}) {
     const out = req.scope !== "in";
     const criteria = req.acceptanceCriteria.map((ac) => `<div class="ac" data-ac="${esc3(ac.id)}" data-rev="${ac.revision}" data-initial-status="${esc3(ac.review.status)}">
 <div><strong>${esc3(ac.id)}</strong></div>
-<div><textarea data-f="ac-statement" data-initial="${esc3(ac.statement)}" aria-label="Text of ${esc3(ac.id)}">${esc3(ac.statement)}</textarea>
+<div><textarea data-f="ac-statement" data-initial="${esc3(ac.statement)}" aria-label="Text of ${esc3(ac.id)}">${esc3(ac.statement)}</textarea>${ac.review.previous ? `
+<div class="meta" data-previous>Before this revision: ${esc3(ac.review.previous.status)}${ac.review.previous.comment ? ` - "${esc3(ac.review.previous.comment)}"` : ""}</div>` : ""}
 <div class="row" style="margin-top:4px">${marks(`m-${ac.id}`, ac.review.status)}<input type="text" data-f="ac-comment" data-initial="${esc3(ac.review.comment ?? "")}" placeholder="Comment" value="${esc3(ac.review.comment ?? "")}" aria-label="Comment on ${esc3(ac.id)}" style="flex:1;min-width:160px">
 <label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>`).join("");
     return `<section class="card${out ? " out" : ""}" data-req="${esc3(req.id)}" data-rev="${req.revision}">
@@ -58964,7 +58998,7 @@ var TOOLS = [
   },
   {
     name: "praxis_workflow_inspect",
-    description: "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria, User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA\u2192Architect\u2192Developer\u2192Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | all. id narrows requirements/stories/decisions/work/handoffs to one record.",
+    description: "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria and the user's review of each criterion (status, comment, who and when; `requirementReview` lists the rejected and commented ones, so a BA can act on the user's remarks), User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA\u2192Architect\u2192Developer\u2192Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | all. id narrows requirements/stories/decisions/work/handoffs to one record.",
     inputSchema: {
       type: "object",
       properties: {
@@ -79086,7 +79120,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"84e2b79522ab3778dcc5c3528f9b59ed47de99e4689c293ead207790372c740f","coreBaseline":"de8c37bb5b5cf1fe5e89836d32c99c37aa642c52","inputs":32}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"c435621b38def01e8e9013bf2f4007a897681d81007ec0ed1f8fcf1769633ccd","coreBaseline":"90e0c0518d188bb2ac4c8d1e182db8fc489a2fe1","inputs":32}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80645,6 +80679,36 @@ function overview(state2, repo) {
     }))
   };
 }
+function reviewOf(review) {
+  return {
+    status: review.status,
+    comment: review.comment ?? null,
+    decidedAt: review.at ?? null,
+    decidedVia: review.via ?? null,
+    commentAt: review.commentAt ?? null,
+    commentVia: review.commentVia ?? null,
+    previous: review.previous ?? null
+  };
+}
+function requirementReview(state2) {
+  const rows = state2.requirements.filter((req) => req.status !== "superseded").flatMap((req) => req.acceptanceCriteria.map((c) => ({
+    requirementId: req.id,
+    scope: req.scope,
+    criterionId: c.id,
+    statement: c.statement,
+    revision: c.revision,
+    ...reviewOf(c.review)
+  })));
+  return {
+    acceptance: acceptanceStatus(state2, "requirements_review"),
+    fingerprint: requirementsFingerprint(state2),
+    progress: reviewProgress(state2),
+    rejected: rows.filter((r) => r.status === "rejected"),
+    commented: rows.filter((r) => r.comment !== null),
+    pending: rows.filter((r) => r.status === "pending").map((r) => r.criterionId),
+    requirementComments: state2.requirements.filter((req) => req.status !== "superseded" && req.comment).map((req) => ({ requirementId: req.id, comment: req.comment }))
+  };
+}
 function requirements(state2) {
   return state2.requirements.map((req) => {
     const evidence = requirementEvidence(state2, req.id);
@@ -80653,7 +80717,10 @@ function requirements(state2) {
       statement: req.statement,
       revision: req.revision,
       status: req.status,
-      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision })),
+      scope: req.scope,
+      scopeNote: req.scopeNote ?? null,
+      comment: req.comment ?? null,
+      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision, review: reviewOf(c.review) })),
       serviceIds: req.serviceIds,
       assumptions: state2.assumptions.filter((a) => req.assumptionIds.includes(a.id) || a.requirementIds.includes(req.id)),
       storyIds: state2.stories.filter((s) => s.requirementIds.includes(req.id)).map((s) => s.id),
@@ -80814,6 +80881,7 @@ async function inspectWorkflow(repo, args) {
   if (view === "all") {
     for (const name of INSPECT_VIEWS.filter((v) => v !== "all"))
       body2[name] = await section(name);
+    body2.requirementReview = requirementReview(state2);
   } else {
     const value = await section(view);
     if (id && Array.isArray(value) && value.length === 0) {
@@ -80823,6 +80891,8 @@ async function inspectWorkflow(repo, args) {
       throw new WorkItemError("INSPECT_NOT_FOUND", `no handoff ${id} in work item ${state2.workItem.id}`);
     }
     body2[view] = value;
+    if (view === "requirements")
+      body2.requirementReview = requirementReview(state2);
   }
   return scrub(repo, {
     schema: INSPECT_SCHEMA,
@@ -81178,6 +81248,35 @@ it exists to produce - the single sentence a stranger could use to judge
 whether any future requirement belongs in scope. Plain prose; only the
 frontmatter status is machine-checked.
 `;
+var MAX_PRODUCT_LENGTH = 120;
+var MAX_EXISTING_BYTES = 64 * 1024;
+function checkExistingYaml(abs, rel2) {
+  const st = (0, import_node_fs26.lstatSync)(abs);
+  if (st.size > MAX_EXISTING_BYTES)
+    throw new Error(`INVALID_INPUT: ${rel2} is unexpectedly large; fix or remove it, init does not repair it`);
+  const text = (0, import_node_fs26.readFileSync)(abs, "utf8");
+  const problem = rel2.endsWith("config.yaml") ? configProblem(text) : countersProblem(text);
+  if (problem)
+    throw new Error(`INVALID_INPUT: ${rel2} is not a valid canon file (${problem}); fix or remove it, init does not repair it`);
+}
+function configProblem(text) {
+  const m = /^canon_roots:[ \t]*(.*)$/m.exec(text);
+  if (!m)
+    return "canon_roots is missing";
+  const inline = m[1].trim();
+  if (inline)
+    return /^\[.*\]$/.test(inline) ? null : "canon_roots must be a list";
+  return /^canon_roots:[^\n]*\n(?:[ \t]*#[^\n]*\n)*[ \t]*- \S/m.test(text) ? null : "canon_roots must be a non-empty list";
+}
+function countersProblem(text) {
+  for (const key of ["product", "epics", "retired"])
+    if (!new RegExp(`^${key}:`, "m").test(text))
+      return `${key} is missing`;
+  for (const key of ["epic", "cr", "wp", "bug"])
+    if (!new RegExp(`^[ \\t]+${key}:[ \\t]*\\d+[ \\t]*$`, "m").test(text))
+      return `product.${key} must be a whole number`;
+  return null;
+}
 function visionText(product) {
   const heading = product ? `# ${product.replace(/\s+/g, " ").trim()}
 
@@ -81209,6 +81308,8 @@ function kindOf(abs, rel2) {
 function planCanonInit(repoInput, options2 = {}) {
   if (options2.product !== void 0 && !options2.product.trim())
     throw new Error("INVALID_INPUT: product must not be empty");
+  if (options2.product !== void 0 && options2.product.trim().length > MAX_PRODUCT_LENGTH)
+    throw new Error(`INVALID_INPUT: product is longer than ${MAX_PRODUCT_LENGTH} characters`);
   if (!(0, import_node_fs26.existsSync)(repoInput))
     throw new Error(`INVALID_INPUT: ${repoInput} does not exist`);
   const repo = (0, import_node_fs26.realpathSync)((0, import_node_path31.resolve)(repoInput));
@@ -81230,9 +81331,11 @@ function planCanonInit(repoInput, options2 = {}) {
     const k = kindOf((0, import_node_path31.join)(repo, rel2), rel2);
     if (k === "dir")
       throw new Error(`INVALID_INPUT: ${rel2} exists but is a directory, expected a file`);
-    if (k === "file")
+    if (k === "file") {
+      if (rel2.startsWith(".ba/"))
+        checkExistingYaml((0, import_node_path31.join)(repo, rel2), rel2);
       skipped.push(rel2);
-    else
+    } else
       create.push({ path: rel2, kind: "file", content });
   };
   dir(".ba");
@@ -81253,13 +81356,36 @@ function planCanonInit(repoInput, options2 = {}) {
 }
 function applyCanonInit(plan) {
   const written = [];
-  for (const item of plan.create) {
-    const abs = (0, import_node_path31.join)(plan.repo, item.path);
-    if (item.kind === "dir")
-      (0, import_node_fs26.mkdirSync)(abs, { recursive: false });
-    else
-      (0, import_node_fs26.writeFileSync)(abs, item.content ?? "", { encoding: "utf8", flag: "wx" });
-    written.push(item.path);
+  const undo = [];
+  try {
+    for (const item of plan.create) {
+      const abs = (0, import_node_path31.join)(plan.repo, item.path);
+      if (item.kind === "dir") {
+        (0, import_node_fs26.mkdirSync)(abs, { recursive: false });
+        undo.push(() => (0, import_node_fs26.rmSync)(abs, { recursive: true, force: true }));
+      } else {
+        if ((0, import_node_fs26.existsSync)(abs))
+          throw new Error(`INVALID_INPUT: ${item.path} appeared since planning; refusing to overwrite`);
+        const tmp = `${abs}.praxis-tmp-${process.pid}`;
+        (0, import_node_fs26.writeFileSync)(tmp, item.content ?? "", { encoding: "utf8", flag: "wx" });
+        try {
+          (0, import_node_fs26.renameSync)(tmp, abs);
+        } catch (error64) {
+          (0, import_node_fs26.rmSync)(tmp, { force: true });
+          throw error64;
+        }
+        undo.push(() => (0, import_node_fs26.rmSync)(abs, { force: true }));
+      }
+      written.push(item.path);
+    }
+  } catch (error64) {
+    for (const step of undo.reverse()) {
+      try {
+        step();
+      } catch {
+      }
+    }
+    throw error64;
   }
   return written;
 }

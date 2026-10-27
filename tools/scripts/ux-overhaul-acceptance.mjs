@@ -741,6 +741,47 @@ await scenario("S20", "A repository .env cannot change trusted behaviour through
   await noDialog.close();
 });
 
+await scenario("S21", "A user's remark on a criterion reaches the BA through praxis_workflow_inspect, and the targeted fix returns to the review page", async () => {
+  const repo = mkdtempSync(join(tmpdir(), "praxis-ux-s21-"));
+  const id = await openItem(agent, repo, "Order export");
+  await must(agent, repo, { action: "add-requirement", id: "REQ-ORD-002", statement: "Managers export orders", acceptanceCriteria: ["Export contains the filtered rows", "Export is limited to 10000 rows"] }, id);
+  const AC = "REQ-ORD-002-AC-02";
+  const inspect = async (view = "requirements") => (await call(agent, "praxis_workflow_inspect", { repo, workItemId: id, view })).data;
+  const criterion = async () => (await inspect()).requirements[0].acceptanceCriteria.find((c) => c.id === AC);
+  // 1. the user rejects, comments and saves in the page
+  await userSaves(agent, repo, "requirements", id, () => ({ requirements: { requirements: [{ id: "REQ-ORD-002", revision: 1, criteria: [{ id: "REQ-ORD-002-AC-01", revision: 1, status: "accepted" }, { id: AC, revision: 1, status: "rejected", comment: "Не нравится решение" }], addCriteria: [], removeCriteria: [] }], acceptAll: false } }));
+  // 2. the BA reads it through the tool, not from files
+  const first = await inspect();
+  const c1 = first.requirements[0].acceptanceCriteria.find((c) => c.id === AC);
+  eq([c1.review.status, c1.review.comment, c1.review.decidedVia], ["rejected", "Не нравится решение", "html-review"], "status, reason and source come back from inspect");
+  check(c1.review.decidedAt && c1.review.commentAt, "times come back");
+  eq(first.requirementReview.rejected.map((r) => [r.criterionId, r.comment]), [[AC, "Не нравится решение"]], "the rejected list names the criterion and the reason");
+  eq(first.requirementReview.pending, [], "nothing pending");
+  const accepted = first.requirements[0].acceptanceCriteria.find((c) => c.id === "REQ-ORD-002-AC-01");
+  eq([accepted.review.status, accepted.review.comment], ["accepted", null], "an accepted criterion shows no comment");
+  eq((await inspect("all")).requirements[0].acceptanceCriteria.find((c) => c.id === AC).review.status, "rejected", "the all view carries each criterion's review");
+  // 3. the user edits only the comment later: the decision time does not move, the comment time does
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  await userSaves(agent, repo, "requirements", id, () => ({ requirements: { requirements: [{ id: "REQ-ORD-002", revision: 1, criteria: [{ id: AC, revision: 1, comment: "Лимит должен быть настраиваемым" }], addCriteria: [], removeCriteria: [] }], acceptAll: false } }));
+  const c2 = await criterion();
+  eq([c2.review.status, c2.review.comment], ["rejected", "Лимит должен быть настраиваемым"], "the new comment replaces the old one");
+  eq(c2.review.decidedAt, c1.review.decidedAt, "a comment edit does not look like a new status decision");
+  check(c2.review.commentAt > c1.review.commentAt, "the comment time moved");
+  const notes = stateOf(repo, id).history.map((h) => h.note ?? "").join("\n");
+  check(/AC-02 rejected/.test(notes) && /AC-02 comment changed/.test(notes) && !/marks only/.test(notes), `the history says what changed: ${notes.slice(-300)}`);
+  // 4. the BA proposes a targeted edit; the user confirms it in the dialog; only that criterion changes
+  await must(agent, repo, { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-002", acceptance: [{ id: AC, statement: "Export is limited to a configurable number of rows" }] }] }, id);
+  const after = await inspect();
+  const c3 = after.requirements[0].acceptanceCriteria.find((c) => c.id === AC);
+  eq([c3.statement, c3.review.status, c3.review.previous.status, c3.review.previous.comment], ["Export is limited to a configurable number of rows", "pending", "rejected", "Лимит должен быть настраиваемым"], "the edited criterion is pending and keeps the earlier reason");
+  eq(after.requirements[0].acceptanceCriteria[0].review.status, "accepted", "the other criterion keeps its decision");
+  // 5. the review page shows the revised text and the earlier remark
+  const rendered = await call(agent, "praxis_review_render", { repo, view: "requirements", workItemId: id });
+  const html = await (await fetch(readFileSync(join(dirname(rendered.data.file), "requirements.url"), "utf8"))).text();
+  check(html.includes("configurable number of rows") && html.includes("Before this revision: rejected") && html.includes("Лимит должен быть настраиваемым"), "the page shows the new text and what the user said before");
+  check(stateOf(repo, id).requirements[0].acceptanceCriteria[0].review.status === "accepted", "the state on disk is what the tool reported");
+});
+
 await agent.close();
 for (const s of sessions) await s.close().catch(() => {});
 jira.close();
