@@ -267,21 +267,28 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
   };
 }
 
-/** Every path a unified diff touches (headers, renames, copies, mode lines), as written in the diff. */
-export function diffPaths(diff: string): string[] {
+/**
+ * Every path `git apply` would touch for this diff, as git itself reads it (it strips the leading component, handles renames,
+ * copies, creations, deletions, quoted names and hunk lines that look like headers). Our own parser would disagree with git.
+ */
+export function diffPaths(diff: string, root: string): string[] {
+  const out = spawnSync("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
+  if ((out.status ?? 1) !== 0) throw new Error(`PROPOSAL_INVALID: git cannot read the diff (${(out.stderr || "").trim().slice(0, 160)})`);
+  const tokens = out.stdout.split("\0");
   const paths = new Set<string>();
-  const clean = (raw: string) => raw.replace(/\t.*$/, "").replace(/^"(.*)"$/, "$1").replace(/^[ab]\//, "");
-  for (const line of diff.split("\n")) {
-    let m: RegExpMatchArray | null;
-    if ((m = line.match(/^diff --git (.+) (.+)$/))) {
-      paths.add(clean(m[1]));
-      paths.add(clean(m[2]));
-    } else if ((m = line.match(/^(?:---|\+\+\+) (.+)$/))) {
-      if (m[1] !== "/dev/null") paths.add(clean(m[1]));
-    } else if ((m = line.match(/^(?:rename|copy) (?:from|to) (.+)$/))) {
-      paths.add(clean(m[1]));
+  for (let i = 0; i < tokens.length; i += 1) {
+    const m = tokens[i].match(/^(\S+)\t(\S+)\t(.*)$/s);
+    if (!m) continue;
+    if (m[3] === "") {
+      // a rename or copy: the old and the new name follow
+      paths.add(tokens[i + 1] ?? "");
+      paths.add(tokens[i + 2] ?? "");
+      i += 2;
+    } else {
+      paths.add(m[3]);
     }
   }
+  paths.delete("");
   return [...paths];
 }
 
@@ -289,8 +296,16 @@ export function diffPaths(diff: string): string[] {
 export function assertDiffTouchesOnly(root: string, file: { path: string; diff?: string }): void {
   if (!file.diff) return;
   const allowed = containedPath(root, file.path);
-  for (const touched of diffPaths(file.diff)) {
-    if (containedPath(root, touched) !== allowed) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${touched}`);
+  const touched = diffPaths(file.diff, root);
+  if (touched.length === 0) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} changes nothing`);
+  for (const path of touched) {
+    let real: string;
+    try {
+      real = containedPath(root, path);
+    } catch {
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}, outside the checkout`);
+    }
+    if (real !== allowed) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}`);
   }
 }
 

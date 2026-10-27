@@ -8678,6 +8678,7 @@ function submissionToCommands(state2, raw) {
   const via = "html-review";
   let affectsStories = false;
   const editedPlan = /* @__PURE__ */ new Map();
+  const planStatus = /* @__PURE__ */ new Map();
   const outdated = submission.baseStamp === void 0 || submission.baseStamp !== reviewStamp(state2, submission.view);
   const reload = "reload the page and decide again";
   const unbased = (what) => `this page is out of date and does not say what it showed for ${what}: ${reload}`;
@@ -8759,8 +8760,11 @@ function submissionToCommands(state2, raw) {
         details.push(`${item.id}: remove criterion ${r}`);
       const reworded = item.statement !== void 0 && item.statement !== current.statement || item.criteria.some((c) => c.statement !== void 0 && c.statement !== current.acceptanceCriteria.find((x) => x.id === c.id)?.statement) || item.addCriteria.length > 0 || item.removeCriteria.length > 0 || scopeChanged;
       const resting = state2.stories.filter((x) => x.status !== "superseded" && x.requirementIds.includes(item.id));
-      if (reworded && resting.length > 0) {
-        details.push(`${item.id}: this change affects stories ${resting.map((x) => x.id).join(", ")}: they are marked stale and their confirmation is withdrawn${scopeChanged ? `; moving the requirement to scope '${item.scope}' also excludes or restores them and their plan lines` : ""}`);
+      const lines = (state2.storyPlan?.entries ?? []).filter((e) => e.requirementIds.includes(item.id));
+      const verdicts = state2.verdicts.filter((v) => !v.stale && v.requirementIds.includes(item.id)).length;
+      const units = state2.implementationUnits.filter((u) => !u.stale && u.requirementIds.includes(item.id)).length;
+      if (reworded && (resting.length > 0 || lines.length > 0)) {
+        details.push(`${item.id}: this change affects ${resting.length > 0 ? `stories ${resting.map((x) => x.id).join(", ")}: they are marked stale and their confirmation is withdrawn` : `plan lines ${lines.map((x) => x.id).join(", ")}`}${scopeChanged ? `; moving the requirement to scope '${item.scope}' also excludes or restores ${resting.length > 0 ? "them and " : ""}the plan lines` : ""}${verdicts + units > 0 ? `; it also makes ${verdicts} Quality verdict(s) and ${units} implementation record(s) stale` : ""}`);
         affectsStories = true;
       }
       if (item.comment === "" && current.comment)
@@ -8862,7 +8866,11 @@ function submissionToCommands(state2, raw) {
         }
       }
       if (Object.keys(patch).length > 0)
-        editedPlan.set(entry.id, patch);
+        editedPlan.set(entry.id, { ...editedPlan.get(entry.id) ?? {}, ...patch });
+      if (entry.exclude !== void 0)
+        planStatus.set(entry.id, "excluded");
+      if (entry.restore)
+        planStatus.set(entry.id, "planned");
       if (entry.status !== void 0)
         operations.push({ op: "review", id: entry.id, status: entry.status, ...entry.comment !== void 0 ? { comment: entry.comment } : {} });
     }
@@ -8879,7 +8887,8 @@ function submissionToCommands(state2, raw) {
         details.push(`AGREE the story plan as it will be after the edits above (${state2.storyPlan?.entries.length ?? 0} lines):`);
         for (const e of state2.storyPlan?.entries ?? []) {
           const edit = editedPlan.get(e.id) ?? {};
-          details.push(`  ${e.id} '${edit.title ?? e.title}' - implements: ${edit.implementation ?? e.implementation} - the user gets: ${edit.userGets ?? e.userGets}${e.status === "excluded" ? " (excluded)" : ""}`);
+          const status = planStatus.get(e.id) ?? e.status;
+          details.push(`  ${e.id} '${edit.title ?? e.title}' - implements: ${edit.implementation ?? e.implementation} - the user gets: ${edit.userGets ?? e.userGets}${status === "excluded" ? " (excluded)" : ""}`);
         }
       }
     }
@@ -79528,7 +79537,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"585664352dfbb689f8ef44547d6168905c9402a3ab3a4de676abd163f2058816","coreBaseline":"4ad96037f8b188a3ed762a4fced50110e45b8cdd","inputs":33}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"10136e15c3d1b1ff1964fdea13a47aff1c35399e4856d070414dee06eef4acf3","coreBaseline":"4042ae18c6be248ed0c03cd93dda48d90eaeb9c2","inputs":33}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80931,30 +80940,43 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
     }
   };
 }
-function diffPaths(diff) {
+function diffPaths(diff, root) {
+  const out = (0, import_node_child_process3.spawnSync)("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
+  if ((out.status ?? 1) !== 0)
+    throw new Error(`PROPOSAL_INVALID: git cannot read the diff (${(out.stderr || "").trim().slice(0, 160)})`);
+  const tokens = out.stdout.split("\0");
   const paths = /* @__PURE__ */ new Set();
-  const clean = (raw) => raw.replace(/\t.*$/, "").replace(/^"(.*)"$/, "$1").replace(/^[ab]\//, "");
-  for (const line of diff.split("\n")) {
-    let m;
-    if (m = line.match(/^diff --git (.+) (.+)$/)) {
-      paths.add(clean(m[1]));
-      paths.add(clean(m[2]));
-    } else if (m = line.match(/^(?:---|\+\+\+) (.+)$/)) {
-      if (m[1] !== "/dev/null")
-        paths.add(clean(m[1]));
-    } else if (m = line.match(/^(?:rename|copy) (?:from|to) (.+)$/)) {
-      paths.add(clean(m[1]));
+  for (let i = 0; i < tokens.length; i += 1) {
+    const m = tokens[i].match(/^(\S+)\t(\S+)\t(.*)$/s);
+    if (!m)
+      continue;
+    if (m[3] === "") {
+      paths.add(tokens[i + 1] ?? "");
+      paths.add(tokens[i + 2] ?? "");
+      i += 2;
+    } else {
+      paths.add(m[3]);
     }
   }
+  paths.delete("");
   return [...paths];
 }
 function assertDiffTouchesOnly(root, file2) {
   if (!file2.diff)
     return;
   const allowed = containedPath(root, file2.path);
-  for (const touched of diffPaths(file2.diff)) {
-    if (containedPath(root, touched) !== allowed)
-      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${touched}`);
+  const touched = diffPaths(file2.diff, root);
+  if (touched.length === 0)
+    throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes nothing`);
+  for (const path of touched) {
+    let real;
+    try {
+      real = containedPath(root, path);
+    } catch {
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}, outside the checkout`);
+    }
+    if (real !== allowed)
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}`);
   }
 }
 function applyProposal(root, proposal) {
@@ -82870,7 +82892,7 @@ Left untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
     }
     case "praxis_frontend_discover": {
       const registered = str2(args.repositoryId);
-      let target = str2(args.path) !== void 0 ? containedPath(repo, str2(args.path)) : repo;
+      let target = str2(args.path) ?? repo;
       if (registered) {
         const state2 = loadWorkflow(repo, workItemId);
         const entry = state2?.repositories.find((r) => r.id === registered);

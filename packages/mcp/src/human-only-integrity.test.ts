@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -407,26 +408,35 @@ describe("the dialog shows everything it binds, or the action is refused", () =>
 });
 
 describe("a Quality patch may touch only the file it was approved for", () => {
-  it("diffPaths and assertDiffTouchesOnly: other files, renames, copies and links are refused", async () => {
+  it("assertDiffTouchesOnly reads the diff the way git does: other files, renames, a different prefix, spaces and header-like hunk lines", async () => {
     const { diffPaths, assertDiffTouchesOnly } = await import("./story-engine.js");
-    const { repo, outside } = (() => {
-      const dir = mkdtempSync(join(tmpdir(), "praxis-diff-"));
-      const out = mkdtempSync(join(tmpdir(), "praxis-diff-out-"));
-      writeFileSync(join(dir, "a.txt"), "a\n");
-      mkdirSync(join(dir, "other"));
-      writeFileSync(join(dir, "other", "file"), "o\n");
-      return { repo: dir, outside: out };
-    })();
+    const dir = mkdtempSync(join(tmpdir(), "praxis-diff-"));
+    const out = mkdtempSync(join(tmpdir(), "praxis-diff-out-"));
+    execFileSync("git", ["init", "-q"], { cwd: dir });
+    mkdirSync(join(dir, "src"));
+    mkdirSync(join(dir, "other"));
+    for (const [path, text] of [["a.txt", "a\n"], ["src/target.txt", "t\n"], ["target.txt", "root\n"], ["other/file", "o\n"], ["sp ace.txt", "s\n"], ["notes.sql", "keep\n-- note\n"]] as const) writeFileSync(join(dir, path), text);
     const one = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n";
-    expect(diffPaths(one)).toEqual(["a.txt"]);
-    expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: one })).not.toThrow();
+    expect(diffPaths(one, dir)).toEqual(["a.txt"]);
+    expect(() => assertDiffTouchesOnly(dir, { path: "a.txt", diff: one })).not.toThrow();
+    // a second file in the same diff
     const sneaky = `${one}diff --git a/other/file b/other/file\n--- a/other/file\n+++ b/other/file\n@@ -1 +1 @@\n-o\n+EVIL\n`;
-    expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: sneaky })).toThrow(/also changes other\/file/);
-    const rename = "diff --git a/a.txt b/other/file\nsimilarity index 100%\nrename from a.txt\nrename to other/file\n";
-    expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: rename })).toThrow(/PROPOSAL_INVALID/);
-    const escape = "diff --git a/../x b/../x\n--- a/../x\n+++ b/../x\n";
-    expect(() => assertDiffTouchesOnly(repo, { path: "a.txt", diff: escape })).toThrow();
-    symlinkSync(outside, join(repo, "out-link"));
-    expect(() => assertDiffTouchesOnly(repo, { path: "out-link/x.txt", diff: "--- a/out-link/x.txt\n+++ b/out-link/x.txt\n" })).toThrow("UNSAFE_PATH");
+    expect(() => assertDiffTouchesOnly(dir, { path: "a.txt", diff: sneaky })).toThrow(/also changes other\/file/);
+    // a diff without the a/ b/ prefix: git strips one component, so this edits the ROOT target.txt, not src/target.txt
+    const prefixless = "--- src/target.txt\n+++ src/target.txt\n@@ -1 +1 @@\n-root\n+PWNED\n";
+    expect(diffPaths(prefixless, dir)).toEqual(["target.txt"]);
+    expect(() => assertDiffTouchesOnly(dir, { path: "src/target.txt", diff: prefixless })).toThrow(/also changes target.txt/);
+    // a rename
+    const rename = "diff --git a/a.txt b/other/renamed\nsimilarity index 100%\nrename from a.txt\nrename to other/renamed\n";
+    expect(() => assertDiffTouchesOnly(dir, { path: "a.txt", diff: rename })).toThrow(/PROPOSAL_INVALID/);
+    // legitimate shapes still work: a path with a space, and a removed line that looks like a header
+    const spaced = "diff --git a/sp ace.txt b/sp ace.txt\n--- a/sp ace.txt\n+++ b/sp ace.txt\n@@ -1 +1 @@\n-s\n+t\n";
+    expect(() => assertDiffTouchesOnly(dir, { path: "sp ace.txt", diff: spaced })).not.toThrow();
+    const headerLike = "diff --git a/notes.sql b/notes.sql\n--- a/notes.sql\n+++ b/notes.sql\n@@ -1,2 +1,1 @@\n keep\n--- note\n";
+    expect(() => assertDiffTouchesOnly(dir, { path: "notes.sql", diff: headerLike })).not.toThrow();
+    // a link out of the checkout, and a path that climbs out
+    symlinkSync(out, join(dir, "out-link"));
+    expect(() => assertDiffTouchesOnly(dir, { path: "out-link/x.txt", diff: "--- a/out-link/x.txt\n+++ b/out-link/x.txt\n@@ -1 +1 @@\n-x\n+y\n" })).toThrow();
+    expect(() => assertDiffTouchesOnly(dir, { path: "a.txt", diff: "not a diff at all" })).toThrow(/PROPOSAL_INVALID/);
   });
 });
