@@ -77,7 +77,8 @@ describe("the Runtime creates the same canon root as `praxis-ba init`", () => {
   it("the result is a canon the BA CLI accepts (when the BA repository is next to this one)", () => {
     const cli = join(here, "../../../../praxis-ba/plugins/ba/canon-graph/bin/praxis-ba.mjs");
     // the BA repository is a sibling checkout only in the split workspace; elsewhere this check has nothing to run against
-    const present = existsSync(cli);
+    // the CLI launcher also needs the BA build (dist/), which a fresh clone has not made yet
+    const present = existsSync(cli) && existsSync(join(dirname(cli), "../dist/cli.js"));
     const repo = mkdtempSync(join(tmpdir(), "praxis-canon5-"));
     const plan = planCanonInit(repo);
     for (const item of plan.create) {
