@@ -47,7 +47,7 @@ describe("Quality evidence through MCP workflow tools", () => {
             scenarioId: "US-QEV-001-S1",
             storyId: "US-QEV-001",
             requirementId: "REQ-QEV-101",
-            acceptanceCriterionId: "US-QEV-001-AC-01",
+            acceptanceCriterionId: "REQ-QEV-101-AC-01",
             kind: "happy",
             serviceId: "svc",
             module: "scrub.mjs",

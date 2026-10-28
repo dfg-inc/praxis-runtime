@@ -1,4 +1,5 @@
 import { diagnosticsPath } from "./diagnostics-log.js";
+import { randomUUID } from "node:crypto";
 import { readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
@@ -13,6 +14,7 @@ import {
   WorkflowError,
   commandCatalog,
   explainCommandError,
+  type EvidenceSource,
   type UserApprovalChannel,
   type WorkflowRole,
   parseWorkflowCommand,
@@ -557,13 +559,16 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
     parseWorkflowCommand(JSON.parse(str(args.command) ?? ""));
   }
   if (parsed.action === "verify-stories") {
+    const startedAt = new Date().toISOString();
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
     const { meta, ...command } = recorded;
+    // the Runtime ran these checks itself: this, not anything in a command, is what makes the evidence "executed"
+    const source: EvidenceSource = { kind: "executed", runner: "praxis-runtime:verify-stories", runId: `run-${randomUUID()}`, startedAt, finishedAt: new Date().toISOString(), artifacts: [] };
     if (name === "praxis_workflow_preview") {
-      const preview = previewWorkflow(repo, command, workItemId);
+      const preview = previewWorkflow(repo, command, workItemId, source);
       return { ...preview, result: { ...(preview.result as object), ...meta } };
     }
-    const applied = applyWorkflow(repo, command, str(args.previewFingerprint) ?? "", workItemId);
+    const applied = applyWorkflow(repo, command, str(args.previewFingerprint) ?? "", workItemId, undefined, source);
     return { ...applied, result: { ...(applied.result as object), ...meta } };
   }
   if (parsed.action === "prepare-fix") {

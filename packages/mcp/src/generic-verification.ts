@@ -142,13 +142,19 @@ export async function runProjectChecks(input: {
   for (const check of checks) {
     const service = services.get(check.serviceId);
     const profile = input.profiles.find((item) => item.serviceId === check.serviceId);
-    const requirementId = check.requirementId ?? story?.requirementIds[0];
+    // a check belongs to the Story that states its criterion (or names it); only then to the first Story, as before
+    const owner =
+      (check.storyId ? input.stories.find((item) => item.id === check.storyId && item.status !== "superseded") : undefined) ??
+      (check.acceptanceCriterionId ? input.stories.find((item) => item.status !== "superseded" && item.acceptanceCriteria.some((c) => c.id === check.acceptanceCriterionId)) : undefined) ??
+      (check.requirementId ? input.stories.find((item) => item.status !== "superseded" && item.requirementIds.includes(check.requirementId as string)) : undefined) ??
+      story;
+    const requirementId = check.requirementId ?? owner?.requirementIds[0];
     if (!requirementId) {
       throw new Error(`CHECKS_INVALID: check ${check.scenarioId} names no requirementId and there is no Story to take one from`);
     }
     // Without a Story, a check must say which acceptance criterion it proves; guessing one would
     // claim coverage the check does not give.
-    const criterionId = check.acceptanceCriterionId ?? story?.acceptanceCriteria[0]?.id ?? story?.id;
+    const criterionId = check.acceptanceCriterionId ?? owner?.acceptanceCriteria[0]?.id ?? owner?.id;
     if (!criterionId) {
       throw new Error(`CHECKS_INVALID: check ${check.scenarioId} must name acceptanceCriterionId when no Story exists`);
     }
@@ -157,7 +163,7 @@ export async function runProjectChecks(input: {
     const level = check.level ?? "unit";
     covered.add(check.serviceId);
     const base = {
-      ...((check.storyId ?? story?.id) ? { storyId: (check.storyId ?? story?.id) as string } : {}),
+      ...((check.storyId ?? owner?.id) ? { storyId: (check.storyId ?? owner?.id) as string } : {}),
       requirementId,
       acceptanceCriterionId: criterionId,
       scenarioId,
@@ -215,39 +221,32 @@ export async function runProjectChecks(input: {
       findings.push(findingFor(base, "FAIL", observed, check.expect));
     }
   }
-  for (const serviceId of story?.serviceIds ?? []) {
-    if (!story || covered.has(serviceId)) continue;
-    const service = services.get(serviceId);
-    const blocked = !service?.localPath;
-    const scenarioId = `${story.id}-${blocked ? "BLOCKED" : "UNVERIFIED"}-${serviceId.toUpperCase()}`;
-    const entry: Scenario = {
-      storyId: story.id,
-      requirementId: story.requirementIds[0]!,
-      acceptanceCriterionId: story.acceptanceCriteria[0]?.id ?? story.id,
-      scenarioId,
-      kind: "happy",
-      serviceId,
-      repository: service?.repository ?? serviceId,
-      implementationPath: "",
-      testRef: "",
-      status: blocked ? "BLOCKED" : "NOT_VERIFIED",
-      critical: true,
-      evidence: [
-        blocked
-          ? "mandatory service has no repository location"
-          : "no executable check is bound to this mandatory service",
-        "deployed end-to-end coverage was not claimed",
-      ],
-    };
-    scenarios.push(entry);
-    findings.push(
-      findingFor(
-        entry,
-        entry.status,
-        blocked ? "repository location is missing" : "behavior was not executed",
-        story.acceptanceCriteria[0]?.then ?? story.happyPath[0] ?? "the user story outcome",
-      ),
-    );
+  for (const item of input.stories.filter((x) => x.status !== "superseded")) {
+    for (const serviceId of item.serviceIds) {
+      if (covered.has(serviceId)) continue;
+      const service = services.get(serviceId);
+      const blocked = !service?.localPath;
+      const scenarioId = `${item.id}-${blocked ? "BLOCKED" : "UNVERIFIED"}-${serviceId.toUpperCase()}`;
+      const entry: Scenario = {
+        storyId: item.id,
+        requirementId: item.requirementIds[0]!,
+        acceptanceCriterionId: item.acceptanceCriteria[0]?.id ?? item.id,
+        scenarioId,
+        kind: "happy",
+        serviceId,
+        repository: service?.repository ?? serviceId,
+        implementationPath: "",
+        testRef: "",
+        status: blocked ? "BLOCKED" : "NOT_VERIFIED",
+        critical: true,
+        evidence: [
+          blocked ? "mandatory service has no repository location" : "no executable check is bound to this mandatory service",
+          "deployed end-to-end coverage was not claimed",
+        ],
+      };
+      scenarios.push(entry);
+      findings.push(findingFor(entry, entry.status, blocked ? "repository location is missing" : "behavior was not executed", item.acceptanceCriteria[0]?.then ?? item.happyPath[0] ?? "the user story outcome"));
+    }
   }
   return {
     scenarios,

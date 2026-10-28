@@ -27,6 +27,7 @@ import {
   type WorkItemLink,
   type WorkflowRole,
   type WorkflowState,
+  type EvidenceSource,
 } from "@praxis/contracts";
 
 export const PRAXIS_CAPABILITIES: Capability[] = [
@@ -616,7 +617,7 @@ function resolveCommand(repo: string, command: WorkflowCommand, workItemId?: str
   return { command, state: loadWorkflow(repo, workItemId) };
 }
 
-export function previewWorkflow(repo: string, raw: unknown, workItemId?: string): {
+export function previewWorkflow(repo: string, raw: unknown, workItemId?: string, evidenceSource?: EvidenceSource): {
   fingerprint: string;
   duplicate: boolean;
   result: unknown;
@@ -666,7 +667,7 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
       humanApproval,
     };
   }
-  const applied = applyWorkflowCommand(resolved.state, resolved.command);
+  const applied = applyWorkflowCommand(resolved.state, resolved.command, evidenceSource ? { evidenceSource } : undefined);
   return {
     fingerprint,
     duplicate: applied.duplicate,
@@ -687,7 +688,7 @@ export type WorkflowApplyResult = {
 };
 
 /** One locked read-modify-write of a single work item (or the index, for select/reopen). */
-function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel): WorkflowApplyResult {
+function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel, evidenceSource?: EvidenceSource): WorkflowApplyResult {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
     const finalCommand = parseWorkflowCommand(final);
@@ -723,7 +724,7 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
     }
     // A human act carries the user's approval (made by the Runtime, never part of the command); the contract verifies
     // it against the exact content again before it changes anything.
-    const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...(userApproval ? { userApproval } : {}), ...(channel ? { channel } : {}) });
+    const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...(userApproval ? { userApproval } : {}), ...(channel ? { channel } : {}), ...(evidenceSource ? { evidenceSource } : {}) });
     const path = writeItem(repo, applied.state);
     const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1 as const, current: null, items: [] };
     const entry = summarize(applied.state);
@@ -748,14 +749,14 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
   });
 }
 
-function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel): WorkflowApplyResult {
+function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel, evidenceSource?: EvidenceSource): WorkflowApplyResult {
   const command = parseWorkflowCommand(planned);
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
   // Agent-authored records need no approval. Human acts are protected by the user's approval, verified inside the write.
-  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel));
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource));
 }
 
 export function applyResolved(
@@ -768,8 +769,9 @@ export function applyResolved(
   return guarded(repo, fingerprint, planned, final, workItemId);
 }
 
-export function applyWorkflow(repo: string, raw: unknown, fingerprint: string, workItemId?: string, userApproval?: UserApproval): WorkflowApplyResult {
-  return guarded(repo, fingerprint, raw, raw, workItemId, userApproval);
+/** `evidenceSource` is set only by Runtime modules that executed the check themselves (verify-stories): it is never read from a command. */
+export function applyWorkflow(repo: string, raw: unknown, fingerprint: string, workItemId?: string, userApproval?: UserApproval, evidenceSource?: EvidenceSource): WorkflowApplyResult {
+  return guarded(repo, fingerprint, raw, raw, workItemId, userApproval, undefined, evidenceSource);
 }
 
 /**

@@ -3,7 +3,7 @@ import { containedPath } from "./path-guard.js";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ApprovalError, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
+import { ApprovalError, effectiveServices, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
 import { tmpdir } from "node:os";
 import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
 import { inspectionPlan, runProjectChecks, type Finding, type Scenario } from "./generic-verification.js";
@@ -32,6 +32,9 @@ type VerificationCommand = {
   testsGreen: boolean;
   scenarios: Scenario[];
   findings: Finding[];
+  /** This run is complete for what the Runtime executes: its earlier results that were not repeated are retired, evidence from other sources stays. */
+  replaceSource: "executed";
+  baseCoverageRevision: number;
   meta: VerificationMeta;
 };
 
@@ -125,7 +128,7 @@ export async function buildStoryVerification(
   const requirements = state.requirements.filter((item) => item.status !== "superseded");
   // A work item with requirements but no Story is verified from checks bound to its acceptance criteria.
   if (!stories.length && !requirements.length) throw new Error("STORY_MISSING");
-  const services = state.services as ServiceLocation[];
+  const services = effectiveServices(state) as ServiceLocation[];
   const profiles = services.map((service) => inspectService(service));
   const adapter = adapterFile(repo);
   let scenarios: Scenario[] = [];
@@ -200,6 +203,8 @@ export async function buildStoryVerification(
     testsGreen: testsAreGreen(services),
     scenarios,
     findings,
+    replaceSource: "executed",
+    baseCoverageRevision: state.coverageRevision,
     meta,
   };
 }

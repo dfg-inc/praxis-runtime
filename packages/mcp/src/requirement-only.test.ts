@@ -96,8 +96,8 @@ describe("verifying a work item with requirements but no Story (through MCP tool
     const repo = await setup([check(AC1, "answer", 42)]);
     await step(repo, "quality", { action: "verify-stories", independentRerun: true });
     const verdict = requirementVerdict(repo);
-    expect(verdict?.verdict).toBe("PASS_WITH_RISKS");
-    expect(verdict?.evidenceRefs).toContain(`ac-not-verified:${AC2}`);
+    expect(verdict?.verdict).toBe("FAIL");
+    expect(verdict?.evidenceRefs.join("\n")).toContain(`${AC2} has no evidence`);
   });
 
   it("a failing check fails the requirement and returns it to Developer", async () => {

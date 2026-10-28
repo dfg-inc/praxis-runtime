@@ -4307,6 +4307,173 @@ var init_command_strict = __esm({
   }
 });
 
+// node_modules/@praxis/contracts/dist/quality-model.js
+function trusted(entry) {
+  return TRUSTED.has(entry.source?.kind ?? "legacy");
+}
+function locate(state2, entry, ac) {
+  let current = true;
+  if (entry.storyId !== void 0) {
+    const story = state2.stories.find((s) => s.id === entry.storyId);
+    if (!story || story.status === "superseded" || story.status === "excluded")
+      current = false;
+    else if ((entry.storyRevision ?? 1) !== story.revision)
+      current = false;
+  }
+  if (current && ac) {
+    if ((entry.acceptanceCriterionRevision ?? 1) !== ac.revision)
+      current = false;
+  }
+  return { entry, current };
+}
+function criterionStatus(state2, requirementId, ac, acId) {
+  const mine = state2.coverage.filter((e) => e.requirementId === requirementId && e.acceptanceCriterionId === acId && !e.scenarioId.endsWith("-CONFIRMATION"));
+  const located = mine.map((e) => locate(state2, e, ac));
+  const current = located.filter((l) => l.current).map((l) => l.entry);
+  const stale = located.filter((l) => !l.current).map((l) => l.entry.scenarioId);
+  const base = { id: acId, revision: ac?.revision ?? 1, scenarios: current.map((e) => e.scenarioId), stale };
+  if (current.length === 0)
+    return { ...base, state: stale.length ? "stale" : "missing" };
+  if (current.some((e) => e.status === "FAIL"))
+    return { ...base, state: "failed" };
+  if (current.some((e) => (e.status === "BLOCKED" || e.status === "NOT_VERIFIED") && e.critical))
+    return { ...base, state: "blocked" };
+  const passes = current.filter((e) => e.status === "PASS");
+  if (passes.some(trusted))
+    return { ...base, state: "passed" };
+  if (passes.length)
+    return { ...base, state: "attested" };
+  if (current.some((e) => e.status === "PASS_WITH_RISKS"))
+    return { ...base, state: "risk" };
+  return { ...base, state: "blocked" };
+}
+function count(criteria) {
+  const n = (s) => criteria.filter((c) => c.state === s).length;
+  return { total: criteria.length, verified: n("passed") + n("failed"), passed: n("passed"), failed: n("failed"), blocked: n("blocked"), missing: n("missing"), stale: n("stale"), attested: n("attested"), risk: n("risk") };
+}
+function describe3(c) {
+  switch (c.state) {
+    case "failed":
+      return `${c.id} FAILED (${c.scenarios.join(", ")})`;
+    case "blocked":
+      return `${c.id} could not be proven: BLOCKED or not verified (${c.scenarios.join(", ")})`;
+    case "stale":
+      return `${c.id} only has results for an older revision (${c.stale.join(", ")}): verify it again`;
+    case "attested":
+      return `${c.id} is attested by an agent, not independently executed (${c.scenarios.join(", ")})`;
+    case "risk":
+      return `${c.id} passed with risks (${c.scenarios.join(", ")})`;
+    case "missing":
+      return `${c.id} has no evidence`;
+    default:
+      return "";
+  }
+}
+function verdictOf(counts, extraRisks) {
+  if (counts.failed > 0 || counts.blocked > 0 || counts.missing > 0 || counts.stale > 0)
+    return "FAIL";
+  if (counts.attested > 0 || counts.risk > 0 || extraRisks > 0)
+    return "PASS_WITH_RISKS";
+  return "PASS";
+}
+function requiredRequirements(state2) {
+  return state2.requirements.filter((r) => r.status !== "superseded" && r.scope === "in");
+}
+function requirementCoverage(state2, requirementId) {
+  const requirement = state2.requirements.find((r) => r.id === requirementId && r.status !== "superseded");
+  const reasons = [];
+  let criteria;
+  if (!requirement)
+    return { id: requirementId, counts: count([]), criteria: [], verdict: "FAIL", reasons: ["not a current requirement"], noEvidence: true };
+  if (requirement.acceptanceCriteria.length > 0) {
+    criteria = requirement.acceptanceCriteria.map((ac) => criterionStatus(state2, requirementId, ac, ac.id));
+  } else {
+    const ids = [...new Set(state2.coverage.filter((e) => e.requirementId === requirementId).map((e) => e.acceptanceCriterionId))];
+    criteria = ids.map((id) => criterionStatus(state2, requirementId, void 0, id));
+  }
+  const counts = count(criteria);
+  for (const c of criteria) {
+    const line = describe3(c);
+    if (line)
+      reasons.push(line);
+  }
+  let extraRisks = 0;
+  for (const story of state2.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded" && s.requirementIds.includes(requirementId))) {
+    const verified = state2.coverage.some((e) => e.storyId === story.id && e.requirementId === requirementId && (e.storyRevision ?? 1) === story.revision && !e.scenarioId.endsWith("-CONFIRMATION"));
+    if (!verified) {
+      reasons.push(`story-not-verified:${story.id}@${story.revision}`);
+      extraRisks += 1;
+    } else if (!story.confirmedBehavior) {
+      reasons.push(`story-unconfirmed:${story.id}@${story.revision}`);
+      extraRisks += 1;
+    }
+  }
+  const own4 = new Set(requirement.acceptanceCriteria.map((c) => c.id));
+  let anyCurrent = false;
+  for (const e of state2.coverage.filter((x) => x.requirementId === requirementId && !x.scenarioId.endsWith("-CONFIRMATION"))) {
+    if (!locate(state2, e, void 0).current)
+      continue;
+    anyCurrent = true;
+    if (requirement.acceptanceCriteria.length > 0 && !own4.has(e.acceptanceCriterionId))
+      reasons.push(`${e.scenarioId} proves ${e.acceptanceCriterionId}, which is not an acceptance criterion of ${requirementId}`);
+  }
+  const noEvidence = !anyCurrent;
+  const verdict = noEvidence ? "FAIL" : verdictOf(counts, extraRisks);
+  return { id: requirementId, counts, criteria, verdict, reasons, noEvidence };
+}
+function storyCoverage(state2, storyId) {
+  const story = state2.stories.find((s) => s.id === storyId);
+  if (!story)
+    return { id: storyId, counts: count([]), criteria: [], verdict: "FAIL", reasons: ["unknown story"], noEvidence: true };
+  const criteria = story.acceptanceCriteria.map((sc) => {
+    const owner = story.requirementIds.map((rid) => state2.requirements.find((r) => r.id === rid)).find((r) => r?.acceptanceCriteria.some((c) => c.id === sc.id));
+    const ac = owner?.acceptanceCriteria.find((c) => c.id === sc.id);
+    if (owner && ac)
+      return criterionStatus(state2, owner.id, ac, sc.id);
+    const entries = state2.coverage.filter((e) => e.storyId === storyId && e.acceptanceCriterionId === sc.id);
+    const located = entries.map((e) => locate(state2, e, void 0));
+    const cur = located.filter((l) => l.current).map((l) => l.entry);
+    const st = !cur.length ? entries.length ? "stale" : "missing" : cur.some((e) => e.status === "FAIL") ? "failed" : cur.some((e) => (e.status === "BLOCKED" || e.status === "NOT_VERIFIED") && e.critical) ? "blocked" : cur.some((e) => e.status === "PASS" && trusted(e)) ? "passed" : cur.some((e) => e.status === "PASS") ? "attested" : "risk";
+    return { id: sc.id, revision: 1, state: st, scenarios: cur.map((e) => e.scenarioId), stale: located.filter((l) => !l.current).map((l) => l.entry.scenarioId) };
+  });
+  const counts = count(criteria);
+  const reasons = criteria.map(describe3).filter(Boolean);
+  if (!story.confirmedBehavior)
+    reasons.push(`story-unconfirmed:${story.id}@${story.revision}`);
+  const noEvidence = criteria.every((c) => c.state === "missing" || c.state === "stale");
+  return { id: storyId, counts, criteria, verdict: noEvidence ? "FAIL" : verdictOf(counts, story.confirmedBehavior ? 0 : 1), reasons, noEvidence };
+}
+function evaluateEvidence(state2) {
+  const gaps = [];
+  const reqs = requiredRequirements(state2);
+  if (reqs.length === 0)
+    gaps.push("no requirements in scope");
+  const requirements2 = reqs.map((r) => {
+    const cov = requirementCoverage(state2, r.id);
+    if (cov.verdict !== "PASS") {
+      const head = cov.noEvidence ? `${r.id}: no evidence for any of ${cov.counts.total} acceptance criteria` : `${r.id} is ${cov.verdict}: ${cov.counts.passed} of ${cov.counts.total} criteria passed (failed ${cov.counts.failed}, blocked ${cov.counts.blocked}, missing ${cov.counts.missing}, stale ${cov.counts.stale}, attested ${cov.counts.attested})`;
+      gaps.push(head);
+      if (!cov.noEvidence)
+        for (const reason of cov.reasons)
+          gaps.push(`  ${reason}`);
+    }
+    return { id: r.id, verdict: cov.verdict, counts: cov.counts };
+  });
+  const stories2 = state2.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded").map((s) => {
+    const cov = storyCoverage(state2, s.id);
+    return { id: s.id, verdict: cov.verdict, counts: cov.counts };
+  });
+  const totals = requirements2.reduce((sum, r) => ({ total: sum.total + r.counts.total, verified: sum.verified + r.counts.verified, passed: sum.passed + r.counts.passed, failed: sum.failed + r.counts.failed, blocked: sum.blocked + r.counts.blocked, missing: sum.missing + r.counts.missing, stale: sum.stale + r.counts.stale, attested: sum.attested + r.counts.attested, risk: sum.risk + r.counts.risk }), count([]));
+  const verdict = requirements2.length === 0 || requirements2.some((r) => r.verdict === "FAIL") ? "FAIL" : requirements2.some((r) => r.verdict === "PASS_WITH_RISKS") ? "PASS_WITH_RISKS" : "PASS";
+  return { verdict, gaps, requirements: requirements2, stories: stories2, totals };
+}
+var TRUSTED;
+var init_quality_model = __esm({
+  "node_modules/@praxis/contracts/dist/quality-model.js"() {
+    TRUSTED = /* @__PURE__ */ new Set(["executed", "browser", "legacy"]);
+  }
+});
+
 // node_modules/@praxis/contracts/dist/ids.js
 var RequirementIdSchema, StoryIdSchema, RepositoryIdSchema;
 var init_ids = __esm({
@@ -4362,7 +4529,7 @@ function rollupStoryVerdict(entries) {
   }
   return { verdict: "PASS", reasons: [] };
 }
-var STORY_NARRATIVE, CoverageStatusSchema, StoryCriterionSchema, ReviewMarkSchema, STORY_CAPABILITIES, StoryCapabilitySchema, UserStorySchema, CoverageEntrySchema, ChangeRecordSchema;
+var STORY_NARRATIVE, CoverageStatusSchema, StoryCriterionSchema, ReviewMarkSchema, STORY_CAPABILITIES, StoryCapabilitySchema, UserStorySchema, EvidenceSourceSchema, CoverageEntrySchema, ChangeRecordSchema;
 var init_story = __esm({
   "node_modules/@praxis/contracts/dist/story.js"() {
     init_zod();
@@ -4446,6 +4613,17 @@ var init_story = __esm({
       /** Review marks by item key: "ac:<id>", "step:<n>", "alt:<n>", "neg:<n>", "edge:<n>", "rule:<n>", "result:<n>". */
       review: external_exports.record(external_exports.string(), ReviewMarkSchema).default({})
     });
+    EvidenceSourceSchema = external_exports.object({
+      /** executed: the Runtime ran the check. browser: the Runtime drove a real browser. agent: written by an agent without a Runtime run (self-attested, never independent). */
+      kind: external_exports.enum(["executed", "browser", "agent"]),
+      runId: external_exports.string().optional(),
+      runner: external_exports.string().optional(),
+      startedAt: external_exports.string().optional(),
+      finishedAt: external_exports.string().optional(),
+      /** Digest of what was exercised (the served bundle, or the module). */
+      subjectDigest: external_exports.string().optional(),
+      artifacts: external_exports.array(external_exports.object({ path: external_exports.string(), sha256: external_exports.string(), bytes: external_exports.number().int().nonnegative().optional() })).default([])
+    });
     CoverageEntrySchema = external_exports.object({
       /** Absent for requirement-only evidence: a work item verified without a Story. */
       storyId: StoryIdSchema.optional(),
@@ -4462,7 +4640,11 @@ var init_story = __esm({
       evidence: external_exports.array(external_exports.string()).default([]),
       findingId: external_exports.string().optional(),
       status: CoverageStatusSchema,
-      critical: external_exports.boolean().default(false)
+      critical: external_exports.boolean().default(false),
+      /** Revision of the acceptance criterion this scenario verified. A revised criterion is not proven by the older result. */
+      acceptanceCriterionRevision: external_exports.number().int().positive().optional(),
+      recordedAt: external_exports.string().optional(),
+      source: EvidenceSourceSchema.optional()
     });
     ChangeRecordSchema = external_exports.object({
       id: external_exports.string().min(1),
@@ -5517,15 +5699,15 @@ function markDownstreamStale(state2, requirementId, now) {
 function reviewProgress(state2) {
   const reqs = inScope(state2);
   const criteria = reqs.flatMap((r) => r.acceptanceCriteria);
-  const count = (status) => criteria.filter((c) => c.review.status === status).length;
+  const count2 = (status) => criteria.filter((c) => c.review.status === status).length;
   return {
     requirements: reqs.length,
     deferred: activeRequirements(state2).filter((r) => r.scope === "deferred").length,
     excluded: activeRequirements(state2).filter((r) => r.scope === "excluded").length,
     criteria: criteria.length,
-    accepted: count("accepted"),
-    rejected: count("rejected"),
-    pending: count("pending"),
+    accepted: count2("accepted"),
+    rejected: count2("rejected"),
+    pending: count2("pending"),
     complete: criteria.length > 0 && criteria.every((c) => c.review.status === "accepted") && reqs.every((r) => r.acceptanceCriteria.length > 0)
   };
 }
@@ -7387,46 +7569,20 @@ function carryForwardContext(state2, command) {
   };
 }
 function requirementEvidence(state2, requirementId) {
-  const current = new Map(state2.stories.filter((story) => story.status !== "superseded").map((story) => [story.id, story]));
-  const requirement = state2.requirements.find((item) => item.id === requirementId && item.status !== "superseded");
-  const executed = state2.coverage.filter((entry) => {
-    if (entry.requirementId !== requirementId)
-      return false;
-    if (entry.storyId === void 0)
-      return requirement !== void 0;
-    const story = current.get(entry.storyId);
-    if (!story || entry.scenarioId === `${entry.storyId}-CONFIRMATION`)
-      return false;
-    return (entry.storyRevision ?? 1) === story.revision;
-  });
-  if (executed.length === 0)
-    return { status: "missing", reasons: ["missing independent evidence"] };
-  const rolled = rollupStoryVerdict(executed);
-  let verdict = rolled.verdict;
-  const reasons = [...rolled.reasons];
-  const verified = new Set(executed.flatMap((entry) => entry.storyId ? [entry.storyId] : []));
-  const linked = [...current.values()].filter((story) => story.requirementIds.includes(requirementId));
-  for (const story of linked) {
-    if (!verified.has(story.id))
-      reasons.push(`story-not-verified:${story.id}@${story.revision}`);
-    else if (!story.confirmedBehavior)
-      reasons.push(`story-unconfirmed:${story.id}@${story.revision}`);
-  }
-  if (linked.length === 0 && requirement) {
-    const passed = new Set(executed.filter((entry) => entry.status === "PASS").map((entry) => entry.acceptanceCriterionId));
-    for (const criterion of requirement.acceptanceCriteria) {
-      if (!passed.has(criterion.id))
-        reasons.push(`ac-not-verified:${criterion.id}`);
-    }
-  }
-  if (verdict === "PASS" && reasons.length > 0)
-    verdict = "PASS_WITH_RISKS";
+  const cov = requirementCoverage(state2, requirementId);
+  if (cov.noEvidence)
+    return { status: "missing", reasons: ["missing independent evidence", ...cov.reasons.filter((r) => r.includes("older revision"))] };
+  const scenarios = state2.coverage.filter((e) => e.requirementId === requirementId && cov.criteria.some((c2) => c2.scenarios.includes(e.scenarioId)));
+  const stories2 = [...new Set(scenarios.flatMap((e) => e.storyId ? [e.storyId] : []))];
   const provenance = [
-    ...[...verified].map((id) => `story:${id}@${current.get(id).revision}`),
-    ...verified.size === 0 ? [`requirement:${requirementId}@${requirement?.revision ?? 1}`] : [],
-    ...executed.map((entry) => `${entry.scenarioId}:${entry.status}`)
+    ...stories2.map((id) => `story:${id}@${state2.stories.find((st) => st.id === id)?.revision ?? 1}`),
+    ...stories2.length === 0 ? [`requirement:${requirementId}@${state2.requirements.find((r) => r.id === requirementId)?.revision ?? 1}`] : [],
+    ...scenarios.map((e) => `${e.scenarioId}:${e.status}`),
+    ...[...new Set(scenarios.map((e) => e.source?.kind ?? "legacy"))].map((k) => `source:${k}`)
   ];
-  return { status: "executed", verdict, reasons, provenance };
+  const c = cov.counts;
+  const reasons = [`criteria: ${c.passed} of ${c.total} passed, ${c.failed} failed, ${c.blocked} blocked, ${c.missing} missing, ${c.stale} stale, ${c.attested} attested`, ...cov.reasons];
+  return { status: "executed", verdict: cov.verdict, reasons, provenance, counts: c };
 }
 function recordVerdict(state2, verdict) {
   return {
@@ -7755,37 +7911,70 @@ function applyWorkflowCommand(state2, raw, options2) {
         ...state2.services.map((service) => service.id)
       ])
     ];
-    const questions = missingRepositoryPrompts({ services: state2.services, requiredServiceIds: required4 });
+    const questions = missingRepositoryPrompts({ services: effectiveServices(state2), requiredServiceIds: required4 });
     return { state: state2, duplicate: false, result: { questions } };
   }
   if (command.action === "record-verification") {
-    const scenarios = command.scenarios.map((scenario) => {
-      const storyRevision = scenario.storyRevision ?? (scenario.storyId ? state2.stories.find((story) => story.id === scenario.storyId)?.revision : void 0);
-      const stamped = storyRevision === void 0 ? scenario : { ...scenario, storyRevision };
+    const kind = options2?.evidenceSource?.kind ?? "agent";
+    const at = (options2?.now ?? /* @__PURE__ */ new Date()).toISOString();
+    if (command.baseCoverageRevision !== void 0 && command.baseCoverageRevision !== state2.coverageRevision) {
+      throw new WorkflowError("EVIDENCE_STALE", `coverage is at revision ${state2.coverageRevision}, the writer saw ${command.baseCoverageRevision}: read the work item again and re-run the check`);
+    }
+    const sourceFor = () => ({ ...options2?.evidenceSource ?? {}, kind, artifacts: options2?.evidenceSource?.artifacts ?? [] });
+    const incoming = command.scenarios.map((scenario) => {
+      const requirement = state2.requirements.find((r) => r.id === scenario.requirementId && r.status !== "superseded");
+      if (!requirement)
+        throw new WorkflowError("EVIDENCE_TARGET_UNKNOWN", `scenario ${scenario.scenarioId} names ${scenario.requirementId}, which is not a current requirement`);
+      const story = scenario.storyId ? state2.stories.find((item) => item.id === scenario.storyId && item.status !== "superseded") : void 0;
+      if (scenario.storyId && !story)
+        throw new WorkflowError("EVIDENCE_TARGET_UNKNOWN", `scenario ${scenario.scenarioId} names story ${scenario.storyId}, which is not current`);
+      const ac = requirement.acceptanceCriteria.find((c) => c.id === scenario.acceptanceCriterionId);
+      if (!ac && !story?.acceptanceCriteria.some((c) => c.id === scenario.acceptanceCriterionId) && scenario.acceptanceCriterionId !== story?.id) {
+        throw new WorkflowError("EVIDENCE_TARGET_UNKNOWN", `scenario ${scenario.scenarioId} names criterion ${scenario.acceptanceCriterionId}, which ${scenario.requirementId} does not have`);
+      }
+      const storyRevision = story?.revision;
+      const stamped = { ...scenario, ...storyRevision === void 0 ? {} : { storyRevision }, ...ac ? { acceptanceCriterionRevision: ac.revision } : {}, recordedAt: at, source: sourceFor() };
       return stamped.critical || stamped.kind === "happy" ? { ...stamped, critical: true } : stamped;
     });
-    const unconfirmed = state2.stories.filter((story) => !story.confirmedBehavior && story.status !== "superseded");
-    for (const story of unconfirmed) {
-      scenarios.push({
-        storyId: story.id,
-        storyRevision: story.revision,
-        requirementId: story.requirementIds[0],
-        acceptanceCriterionId: story.acceptanceCriteria[0]?.id ?? story.id,
-        scenarioId: `${story.id}-CONFIRMATION`,
-        kind: "happy",
-        serviceId: story.serviceIds[0] ?? "feature",
-        repository: "",
-        implementationPath: "",
-        testRef: "",
-        evidence: ["story behavior is an assumption until BA confirms it"],
-        status: "PASS_WITH_RISKS",
-        critical: false
-      });
+    const seen = /* @__PURE__ */ new Set();
+    for (const scenario of incoming) {
+      if (seen.has(scenario.scenarioId))
+        throw new WorkflowError("EVIDENCE_ID_CONFLICT", `scenario ${scenario.scenarioId} appears twice in one record`);
+      seen.add(scenario.scenarioId);
     }
-    const feature = rollupStoryVerdict(scenarios);
+    const kindOf2 = (e) => e.source?.kind ?? "legacy";
+    const ownedBy = (e) => kindOf2(e) === kind || kind === "executed" && kindOf2(e) === "legacy";
+    let coverage2 = [...state2.coverage];
+    const before = JSON.stringify(coverage2);
+    if (command.retire.length)
+      coverage2 = coverage2.filter((e) => !(command.retire.includes(e.scenarioId) && ownedBy(e)));
+    if (command.replaceSource) {
+      if (command.replaceSource !== kind)
+        throw new WorkflowError("EVIDENCE_PROTECTED", `a ${kind} record cannot replace ${command.replaceSource} evidence`);
+      coverage2 = coverage2.filter((e) => !(ownedBy(e) && !seen.has(e.scenarioId)));
+    }
+    const comparable = (e) => JSON.stringify({ ...e, recordedAt: void 0, source: e.source && { kind: e.source.kind, runner: e.source.runner, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
+    for (const scenario of incoming) {
+      const index = coverage2.findIndex((e) => e.scenarioId === scenario.scenarioId);
+      if (index < 0) {
+        coverage2.push(scenario);
+        continue;
+      }
+      const existing = coverage2[index];
+      if (existing.requirementId !== scenario.requirementId || existing.acceptanceCriterionId !== scenario.acceptanceCriterionId) {
+        throw new WorkflowError("EVIDENCE_ID_CONFLICT", `scenario ${scenario.scenarioId} already proves ${existing.requirementId} ${existing.acceptanceCriterionId}; a scenario id cannot be moved to another criterion, use a new id`);
+      }
+      if (kindOf2(existing) === "agent" || ownedBy(existing)) {
+        if (comparable(existing) !== comparable(scenario))
+          coverage2[index] = scenario;
+      } else {
+        throw new WorkflowError("EVIDENCE_PROTECTED", `scenario ${scenario.scenarioId} was recorded by ${kindOf2(existing)} evidence; a ${kind} record cannot overwrite it`);
+      }
+    }
+    const changed = JSON.stringify(coverage2) !== before;
+    const feature0 = { ...state2, coverage: coverage2, coverageRevision: state2.coverageRevision + (changed ? 1 : 0) };
     let next2 = {
-      ...state2,
-      coverage: scenarios,
+      ...feature0,
       findings: mergeFindings(state2.findings, command.findings)
     };
     if (!command.independentRerun) {
@@ -7794,26 +7983,32 @@ function applyWorkflowCommand(state2, raw, options2) {
         next2 = returned.state;
       }
     }
-    const grouped = /* @__PURE__ */ new Map();
-    for (const scenario of scenarios) {
-      const entries = grouped.get(scenario.serviceId) ?? [];
-      entries.push(scenario);
-      grouped.set(scenario.serviceId, entries);
-    }
+    const touchedServices = [...new Set(incoming.map((scenario) => scenario.serviceId))];
     const serviceVerdicts2 = [];
-    for (const [serviceId, entries] of grouped) {
-      const rolled = rollupStoryVerdict(entries);
-      serviceVerdicts2.push({ serviceId, verdict: rolled.verdict, reasons: rolled.reasons });
+    for (const serviceId of touchedServices) {
+      const entries = coverage2.filter((e) => e.serviceId === serviceId && !e.scenarioId.endsWith("-CONFIRMATION"));
+      const current = entries.filter((e) => {
+        const story = e.storyId ? next2.stories.find((st) => st.id === e.storyId) : void 0;
+        return !e.storyId || story && story.status !== "superseded" && (e.storyRevision ?? 1) === story.revision;
+      });
+      const rolled = rollupStoryVerdict(current);
+      const independent = current.some((e) => e.status === "PASS" && (e.source?.kind ?? "legacy") !== "agent");
+      const verdict2 = rolled.verdict === "PASS" && !independent ? "PASS_WITH_RISKS" : rolled.verdict;
+      const reasons = rolled.verdict === "PASS" && !independent ? ["only agent-attested results: not independently executed"] : rolled.reasons;
+      serviceVerdicts2.push({ serviceId, verdict: verdict2, reasons });
       next2 = recordVerdict(next2, {
         id: `V-SERVICE-${serviceId}-${next2.verdicts.length + 1}`,
         scope: "service",
         scopeId: serviceId,
-        verdict: rolled.verdict,
-        evidenceRefs: rolled.reasons.length ? rolled.reasons : [`${serviceId} scenarios passed`],
-        requirementIds: [...new Set(entries.map((scenario) => scenario.requirementId))]
+        verdict: verdict2,
+        evidenceRefs: reasons.length ? reasons : [`${serviceId} scenarios passed`],
+        requirementIds: [...new Set(current.map((e) => e.requirementId))]
       });
     }
-    for (const requirementId of [...new Set(scenarios.map((scenario) => scenario.requirementId))]) {
+    for (const requirementId of [...new Set(incoming.map((scenario) => scenario.requirementId))]) {
+      const cov = requirementCoverage(next2, requirementId);
+      if (cov.noEvidence)
+        continue;
       const evidence2 = requirementEvidence(next2, requirementId);
       if (evidence2.status !== "executed")
         continue;
@@ -7830,24 +8025,33 @@ function applyWorkflowCommand(state2, raw, options2) {
         requirementIds: [requirementId]
       });
     }
+    const evaluation = evaluateEvidence(next2);
     const verdictId2 = `V-STORY-${next2.verdicts.length + 1}`;
     next2 = recordVerdict(next2, {
       id: verdictId2,
       scope: "feature",
       scopeId: state2.workItem.id,
-      verdict: feature.verdict,
+      verdict: evaluation.verdict,
       evidenceRefs: [
         ...command.testsGreen ? ["testsGreen:true", "green tests are not story evidence"] : [],
         ...command.independentRerun ? ["independentRerun:true"] : ["independentRerun:false"],
-        ...feature.reasons,
-        ...scenarios.map((scenario) => `${scenario.scenarioId}:${scenario.status}`)
+        `criteria: ${evaluation.totals.passed} of ${evaluation.totals.total} passed`,
+        ...evaluation.gaps
       ],
-      requirementIds: [...new Set(scenarios.map((scenario) => scenario.requirementId))]
+      requirementIds: requiredRequirements(next2).map((r) => r.id)
     });
     return {
       state: next2,
       duplicate: false,
-      result: { verdict: feature.verdict, reasons: feature.reasons, scenarios, serviceVerdicts: serviceVerdicts2 }
+      result: {
+        verdict: evaluation.verdict,
+        reasons: evaluation.gaps,
+        scenarios: incoming,
+        serviceVerdicts: serviceVerdicts2,
+        coverage: { totals: evaluation.totals, requirements: evaluation.requirements, stories: evaluation.stories },
+        coverageRevision: next2.coverageRevision,
+        evidenceSource: kind
+      }
     };
   }
   if (command.action === "record-change") {
@@ -7940,7 +8144,7 @@ function applyWorkflowCommand(state2, raw, options2) {
   } else {
     verdict = executed.verdict;
     evidence = [...executed.reasons, ...executed.provenance, ...implementationEvidence];
-    finding = executed.verdict === "FAIL" ? {
+    finding = executed.verdict === "FAIL" && executed.counts.failed > 0 ? {
       id: `F-${command.requirementId}-coverage`,
       requirementIds: [command.requirementId],
       serviceIds: serviceIds([]),
@@ -7981,36 +8185,43 @@ function mergeFindings(current, incoming) {
     merged.set(finding.id, finding);
   return [...merged.values()];
 }
+function effectiveServices(state2) {
+  return state2.services.map((service) => {
+    const repo = service.repositoryId ? state2.repositories.find((r) => r.id === service.repositoryId) : void 0;
+    if (!repo)
+      return service;
+    return {
+      ...service,
+      ...service.localPath === void 0 && repo.localPath !== void 0 ? { localPath: repo.localPath } : {},
+      ...service.remoteUrl === void 0 && repo.remoteUrl !== void 0 ? { remoteUrl: repo.remoteUrl } : {},
+      ...service.branch === void 0 && repo.branch !== void 0 ? { branch: repo.branch } : {},
+      ...service.repository === void 0 ? { repository: repo.name } : {}
+    };
+  });
+}
 function evaluateFeature(state2) {
-  const gaps = [];
-  const active = state2.requirements.filter((item) => item.status !== "superseded");
-  if (active.length === 0)
-    gaps.push("no requirements");
-  for (const requirement of active) {
-    const latest = [...state2.verdicts].reverse().find((verdict) => verdict.scope === "requirement" && verdict.scopeId === requirement.id && !verdict.stale);
-    if (!latest)
-      gaps.push(`missing verdict for ${requirement.id}`);
-    else if (latest.verdict !== "PASS")
-      gaps.push(`${requirement.id} is ${latest.verdict}`);
-  }
+  const evidence = evaluateEvidence(state2);
+  const readinessGaps = [];
   for (const service of state2.services) {
     const unit = state2.implementationUnits.find((item) => item.serviceId === service.id && !item.stale);
     if (!unit)
-      gaps.push(`missing implementation for ${service.id}`);
+      readinessGaps.push(`missing implementation for ${service.id}`);
   }
   const readiness = featureReadiness(state2);
   if (!readiness.ready) {
     for (const id of readiness.missingIntegration)
-      gaps.push(`dependency not done: ${id}`);
+      readinessGaps.push(`dependency not done: ${id}`);
     for (const dep of readiness.unknownDependencies)
-      gaps.push(`unknown dependency: ${dep}`);
+      readinessGaps.push(`unknown dependency: ${dep}`);
     if (state2.services.length === 0)
-      gaps.push("no services");
+      readinessGaps.push("no services");
     else if (!state2.services.every((service) => service.status === "approved" || service.status === "completed")) {
-      gaps.push("services are not approved");
+      readinessGaps.push("services are not approved");
     }
   }
-  return { verdict: gaps.length === 0 ? "PASS" : "FAIL", gaps };
+  const gaps = [...evidence.gaps, ...readinessGaps];
+  const verdict = readinessGaps.length > 0 ? "FAIL" : evidence.verdict;
+  return { verdict, gaps, evidence, readinessGaps };
 }
 var import_node_crypto3, WORKFLOW_CONTRACT_VERSION, SUPPORTED_WORKFLOW_VERSIONS, WorkflowStageSchema, WorkflowRoleSchema, ClarificationClassSchema, SideEffectSchema, QualityVerdictSchema, WorkItemSourceSchema, WorkTrackingProviderSchema, TRANSITIONS, WorkItemRelationSchema, WorkItemLinkSchema, WorkItemSchema, AcceptanceCriterionSchema, RequirementSchema, ServiceSchema, ArtifactRefSchema, RoleHandoffSchema, FindingSchema, VerdictRecordSchema, CapabilitySchema, WorkflowStateSchema, SECRET_KEY, TRANSLIT, bullet, PARTIAL_SUCCESS, WorkflowCommandSchema;
 var init_workflow = __esm({
@@ -8019,6 +8230,7 @@ var init_workflow = __esm({
     init_zod();
     init_errors2();
     init_command_strict();
+    init_quality_model();
     init_ids();
     init_planning_schemas();
     init_planning();
@@ -8279,6 +8491,8 @@ var init_workflow = __esm({
       })).default([]),
       stories: external_exports.array(UserStorySchema).default([]),
       coverage: external_exports.array(CoverageEntrySchema).default([]),
+      /** Bumped on every change to coverage: lets a writer say which coverage it saw (EVIDENCE_STALE). */
+      coverageRevision: external_exports.number().int().nonnegative().default(0),
       changes: external_exports.array(ChangeRecordSchema).default([]),
       stage: WorkflowStageSchema,
       history: external_exports.array(external_exports.object({
@@ -8453,7 +8667,13 @@ var init_workflow = __esm({
         independentRerun: external_exports.boolean().default(false),
         testsGreen: external_exports.boolean().optional(),
         scenarios: external_exports.array(CoverageEntrySchema).default([]),
-        findings: external_exports.array(FindingSchema).default([])
+        findings: external_exports.array(FindingSchema).default([]),
+        /** Scenario ids to remove. Only entries from the same kind of source can be removed. */
+        retire: external_exports.array(external_exports.string().min(1)).default([]),
+        /** Remove this source's earlier entries that this run did not repeat (a complete re-run). Only the caller's own source kind. */
+        replaceSource: external_exports.enum(["executed", "browser", "agent"]).optional(),
+        /** The coverageRevision the writer saw; a different current value is EVIDENCE_STALE. */
+        baseCoverageRevision: external_exports.number().int().nonnegative().optional()
       }),
       external_exports.object({
         action: external_exports.literal("record-change"),
@@ -10568,6 +10788,8 @@ var init_dist = __esm({
     init_context_trust();
     init_briefing();
     init_command_catalog();
+    init_quality_model();
+    init_story();
     ContractMetaSchema = external_exports.object({
       contract: external_exports.string().min(1),
       version: external_exports.string().regex(/^\d+\.\d+\.\d+$/)
@@ -11372,8 +11594,8 @@ var require_Node = __commonJS({
         };
         const res = toJS.toJS(this, "", ctx);
         if (typeof onAnchor === "function")
-          for (const { count, res: res2 } of ctx.anchors.values())
-            onAnchor(res2, count);
+          for (const { count: count2, res: res2 } of ctx.anchors.values())
+            onAnchor(res2, count2);
         return typeof reviver === "function" ? applyReviver.applyReviver(reviver, { "": res }, "", res) : res;
       }
     };
@@ -11481,13 +11703,13 @@ var require_Alias = __commonJS({
         const anchor4 = anchors2 && source && anchors2.get(source);
         return anchor4 ? anchor4.count * anchor4.aliasCount : 0;
       } else if (identity.isCollection(node4)) {
-        let count = 0;
+        let count2 = 0;
         for (const item of node4.items) {
           const c = getAliasCount(doc, item, anchors2);
-          if (c > count)
-            count = c;
+          if (c > count2)
+            count2 = c;
         }
-        return count;
+        return count2;
       } else if (identity.isPair(node4)) {
         const kc = getAliasCount(doc, node4.key, anchors2);
         const vc = getAliasCount(doc, node4.value, anchors2);
@@ -14440,8 +14662,8 @@ var require_Document = __commonJS({
         };
         const res = toJS.toJS(this.contents, jsonArg ?? "", ctx);
         if (typeof onAnchor === "function")
-          for (const { count, res: res2 } of ctx.anchors.values())
-            onAnchor(res2, count);
+          for (const { count: count2, res: res2 } of ctx.anchors.values())
+            onAnchor(res2, count2);
         return typeof reviver === "function" ? applyReviver.applyReviver(reviver, { "": res }, "", res) : res;
       }
       /**
@@ -14518,12 +14740,12 @@ var require_errors2 = __commonJS({
         lineStr = prev + lineStr;
       }
       if (/[^ ]/.test(lineStr)) {
-        let count = 1;
+        let count2 = 1;
         const end = error64.linePos[1];
         if (end?.line === line && end.col > col) {
-          count = Math.max(1, Math.min(end.col - col, 80 - ci));
+          count2 = Math.max(1, Math.min(end.col - col, 80 - ci));
         }
-        const pointer = " ".repeat(ci) + "^".repeat(count);
+        const pointer = " ".repeat(ci) + "^".repeat(count2);
         error64.message += `:
 
 ${lineStr}
@@ -28311,9 +28533,9 @@ var require_common = __commonJS({
       }
       return target;
     }
-    function repeat(string9, count) {
+    function repeat(string9, count2) {
       var result = "", cycle;
-      for (cycle = 0; cycle < count; cycle += 1) {
+      for (cycle = 0; cycle < count2; cycle += 1) {
         result += string9;
       }
       return result;
@@ -29708,11 +29930,11 @@ var require_loader = __commonJS({
       }
       return false;
     }
-    function writeFoldedLines(state2, count) {
-      if (count === 1) {
+    function writeFoldedLines(state2, count2) {
+      if (count2 === 1) {
         state2.result += " ";
-      } else if (count > 1) {
-        state2.result += common.repeat("\n", count - 1);
+      } else if (count2 > 1) {
+        state2.result += common.repeat("\n", count2 - 1);
       }
     }
     function readPlainScalar(state2, nodeIndent, withinFlowCollection) {
@@ -32203,14 +32425,14 @@ function codePointLength(str3) {
   const units = str3.length;
   if (!highSurrogate.test(str3))
     return units;
-  let count = units;
+  let count2 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str3.charCodeAt(i) & 64512) === 55296 && (str3.charCodeAt(i + 1) & 64512) === 56320) {
-      count--;
+      count2--;
       i++;
     }
   }
-  return count;
+  return count2;
 }
 function getLengthableOrigin(input2) {
   if (Array.isArray(input2))
@@ -39741,14 +39963,14 @@ function codePointLength2(str3) {
   const units = str3.length;
   if (!highSurrogate2.test(str3))
     return units;
-  let count = units;
+  let count2 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str3.charCodeAt(i) & 64512) === 55296 && (str3.charCodeAt(i + 1) & 64512) === 56320) {
-      count--;
+      count2--;
       i++;
     }
   }
-  return count;
+  return count2;
 }
 function getLengthableOrigin2(input2) {
   if (Array.isArray(input2))
@@ -52288,15 +52510,15 @@ var require_resolve = /* @__PURE__ */ __commonJSMin((exports2) => {
     return false;
   }
   function countKeys(schema) {
-    let count = 0;
+    let count2 = 0;
     for (const key in schema) {
       if (key === "$ref") return Infinity;
-      count++;
+      count2++;
       if (SIMPLE_INLINED.has(key)) continue;
-      if (typeof schema[key] == "object") (0, util_1.eachItem)(schema[key], (sch) => count += countKeys(sch));
-      if (count === Infinity) return Infinity;
+      if (typeof schema[key] == "object") (0, util_1.eachItem)(schema[key], (sch) => count2 += countKeys(sch));
+      if (count2 === Infinity) return Infinity;
     }
-    return count;
+    return count2;
   }
   function getFullPath(resolver, id = "", normalize) {
     if (normalize !== false) id = normalizeId(id);
@@ -54896,8 +55118,8 @@ var require_contains = /* @__PURE__ */ __commonJSMin((exports2) => {
       cxt.result(valid, () => cxt.reset());
       function validateItemsWithCount() {
         const schValid = gen.name("_valid");
-        const count = gen.let("count", 0);
-        validateItems(schValid, () => gen.if(schValid, () => checkLimits(count)));
+        const count2 = gen.let("count", 0);
+        validateItems(schValid, () => gen.if(schValid, () => checkLimits(count2)));
       }
       function validateItems(_valid, block) {
         gen.forRange("i", 0, len, (i) => {
@@ -54910,13 +55132,13 @@ var require_contains = /* @__PURE__ */ __commonJSMin((exports2) => {
           block();
         });
       }
-      function checkLimits(count) {
-        gen.code((0, codegen_1._)`${count}++`);
-        if (max === void 0) gen.if((0, codegen_1._)`${count} >= ${min}`, () => gen.assign(valid, true).break());
+      function checkLimits(count2) {
+        gen.code((0, codegen_1._)`${count2}++`);
+        if (max === void 0) gen.if((0, codegen_1._)`${count2} >= ${min}`, () => gen.assign(valid, true).break());
         else {
-          gen.if((0, codegen_1._)`${count} > ${max}`, () => gen.assign(valid, false).break());
+          gen.if((0, codegen_1._)`${count2} > ${max}`, () => gen.assign(valid, false).break());
           if (min === 1) gen.assign(valid, true);
-          else gen.if((0, codegen_1._)`${count} >= ${min}`, () => gen.assign(valid, true));
+          else gen.if((0, codegen_1._)`${count2} >= ${min}`, () => gen.assign(valid, true));
         }
       }
     }
@@ -60618,7 +60840,7 @@ __export(external_exports2, {
   decode: () => decode4,
   decodeAsync: () => decodeAsync4,
   deepPartial: () => deepPartial,
-  describe: () => describe4,
+  describe: () => describe5,
   discriminatedUnion: () => discriminatedUnion3,
   e164: () => e1644,
   email: () => email5,
@@ -61024,7 +61246,7 @@ __export(core_exports6, {
   createToJSONSchemaMethod: () => createToJSONSchemaMethod3,
   decode: () => decode3,
   decodeAsync: () => decodeAsync3,
-  describe: () => describe3,
+  describe: () => describe4,
   encode: () => encode3,
   encodeAsync: () => encodeAsync3,
   extractDefs: () => extractDefs3,
@@ -61713,14 +61935,14 @@ function codePointLength3(str3) {
   const units = str3.length;
   if (!highSurrogate3.test(str3))
     return units;
-  let count = units;
+  let count2 = units;
   for (let i = 0; i < units - 1; i++) {
     if ((str3.charCodeAt(i) & 64512) === 55296 && (str3.charCodeAt(i + 1) & 64512) === 56320) {
-      count--;
+      count2--;
       i++;
     }
   }
-  return count;
+  return count2;
 }
 function getLengthableOrigin3(input2) {
   if (Array.isArray(input2))
@@ -66072,8 +66294,8 @@ function az_default() {
 }
 
 // packages/mcp/node_modules/zod/v4/locales/be.js
-function getBelarusianPlural(count, one, few, many) {
-  const absCount = Math.abs(count);
+function getBelarusianPlural(count2, one, few, many) {
+  const absCount = Math.abs(count2);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
   if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
@@ -68719,8 +68941,8 @@ function hu_default() {
 }
 
 // packages/mcp/node_modules/zod/v4/locales/hy.js
-function getArmenianPlural(count, one, many) {
-  return Math.abs(count) === 1 ? one : many;
+function getArmenianPlural(count2, one, many) {
+  return Math.abs(count2) === 1 ? one : many;
 }
 function withDefiniteArticle(word) {
   if (!word)
@@ -71458,8 +71680,8 @@ function ro_default() {
 }
 
 // packages/mcp/node_modules/zod/v4/locales/ru.js
-function getRussianPlural(count, one, few, many) {
-  const absCount = Math.abs(count);
+function getRussianPlural(count2, one, few, many) {
+  const absCount = Math.abs(count2);
   const lastDigit = absCount % 10;
   const lastTwoDigits = absCount % 100;
   if (lastTwoDigits >= 11 && lastTwoDigits <= 19) {
@@ -75956,7 +76178,7 @@ function _check3(fn, params) {
   return ch;
 }
 // @__NO_SIDE_EFFECTS__
-function describe3(description) {
+function describe4(description) {
   const ch = new $ZodCheck3({ check: "describe" });
   ch._zod.onattach = [
     (inst) => {
@@ -77510,7 +77732,7 @@ __export(schemas_exports4, {
   currencyCode: () => currencyCode2,
   custom: () => custom2,
   date: () => date7,
-  describe: () => describe4,
+  describe: () => describe5,
   discriminatedUnion: () => discriminatedUnion3,
   e164: () => e1644,
   email: () => email5,
@@ -79102,7 +79324,7 @@ function refine3(fn, _params = {}) {
 function superRefine3(fn, params) {
   return _superRefine3(fn, params);
 }
-var describe4 = describe3;
+var describe5 = describe4;
 var meta4 = meta3;
 var ZodInstanceOf = /* @__PURE__ */ $constructor3("ZodInstanceOf", (inst, def) => {
   ZodCustom3.init(inst, def);
@@ -80207,6 +80429,7 @@ function recordDiagnostic(entry) {
 }
 
 // packages/mcp/dist/tools.js
+var import_node_crypto17 = require("node:crypto");
 var import_node_fs32 = require("node:fs");
 var import_node_path37 = require("node:path");
 init_dist();
@@ -80217,7 +80440,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"9bbf3b85aeeacb7636e7004ace5d3556eecd4a36b1e70099ca89b658295063d4","coreBaseline":"3756cb3d0fce6ebb6df72c8fdfa90652c8c2dc01","inputs":33}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"a7ade14c14afda830522130471b23e3b7c26f7618de3f547f54323593fc19e2f","coreBaseline":"bb4d5b6772708d801ef7e4e0dfff49ecfc1c8ae1","inputs":33}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80480,11 +80703,12 @@ async function runProjectChecks(input2) {
   for (const check2 of checks) {
     const service = services.get(check2.serviceId);
     const profile = input2.profiles.find((item) => item.serviceId === check2.serviceId);
-    const requirementId = check2.requirementId ?? story?.requirementIds[0];
+    const owner = (check2.storyId ? input2.stories.find((item) => item.id === check2.storyId && item.status !== "superseded") : void 0) ?? (check2.acceptanceCriterionId ? input2.stories.find((item) => item.status !== "superseded" && item.acceptanceCriteria.some((c) => c.id === check2.acceptanceCriterionId)) : void 0) ?? (check2.requirementId ? input2.stories.find((item) => item.status !== "superseded" && item.requirementIds.includes(check2.requirementId)) : void 0) ?? story;
+    const requirementId = check2.requirementId ?? owner?.requirementIds[0];
     if (!requirementId) {
       throw new Error(`CHECKS_INVALID: check ${check2.scenarioId} names no requirementId and there is no Story to take one from`);
     }
-    const criterionId = check2.acceptanceCriterionId ?? story?.acceptanceCriteria[0]?.id ?? story?.id;
+    const criterionId = check2.acceptanceCriterionId ?? owner?.acceptanceCriteria[0]?.id ?? owner?.id;
     if (!criterionId) {
       throw new Error(`CHECKS_INVALID: check ${check2.scenarioId} must name acceptanceCriterionId when no Story exists`);
     }
@@ -80493,7 +80717,7 @@ async function runProjectChecks(input2) {
     const level = check2.level ?? "unit";
     covered.add(check2.serviceId);
     const base = {
-      ...check2.storyId ?? story?.id ? { storyId: check2.storyId ?? story?.id } : {},
+      ...check2.storyId ?? owner?.id ? { storyId: check2.storyId ?? owner?.id } : {},
       requirementId,
       acceptanceCriterionId: criterionId,
       scenarioId,
@@ -80555,31 +80779,33 @@ async function runProjectChecks(input2) {
       findings.push(findingFor(base, "FAIL", observed, check2.expect));
     }
   }
-  for (const serviceId of story?.serviceIds ?? []) {
-    if (!story || covered.has(serviceId))
-      continue;
-    const service = services.get(serviceId);
-    const blocked = !service?.localPath;
-    const scenarioId = `${story.id}-${blocked ? "BLOCKED" : "UNVERIFIED"}-${serviceId.toUpperCase()}`;
-    const entry = {
-      storyId: story.id,
-      requirementId: story.requirementIds[0],
-      acceptanceCriterionId: story.acceptanceCriteria[0]?.id ?? story.id,
-      scenarioId,
-      kind: "happy",
-      serviceId,
-      repository: service?.repository ?? serviceId,
-      implementationPath: "",
-      testRef: "",
-      status: blocked ? "BLOCKED" : "NOT_VERIFIED",
-      critical: true,
-      evidence: [
-        blocked ? "mandatory service has no repository location" : "no executable check is bound to this mandatory service",
-        "deployed end-to-end coverage was not claimed"
-      ]
-    };
-    scenarios.push(entry);
-    findings.push(findingFor(entry, entry.status, blocked ? "repository location is missing" : "behavior was not executed", story.acceptanceCriteria[0]?.then ?? story.happyPath[0] ?? "the user story outcome"));
+  for (const item of input2.stories.filter((x) => x.status !== "superseded")) {
+    for (const serviceId of item.serviceIds) {
+      if (covered.has(serviceId))
+        continue;
+      const service = services.get(serviceId);
+      const blocked = !service?.localPath;
+      const scenarioId = `${item.id}-${blocked ? "BLOCKED" : "UNVERIFIED"}-${serviceId.toUpperCase()}`;
+      const entry = {
+        storyId: item.id,
+        requirementId: item.requirementIds[0],
+        acceptanceCriterionId: item.acceptanceCriteria[0]?.id ?? item.id,
+        scenarioId,
+        kind: "happy",
+        serviceId,
+        repository: service?.repository ?? serviceId,
+        implementationPath: "",
+        testRef: "",
+        status: blocked ? "BLOCKED" : "NOT_VERIFIED",
+        critical: true,
+        evidence: [
+          blocked ? "mandatory service has no repository location" : "no executable check is bound to this mandatory service",
+          "deployed end-to-end coverage was not claimed"
+        ]
+      };
+      scenarios.push(entry);
+      findings.push(findingFor(entry, entry.status, blocked ? "repository location is missing" : "behavior was not executed", item.acceptanceCriteria[0]?.then ?? item.happyPath[0] ?? "the user story outcome"));
+    }
   }
   return {
     scenarios,
@@ -81262,7 +81488,7 @@ function resolveCommand(repo, command, workItemId) {
   }
   return { command, state: loadWorkflow(repo, workItemId) };
 }
-function previewWorkflow(repo, raw, workItemId) {
+function previewWorkflow(repo, raw, workItemId, evidenceSource) {
   const command = parseWorkflowCommand(raw);
   const resolved = resolveCommand(repo, command, workItemId);
   const fingerprint2 = fingerprintFor2(repo, command, workItemId);
@@ -81300,7 +81526,7 @@ function previewWorkflow(repo, raw, workItemId) {
       humanApproval
     };
   }
-  const applied = applyWorkflowCommand(resolved.state, resolved.command);
+  const applied = applyWorkflowCommand(resolved.state, resolved.command, evidenceSource ? { evidenceSource } : void 0);
   return {
     fingerprint: fingerprint2,
     duplicate: applied.duplicate,
@@ -81309,7 +81535,7 @@ function previewWorkflow(repo, raw, workItemId) {
     currentWorkItemId: command.action === "open" ? applied.state.workItem.id : workItemId ?? current
   };
 }
-function writeCommand(repo, planned, final, workItemId, userApproval, channel) {
+function writeCommand(repo, planned, final, workItemId, userApproval, channel, evidenceSource) {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
     const finalCommand = parseWorkflowCommand(final);
@@ -81344,7 +81570,7 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel) {
         currentWorkItemId: resolved.reopen.workItem.id
       };
     }
-    const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...userApproval ? { userApproval } : {}, ...channel ? { channel } : {} });
+    const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...userApproval ? { userApproval } : {}, ...channel ? { channel } : {}, ...evidenceSource ? { evidenceSource } : {} });
     const path = writeItem(repo, applied.state);
     const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1, current: null, items: [] };
     const entry = summarize(applied.state);
@@ -81363,19 +81589,19 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel) {
     };
   });
 }
-function guarded(repo, fingerprint2, planned, final, workItemId, userApproval, channel) {
+function guarded(repo, fingerprint2, planned, final, workItemId, userApproval, channel, evidenceSource) {
   const command = parseWorkflowCommand(planned);
   const expected = fingerprintFor2(repo, command, workItemId);
   if (fingerprint2 !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
-  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel));
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource));
 }
 function applyResolved(repo, fingerprint2, planned, final, workItemId) {
   return guarded(repo, fingerprint2, planned, final, workItemId);
 }
-function applyWorkflow(repo, raw, fingerprint2, workItemId, userApproval) {
-  return guarded(repo, fingerprint2, raw, raw, workItemId, userApproval);
+function applyWorkflow(repo, raw, fingerprint2, workItemId, userApproval, evidenceSource) {
+  return guarded(repo, fingerprint2, raw, raw, workItemId, userApproval, void 0, evidenceSource);
 }
 function openClassicView(command) {
   const request = reviewApprovalRequest([{ action: "open" }], `Open "${command.title}" in classic mode`);
@@ -81505,7 +81731,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
   const requirements2 = state2.requirements.filter((item) => item.status !== "superseded");
   if (!stories2.length && !requirements2.length)
     throw new Error("STORY_MISSING");
-  const services = state2.services;
+  const services = effectiveServices(state2);
   const profiles = services.map((service) => inspectService(service));
   const adapter = adapterFile(repo);
   let scenarios = [];
@@ -81574,6 +81800,8 @@ async function buildStoryVerification(repo, independentRerun, workItemId) {
     testsGreen: testsAreGreen(services),
     scenarios,
     findings,
+    replaceSource: "executed",
+    baseCoverageRevision: state2.coverageRevision,
     meta: meta5
   };
 }
@@ -83650,13 +83878,15 @@ async function runWorkflowTool(name, args, repo, version4) {
     parseWorkflowCommand(JSON.parse(str2(args.command) ?? ""));
   }
   if (parsed.action === "verify-stories") {
+    const startedAt = (/* @__PURE__ */ new Date()).toISOString();
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
     const { meta: meta5, ...command } = recorded;
+    const source = { kind: "executed", runner: "praxis-runtime:verify-stories", runId: `run-${(0, import_node_crypto17.randomUUID)()}`, startedAt, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), artifacts: [] };
     if (name === "praxis_workflow_preview") {
-      const preview = previewWorkflow(repo, command, workItemId);
+      const preview = previewWorkflow(repo, command, workItemId, source);
       return { ...preview, result: { ...preview.result, ...meta5 } };
     }
-    const applied = applyWorkflow(repo, command, str2(args.previewFingerprint) ?? "", workItemId);
+    const applied = applyWorkflow(repo, command, str2(args.previewFingerprint) ?? "", workItemId, void 0, source);
     return { ...applied, result: { ...applied.result, ...meta5 } };
   }
   if (parsed.action === "prepare-fix") {
