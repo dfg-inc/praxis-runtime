@@ -438,5 +438,22 @@ describe("a Quality patch may touch only the file it was approved for", () => {
     symlinkSync(out, join(dir, "out-link"));
     expect(() => assertDiffTouchesOnly(dir, { path: "out-link/x.txt", diff: "--- a/out-link/x.txt\n+++ b/out-link/x.txt\n@@ -1 +1 @@\n-x\n+y\n" })).toThrow();
     expect(() => assertDiffTouchesOnly(dir, { path: "a.txt", diff: "not a diff at all" })).toThrow(/PROPOSAL_INVALID/);
+    // a service that is a subdirectory of the git repository: git prefixes header-less names, a toplevel-style diff still works
+    const top = mkdtempSync(join(tmpdir(), "praxis-diff-mono-"));
+    execFileSync("git", ["init", "-q"], { cwd: top });
+    mkdirSync(join(top, "svc", "src"), { recursive: true });
+    writeFileSync(join(top, "svc", "src", "target.txt"), "t\n");
+    writeFileSync(join(top, "svc", "secret.txt"), "s\n");
+    const svc = join(top, "svc");
+    const topStyle = "diff --git a/svc/src/target.txt b/svc/src/target.txt\n--- a/svc/src/target.txt\n+++ b/svc/src/target.txt\n@@ -1 +1 @@\n-t\n+u\n";
+    expect(() => assertDiffTouchesOnly(svc, { path: "src/target.txt", diff: topStyle })).not.toThrow();
+    // the proposal names a file that does not exist under the root; the diff's header-less name would be prefixed by git into svc/secret.txt
+    const phantom = "--- a/secret.txt\n+++ b/secret.txt\n@@ -1 +1 @@\n-s\n+PWNED\n";
+    expect(() => assertDiffTouchesOnly(svc, { path: "svc/secret.txt", diff: phantom })).toThrow(/PROPOSAL_INVALID/);
+    expect(() => assertDiffTouchesOnly(svc, { path: "secret.txt", diff: phantom })).not.toThrow(); // the file it really is
+    // a link that points at the approved file is not the approved file
+    symlinkSync(join(svc, "src", "target.txt"), join(svc, "link.txt"));
+    const delLink = "diff --git a/svc/link.txt b/svc/link.txt\ndeleted file mode 120000\n--- a/svc/link.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-src/target.txt\n\\ No newline at end of file\n";
+    expect(() => assertDiffTouchesOnly(svc, { path: "src/target.txt", diff: delLink })).toThrow(/PROPOSAL_INVALID/);
   });
 });

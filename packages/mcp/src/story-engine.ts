@@ -1,7 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { containedPath } from "./path-guard.js";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ApprovalError, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
 import { tmpdir } from "node:os";
@@ -292,20 +292,37 @@ export function diffPaths(diff: string, root: string): string[] {
   return [...paths];
 }
 
-/** A diff may only touch the file it was proposed for (and that file must stay inside the checkout): the approval lists exactly these files. */
+/**
+ * A diff may only touch the file it was proposed for (and that file must stay inside the checkout): the approval lists exactly
+ * that file. `git apply --numstat` prints paths relative to the top of the git repository (the service root can be a
+ * subdirectory of it, and git then prefixes header-less names), so they are resolved from there and compared, lexically, with
+ * the approved file; a touched path that is itself a link, or that reaches the approved file through a link, does not count.
+ */
 export function assertDiffTouchesOnly(root: string, file: { path: string; diff?: string }): void {
   if (!file.diff) return;
-  const allowed = containedPath(root, file.path);
+  const allowedReal = containedPath(root, file.path);
+  const realRoot = realpathSync(resolve(root));
+  const allowedLexical = resolve(realRoot, file.path);
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? realpathSync(top.stdout.trim()) : realRoot;
   const touched = diffPaths(file.diff, root);
   if (touched.length === 0) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} changes nothing`);
   for (const path of touched) {
+    const absolute = resolve(topLevel, path);
+    const relative = relativePath(realRoot, absolute);
+    if (relative === "" || relative.startsWith("..") || isAbsolute(relative)) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}, outside the checkout`);
     let real: string;
     try {
-      real = containedPath(root, path);
+      real = containedPath(root, relative);
     } catch {
       throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}, outside the checkout`);
     }
-    if (real !== allowed) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}`);
+    if (absolute !== allowedLexical || real !== allowedReal) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}`);
+    try {
+      if (lstatSync(absolute).isSymbolicLink()) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} changes ${path}, which is a link`);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("PROPOSAL_INVALID")) throw error;
+    }
   }
 }
 
