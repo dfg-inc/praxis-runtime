@@ -214,7 +214,11 @@ await scenario("B03", "Prototype in Chrome: navigation, states, roles, mock data
   const p = await page(link.secret);
   const rows = () => p.locator("#proto-screen tr").count();
   eq(await rows(), 4, "header + 3 mock rows");
-  check((await p.locator("#proto-screen").innerText()).includes("REQ-ORD-001"), "elements show the requirement and criterion they cover");
+  check(!/REQ-ORD-001/.test(await p.locator("#proto-screen").innerText()), "Preview shows no technical ids next to the elements");
+  await p.locator('#pv-mode [data-mode="inspect"]').click();
+  await p.locator('[data-el="list#tbl"]').click();
+  check((await p.locator("#pv-inspector").innerText()).includes("REQ-ORD-001"), "Inspect shows the requirement an element covers");
+  await p.locator('#pv-mode [data-mode="preview"]').click();
   await p.locator("input[data-search]").pressSequentially("A-");
   eq(await p.locator("input[data-search]").inputValue(), "A-", "the search box keeps what is typed");
   eq(await rows(), 3, "search filters the table");
@@ -233,7 +237,8 @@ await scenario("B03", "Prototype in Chrome: navigation, states, roles, mock data
   eq(stateOf(wi).prototype.mock[0].rows.length, 3, "the canonical mock data did not change");
   await p.locator("#proto-screen button", { hasText: "Open" }).click();
   check((await p.locator("#proto-screen").innerText()).includes("Order"), "navigation to the detail screen");
-  await p.locator('[data-el="detail#status"] button[aria-label="Comment on status"]').click();
+  await p.locator('#pv-mode [data-mode="review"]').click();
+  await p.locator('[data-el="detail#status"]').click();
   await p.locator('[data-fb="detail#status"]').fill("make status a dropdown");
   await p.locator("#accept-proto").check();
   await p.locator("#btn-save").click();
@@ -371,6 +376,130 @@ await scenario("B07", "Two tabs in Chrome: the second Save does not overwrite th
   const fresh = await page((await linkOf("requirements", w)).secret);
   eq(await fresh.locator('[data-ac="REQ-ORD-001-AC-01"] [data-f=ac-comment]').inputValue(), "tab A remark", "the reloaded page shows tab A's remark");
   eq(await fresh.locator('[data-ac="REQ-ORD-001-AC-02"] input[value=rejected]').isChecked(), true, "and tab A's decision");
+});
+
+await scenario("B08", "Orders prototype in Chrome: filter, side card, URL, empty state, Escape, deep links, legacy order, mobile, scenarios, Review comments, no network", async () => {
+  const fixture = JSON.parse(readFileSync(join(root, "tools", "fixtures", "orders-interactive-prototype.command.json"), "utf8"));
+  const w8 = (await must({ action: "open", projectId: "orders", title: "Orders filter", request: "Filter orders by status", mode: "guided" })).data.workItemId;
+  for (const [id, n] of Object.entries({ "REQ-ORD-001": 7, "REQ-ORD-002": 9, "REQ-ORD-003": 2, "REQ-ORD-004": 6, "REQ-ORD-005": 7 }))
+    await must({ action: "add-requirement", id, statement: `Requirement ${id}`, acceptanceCriteria: Array.from({ length: n }, (_, i) => `Criterion ${i + 1} of ${id}`) }, w8);
+  await httpSave("requirements", w8, { requirements: { requirements: [], acceptAll: true } });
+  await must({ action: "advance-phase", to: "requirements_review" }, w8);
+  await must({ action: "advance-phase", to: "prototype" }, w8);
+  await must(fixture, w8);
+  const before = JSON.stringify(stateOf(w8).prototype);
+  const link = await linkOf("prototype", w8);
+  const requests = [];
+  const p = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+  const errors = [];
+  p.on("pageerror", (e) => errors.push(String(e)));
+  p.on("request", (r) => requests.push(r.url()));
+  await p.goto(link.secret);
+  const rows = async () => (await p.locator("#proto-screen tr[data-row]").evaluateAll((n) => n.map((x) => x.getAttribute("data-row"))));
+  const hash = async () => decodeURIComponent(await p.evaluate(() => location.hash));
+  const card = p.locator('[data-overlay="orders#card"]');
+  eq((await rows()).length, 6, "all orders without parameters");
+  // all five statuses
+  const want = { New: 1, "In progress": 1, Shipped: 2, Delivered: 2, Cancelled: 0 };
+  for (const [st, n] of Object.entries(want)) {
+    await p.selectOption("select[data-filter]", st);
+    eq((await rows()).length, n, `rows for ${st}`);
+    eq(await hash(), `#/orders?status=${st}`, `address for ${st}`);
+  }
+  check((await p.locator("#proto-screen").innerText()).includes("Нет заказов со статусом Cancelled"), "empty state names the status");
+  await p.locator("#proto-screen button", { hasText: "Сбросить фильтр" }).click();
+  eq((await rows()).length, 6, "reset returns to All");
+  eq(await p.locator("select[data-filter]").inputValue(), "", "the filter shows All");
+  // open by clicking a row, close by X and Escape
+  await p.locator('tr[data-row="A-1003"]').click();
+  await card.waitFor();
+  check((await card.innerText()).includes("Анна Смирнова") && (await card.innerText()).includes("Чайник"), "the card shows the order and its lines");
+  eq(await p.locator('tr[data-row="A-1003"]').getAttribute("aria-selected"), "true", "row is selected");
+  check(await p.locator("#proto-screen tr[data-row]").first().isVisible(), "the list stays visible beside the card");
+  const rowBox = await p.locator('tr[data-row="A-1004"]').boundingBox(), cardBox = await card.boundingBox();
+  check(rowBox.x + rowBox.width <= cardBox.x + 1, "the card does not cover the list");
+  eq(await hash(), "#/orders?order=A-1003", "order is in the address");
+  await p.locator('[data-overlay="orders#card"] button[aria-label="Close"]').click();
+  eq(await card.count(), 0, "X closes the card");
+  eq(await hash(), "#/orders", "order is gone from the address");
+  await p.locator('tr[data-row="A-1004"]').click();
+  await card.waitFor();
+  await p.keyboard.press("Escape");
+  eq(await card.count(), 0, "Escape closes the card");
+  eq(await p.evaluate(() => document.activeElement.getAttribute("data-row")), "A-1004", "focus returns to the row");
+  // keyboard open
+  await p.locator('tr[data-row="A-1005"]').focus();
+  await p.keyboard.press("Enter");
+  await card.waitFor();
+  eq(await p.evaluate(() => document.activeElement.getAttribute("data-overlay")), "orders#card", "focus moves into the card");
+  await p.keyboard.press("Escape");
+  // filter change with an order open
+  await p.selectOption("select[data-filter]", "Shipped");
+  await p.locator('tr[data-row="A-1003"]').click();
+  await p.selectOption("select[data-filter]", "");
+  eq(await card.count(), 1, "the card stays while the order is still listed");
+  await p.selectOption("select[data-filter]", "New");
+  eq(await card.count(), 0, "the card closes when the order leaves the list");
+  eq(await hash(), "#/orders?status=New", "status is kept, order is gone");
+  // deep links, reload, wrong order, unknown status, legacy order
+  await p.goto(link.secret + "#/orders?status=Shipped&order=A-1004");
+  await card.waitFor();
+  eq(await rows(), ["A-1003", "A-1004"], "deep link restores the filter");
+  check((await card.innerText()).includes("Павел Орлов"), "deep link restores the card");
+  await p.reload();
+  await card.waitFor();
+  eq(await hash(), "#/orders?status=Shipped&order=A-1004", "reload keeps the address");
+  await p.goto(link.secret + "#/orders?status=Shipped&order=NOPE-1");
+  await p.locator("#proto-screen tr[data-row]").first().waitFor();
+  eq([await card.count(), await hash(), (await rows()).length], [0, "#/orders?status=Shipped", 2], "a wrong order opens nothing and keeps status");
+  await p.goto(link.secret + "#/orders?status=Bogus");
+  await p.locator("#proto-screen tr[data-row]").first().waitFor();
+  eq((await rows()).length, 6, "unknown status shows All");
+  await p.goto(link.secret + "#/orders?order=A-1000");
+  await card.waitFor();
+  check((await card.locator("dd .miss").count()) >= 5 && (await card.locator("dd .miss").first().innerText()) === "—", "a legacy order shows dashes");
+  // mobile
+  await p.setViewportSize({ width: 390, height: 800 });
+  await p.goto(link.secret + "#/orders?status=Shipped&order=A-1003");
+  await card.waitFor();
+  const mc = await card.boundingBox(), dev = await p.locator("#proto-frame").boundingBox();
+  check(Math.abs(mc.width - dev.width) < 4 && dev.width <= 390, "on a phone width the card takes the whole screen");
+  check((await p.evaluate(() => document.documentElement.scrollWidth)) <= 392, "no horizontal page scroll on a phone");
+  await p.setViewportSize({ width: 1360, height: 900 });
+  await p.goto(link.secret);
+  await p.locator('#pv-vp [data-vp="mobile"]').click();
+  check((await p.locator("#proto-frame").boundingBox()).width <= 392, "the Mobile switch narrows the prototype");
+  await p.locator('#pv-vp [data-vp="desktop"]').click();
+  // scenarios
+  await p.locator('[data-side="scenarios"]').click();
+  await p.locator("#sc-run-all").click();
+  eq(await p.locator("#sc-summary").innerText(), "13 of 13 checked scenarios passed", "every scenario check passes");
+  // Inspect and Review
+  await p.locator('#pv-mode [data-mode="inspect"]').click();
+  await p.locator('[data-el="orders#status"]').click();
+  check((await p.locator("#pv-inspector").innerText()).includes("REQ-ORD-001-AC-01"), "Inspect links the filter to its criteria");
+  await p.locator('tr[data-row]').first().click({ force: true });
+  eq(await card.count(), 0, "Inspect does not operate the prototype");
+  await p.locator('#pv-mode [data-mode="review"]').click();
+  await p.locator('[data-el="orders#tbl"]').click();
+  await p.locator('[data-fb="orders#tbl"]').fill("Add a created date column");
+  check(stateOf(w8).prototype.feedback.length === 0, "nothing is written before Save");
+  eq(JSON.stringify(stateOf(w8).prototype), before, "using the prototype did not change it");
+  await p.locator("#accept-proto").check();
+  await p.locator("#btn-save").click();
+  await p.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  const s8 = stateOf(w8);
+  eq(s8.prototype.feedback[0].target, "orders#tbl", "the comment is saved against the element");
+  check(s8.phaseAcceptance.prototype?.via === "html-review", "accepted by the user's save");
+  check(s8.history.some((h) => /prototype/i.test(h.note) && /accept/i.test(h.note)) || s8.history.some((h) => /prototype/i.test(h.note)), "the history records the prototype and the decision");
+  check(s8.history.length > 0 && s8.prototype.revision === 1, "history kept, prototype revision unchanged by reviewing");
+  // coverage is collapsed and grouped
+  check(!(await p.locator("details.pv-cov").evaluate((d) => d.open)), "coverage is collapsed");
+  eq(await p.locator("details.pv-cov .cov-req").count(), 5, "coverage is grouped by requirement");
+  eq(errors, [], "no page errors");
+  const external = requests.filter((u) => !u.startsWith(new URL(link.secret).origin) && !u.startsWith("data:") && !u.startsWith("about:"));
+  eq(external, [], "the prototype made no requests outside the review page");
+  await p.close();
 });
 
 await browser.close();

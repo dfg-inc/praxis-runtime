@@ -4484,7 +4484,7 @@ var init_story = __esm({
 });
 
 // node_modules/@praxis/contracts/dist/planning-schemas.js
-var PHASES, PhaseSchema, ACCEPTABLE_PHASES, AcceptablePhaseSchema, PhaseAcceptanceSchema, PhaseHistoryEntrySchema, ScopeSchema, WorkItemKindSchema, WorkflowModeSchema, RepositoryInspectionSchema, RepositorySchema, ServiceContractSchema, EvidenceRefSchema, ImpactSchema, PrototypeStateSchema, ELEMENT_KINDS, ElementKindSchema, PrototypeElementSchema, PrototypeScreenSchema, MockFieldSchema, MockCollectionSchema, ApiEndpointSchema, PrototypeTokensSchema, PrototypeFeedbackSchema, PrototypeSchema, StoryPlanEntrySchema, StoryPlanSchema, StoryHistoryEntrySchema, SessionNoteSchema, CoverageWaiverSchema, PlanningStateFields;
+var PHASES, PhaseSchema, ACCEPTABLE_PHASES, AcceptablePhaseSchema, PhaseAcceptanceSchema, PhaseHistoryEntrySchema, ScopeSchema, WorkItemKindSchema, WorkflowModeSchema, RepositoryInspectionSchema, RepositorySchema, ServiceContractSchema, EvidenceRefSchema, ImpactSchema, PrototypeStateSchema, ELEMENT_KINDS, ElementKindSchema, ShowWhenSchema, ParamNameSchema, PrototypeElementSchema, PrototypeScenarioSchema, PrototypeDatasetSchema, PrototypeScreenSchema, MockFieldSchema, MockCollectionSchema, ApiEndpointSchema, PrototypeTokensSchema, PrototypeFeedbackSchema, PrototypeSchema, StoryPlanEntrySchema, StoryPlanSchema, StoryHistoryEntrySchema, SessionNoteSchema, CoverageWaiverSchema, PlanningStateFields;
 var init_planning_schemas = __esm({
   "node_modules/@praxis/contracts/dist/planning-schemas.js"() {
     init_zod();
@@ -4614,9 +4614,18 @@ var init_planning_schemas = __esm({
       "tabs",
       "badge",
       "modal",
+      "drawer",
       "message"
     ];
     ElementKindSchema = external_exports.enum(ELEMENT_KINDS);
+    ShowWhenSchema = external_exports.object({
+      param: external_exports.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/).refine((n) => !(n in Object.prototype), "a parameter name must not be an Object property name"),
+      equals: external_exports.string().optional(),
+      notEquals: external_exports.string().optional(),
+      /** true: the parameter is set; false: it is not set. */
+      present: external_exports.boolean().optional()
+    });
+    ParamNameSchema = external_exports.string().regex(/^[A-Za-z][A-Za-z0-9_-]*$/).refine((n) => !(n in Object.prototype), "a parameter name must not be an Object property name such as toString or constructor");
     PrototypeElementSchema = external_exports.object({
       id: external_exports.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
       kind: ElementKindSchema,
@@ -4636,7 +4645,77 @@ var init_planning_schemas = __esm({
       allowedRoles: external_exports.array(external_exports.string()).default([]),
       text: external_exports.string().optional(),
       requirementIds: external_exports.array(RequirementIdSchema).default([]),
+      acIds: external_exports.array(external_exports.string()).default([]),
+      /**
+       * Behaviour, all optional: an older prototype without any of it renders as before. Everything runs on mock data and the
+       * prototype's own virtual address (query string), never on a real system.
+       */
+      /** filter/tabs/drawer/modal/table: the URL query parameter the element reads and writes. */
+      param: ParamNameSchema.optional(),
+      /** filter/tabs: the choices. A filter on an enum field takes the field's options when this is empty. */
+      options: external_exports.array(external_exports.object({ value: external_exports.string(), label: external_exports.string().optional() })).default([]),
+      /** filter: label of the "no filter" choice. */
+      allLabel: external_exports.string().optional(),
+      /** table/list: rows are narrowed by these query parameters (field equals the parameter value; an unknown value shows no rows). */
+      filters: external_exports.array(external_exports.object({
+        param: ParamNameSchema,
+        field: external_exports.string(),
+        /** "all": a value that is not one of the field's options is ignored (shows everything). Default: it matches nothing. */
+        unknown: external_exports.enum(["all", "empty"]).optional()
+      })).default([]),
+      /** table/list: field that identifies a row (default "id", then the first column). drawer/modal: field matched against the parameter. */
+      idField: external_exports.string().optional(),
+      /** table/list: id of the drawer or modal (same screen) a click on a row opens. */
+      rowOpens: external_exports.string().optional(),
+      /** drawer/modal: what is shown for the opened record. */
+      detailFields: external_exports.array(external_exports.object({ field: external_exports.string(), label: external_exports.string().optional() })).default([]),
+      /** table/list: shown in the empty state as a button that clears the listed query parameters. {param} in emptyText is replaced by that parameter's value. */
+      emptyAction: external_exports.object({ label: external_exports.string().min(1), clear: external_exports.array(ParamNameSchema).default([]) }).optional(),
+      /** drawer/modal: the opened record must be one of this table's rows (after its filters). */
+      withinTable: external_exports.string().optional(),
+      /** drawer/modal: when the record is missing (or outside withinTable): "close" removes the parameter and shows nothing; "message" (default) shows notFoundText. */
+      onMissing: external_exports.enum(["close", "message"]).optional(),
+      /** drawer/modal: rows of another collection that belong to the opened record (for example the lines of an order). */
+      related: external_exports.array(external_exports.object({ collection: external_exports.string(), matchField: external_exports.string(), columns: external_exports.array(external_exports.string()).default([]), label: external_exports.string().optional() })).default([]),
+      /** Texts for the situations a reviewer must see: nothing matches / the record is missing / a value is missing. */
+      emptyText: external_exports.string().optional(),
+      notFoundText: external_exports.string().optional(),
+      missingText: external_exports.string().optional(),
+      /** tabs: the tabs. The first is the default. */
+      tabs: external_exports.array(external_exports.object({ id: external_exports.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/), label: external_exports.string().min(1) })).default([]),
+      showWhen: ShowWhenSchema.optional(),
+      /** field: the value must be filled before a submit works. */
+      required: external_exports.boolean().default(false)
+    });
+    PrototypeScenarioSchema = external_exports.object({
+      id: external_exports.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
+      title: external_exports.string().min(1),
+      description: external_exports.string().default(""),
+      screen: external_exports.string().optional(),
+      dataset: external_exports.string().optional(),
+      role: external_exports.string().optional(),
+      /** Query string the scenario starts from. */
+      query: external_exports.record(external_exports.string(), external_exports.string()).default({}),
+      expect: external_exports.object({
+        /** Rows shown by a table/list element. */
+        rows: external_exports.array(external_exports.object({ element: external_exports.string(), count: external_exports.number().int().nonnegative() })).default([]),
+        /** State of a drawer/modal: open with a record, closed, or open on a missing record. */
+        overlay: external_exports.array(external_exports.object({ element: external_exports.string(), state: external_exports.enum(["open", "closed", "not-found"]) })).default([]),
+        /** Texts that must / must not appear in the screen. */
+        contains: external_exports.array(external_exports.string()).default([]),
+        absent: external_exports.array(external_exports.string()).default([]),
+        /** Query parameters that must have these values afterwards, and ones that must be gone. */
+        query: external_exports.record(external_exports.string(), external_exports.string()).default({}),
+        noQuery: external_exports.array(external_exports.string()).default([])
+      }).optional(),
+      requirementIds: external_exports.array(RequirementIdSchema).default([]),
       acIds: external_exports.array(external_exports.string()).default([])
+    });
+    PrototypeDatasetSchema = external_exports.object({
+      id: external_exports.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
+      label: external_exports.string().min(1),
+      description: external_exports.string().default(""),
+      rows: external_exports.record(external_exports.string(), external_exports.array(external_exports.record(external_exports.string(), external_exports.union([external_exports.string(), external_exports.number(), external_exports.boolean(), external_exports.null()]))).max(200)).default({})
     });
     PrototypeScreenSchema = external_exports.object({
       id: external_exports.string().regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
@@ -4698,6 +4777,10 @@ var init_planning_schemas = __esm({
       screens: external_exports.array(PrototypeScreenSchema).default([]),
       startScreen: external_exports.string().optional(),
       mock: external_exports.array(MockCollectionSchema).default([]),
+      datasets: external_exports.array(PrototypeDatasetSchema).default([]),
+      scenarios: external_exports.array(PrototypeScenarioSchema).default([]),
+      /** What this prototype does not reproduce (components, behaviour, data). Shown to the reviewer instead of implying a full replica. */
+      limitations: external_exports.array(external_exports.string()).default([]),
       endpoints: external_exports.array(ApiEndpointSchema).default([]),
       roles: external_exports.array(external_exports.string()).default([]),
       feedback: external_exports.array(PrototypeFeedbackSchema).default([]),
@@ -5005,11 +5088,37 @@ function requirementsFingerprint(state2) {
 function contractsFingerprint(state2) {
   return hash(state2.contracts.map(({ status: _s, agreement: _a7, everAgreed: _e, ...content }) => content));
 }
+function withoutEmptyDefaults(prototype) {
+  const { datasets, scenarios, limitations, screens, ...rest } = prototype;
+  const out = { ...rest };
+  if (datasets?.length)
+    out.datasets = datasets;
+  if (scenarios?.length)
+    out.scenarios = scenarios;
+  if (limitations?.length)
+    out.limitations = limitations;
+  out.screens = screens.map((screen) => ({
+    ...screen,
+    elements: screen.elements.map((element) => {
+      const kept = {};
+      for (const [key, value] of Object.entries(element)) {
+        if (value === void 0)
+          continue;
+        const dflt = EMPTY_ELEMENT_DEFAULTS[key];
+        if (key in EMPTY_ELEMENT_DEFAULTS && JSON.stringify(dflt) === JSON.stringify(value))
+          continue;
+        kept[key] = value;
+      }
+      return kept;
+    })
+  }));
+  return out;
+}
 function prototypeFingerprint(prototype) {
   if (!prototype)
     return "none";
   const { feedback: _f, history: _h, status: _s, revision: _r, ...content } = prototype;
-  return hash(content);
+  return hash(withoutEmptyDefaults(content));
 }
 function storyPlanFingerprint(plan) {
   if (!plan)
@@ -5480,6 +5589,143 @@ function validatePrototype(state2, prototype) {
         if (!keys.has(key))
           throw missing("PROTOTYPE_INVALID", `mock collection ${collection.id} has a row with unknown field ${key}`);
   }
+  validatePrototypeBehaviour(prototype, reqIds, acIds);
+}
+function validatePrototypeBehaviour(prototype, reqIds, acIds) {
+  const fieldsOf = new Map(prototype.mock.map((c) => [c.id, new Set(c.fields.map((f) => f.key))]));
+  const screenElements = new Map(prototype.screens.map((s) => [s.id, new Map(s.elements.map((e) => [e.id, e]))]));
+  for (const screen of prototype.screens) {
+    for (const element of screen.elements) {
+      const where = `${screen.id}#${element.id}`;
+      const keys = element.collection ? fieldsOf.get(element.collection) : void 0;
+      const needField = (field, what) => {
+        if (!element.collection)
+          throw missing("PROTOTYPE_INVALID", `${where} uses ${what} "${field}" but has no mock collection`);
+        if (keys && !keys.has(field))
+          throw missing("PROTOTYPE_INVALID", `${where} ${what} "${field}" is not a field of mock collection ${element.collection}`);
+      };
+      if (element.kind === "filter" && !element.param)
+        throw missing("PROTOTYPE_INVALID", `${where} is a filter and needs a param (the URL query parameter it sets)`);
+      if (element.kind === "tabs" && element.tabs.length === 0)
+        throw missing("PROTOTYPE_INVALID", `${where} is tabs and needs tabs`);
+      if ((element.kind === "drawer" || element.kind === "modal") && element.param) {
+        if (element.detailFields.length && !element.collection)
+          throw missing("PROTOTYPE_INVALID", `${where} shows record fields but has no mock collection to look the record up in`);
+        for (const d of element.detailFields)
+          needField(d.field, "detail field");
+      }
+      for (const f of element.filters)
+        needField(f.field, "filter field");
+      for (const c of element.columns)
+        if (keys && !keys.has(c))
+          throw missing("PROTOTYPE_INVALID", `${where} column "${c}" is not a field of mock collection ${element.collection}`);
+      if (element.idField && element.collection)
+        needField(element.idField, "id field");
+      if (element.withinTable) {
+        const t = screenElements.get(screen.id)?.get(element.withinTable);
+        if (!t || !(t.kind === "table" || t.kind === "list") || t.collection !== element.collection)
+          throw missing("PROTOTYPE_INVALID", `${where} withinTable ${element.withinTable} must be a table on the same screen over the same collection`);
+      }
+      for (const rel2 of element.related) {
+        const rk = fieldsOf.get(rel2.collection);
+        if (!rk)
+          throw missing("PROTOTYPE_INVALID", `${where} related collection ${rel2.collection} does not exist`);
+        for (const f of [rel2.matchField, ...rel2.columns])
+          if (!rk.has(f))
+            throw missing("PROTOTYPE_INVALID", `${where} related field "${f}" is not a field of ${rel2.collection}`);
+      }
+      if (element.rowOpens) {
+        const target = screenElements.get(screen.id)?.get(element.rowOpens);
+        if (!target || !(target.kind === "drawer" || target.kind === "modal"))
+          throw missing("PROTOTYPE_INVALID", `${where} rowOpens ${element.rowOpens}, which is not a drawer or modal on the same screen`);
+        if (!target.param)
+          throw missing("PROTOTYPE_INVALID", `${where} opens ${element.rowOpens}, which needs a param to know which record to show`);
+      }
+      if (element.showWhen && element.showWhen.equals === void 0 && element.showWhen.notEquals === void 0 && element.showWhen.present === void 0)
+        throw missing("PROTOTYPE_INVALID", `${where} showWhen needs equals, notEquals or present`);
+    }
+  }
+  const settable = new Map(prototype.screens.map((sc) => [sc.id, new Set(sc.elements.filter((e) => e.param && ["filter", "tabs", "drawer", "modal", "search"].includes(e.kind)).map((e) => e.param))]));
+  for (const screen of prototype.screens) {
+    const known = settable.get(screen.id);
+    for (const element of screen.elements) {
+      const where = `${screen.id}#${element.id}`;
+      if ((element.kind === "drawer" || element.kind === "modal") && !element.param)
+        throw missing("PROTOTYPE_INVALID", `${where} is a ${element.kind} and needs a param, otherwise nothing can open it`);
+      if (element.onMissing === "close" && !element.collection)
+        throw missing("PROTOTYPE_INVALID", `${where} onMissing "close" needs a collection to look the record up in`);
+      if (element.kind === "tabs" && new Set(element.tabs.map((t) => t.id)).size !== element.tabs.length)
+        throw missing("PROTOTYPE_INVALID", `${where} has duplicate tab ids`);
+      if (element.showWhen && !known.has(element.showWhen.param))
+        throw missing("PROTOTYPE_INVALID", `${where} showWhen uses "${element.showWhen.param}", which no filter, tabs, drawer or search on ${screen.id} sets`);
+      for (const f of element.filters)
+        if (!known.has(f.param))
+          throw missing("PROTOTYPE_INVALID", `${where} filters by "${f.param}", which no filter or tabs on ${screen.id} sets`);
+      for (const k of element.emptyAction?.clear ?? [])
+        if (!known.has(k))
+          throw missing("PROTOTYPE_INVALID", `${where} emptyAction clears "${k}", which nothing on ${screen.id} sets`);
+      if (element.kind === "field" && element.collection && element.field && !fieldsOf.get(element.collection)?.has(element.field))
+        throw missing("PROTOTYPE_INVALID", `${where} field "${element.field}" is not a field of ${element.collection}`);
+      if (prototype.roles.length) {
+        for (const r of element.allowedRoles)
+          if (!prototype.roles.includes(r))
+            throw missing("PROTOTYPE_INVALID", `${where} allows role "${r}", which the prototype does not define`);
+      }
+    }
+  }
+  const datasetIds = /* @__PURE__ */ new Set();
+  for (const dataset of prototype.datasets) {
+    if (datasetIds.has(dataset.id))
+      throw missing("PROTOTYPE_INVALID", `duplicate dataset id ${dataset.id}`);
+    datasetIds.add(dataset.id);
+    for (const [collectionId, rows] of Object.entries(dataset.rows)) {
+      const keys = fieldsOf.get(collectionId);
+      if (!keys)
+        throw missing("PROTOTYPE_INVALID", `dataset ${dataset.id} has rows for unknown mock collection ${collectionId}`);
+      for (const row of rows)
+        for (const key of Object.keys(row))
+          if (!keys.has(key))
+            throw missing("PROTOTYPE_INVALID", `dataset ${dataset.id}: a ${collectionId} row has unknown field ${key}`);
+    }
+  }
+  const scenarioIds = /* @__PURE__ */ new Set();
+  for (const scenario of prototype.scenarios) {
+    if (scenarioIds.has(scenario.id))
+      throw missing("PROTOTYPE_INVALID", `duplicate scenario id ${scenario.id}`);
+    scenarioIds.add(scenario.id);
+    const screen = scenario.screen ?? prototype.startScreen ?? prototype.screens[0]?.id;
+    if (scenario.screen && !screenElements.has(scenario.screen))
+      throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses unknown screen ${scenario.screen}`);
+    if (scenario.dataset && !datasetIds.has(scenario.dataset))
+      throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses unknown dataset ${scenario.dataset}`);
+    if (scenario.role && !prototype.roles.includes(scenario.role))
+      throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses unknown role ${scenario.role}`);
+    const elements = screen ? screenElements.get(screen) : void 0;
+    const known = screen && settable.get(screen) || /* @__PURE__ */ new Set();
+    for (const r of scenario.expect?.rows ?? []) {
+      const e = elements?.get(r.element);
+      if (!e)
+        throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of unknown element ${r.element} on ${screen}`);
+      if (e.kind !== "table" && e.kind !== "list")
+        throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects rows of ${r.element}, which is not a table or list`);
+    }
+    for (const o of scenario.expect?.overlay ?? []) {
+      const e = elements?.get(o.element);
+      if (!e)
+        throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects overlay of unknown element ${o.element} on ${screen}`);
+      if (e.kind !== "drawer" && e.kind !== "modal")
+        throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} expects an overlay state of ${o.element}, which is not a drawer or modal`);
+    }
+    for (const k of [...Object.keys(scenario.query), ...Object.keys(scenario.expect?.query ?? {}), ...scenario.expect?.noQuery ?? []])
+      if (!known.has(k))
+        throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} uses query parameter "${k}", which nothing on ${screen} reads or sets`);
+    for (const id of scenario.requirementIds)
+      if (!reqIds.has(id))
+        throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} links unknown requirement ${id}`);
+    for (const id of scenario.acIds)
+      if (!acIds.has(id))
+        throw missing("PROTOTYPE_INVALID", `scenario ${scenario.id} links unknown acceptance criterion ${id}`);
+  }
 }
 function withPrototype(state2, prototype, summary, now) {
   validatePrototype(state2, prototype);
@@ -5507,7 +5753,19 @@ function applyPrototypeOps(state2, operations) {
   for (const op of operations) {
     switch (op.op) {
       case "set-meta":
-        p = { ...p, ...op.title !== void 0 ? { title: op.title } : {}, ...op.notes !== void 0 ? { notes: op.notes } : {}, ...op.startScreen !== void 0 ? { startScreen: op.startScreen } : {}, ...op.roles !== void 0 ? { roles: op.roles } : {} };
+        p = { ...p, ...op.title !== void 0 ? { title: op.title } : {}, ...op.notes !== void 0 ? { notes: op.notes } : {}, ...op.startScreen !== void 0 ? { startScreen: op.startScreen } : {}, ...op.roles !== void 0 ? { roles: op.roles } : {}, ...op.limitations !== void 0 ? { limitations: op.limitations } : {} };
+        break;
+      case "set-dataset":
+        p = { ...p, datasets: [...p.datasets.filter((d) => d.id !== op.dataset.id), op.dataset] };
+        break;
+      case "remove-dataset":
+        p = { ...p, datasets: p.datasets.filter((d) => d.id !== op.id) };
+        break;
+      case "set-scenario":
+        p = { ...p, scenarios: [...p.scenarios.filter((d) => d.id !== op.scenario.id), op.scenario] };
+        break;
+      case "remove-scenario":
+        p = { ...p, scenarios: p.scenarios.filter((d) => d.id !== op.id) };
         break;
       case "add-screen":
         if (p.screens.some((s) => s.id === op.screen.id))
@@ -5800,8 +6058,8 @@ function phaseGates(state2, to) {
     }
     case "architecture": {
       need(acceptanceStatus(state2, "stories_review") === "accepted", "stories reviewed and accepted, unchanged since");
-      const coverage = analyzeStoryCoverage(state2);
-      need(coverage.ok, `coverage gaps: ${coverage.gaps.map((g) => g.reason).concat(coverage.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
+      const coverage2 = analyzeStoryCoverage(state2);
+      need(coverage2.ok, `coverage gaps: ${coverage2.gaps.map((g) => g.reason).concat(coverage2.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
       break;
     }
     case "development":
@@ -5929,16 +6187,16 @@ function nextStep(state2) {
         userDecision: Boolean(state2.storyPlan) && acceptanceStatus(state2, "story_plan") !== "accepted"
       };
     case "stories_review": {
-      const coverage = analyzeStoryCoverage(state2);
+      const coverage2 = analyzeStoryCoverage(state2);
       return {
         ...base,
         role: "ba",
-        action: coverage.ok ? acceptanceStatus(state2, "stories_review") === "accepted" ? "advance-to-architecture" : "review-stories" : "fix-coverage",
-        summary: coverage.ok ? "Review the stories in HTML, item by item." : `Coverage gaps: ${[...coverage.gaps.map((g) => g.reason), ...coverage.requirementsWithoutStories.map((id) => `${id} has no story`)].join("; ")}`,
+        action: coverage2.ok ? acceptanceStatus(state2, "stories_review") === "accepted" ? "advance-to-architecture" : "review-stories" : "fix-coverage",
+        summary: coverage2.ok ? "Review the stories in HTML, item by item." : `Coverage gaps: ${[...coverage2.gaps.map((g) => g.reason), ...coverage2.requirementsWithoutStories.map((id) => `${id} has no story`)].join("; ")}`,
         tools: ["praxis_review_render", "praxis_workflow_inspect"],
         skills: ["praxis-ba:stories-review"],
-        userDecision: coverage.ok,
-        blockers: [...state2.blockers, ...coverage.ok ? [] : ["coverage gaps"]]
+        userDecision: coverage2.ok,
+        blockers: [...state2.blockers, ...coverage2.ok ? [] : ["coverage gaps"]]
       };
     }
     case "architecture": {
@@ -6189,16 +6447,16 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       const live = state2.storyPlan.entries.filter((e) => e.status !== "excluded");
       if (live.length === 0)
         throw missing("PLAN_EMPTY", "the story plan has no stories");
-      const coverage = analyzeStoryCoverage(state2);
-      if (state2.mode === "guided" && !coverage.ok) {
-        throw missing("PLAN_COVERAGE_GAPS", `the plan does not cover what the requirements imply: ${[...coverage.gaps.map((g) => g.reason), ...coverage.requirementsWithoutStories.map((id) => `${id} has no story`)].join("; ")}. Add stories or waive a gap with a reason.`, { coverage });
+      const coverage2 = analyzeStoryCoverage(state2);
+      if (state2.mode === "guided" && !coverage2.ok) {
+        throw missing("PLAN_COVERAGE_GAPS", `the plan does not cover what the requirements imply: ${[...coverage2.gaps.map((g) => g.reason), ...coverage2.requirementsWithoutStories.map((id) => `${id} has no story`)].join("; ")}. Add stories or waive a gap with a reason.`, { coverage: coverage2 });
       }
       const rejected = live.filter((e) => e.review.status === "rejected").map((e) => e.id);
       if (rejected.length > 0)
         throw missing("PLAN_HAS_REJECTED", `plan entries rejected by the reviewer: ${rejected.join(", ")}`);
       let next = { ...state2, storyPlan: { ...state2.storyPlan, status: "agreed" } };
       next = recordAcceptance(next, "story_plan", command.via, now);
-      return { state: touch(next, now, `story plan r${state2.storyPlan.revision} agreed`), duplicate: false, result: { agreed: true, revision: state2.storyPlan.revision, coverage } };
+      return { state: touch(next, now, `story plan r${state2.storyPlan.revision} agreed`), duplicate: false, result: { agreed: true, revision: state2.storyPlan.revision, coverage: coverage2 } };
     }
     case "update-story":
       return editStory(state2, command, now);
@@ -6392,11 +6650,11 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       const progress = storyReviewProgress(state2);
       if (!progress.complete)
         throw missing("STORIES_NOT_REVIEWED", `stories are not fully reviewed: ${progress.accepted}/${progress.items} items accepted, ${progress.rejected} rejected, ${progress.pending} pending`, { progress });
-      const coverage = analyzeStoryCoverage(state2);
-      if (state2.mode === "guided" && !coverage.ok)
-        throw missing("STORIES_COVERAGE_GAPS", `coverage gaps remain: ${[...coverage.gaps.map((g) => g.reason), ...coverage.requirementsWithoutStories.map((id) => `${id} has no story`), ...coverage.storiesOutOfScope.map((id) => `${id} is out of scope`)].join("; ")}`, { coverage });
+      const coverage2 = analyzeStoryCoverage(state2);
+      if (state2.mode === "guided" && !coverage2.ok)
+        throw missing("STORIES_COVERAGE_GAPS", `coverage gaps remain: ${[...coverage2.gaps.map((g) => g.reason), ...coverage2.requirementsWithoutStories.map((id) => `${id} has no story`), ...coverage2.storiesOutOfScope.map((id) => `${id} is out of scope`)].join("; ")}`, { coverage: coverage2 });
       const next = recordAcceptance(state2, "stories_review", command.via, now);
-      return { state: touch(next, now, "stories accepted by the reviewer"), duplicate: false, result: { accepted: true, progress, coverage } };
+      return { state: touch(next, now, "stories accepted by the reviewer"), duplicate: false, result: { accepted: true, progress, coverage: coverage2 } };
     }
     case "register-repository":
       return registerRepository(state2, command, now);
@@ -6535,7 +6793,7 @@ function migrateWorkflowState(state2) {
   const migrated = { ...state2, version: "1.1.0", requirements: requirements2 };
   return { ...migrated, phase: inferPhase(migrated) };
 }
-var import_node_crypto2, iso, hash, activeRequirements, inScope, activeStories, KEYWORDS, storyText, Via, ReviewStatus, AcDecision, RequirementDecision, PrototypeInput, PrototypeOperation, PlanOperation, StoryPatch, CriterionOp, NewStoryFromOriginal, PlanningCommandSchemas, PLANNING_ACTIONS, missing, requirementOf, REAL_SECRET, PATCH_ITEM_KEYS, REVIEW_DECISION_ACTION;
+var import_node_crypto2, iso, hash, activeRequirements, inScope, activeStories, EMPTY_ELEMENT_DEFAULTS, KEYWORDS, storyText, Via, ReviewStatus, AcDecision, RequirementDecision, PrototypeInput, PrototypeOperation, PlanOperation, StoryPatch, CriterionOp, NewStoryFromOriginal, PlanningCommandSchemas, PLANNING_ACTIONS, missing, requirementOf, REAL_SECRET, PATCH_ITEM_KEYS, REVIEW_DECISION_ACTION;
 var init_planning = __esm({
   "node_modules/@praxis/contracts/dist/planning.js"() {
     import_node_crypto2 = require("node:crypto");
@@ -6551,6 +6809,7 @@ var init_planning = __esm({
     activeRequirements = (state2) => state2.requirements.filter((r) => r.status !== "superseded");
     inScope = (state2) => activeRequirements(state2).filter((r) => r.scope === "in");
     activeStories = (state2) => state2.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded");
+    EMPTY_ELEMENT_DEFAULTS = { options: [], filters: [], detailFields: [], tabs: [], related: [], required: false };
     KEYWORDS = [
       ["view", /\b(view|display|show|see|list|browse|read|open|detail|preview|report)\w*/i],
       ["search", /\b(search|find|lookup|look up|query)\w*/i],
@@ -6584,7 +6843,11 @@ var init_planning = __esm({
     });
     PrototypeInput = PrototypeSchema.omit({ revision: true, status: true, history: true, feedback: true }).partial({ id: true, styles: true });
     PrototypeOperation = external_exports.discriminatedUnion("op", [
-      external_exports.object({ op: external_exports.literal("set-meta"), title: external_exports.string().min(1).optional(), notes: external_exports.string().optional(), startScreen: external_exports.string().optional(), roles: external_exports.array(external_exports.string()).optional() }),
+      external_exports.object({ op: external_exports.literal("set-meta"), title: external_exports.string().min(1).optional(), notes: external_exports.string().optional(), startScreen: external_exports.string().optional(), roles: external_exports.array(external_exports.string()).optional(), limitations: external_exports.array(external_exports.string()).optional() }),
+      external_exports.object({ op: external_exports.literal("set-dataset"), dataset: PrototypeDatasetSchema }),
+      external_exports.object({ op: external_exports.literal("remove-dataset"), id: external_exports.string() }),
+      external_exports.object({ op: external_exports.literal("set-scenario"), scenario: PrototypeScenarioSchema }),
+      external_exports.object({ op: external_exports.literal("remove-scenario"), id: external_exports.string() }),
       external_exports.object({ op: external_exports.literal("add-screen"), screen: PrototypeScreenSchema }),
       external_exports.object({ op: external_exports.literal("update-screen"), id: external_exports.string(), patch: PrototypeScreenSchema.omit({ id: true, elements: true }).partial() }),
       external_exports.object({ op: external_exports.literal("remove-screen"), id: external_exports.string() }),
@@ -9133,14 +9396,486 @@ var init_review_submission = __esm({
   }
 });
 
-// node_modules/@praxis/contracts/dist/review-html.js
+// node_modules/@praxis/contracts/dist/review-util.js
 function esc3(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 function jsonForScript(value) {
   return JSON.stringify(value).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
 }
-function shell(state2, view, title, body2, data, options2, barExtra) {
+function pill(text, kind = "") {
+  return `<span class="pill ${kind}">${esc3(text)}</span>`;
+}
+var init_review_util = __esm({
+  "node_modules/@praxis/contracts/dist/review-util.js"() {
+  }
+});
+
+// node_modules/@praxis/contracts/dist/prototype-viewer.js
+function onColor(hex3) {
+  const m = /^#([0-9a-f]{6})$/i.exec(hex3 ?? "") ?? /^#([0-9a-f]{3})$/i.exec(hex3 ?? "");
+  if (!m)
+    return "#fff";
+  const full = m[1].length === 3 ? [...m[1]].map((c) => c + c).join("") : m[1];
+  const [r, g, b] = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16) / 255).map((c) => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.5 ? "#111" : "#fff";
+}
+function prototypeVars(proto) {
+  const colors = proto.styles.colors;
+  const out = [
+    ...Object.entries(colors).filter(([, v]) => safeToken(v)).map(([k, v]) => `--p-${k.replace(/[^\w-]/g, "")}:${v}`),
+    ...proto.styles.fonts.body && FONT_OK.test(proto.styles.fonts.body) && !/url|image|src/i.test(proto.styles.fonts.body) ? [`--p-font:${proto.styles.fonts.body}`] : [],
+    ...proto.styles.fonts.heading && FONT_OK.test(proto.styles.fonts.heading) && !/url|image|src/i.test(proto.styles.fonts.heading) ? [`--p-font-heading:${proto.styles.fonts.heading}`] : [],
+    ...proto.styles.radius && safeToken(proto.styles.radius) ? [`--p-radius:${proto.styles.radius}`] : [],
+    ...proto.styles.spacing && safeToken(proto.styles.spacing) ? [`--p-space:${proto.styles.spacing}`] : [],
+    `--p-on-primary:${onColor(colors.primary)}`
+  ];
+  return out.join(";");
+}
+function coverage(state2, proto) {
+  const reqs = state2.requirements.filter((r) => r.status !== "superseded" && r.scope === "in");
+  const groups = new Map(reqs.map((r) => [r.id, { id: r.id, label: r.statement, items: [] }]));
+  const unlinked = [];
+  const elementLine = (screen, e) => `<li><button type="button" class="gt" data-goto="${esc3(screen.id)}#${esc3(e.id)}">${esc3(screen.title)} &rsaquo; ${esc3(e.label || e.text || e.kind)}</button> <span class="meta">${esc3(e.kind)}${e.acIds.length ? ` \xB7 ${esc3(e.acIds.join(", "))}` : ""}</span></li>`;
+  for (const screen of proto.screens)
+    for (const e of screen.elements) {
+      if (!e.requirementIds.length && !e.acIds.length) {
+        if (e.kind !== "heading" && e.kind !== "text")
+          unlinked.push(elementLine(screen, e));
+        continue;
+      }
+      const ids = new Set(e.requirementIds);
+      for (const ac of e.acIds)
+        for (const r of reqs)
+          if (r.acceptanceCriteria.some((c) => c.id === ac))
+            ids.add(r.id);
+      for (const id of ids)
+        groups.get(id)?.items.push(elementLine(screen, e));
+    }
+  for (const sc of proto.scenarios) {
+    const ids = new Set(sc.requirementIds);
+    for (const ac of sc.acIds)
+      for (const r of reqs)
+        if (r.acceptanceCriteria.some((c) => c.id === ac))
+          ids.add(r.id);
+    for (const id of ids)
+      groups.get(id)?.items.push(`<li>Scenario: ${esc3(sc.title)}</li>`);
+  }
+  for (const ep of proto.endpoints)
+    for (const id of new Set(ep.requirementIds))
+      groups.get(id)?.items.push(`<li>${esc3(ep.method)} ${esc3(ep.path)}</li>`);
+  const rows = [...groups.values()].map((g) => `<details class="cov-req"><summary><strong>${esc3(g.id)}</strong> <span class="meta">${g.items.length ? `${g.items.length} item(s)` : "not covered by the prototype"}</span><br><span class="meta">${esc3(g.label)}</span></summary><ul>${g.items.join("") || `<li class="muted">Nothing in the prototype is linked to this requirement.</li>`}</ul></details>`).join("");
+  const covered = [...groups.values()].filter((g) => g.items.length).length;
+  return `<details class="pv-cov"><summary>Coverage: ${covered} of ${groups.size} requirement(s) are shown in the prototype</summary><div class="covbody">${rows || `<p class="muted">No requirements in scope.</p>`}${unlinked.length ? `<details class="cov-req"><summary>Interactive elements not linked to a requirement (${unlinked.length})</summary><ul>${unlinked.join("")}</ul></details>` : ""}</div></details>`;
+}
+function fidelity(proto) {
+  const src = proto.styles.sources;
+  const items = [
+    "Mock data only. Nothing here reaches a real system, and nothing you do here changes the saved prototype.",
+    src.length ? `Look: colours, font, corner radius and spacing were read from ${src.map((s) => esc3(s.file)).join(", ")}. The application's own component library, icons and exact page layout are not reproduced, so this is faithful in tone, not pixel-identical.` : "Neutral look: no application styles were found, so colours, fonts and spacing are generic.",
+    ...proto.limitations.map((l) => esc3(l))
+  ];
+  return `<details class="pv-about"><summary>What this prototype is, and is not</summary><div class="covbody"><ul>${items.map((i) => `<li>${i}</li>`).join("")}</ul></div></details>`;
+}
+function renderPrototypeBody(state2, proto, staleBanner2) {
+  const vars = prototypeVars(proto);
+  const scenarios = proto.scenarios.length;
+  const feedback = proto.feedback.map((f) => `<div class="fbcard"><div class="top"><label class="marks"><input type="checkbox" data-resolve="${esc3(f.id)}"${f.resolved ? " checked disabled" : ""}> ${f.resolved ? "Resolved" : "Mark resolved"}</label><span class="meta">${esc3(f.target)}</span></div><p style="margin:4px 0">${esc3(f.comment)}</p></div>`).join("");
+  const viewer = proto.kind === "ui" ? `<div class="pv-bar" role="toolbar" aria-label="Prototype controls">
+<div><div class="meta" id="pv-mode-l">Mode</div><div class="seg" id="pv-mode" role="group" aria-labelledby="pv-mode-l"><button type="button" data-mode="preview" aria-pressed="true">Preview</button><button type="button" data-mode="inspect" aria-pressed="false">Inspect</button><button type="button" data-mode="review" aria-pressed="false">Review</button></div></div>
+<div><div class="meta" id="pv-vp-l">Screen size</div><div class="seg" id="pv-vp" role="group" aria-labelledby="pv-vp-l"><button type="button" data-vp="desktop" aria-pressed="true">Desktop</button><button type="button" data-vp="mobile" aria-pressed="false">Mobile</button></div></div>
+${proto.datasets.length ? `<label>Data<select id="proto-data"><option value="">${esc3("Default data")}</option>${proto.datasets.map((d) => `<option value="${esc3(d.id)}">${esc3(d.label)}</option>`).join("")}</select></label>` : ""}
+${proto.roles.length ? `<label>Role<select id="proto-role">${proto.roles.map((r) => `<option>${esc3(r)}</option>`).join("")}</select></label>` : ""}
+<label>Screen state<select id="proto-state"></select></label>
+<button id="proto-reset" type="button">Reset mock data</button></div>
+<div class="pv-grid"><section aria-label="Prototype">
+<div class="pv-device" id="pv-device"><form class="pv-addr" id="proto-addr" autocomplete="off"><span aria-hidden="true">prototype://</span><input id="proto-url" type="text" aria-label="Prototype address (screen and query parameters)" spellcheck="false"></form>
+<div class="proto" id="proto-frame" data-mode="preview" style="${esc3(vars)}"><div class="nav" id="proto-nav" role="tablist" aria-label="Screens">${proto.screens.map((s) => `<button type="button" role="tab" data-screen="${esc3(s.id)}">${esc3(s.title)}</button>`).join("")}</div>
+<div class="screen" id="proto-screen" tabindex="-1"></div></div></div>
+${fidelity(proto)}</section>
+<aside class="pv-side" aria-label="Review panel"><div class="pv-tabs" role="tablist"><button type="button" role="tab" data-side="review" aria-selected="true">Review</button><button type="button" role="tab" data-side="inspect" aria-selected="false">Inspector</button><button type="button" role="tab" data-side="scenarios" aria-selected="false">Scenarios${scenarios ? ` (${scenarios})` : ""}</button></div>
+<div class="pv-panel" data-sidepanel="review"><p class="meta">Use the prototype in Preview. Switch to Review and click anything to leave a comment on it.</p><div id="fb-list"></div><button id="fb-add" type="button">Comment on the prototype as a whole</button>${feedback ? `<h3>Earlier comments</h3>${feedback}` : ""}</div>
+<div class="pv-panel" data-sidepanel="inspect" hidden><div id="pv-inspector"></div></div>
+<div class="pv-panel" data-sidepanel="scenarios" hidden><div class="row" style="justify-content:space-between;align-items:center"><span class="meta" id="sc-summary" role="status"></span>${scenarios ? `<button type="button" id="sc-run-all">Run all checks</button>` : ""}</div><div id="pv-scenarios"></div></div></aside></div>
+${coverage(state2, proto)}` : `<p class="meta">Technical prototype of an API: request and response examples, no screens.</p>${proto.endpoints.map((e) => `<div class="card"><h2>${pill(e.method)} ${esc3(e.path)}</h2><p>${esc3(e.summary)}</p><div class="meta">${e.auth ? `Auth: ${esc3(e.auth)} \xB7 ` : ""}${esc3([...e.requirementIds, ...e.acIds].join(" "))}</div>
+${e.request !== void 0 ? `<h3>Request</h3><pre>${esc3(JSON.stringify(e.request, null, 2))}</pre>` : ""}${e.responses.map((r) => `<h3>Response ${r.status} ${esc3(r.description)}</h3>${r.example !== void 0 ? `<pre>${esc3(JSON.stringify(r.example, null, 2))}</pre>` : ""}`).join("")}</div>`).join("")}
+<div id="fb-list"></div><button id="fb-add" type="button">Add a comment</button>${feedback ? `<h3>Earlier comments</h3>${feedback}` : ""}
+${coverage(state2, proto)}`;
+  const body2 = `${staleBanner2}
+<div class="pv-head">${pill(`${proto.kind === "ui" ? "UI" : "API"} prototype`)} ${pill(`revision ${proto.revision}`)} ${pill(proto.status, proto.status === "accepted" ? "ok" : "warn")}${proto.notes ? ` <span class="muted">${esc3(proto.notes)}</span>` : ""}</div>
+${viewer}`;
+  const trace = {};
+  const acText = {};
+  for (const r of state2.requirements) {
+    trace[r.id] = { statement: r.statement };
+    for (const c of r.acceptanceCriteria)
+      acText[c.id] = c.statement;
+  }
+  return {
+    body: body2,
+    clientData: { proto: { kind: proto.kind, startScreen: proto.startScreen, roles: proto.roles, screens: proto.screens, mock: proto.mock, datasets: proto.datasets, scenarios: proto.scenarios }, trace, acText }
+  };
+}
+var COLOR_OK, safeToken, FONT_OK, PROTOTYPE_CSS, PROTOTYPE_SCRIPT;
+var init_prototype_viewer = __esm({
+  "node_modules/@praxis/contracts/dist/prototype-viewer.js"() {
+    init_review_util();
+    COLOR_OK = /^[#\w(),.%\s/-]{1,60}$/;
+    safeToken = (v) => COLOR_OK.test(v) && !/url|image|src|expression|element|paint|cross-fade|attr|var\(/i.test(v);
+    FONT_OK = /^[\w\s,'"-]{1,80}$/;
+    PROTOTYPE_CSS = `
+main.wide{max-width:1360px}
+.pv-head{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:4px 0 10px}
+.pv-bar{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:flex-end;margin:0 0 12px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+.pv-bar label{display:flex;flex-direction:column;gap:2px;font-size:12px;color:var(--muted)}.pv-bar select{width:auto;min-width:120px;padding:3px 6px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
+.seg button{border:0;border-radius:0;background:transparent;padding:5px 12px;font-size:13px}
+.seg button+button{border-left:1px solid var(--line)}.seg button[aria-pressed=true]{background:var(--accent);color:var(--on-accent)}
+.pv-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px;align-items:start}
+@media (max-width:1000px){.pv-grid{grid-template-columns:minmax(0,1fr)}}
+.pv-side{border:1px solid var(--line);border-radius:10px;background:var(--card);position:sticky;top:8px;max-height:calc(100vh - 90px);overflow:auto}
+@media (max-width:1000px){.pv-side{position:static;max-height:none}}
+.pv-tabs{display:flex;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:1}
+.pv-tabs button{flex:1;border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:9px 6px;font-size:13px}
+.pv-tabs button[aria-selected=true]{border-bottom-color:var(--accent);font-weight:600}
+.pv-panel{padding:10px 12px}.pv-panel[hidden]{display:none}
+.pv-panel h3{margin:10px 0 4px}.pv-panel ul{margin:4px 0;padding-left:18px}
+.pv-device{margin:0 auto;max-width:100%}.pv-device.mobile{max-width:390px}
+.pv-addr{display:flex;align-items:center;gap:6px;border:1px solid var(--line);border-bottom:0;border-radius:10px 10px 0 0;padding:6px 10px;background:var(--card);font-size:12px;color:var(--muted)}
+.pv-addr input{flex:1;font:12px ui-monospace,Menlo,monospace;padding:3px 6px}
+.proto{--pc-bg:var(--p-background,#fff);--pc-text:var(--p-text,#1d2330);--pc-primary:var(--p-primary,#2457d6);--pc-on-primary:var(--p-on-primary,#fff);--pc-danger:var(--p-danger,#b42318);--pc-success:var(--p-success,#17803d);--pc-warning:var(--p-warning,#a15c00);
+--pc-surface:var(--p-surface,color-mix(in srgb,var(--pc-text) 4%,var(--pc-bg)));--pc-border:var(--p-border,color-mix(in srgb,var(--pc-text) 16%,var(--pc-bg)));--pc-muted:color-mix(in srgb,var(--pc-text) 62%,var(--pc-bg));
+--pc-r:var(--p-radius,8px);--pc-s:var(--p-space,8px);
+container-type:inline-size;container-name:proto;border:1px solid var(--line);border-radius:0 0 10px 10px;overflow:hidden;background:var(--pc-bg);color:var(--pc-text);font:14px/1.45 var(--p-font,system-ui,-apple-system,"Segoe UI",sans-serif)}
+.proto .nav{display:flex;gap:calc(var(--pc-s)*.5);padding:var(--pc-s);border-bottom:1px solid var(--pc-border);background:var(--pc-surface);overflow-x:auto}
+.proto .nav button{white-space:nowrap;background:transparent;color:var(--pc-text);border:1px solid transparent;border-radius:var(--pc-r);padding:4px 10px;font:inherit}
+.proto .nav button.on{background:var(--pc-primary);color:var(--pc-on-primary)}
+.proto .screen{position:relative;min-height:440px;padding:calc(var(--pc-s)*2.5);overflow:hidden;outline:0}
+.proto h2{font-weight:600;font-size:20px;line-height:1.25;font-family:var(--p-font-heading,var(--p-font,system-ui,-apple-system,sans-serif));margin:0 0 var(--pc-s)}.proto h3{font-weight:600;font-size:15px;line-height:1.3;font-family:var(--p-font-heading,var(--p-font,system-ui,-apple-system,sans-serif));margin:0}
+.proto .lead{color:var(--pc-muted);margin:0 0 calc(var(--pc-s)*2)}
+.proto .el{position:relative;margin:calc(var(--pc-s)*1.5) 0;border-radius:var(--pc-r)}
+.proto .row-el{display:flex;gap:var(--pc-s);align-items:flex-end;flex-wrap:wrap}
+.proto label.lab{display:flex;flex-direction:column;gap:4px;font-size:12px;font-weight:600;color:var(--pc-muted)}
+.proto input,.proto select{font:inherit;color:var(--pc-text);background:var(--pc-bg);border:1px solid var(--pc-border);border-radius:var(--pc-r);padding:6px 10px;min-width:160px;width:auto}
+.proto input:focus-visible,.proto select:focus-visible,.proto button:focus-visible,.proto tr:focus-visible,.proto [tabindex]:focus-visible{outline:2px solid var(--pc-primary);outline-offset:2px}
+.proto .btn{background:var(--pc-primary);color:var(--pc-on-primary);border:1px solid var(--pc-primary);border-radius:var(--pc-r);padding:6px 14px;font:inherit;font-weight:600;cursor:pointer}
+.proto .btn.sec{background:transparent;color:var(--pc-primary)}.proto .btn.danger{background:var(--pc-danger);border-color:var(--pc-danger)}
+.proto table{border-collapse:collapse;width:100%}.proto th{font-size:12px;text-transform:uppercase;letter-spacing:.03em;color:var(--pc-muted);text-align:left;padding:8px 12px;border-bottom:1px solid var(--pc-border);background:var(--pc-surface)}
+.proto td{padding:9px 12px;border-bottom:1px solid var(--pc-border)}
+.proto .tblwrap{border:1px solid var(--pc-border);border-radius:var(--pc-r);overflow:auto}.proto .tblwrap tr:last-child td{border-bottom:0}
+.proto tr[data-row]{cursor:pointer}.proto tr[data-row]:hover td{background:var(--pc-surface)}.proto tr[data-row][aria-selected=true] td{background:color-mix(in srgb,var(--pc-primary) 12%,var(--pc-bg))}
+.proto .count{font-size:12px;color:var(--pc-muted);margin:4px 2px}
+.proto .miss{color:var(--pc-muted);font-style:italic}
+.proto .badge{display:inline-block;border-radius:999px;padding:1px 10px;font-size:12px;font-weight:600;border:1px solid var(--pc-border);background:var(--pc-surface)}
+.proto .badge.info{color:var(--pc-primary);border-color:var(--pc-primary)}.proto .badge.ok{color:var(--pc-success);border-color:var(--pc-success)}.proto .badge.warn{color:var(--pc-warning);border-color:var(--pc-warning)}.proto .badge.bad{color:var(--pc-danger);border-color:var(--pc-danger)}
+.proto .state-msg{padding:calc(var(--pc-s)*3);text-align:center;color:var(--pc-muted);border:1px dashed var(--pc-border);border-radius:var(--pc-r)}
+.proto .state-msg.error{color:var(--pc-danger);border-color:var(--pc-danger)}.proto .state-msg.loading{animation:pvpulse 1.2s ease-in-out infinite}
+@keyframes pvpulse{50%{opacity:.5}}
+.proto .msg{padding:var(--pc-s) calc(var(--pc-s)*1.5);border-radius:var(--pc-r);border:1px solid var(--pc-border);background:var(--pc-surface)}
+.proto .msg.ok{border-color:var(--pc-success)}.proto .err{color:var(--pc-danger);font-size:12px}
+.proto .denied{padding:var(--pc-s);border:1px dashed var(--pc-danger);color:var(--pc-danger);border-radius:var(--pc-r)}
+.proto .tabs{display:flex;gap:2px;border-bottom:1px solid var(--pc-border)}
+.proto .tabs button{background:transparent;border:0;border-bottom:3px solid transparent;border-radius:0;color:var(--pc-muted);padding:8px 14px;font:inherit;cursor:pointer}
+.proto .tabs button[aria-selected=true]{color:var(--pc-text);border-bottom-color:var(--pc-primary);font-weight:600}
+.proto .screen.with-drawer{padding-right:calc(380px + var(--pc-s)*2.5)}
+.proto .pv-overlay{position:absolute;top:0;right:0;bottom:0;width:min(380px,100%);background:var(--pc-bg);border-left:1px solid var(--pc-border);box-shadow:-8px 0 24px rgba(0,0,0,.12);display:flex;flex-direction:column;z-index:3;outline:0}
+.proto .pv-overlay.modal{top:50%;right:auto;bottom:auto;left:50%;transform:translate(-50%,-50%);width:min(440px,92%);max-height:90%;border:1px solid var(--pc-border);border-radius:var(--pc-r)}
+.proto .pv-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35);z-index:2}
+.proto .pv-overlay header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:calc(var(--pc-s)*1.5) calc(var(--pc-s)*2);border-bottom:1px solid var(--pc-border)}
+.proto .pv-overlay .x{background:transparent;border:0;font-size:22px;line-height:1;color:var(--pc-muted);cursor:pointer;padding:2px 8px;border-radius:var(--pc-r)}
+.proto .pv-overlay .body{padding:calc(var(--pc-s)*2);overflow:auto}
+.proto dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 16px;margin:0}.proto dt{color:var(--pc-muted);font-size:12px;font-weight:600;padding-top:2px}.proto dd{margin:0}
+@container proto (max-width:760px){.proto .screen.with-drawer{padding-right:calc(var(--pc-s)*1.5);min-height:640px}}
+@container proto (max-width:620px){.proto .screen{padding:calc(var(--pc-s)*1.5)}.proto .pv-overlay{width:100%;border-left:0}.proto input,.proto select{min-width:0;width:100%}.proto .row-el>*{flex:1 1 100%}.proto th,.proto td{padding:8px}.proto dl{grid-template-columns:1fr}}
+.proto[data-mode=inspect] .screen *,.proto[data-mode=review] .screen *{pointer-events:none}
+.proto[data-mode=inspect] .screen [data-el],.proto[data-mode=review] .screen [data-el]{pointer-events:auto;cursor:crosshair}
+.proto[data-mode=inspect] .screen [data-el]:hover,.proto[data-mode=review] .screen [data-el]:hover{outline:2px dashed var(--pc-primary);outline-offset:2px}
+.proto .screen [data-el].sel{outline:2px solid var(--pc-primary);outline-offset:2px}
+.proto[data-mode=inspect] .screen [data-el]:hover::after,.proto[data-mode=inspect] .screen [data-el].sel::after,.proto[data-mode=review] .screen [data-el].sel::after{content:attr(data-tag);position:absolute;top:-10px;right:4px;font-size:11px;padding:0 6px;border-radius:4px;background:var(--pc-primary);color:var(--pc-on-primary);pointer-events:none;z-index:5}
+.proto .pv-cbtn{display:none}.proto[data-mode=review] .pv-cbtn{display:inline-block;pointer-events:auto;position:absolute;top:-10px;left:4px;font-size:11px;padding:0 6px;background:var(--pc-surface);color:var(--pc-text);border:1px solid var(--pc-border);border-radius:4px;cursor:pointer;z-index:5}
+.pv-side .sc{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;margin:4px 0;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.pv-side .sc .dot{flex:none;width:18px;text-align:center;font-weight:700}.pv-side .sc .dot.ok{color:var(--ok)}.pv-side .sc .dot.bad{color:var(--bad)}
+.pv-side .sc.cur{border-color:var(--accent)}.pv-side .sc small{display:block;color:var(--muted)}
+.pv-side .fail{color:var(--bad);font-size:12px;margin:2px 0 0 26px}
+.fbcard{border:1px solid var(--line);background:var(--bg);border-radius:8px;padding:8px;margin:8px 0}.fbcard textarea{margin-top:4px}
+.fbcard .top{display:flex;justify-content:space-between;gap:6px}
+details.pv-cov,details.pv-about{margin:14px 0;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+details.pv-cov>summary,details.pv-about>summary{cursor:pointer;padding:10px 14px;font-weight:600}
+details.pv-cov .covbody,details.pv-about .covbody{padding:0 14px 12px}
+.cov-req{border-top:1px solid var(--line);padding:8px 0}.cov-req>summary{cursor:pointer}.cov-req ul{margin:4px 0;padding-left:20px;font-size:13px}
+.cov-req .gt{border:0;background:none;color:var(--accent);padding:0;text-decoration:underline;font-size:13px}
+`;
+    PROTOTYPE_SCRIPT = String.raw`
+// prototype viewer
+if(D.view==='prototype'&&D.proto&&D.proto.kind==='ui'){(function(){
+var P=D.proto;P.datasets=P.datasets||[];P.scenarios=P.scenarios||[];P.screens=P.screens||[];P.mock=P.mock||[];
+var host=$('#proto-screen'),frame=$('#proto-frame'),urlIn=$('#proto-url'),device=$('#pv-device');
+var startId=P.startScreen||(P.screens[0]&&P.screens[0].id);
+var live={},search={},form={},formErr={},dsId='',role0=(P.roles&&P.roles[0])||'',role=role0,stateName='default',mode='preview',sel=null,cur=startId,q={},opened={},opener=null,results={},curScenario=null;
+function by(attr,val,root){return $$('['+attr+']',root||document).filter(function(e){return e.getAttribute(attr)===val})[0]||null}
+function clone(x){return JSON.parse(JSON.stringify(x))}
+function h(t,a,c){var e=document.createElement(t);for(var k in (a||{})){if(a[k]===null||a[k]===undefined)continue;if(k==='class')e.className=a[k];else e.setAttribute(k,a[k])}(c||[]).forEach(function(x){if(x===null||x===undefined)return;e.appendChild(typeof x==='string'?document.createTextNode(x):x)});return e}
+function T(s){return document.createTextNode(s)}
+function collDef(id){return P.mock.filter(function(c){return c.id===id})[0]}
+function fieldDef(cid,key){var c=collDef(cid);return c?c.fields.filter(function(f){return f.key===key})[0]:undefined}
+function screenById(id){return P.screens.filter(function(s){return s.id===id})[0]}
+function loadData(){live={};P.mock.forEach(function(c){live[c.id]=clone(c.rows)});var ds=P.datasets.filter(function(d){return d.id===dsId})[0];if(ds)Object.keys(ds.rows).forEach(function(k){live[k]=clone(ds.rows[k])})}
+loadData();
+// ---- virtual address: /screen?param=value, kept in the page #hash
+function dec(x){try{return decodeURIComponent(x.replace(/\+/g,' '))}catch(e){return x}}
+function parseUrl(s){s=String(s||'').replace(/^#/,'').trim();var i=s.indexOf('?');var path=(i>=0?s.slice(0,i):s).replace(/^\/+/,'').replace(/\/+$/,'');var out={};(i>=0?s.slice(i+1):'').split('&').forEach(function(p){if(!p)return;var j=p.indexOf('=');var k=dec(j>=0?p.slice(0,j):p);var v=j>=0?dec(p.slice(j+1)):'';if(k&&Object.keys(out).length<20)out[k.slice(0,60)]=v.slice(0,200)});return {screen:path,query:out}}
+function buildUrl(screen,query){var parts=Object.keys(query).filter(function(k){return query[k]!==''&&query[k]!==undefined}).map(function(k){return encodeURIComponent(k)+'='+encodeURIComponent(query[k])});return '/'+(screen||'')+(parts.length?'?'+parts.join('&'):'')}
+function fromUrl(u){if(!u.screen){cur=startId}else cur=u.screen;q=u.query}
+var quiet=false;
+function pushUrl(replace){var url='#'+buildUrl(cur,q);if(!replace&&!quiet&&url===location.hash)return;try{if(replace||quiet)history.replaceState(null,'',url);else history.pushState(null,'',url)}catch(e){}}
+function go(screen,query,replace){cur=screen;q=query||{};pushUrl(replace);render()}
+function setParam(name,value,replace){var n=clone(q);if(value===''||value===undefined||value===null)delete n[name];else n[name]=value;q=n;pushUrl(replace);render()}
+function defaults(scr){var d={};(scr?scr.elements:[]).forEach(function(e){if(e.kind==='tabs'&&e.tabs&&e.tabs.length)d[e.param||'tab']=e.tabs[0].id});return d}
+function pv(name,scr){if(q[name]!==undefined&&q[name]!=='')return q[name];var d=defaults(scr||screenById(cur));return d[name]||''}
+function shown(el,scr){var w=el.showWhen;if(!w)return true;var v=pv(w.param,scr);if(w.equals!==undefined&&v!==w.equals)return false;if(w.notEquals!==undefined&&v===w.notEquals)return false;if(w.present!==undefined&&(v!=='')!==w.present)return false;return true}
+// ---- data helpers
+function idField(el){if(el.idField)return el.idField;var c=collDef(el.collection);if(c&&c.fields.some(function(f){return f.key==='id'}))return 'id';return (el.columns&&el.columns[0])||(c&&c.fields[0]&&c.fields[0].key)||'id'}
+function knownValues(coll,field){var f=fieldDef(coll,field);if(f&&f.options&&f.options.length)return f.options;var seen={};(live[coll]||[]).forEach(function(r){if(r[field]!==null&&r[field]!==undefined)seen[String(r[field])]=1});return Object.keys(seen)}
+function ignored(f,coll,v){return f.unknown==='all'&&v!==''&&knownValues(coll,f.field).indexOf(v)<0}
+function unknownAll(param,scr){var hit=false;(scr?scr.elements:[]).forEach(function(e){(e.filters||[]).forEach(function(f){if(f.param===param&&f.unknown==='all')hit=true})});return hit}
+function rowsFor(el){var all=live[el.collection]||[];var out=all.filter(function(r){return (el.filters||[]).every(function(f){var v=pv(f.param);return v===''||ignored(f,el.collection,v)||String(r[f.field])===v})});var sq=search[el.collection];if(sq)out=out.filter(function(r){return JSON.stringify(r).toLowerCase().indexOf(sq.toLowerCase())>=0});return out}
+function fmt(v,f){if(typeof v==='boolean')return v?'Yes':'No';return String(v)}
+function tone(v){var t=String(v).toLowerCase();return /cancel|reject|fail|error|declin|denied|block/.test(t)?'bad':/deliver|done|complete|paid|active|approv|success|resolved|closed/.test(t)?'ok':/progress|pending|wait|review|hold|process/.test(t)?'warn':/new|open|draft|created/.test(t)?'info':''}
+function badge(v,f){var i=f&&f.options?f.options.indexOf(String(v)):-1;return h('span',{class:'badge '+(i<0?'':tone(v)),'data-v':String(v),title:i<0&&f&&f.options?'Value not in the known list':null},[String(v)])}
+function valueNode(f,v,el,table){if(v===null||v===undefined||v===''){return h('span',{class:'miss'},[el.missingText||(table?'—':'Not provided')])}if(f&&f.type==='enum')return badge(v,f);return T(fmt(v,f))}
+function emptyMsg(text){return h('div',{class:'state-msg','data-empty':'1'},[text])}
+// ---- element renderers
+function renderTable(scr,el){
+  var box=h('div',{});var c=collDef(el.collection);
+  if(!c){box.appendChild(emptyMsg('No data'));return box}
+  var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
+  var rows=rowsFor(el),id=idField(el),target=el.rowOpens&&scr.elements.filter(function(x){return x.id===el.rowOpens})[0],openId=target&&target.param?q[target.param]:undefined;
+  if(!rows.length){var em=emptyMsg((el.emptyText||'No rows').replace(/\{(\w[\w-]*)\}/g,function(m,p){return pv(p,scr)}));if(el.emptyAction){var ab=h('button',{type:'button',class:'btn sec',style:'margin-top:8px','data-fk':'empty-action:'+scr.id+'#'+el.id},[el.emptyAction.label]);ab.addEventListener('click',function(){if(mode!=='preview')return;var n=clone(q);(el.emptyAction.clear||[]).forEach(function(k){delete n[k]});q=n;pushUrl(false);render()});em.appendChild(h('div',{},[ab]))}box.appendChild(em);box.appendChild(h('div',{class:'count','data-count':'0'},['0 of '+(live[el.collection]||[]).length]));return box}
+  var t=h('table',{},[]);t.appendChild(h('thead',{},[h('tr',{},cols.map(function(k){var f=fieldDef(el.collection,k);return h('th',{scope:'col'},[f?f.label:k])}))]));
+  var tb=h('tbody',{});
+  rows.forEach(function(r){
+    var rid=String(r[id]===undefined||r[id]===null?'':r[id]);
+    var tr=h('tr',{'data-row':rid},cols.map(function(k){return h('td',{},[valueNode(fieldDef(el.collection,k),r[k],el,true)])}));
+    if(target&&target.param){
+      tr.setAttribute('tabindex','0');tr.setAttribute('aria-selected',String(openId===rid));tr.setAttribute('data-fk','row:'+scr.id+'#'+el.id+':'+rid);
+      var open=function(){if(mode!=='preview')return;opener={fk:tr.getAttribute('data-fk')};setParam(target.param,rid)};
+      tr.addEventListener('click',open);
+      tr.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();open()}});
+    }
+    tb.appendChild(tr)
+  });
+  t.appendChild(tb);box.appendChild(h('div',{class:'tblwrap'},[t]));
+  box.appendChild(h('div',{class:'count','data-count':String(rows.length)},['Showing '+rows.length+' of '+(live[el.collection]||[]).length]));
+  return box
+}
+function renderFilter(scr,el){
+  var c=collDef(el.collection),f=c&&el.filters&&el.filters[0]?fieldDef(el.collection,el.filters[0].field):null;
+  var opts=(el.options&&el.options.length?el.options:((f&&f.options)||[]).map(function(o){return {value:o}}));
+  var sel=h('select',{'data-filter':el.param,'data-fk':'filter:'+el.param,'aria-label':el.label||el.param});
+  sel.appendChild(h('option',{value:''},[el.allLabel||'All']));
+  var cur=q[el.param]||'',known=false;
+  opts.forEach(function(o){var op=h('option',{value:o.value},[o.label||o.value]);if(o.value===cur){op.selected=true;known=true}sel.appendChild(op)});
+  if(cur&&!known&&!unknownAll(el.param,scr)){var bad=h('option',{value:cur},['Unknown: '+cur]);bad.selected=true;sel.appendChild(bad)}
+  sel.addEventListener('change',function(){if(mode!=='preview')return;setParam(el.param,sel.value)});
+  return h('label',{class:'lab'},[el.label||'Filter',sel])
+}
+function renderTabs(scr,el){
+  var param=el.param||'tab',val=pv(param,scr);var bar=h('div',{class:'tabs',role:'tablist','aria-label':el.label||'Tabs'});
+  el.tabs.forEach(function(t,i){
+    var b=h('button',{type:'button',role:'tab','aria-selected':String(t.id===val),tabindex:t.id===val?'0':'-1','data-tab':t.id,'data-fk':'tab:'+param+':'+t.id},[t.label]);
+    b.addEventListener('click',function(){if(mode!=='preview')return;setParam(param,t.id)});
+    b.addEventListener('keydown',function(e){var d=e.key==='ArrowRight'?1:e.key==='ArrowLeft'?-1:0;if(!d||mode!=='preview')return;e.preventDefault();var n=el.tabs[(i+d+el.tabs.length)%el.tabs.length];want='tab:'+param+':'+n.id;setParam(param,n.id)});
+    bar.appendChild(b)});
+  return bar
+}
+function renderField(scr,el){
+  var key=scr.id+'#'+el.id,fd=el.collection&&el.field?fieldDef(el.collection,el.field):null,ctl;
+  if(fd&&fd.type==='enum'){ctl=h('select',{});ctl.appendChild(h('option',{value:''},['Select...']));(fd.options||[]).forEach(function(o){ctl.appendChild(h('option',{value:o},[o]))})}
+  else if(fd&&fd.type==='boolean')ctl=h('input',{type:'checkbox'});
+  else ctl=h('input',{type:fd&&fd.type==='number'?'number':fd&&fd.type==='date'?'date':'text',placeholder:el.text||''});
+  ctl.setAttribute('data-fk','field:'+key);if(el.required)ctl.setAttribute('aria-required','true');if(formErr[key])ctl.setAttribute('aria-invalid','true');
+  if(form[key]!==undefined){if(ctl.type==='checkbox')ctl.checked=!!form[key];else ctl.value=form[key]}
+  var upd=function(){form[key]=ctl.type==='checkbox'?ctl.checked:ctl.value;if(formErr[key]&&form[key]!==''){delete formErr[key];render()}};
+  ctl.addEventListener('input',upd);ctl.addEventListener('change',upd);
+  return h('label',{class:'lab'},[(el.label||el.field||'')+(el.required?' *':''),ctl,formErr[key]?h('span',{class:'err',role:'alert'},['Required']):null])
+}
+function renderButton(scr,el){
+  var b=h('button',{class:'btn'+(el.kind==='link'?' sec':''),type:'button','data-fk':'btn:'+scr.id+'#'+el.id},[el.label||'Button']);
+  b.addEventListener('click',function(e){e.stopPropagation();if(mode!=='preview')return;
+    var c=el.collection&&collDef(el.collection);
+    if(el.navigatesTo){stateName='default';go(el.navigatesTo,{})}
+    else if(el.action==='add-row'&&c){var row={};c.fields.forEach(function(f){row[f.key]=f.type==='number'?live[c.id].length+1:f.type==='boolean'?false:f.type==='enum'&&f.options&&f.options[0]?f.options[0]:'New '+f.label});live[c.id].push(row);render()}
+    else if(el.action==='delete-row'&&c){live[c.id].pop();render()}
+    else if(el.action==='open-modal'&&el.rowOpens){var t=scr.elements.filter(function(x){return x.id===el.rowOpens})[0];if(t&&t.param){opener={fk:b.getAttribute('data-fk')};setParam(t.param,'1')}}
+    else if(el.action==='close-modal'&&el.rowOpens){var t2=scr.elements.filter(function(x){return x.id===el.rowOpens})[0];if(t2&&t2.param)setParam(t2.param,'')}
+    else if(el.action==='submit'){
+      var bad=false;scr.elements.forEach(function(x){if(x.kind==='field'&&x.required){var k=scr.id+'#'+x.id;var v=form[k];if(v===undefined||v===''||v===false){formErr[k]=true;bad=true}}});
+      if(bad){render();return}
+      if(scr.states.indexOf('success')>=0){stateName='success'}else{form._ok=scr.id}
+      render()}
+  });
+  return b
+}
+function recordFor(scr,el,val){var tbl=el.withinTable&&scr.elements.filter(function(x){return x.id===el.withinTable})[0];var rows=tbl?rowsFor(tbl):(live[el.collection]||[]);var id=el.idField||(tbl?idField(tbl):idField(el));return rows.filter(function(r){return String(r[id])===val})[0]}
+function normalize(scr){var changed=false;(scr?scr.elements:[]).forEach(function(el){if((el.kind==='drawer'||el.kind==='modal')&&el.param&&el.onMissing==='close'&&q[el.param]!==undefined&&q[el.param]!==''&&!recordFor(scr,el,q[el.param])){var n=clone(q);delete n[el.param];q=n;changed=true}});if(changed)pushUrl(true)}
+function renderOverlay(scr,el){
+  var param=el.param;if(!param||q[param]===undefined||q[param]==='')return null;
+  var key=scr.id+'#'+el.id,val=q[param],modal=el.kind==='modal',rec=null,state='open';
+  if(el.collection&&el.detailFields&&el.detailFields.length){
+    rec=recordFor(scr,el,val);if(!rec)state='not-found'}
+  var title='ov-'+key.replace(/[^\w]/g,'-');
+  var body=h('div',{class:'body'});
+  if(state==='not-found'){body.appendChild(h('div',{class:'msg err',role:'alert','data-notfound':'1'},[(el.notFoundText||'This record was not found.')+' ('+param+'='+val+')']))}
+  else if(rec){var dl=h('dl',{});(el.related||[]).forEach(function(){});el.detailFields.forEach(function(d){var f=fieldDef(el.collection,d.field);dl.appendChild(h('dt',{},[d.label||(f&&f.label)||d.field]));dl.appendChild(h('dd',{'data-field':d.field},[valueNode(f,rec[d.field],el,false)]))});body.appendChild(dl);(el.related||[]).forEach(function(rel){var rid=String(rec[idField(el)]),rows=(live[rel.collection]||[]).filter(function(r){return String(r[rel.matchField])===rid}),cols=rel.columns&&rel.columns.length?rel.columns:(collDef(rel.collection)?collDef(rel.collection).fields.map(function(f){return f.key}):[]);body.appendChild(h('h3',{style:'margin:16px 0 6px'},[rel.label||rel.collection]));if(!rows.length){body.appendChild(h('p',{class:'miss','data-related-empty':'1'},[el.missingText||'Not provided']));return}var t=h('table',{},[h('thead',{},[h('tr',{},cols.map(function(k){var f=fieldDef(rel.collection,k);return h('th',{scope:'col'},[f?f.label:k])}))]),h('tbody',{},rows.map(function(r){return h('tr',{},cols.map(function(k){return h('td',{},[valueNode(fieldDef(rel.collection,k),r[k],el,true)])}))}))]);body.appendChild(h('div',{class:'tblwrap'},[t]))})}
+  else if(el.text||el.label){body.appendChild(h('p',{},[el.text||'']))}
+  var x=h('button',{class:'x',type:'button','aria-label':'Close','data-fk':'close:'+key},['×']);
+  x.addEventListener('click',function(){if(mode!=='preview')return;setParam(param,'')});
+  var box=h('aside',{class:'pv-overlay '+(modal?'modal':'drawer'),role:'dialog','aria-modal':modal?'true':'false','aria-labelledby':title,tabindex:'-1','data-overlay':key,'data-state':state,'data-el':key,'data-tag':'','data-fk':'overlay:'+key},[h('header',{},[h('h3',{id:title},[el.label||'Details']),x]),body]);
+  box.setAttribute('data-tag',(el.requirementIds||[]).concat(el.acIds||[]).join(' '));
+  return {node:box,modal:modal,key:key,param:param}
+}
+function stateText(scr,s){return (scr.stateMessages&&scr.stateMessages[s])||({loading:'Loading...',empty:'Nothing here yet.',error:'Something went wrong.',success:'Done.',denied:'You do not have permission.'}[s]||s)}
+function renderEl(scr,el){
+  var k=el.kind,node=null;
+  if(k==='heading')node=h('h3',{},[el.label||el.text||'']);
+  else if(k==='text')node=h('p',{style:'margin:0'},[el.text||el.label||'']);
+  else if(k==='table'||k==='list')node=renderTable(scr,el);
+  else if(k==='filter'&&el.param)node=renderFilter(scr,el);
+  else if(k==='tabs'&&el.tabs&&el.tabs.length)node=renderTabs(scr,el);
+  else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id,'data-fk':'search:'+el.id,'aria-label':el.label||'Search'});var key=el.collection||'';i.value=el.param?(q[el.param]||''):(search[key]||'');i.addEventListener('input',function(){if(mode!=='preview')return;if(el.param){setParam(el.param,i.value,true)}else{search[key]=i.value;refreshTables()}});node=i}
+  else if(k==='field')node=renderField(scr,el);
+  else if(k==='button'||k==='link')node=renderButton(scr,el);
+  else if(k==='badge')node=h('span',{class:'badge'},[el.label||el.text||'']);
+  else if(k==='message')node=h('div',{class:'msg'},[el.text||el.label||'']);
+  else if(k==='form')node=h('h3',{},[el.label||'']);
+  else if((k==='modal'||k==='drawer')&&el.param)return null;
+  else node=h('div',{},[el.label||el.text||k]);
+  var wrap=h('div',{class:'el'+(k==='filter'||k==='field'?' row-el':''),'data-el':scr.id+'#'+el.id,'data-kind':k,'data-tag':(el.requirementIds||[]).concat(el.acIds||[]).join(' ')||el.id},[node]);
+  if(sel===scr.id+'#'+el.id)wrap.classList.add('sel');
+  var cb=h('button',{type:'button',class:'pv-cbtn','aria-label':'Comment on '+el.id},['comment']);cb.addEventListener('click',function(e){e.stopPropagation();commentFor(scr.id+'#'+el.id)});wrap.appendChild(cb);
+  return wrap
+}
+// a search box only narrows the tables: the box itself is never rebuilt, so focus and caret stay where they are
+function refreshTables(){var scr=screenById(cur);if(!scr)return;$$('.el[data-kind=table],.el[data-kind=list]',host).forEach(function(w){var p=w.getAttribute('data-el').split('#');var el=scr.elements.filter(function(e){return e.id===p[1]})[0];if(el)w.replaceChild(renderTable(scr,el),w.firstChild)})}
+// ---- main render
+var want=null;
+function render(){
+  var a=document.activeElement,fk=a&&a.getAttribute&&a.getAttribute('data-fk'),selStart=null;
+  if(fk&&a.setSelectionRange&&a.type==='text'){try{selStart=[a.selectionStart,a.selectionEnd]}catch(e){}}
+  host.textContent='';
+  var scr=screenById(cur);
+  $$('#proto-nav button').forEach(function(b){var on=b.getAttribute('data-screen')===cur;b.classList.toggle('on',on);b.setAttribute('aria-selected',String(on))});
+  if(document.activeElement!==urlIn)urlIn.value=buildUrl(cur,q);
+  var sw=$('#proto-state');
+  if(!scr){sw.textContent='';sw.disabled=true;host.appendChild(h('h2',{},['Page not found']));host.appendChild(emptyMsg('There is no screen "'+cur+'" in this prototype.'));inspectorShow();return}
+  sw.disabled=false;sw.textContent='';var states=scr.states&&scr.states.length?scr.states:['default'];states.forEach(function(s){var o=h('option',{value:s},[s]);if(s===stateName)o.selected=true;sw.appendChild(o)});
+  if(states.indexOf(stateName)<0)stateName='default';
+  host.appendChild(h('h2',{},[scr.title]));if(scr.description)host.appendChild(h('p',{class:'lead'},[scr.description]));
+  var overlays=[];
+  if(stateName==='default')normalize(scr);
+  if(stateName!=='default'){host.appendChild(h('div',{class:'state-msg '+stateName,'data-state':stateName},[stateText(scr,stateName)]))}
+  else{
+    scr.elements.forEach(function(el){
+      if(!shown(el,scr))return;
+      if(el.allowedRoles&&el.allowedRoles.length&&el.allowedRoles.indexOf(role)<0){host.appendChild(h('div',{class:'el','data-el':scr.id+'#'+el.id},[h('div',{class:'denied'},['Not available for role "'+role+'"'])]));return}
+      if((el.kind==='modal'||el.kind==='drawer')&&el.param){var o=renderOverlay(scr,el);if(o)overlays.push(o);return}
+      var w=renderEl(scr,el);if(w)host.appendChild(w)});
+    if(form._ok===scr.id)host.appendChild(h('div',{class:'msg ok',role:'status'},['Saved (mock data only).']));
+  }
+  var openNow={};
+  host.classList.toggle('with-drawer',overlays.some(function(o){return !o.modal}));
+  overlays.forEach(function(o){openNow[o.key]=true;if(o.modal)host.appendChild(h('div',{class:'pv-backdrop'}));host.appendChild(o.node)});
+  // focus: a newly opened overlay takes focus; a closed one gives it back; otherwise keep the control the person was using
+  var fresh=overlays.filter(function(o){return !opened[o.key]})[0],closed=Object.keys(opened).filter(function(k){return !openNow[k]});
+  var target=null;
+  if(fresh&&mode==='preview')target=fresh.node;
+  else if(closed.length&&opener)target=by('data-fk',opener.fk,host);
+  else if(fk)target=by('data-fk',fk,host);
+  if(want){target=by('data-fk',want,host)||target;want=null}
+  opened=openNow;
+  if(target&&target.focus){try{target.focus({preventScroll:false});if(selStart&&target.setSelectionRange)target.setSelectionRange(selStart[0],selStart[1])}catch(e){}}
+  inspectorShow();
+}
+// ---- keyboard: Escape closes the top overlay; Tab stays inside a modal
+document.addEventListener('keydown',function(e){
+  if(mode!=='preview')return;
+  var ovs=$$('.pv-overlay',host);if(!ovs.length)return;
+  var top=ovs.filter(function(o){return o.classList.contains('modal')})[0]||ovs[ovs.length-1];
+  if(e.key==='Escape'){var el=null;var scr=screenById(cur);if(scr)scr.elements.forEach(function(x){if(scr.id+'#'+x.id===top.getAttribute('data-overlay'))el=x});if(el&&el.param){e.preventDefault();setParam(el.param,'')}}
+  else if(e.key==='Tab'&&top.classList.contains('modal')){var f=$$('button,[href],input,select,textarea,[tabindex]:not([tabindex="-1"])',top).filter(function(x){return !x.disabled});if(!f.length)return;var first=f[0],last=f[f.length-1];if(e.shiftKey&&(document.activeElement===first||document.activeElement===top)){e.preventDefault();last.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus()}}
+});
+// ---- modes: Preview (use it), Inspect (what does it cover), Review (comment on it)
+function setMode(m){mode=m;frame.setAttribute('data-mode',m);$$('#pv-mode button').forEach(function(b){b.setAttribute('aria-pressed',String(b.getAttribute('data-mode')===m))});if(m==='inspect')showSide('inspect');if(m==='review')showSide('review')}
+$$('#pv-mode button').forEach(function(b){b.addEventListener('click',function(){setMode(b.getAttribute('data-mode'))})});
+function showSide(name){$$('[data-side]').forEach(function(b){b.setAttribute('aria-selected',String(b.getAttribute('data-side')===name))});$$('[data-sidepanel]').forEach(function(p){p.hidden=p.getAttribute('data-sidepanel')!==name})}
+$$('[data-side]').forEach(function(b){b.addEventListener('click',function(){showSide(b.getAttribute('data-side'))})});
+host.addEventListener('click',function(e){if(mode==='preview')return;var w=e.target.closest&&e.target.closest('[data-el]');if(!w||(e.target.closest&&e.target.closest('.pv-cbtn')))return;e.preventDefault();e.stopPropagation();select(w.getAttribute('data-el'));if(mode==='review')commentFor(w.getAttribute('data-el'))},true);
+function select(key){sel=key;$$('[data-el]',host).forEach(function(n){n.classList.toggle('sel',n.getAttribute('data-el')===key)});inspectorShow()}
+function elOf(key){var p=String(key||'').split('#');var s=screenById(p[0]);return s?{scr:s,el:s.elements.filter(function(e){return e.id===p[1]})[0]}:null}
+function label(key){var o=elOf(key);return o&&o.el?(o.scr.title+' > '+(o.el.label||o.el.text||o.el.kind)):key}
+function behaviour(el){var out=[];if(el.param&&(el.kind==='filter'||el.kind==='tabs'||el.kind==='drawer'||el.kind==='modal'))out.push('Reads and writes the URL parameter "'+el.param+'"');(el.filters||[]).forEach(function(f){out.push('Rows are narrowed by "'+f.param+'" on field "'+f.field+'"')});if(el.rowOpens)out.push('A click on a row opens '+el.rowOpens);if(el.showWhen)out.push('Shown only while '+el.showWhen.param+(el.showWhen.equals!==undefined?' = '+el.showWhen.equals:el.showWhen.notEquals!==undefined?' is not '+el.showWhen.notEquals:el.showWhen.present?' is set':' is not set'));if(el.allowedRoles&&el.allowedRoles.length)out.push('Roles: '+el.allowedRoles.join(', '));return out}
+function inspectorShow(){
+  var box=$('#pv-inspector');if(!box)return;box.textContent='';
+  var o=elOf(sel);
+  if(!o||!o.el){box.appendChild(h('p',{class:'muted'},['Switch to Inspect and click anything in the prototype to see which requirement and criteria it covers.']));return}
+  var el=o.el;box.appendChild(h('h3',{},[el.label||el.text||el.kind]));box.appendChild(h('p',{class:'meta'},[el.kind+' on "'+o.scr.title+'"'+(el.intent?' - '+el.intent:'')+' - '+o.scr.id+'#'+el.id]));
+  var reqs=el.requirementIds||[],acs=el.acIds||[];
+  if(!reqs.length&&!acs.length)box.appendChild(h('p',{class:'meta'},['Not linked to a requirement.']));
+  reqs.forEach(function(id){var r=D.trace&&D.trace[id];box.appendChild(h('h3',{},[id]));if(r)box.appendChild(h('p',{style:'margin:2px 0'},[r.statement]))});
+  if(acs.length){box.appendChild(h('h3',{},['Acceptance criteria']));var ul=h('ul',{});acs.forEach(function(id){var t=D.acText&&D.acText[id];ul.appendChild(h('li',{},[id+(t?': '+t:'')]))});box.appendChild(ul)}
+  var b=behaviour(el);if(b.length){box.appendChild(h('h3',{},['Behaviour']));var u2=h('ul',{});b.forEach(function(x){u2.appendChild(h('li',{},[x]))});box.appendChild(u2)}
+}
+// ---- comments
+function addFb(target,text){var box=$('#fb-list');var ta=h('textarea',{'data-fb':target,'aria-label':'Comment on '+label(target),rows:'3'});if(text)ta.value=text;
+  var rm=h('button',{type:'button','aria-label':'Remove this comment'},['Remove']);var card=h('div',{class:'fbcard'},[h('div',{class:'top'},[h('div',{class:'meta'},[target==='prototype'?'About the prototype':label(target)]),rm]),ta]);rm.addEventListener('click',function(){card.remove()});box.appendChild(card);return ta}
+function commentFor(key){showSide('review');var ta=by('data-fb',key);if(!ta)ta=addFb(key);if(ta.scrollIntoView)ta.scrollIntoView({block:'center'});ta.focus()}
+var add=$('#fb-add');if(add)add.addEventListener('click',function(){showSide('review');addFb('prototype').focus()});
+// ---- navigation, toolbar
+$$('#proto-nav button').forEach(function(b){b.addEventListener('click',function(){stateName='default';go(b.getAttribute('data-screen'),{})})});
+var swEl=$('#proto-state');swEl.addEventListener('change',function(){stateName=swEl.value;render()});
+var rl=$('#proto-role');if(rl){rl.addEventListener('change',function(){role=rl.value;render()})}
+var dsSel=$('#proto-data');if(dsSel){dsSel.addEventListener('change',function(){dsId=dsSel.value;loadData();search={};render()})}
+var rs=$('#proto-reset');if(rs)rs.addEventListener('click',function(){loadData();search={};form={};formErr={};render()});
+$$('#pv-vp button').forEach(function(b){b.addEventListener('click',function(){var m=b.getAttribute('data-vp')==='mobile';device.classList.toggle('mobile',m);$$('#pv-vp button').forEach(function(x){x.setAttribute('aria-pressed',String(x===b))})})});
+$('#proto-addr').addEventListener('submit',function(e){e.preventDefault();var u=parseUrl(urlIn.value);stateName='default';cur=u.screen||startId;q=u.query;pushUrl(false);render()});
+function syncFromHash(){var u=parseUrl(location.hash);cur=u.screen||startId;q=u.query;stateName='default';render()}
+window.addEventListener('popstate',syncFromHash);window.addEventListener('hashchange',syncFromHash);
+// ---- scenarios
+function applyScenario(sc){
+  dsId=sc.dataset||'';if(dsSel)dsSel.value=dsId;role=sc.role||role0;if(rl)rl.value=role;stateName='default';search={};form={};formErr={};loadData();cur=sc.screen||startId;q=clone(sc.query||{});curScenario=sc.id;pushUrl(false);render()}
+function checkScenario(sc){
+  var fails=[],ex=sc.expect;if(!ex)return null;
+  (ex.rows||[]).forEach(function(r){var w=by('data-el',cur+'#'+r.element,host);var n=w?$$('tr[data-row]',w).length:0;if(n!==r.count)fails.push(r.element+': '+n+' row(s), expected '+r.count)});
+  (ex.overlay||[]).forEach(function(o){var n=by('data-overlay',cur+'#'+o.element,host);var st=n?n.getAttribute('data-state'):'closed';if(st!==o.state)fails.push(o.element+' is '+st+', expected '+o.state)});
+  var txt=host.textContent;(ex.contains||[]).forEach(function(t){if(txt.indexOf(t)<0)fails.push('missing text "'+t+'"')});(ex.absent||[]).forEach(function(t){if(txt.indexOf(t)>=0)fails.push('unexpected text "'+t+'"')});
+  (ex.noQuery||[]).forEach(function(k){if(q[k]!==undefined&&q[k]!=='')fails.push('?'+k+' is still set')});Object.keys(ex.query||{}).forEach(function(k){if(q[k]!==ex.query[k])fails.push('?'+k+' is "'+(q[k]||'')+'", expected "'+ex.query[k]+'"')});
+  return fails}
+function drawScenarios(){
+  var box=$('#pv-scenarios');if(!box)return;box.textContent='';
+  if(!P.scenarios.length){box.appendChild(h('p',{class:'muted'},['This prototype defines no scenarios yet. Ask Claude to add the situations that should be checked.']));return}
+  P.scenarios.forEach(function(sc){
+    var r=results[sc.id];var dot=h('span',{class:'dot '+(r?(r.length?'bad':'ok'):'')},[r===undefined?'○':r===null?'–':r.length?'✗':'✓']);
+    var b=h('button',{type:'button',class:'sc'+(curScenario===sc.id?' cur':''),'data-scenario':sc.id},[dot,h('span',{},[sc.title,sc.description?h('small',{},[sc.description]):null])]);
+    b.addEventListener('click',function(){applyScenario(sc);results[sc.id]=checkScenario(sc);drawScenarios()});
+    box.appendChild(b);if(r&&r.length)r.forEach(function(f){box.appendChild(h('div',{class:'fail'},[f]))})});
+}
+var runAll=$('#sc-run-all');if(runAll)runAll.addEventListener('click',function(){
+  var keep={cur:cur,q:clone(q),ds:dsId,role:role,sc:curScenario};
+  quiet=true;try{P.scenarios.forEach(function(sc){applyScenario(sc);results[sc.id]=checkScenario(sc)})}finally{quiet=false}
+  dsId=keep.ds;if(dsSel)dsSel.value=dsId;role=keep.role;if(rl)rl.value=role;loadData();cur=keep.cur;q=keep.q;curScenario=keep.sc;pushUrl(true);render();drawScenarios();
+  var bad=Object.keys(results).filter(function(k){return results[k]&&results[k].length}).length,done=Object.keys(results).filter(function(k){return results[k]!==null}).length;
+  var s=$('#sc-summary');if(s)s.textContent=bad?bad+' of '+done+' checked scenarios failed':done+' of '+done+' checked scenarios passed'});
+$$('[data-goto]').forEach(function(b){b.addEventListener('click',function(){var key=b.getAttribute('data-goto');var parts=key.split('#');stateName='default';setMode('inspect');go(parts[0],{});select(key);var w=by('data-el',key,host);if(w&&w.scrollIntoView)w.scrollIntoView({block:'center'})})});
+// ---- start
+if(location.hash&&location.hash.length>1){var u0=parseUrl(location.hash);cur=u0.screen||startId;q=u0.query}
+setMode('preview');drawScenarios();render();
+})()}
+`;
+  }
+});
+
+// node_modules/@praxis/contracts/dist/review-html.js
+function shell(state2, view, title, body2, data, options2, barExtra, wide = false) {
   const payload = {
     reviewId: options2.reviewId ?? `${view}-${state2.workItem.id}`,
     view,
@@ -9155,7 +9890,7 @@ function shell(state2, view, title, body2, data, options2, barExtra) {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc3(title)}</title><style>${CSS}</style></head>
-<body><main>
+<body><main${wide ? ' class="wide"' : ""}>
 <h1>${esc3(title)}</h1>
 <p class="meta">Work item ${esc3(state2.workItem.id)} \xB7 ${esc3(state2.workItem.title)} \xB7 phase ${esc3(state2.phase)}${options2.generatedAt ? ` \xB7 generated ${esc3(options2.generatedAt)}` : ""}. This page records decisions; the workflow state in Praxis is the source of truth.</p>
 ${body2}
@@ -9168,10 +9903,7 @@ ${body2}
 </body></html>`;
 }
 function marks(name, current, labels = { accepted: "Accept", rejected: "Reject", pending: "Undecided" }) {
-  return `<div class="marks" role="radiogroup">${["accepted", "rejected", "pending"].map((v) => `<label><input type="radio" name="${esc3(name)}" value="${v}"${v === current ? " checked" : ""}> ${labels[v]}</label>`).join("")}</div>`;
-}
-function pill(text, kind = "") {
-  return `<span class="pill ${kind}">${esc3(text)}</span>`;
+  return `<div class="marks tri" role="radiogroup" aria-label="Decision">${["accepted", "rejected", "pending"].map((v) => `<label class="m-${v}"><input type="radio" name="${esc3(name)}" value="${v}"${v === current ? " checked" : ""}><span>${labels[v]}</span></label>`).join("")}</div>`;
 }
 function staleBanner(state2, phase) {
   return acceptanceStatus(state2, phase) === "stale" ? `<div class="stale"><strong>Changed since you accepted it.</strong> The earlier acceptance no longer applies; review the changes and accept again.</div>` : "";
@@ -9179,29 +9911,45 @@ function staleBanner(state2, phase) {
 function renderRequirementsReview(state2, options2 = {}) {
   const all = state2.requirements.filter((r) => r.status !== "superseded");
   const progress = reviewProgress(state2);
-  const cards = all.map((req) => {
+  const decided = progress.accepted + progress.rejected;
+  const pct = (n) => progress.criteria ? Math.round(n / progress.criteria * 100) : 0;
+  const reqState = (req) => req.scope !== "in" ? "out" : req.acceptanceCriteria.length > 0 && req.acceptanceCriteria.every((c) => c.review.status === "accepted") ? "accepted" : "open";
+  const card = (req) => {
     const out = req.scope !== "in";
-    const criteria = req.acceptanceCriteria.map((ac) => `<div class="ac" data-ac="${esc3(ac.id)}" data-rev="${ac.revision}" data-initial-status="${esc3(ac.review.status)}">
-<div><strong>${esc3(ac.id)}</strong></div>
-<div><textarea data-f="ac-statement" data-initial="${esc3(ac.statement)}" aria-label="Text of ${esc3(ac.id)}">${esc3(ac.statement)}</textarea>${ac.review.previous && ac.review.status === "pending" ? `
-<div class="meta" data-previous>Before this revision: ${esc3(ac.review.previous.status)}${ac.review.previous.comment ? ` - "${esc3(ac.review.previous.comment)}"` : ""}</div>` : ""}
-<div class="row" style="margin-top:4px">${marks(`m-${ac.id}`, ac.review.status)}<input type="text" data-f="ac-comment" data-initial="${esc3(ac.review.comment ?? "")}" placeholder="Comment" value="${esc3(ac.review.comment ?? "")}" aria-label="Comment on ${esc3(ac.id)}" style="flex:1;min-width:160px">
-<label class="marks"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>`).join("");
-    return `<section class="card${out ? " out" : ""}" data-req="${esc3(req.id)}" data-rev="${req.revision}">
-<div class="row"><h2 class="grow">${esc3(req.id)} ${pill(`r${req.revision}`)} ${pill(req.status)}${out ? " " + pill(req.scope, "warn") : ""}</h2></div>
-<textarea data-f="statement" data-initial="${esc3(req.statement)}" aria-label="Statement of ${esc3(req.id)}">${esc3(req.statement)}</textarea>
-<div class="row" style="margin-top:6px"><div><label class="meta">Scope<br><select data-f="scope" data-initial="${esc3(req.scope)}">${["in", "deferred", "excluded"].map((s) => `<option value="${s}"${s === req.scope ? " selected" : ""}>${{ in: "In scope", deferred: "Deferred", excluded: "Out of scope" }[s]}</option>`).join("")}</select></label></div>
-<div class="grow"><label class="meta">Scope note<br><input type="text" data-f="scopeNote" data-initial="${esc3(req.scopeNote ?? "")}" value="${esc3(req.scopeNote ?? "")}"></label></div></div>
-<h3>Acceptance criteria <button type="button" data-accept-card>Accept all in this requirement</button></h3>
+    const accepted = req.acceptanceCriteria.filter((c) => c.review.status === "accepted").length;
+    const criteria = req.acceptanceCriteria.map((ac) => {
+      const prev = ac.review.previous && ac.review.status === "pending" ? ac.review.previous : null;
+      return `<div class="ac" data-ac="${esc3(ac.id)}" data-rev="${ac.revision}" data-initial-status="${esc3(ac.review.status)}">
+<div class="acid"><strong>${esc3(ac.id.replace(/^.*-AC-/, "AC-"))}</strong>${ac.revision > 1 ? `<br>${pill(`r${ac.revision}`, "warn")}` : ""}</div>
+<div class="acbody"><textarea class="auto" data-f="ac-statement" data-initial="${esc3(ac.statement)}" aria-label="Text of ${esc3(ac.id)}">${esc3(ac.statement)}</textarea>${prev ? `
+<div class="prev" data-previous>Before this revision: ${esc3(prev.status)}${prev.comment ? ` - "${esc3(prev.comment)}"` : ""} (the text changed, so it needs a new decision)</div>` : ""}
+<div class="acctl">${marks(`m-${ac.id}`, ac.review.status)}<input type="text" data-f="ac-comment" data-initial="${esc3(ac.review.comment ?? "")}" placeholder="Comment" value="${esc3(ac.review.comment ?? "")}" aria-label="Comment on ${esc3(ac.id)}"><label class="rm"><input type="checkbox" data-f="remove"> Remove</label></div></div></div>`;
+    }).join("");
+    return `<section class="card req${out ? " out" : ""}" id="req-${esc3(req.id)}" data-req="${esc3(req.id)}" data-rev="${req.revision}">
+<div class="reqhead"><h2><span class="rid">${esc3(req.id)}</span> ${pill(`r${req.revision}`)} ${pill(req.status)}${out ? " " + pill(req.scope, "warn") : ""}</h2><span class="meta">${accepted} of ${req.acceptanceCriteria.length} criteria accepted</span></div>
+<textarea class="auto reqtext" data-f="statement" data-initial="${esc3(req.statement)}" aria-label="Statement of ${esc3(req.id)}">${esc3(req.statement)}</textarea>
+<div class="row scoperow"><label class="meta">Scope<select data-f="scope" data-initial="${esc3(req.scope)}">${["in", "deferred", "excluded"].map((sc) => `<option value="${sc}"${sc === req.scope ? " selected" : ""}>${{ in: "In scope", deferred: "Deferred", excluded: "Out of scope" }[sc]}</option>`).join("")}</select></label>
+<label class="meta grow">Scope note<input type="text" data-f="scopeNote" data-initial="${esc3(req.scopeNote ?? "")}" value="${esc3(req.scopeNote ?? "")}"></label></div>
+<div class="achead"><h3>Acceptance criteria</h3><button type="button" data-accept-card>Accept all in this requirement</button></div>
 ${criteria || `<p class="muted">No acceptance criteria yet.</p>`}
-<label class="meta">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
-<label class="meta">Comment on the requirement<input type="text" data-f="comment" data-initial="${esc3(req.comment ?? "")}" value="${esc3(req.comment ?? "")}"></label>
+<div class="row addrow"><label class="meta grow">Add criteria (one per line)<textarea data-f="add-ac"></textarea></label>
+<label class="meta grow">Comment on the requirement<input type="text" data-f="comment" data-initial="${esc3(req.comment ?? "")}" value="${esc3(req.comment ?? "")}"></label></div>
 </section>`;
-  }).join("");
+  };
+  const groups = [
+    ["open", "Needs your decision", all.filter((r) => reqState(r) === "open")],
+    ["accepted", "Accepted", all.filter((r) => reqState(r) === "accepted")],
+    ["out", "Deferred or out of scope", all.filter((r) => reqState(r) === "out")]
+  ];
+  const sections = groups.filter(([, , list]) => list.length).map(([, title, list]) => `<h2 class="grouph">${esc3(title)} <span class="meta">${list.length}</span></h2>${list.map(card).join("")}`).join("");
+  const chips = all.map((r) => `<a class="chip ${reqState(r)}" href="#req-${esc3(r.id)}">${esc3(r.id)}</a>`).join("");
   const body2 = `${staleBanner(state2, "requirements_review")}
-<div class="card"><div class="row"><div class="grow kv"><span class="muted">In scope</span><span>${progress.requirements} requirement(s), ${progress.criteria} criteria</span><span class="muted">Accepted</span><span>${progress.accepted}</span><span class="muted">Rejected</span><span>${progress.rejected}</span><span class="muted">Undecided</span><span>${progress.pending}</span><span class="muted">Deferred / out</span><span>${progress.deferred} / ${progress.excluded}</span></div>
-<div><button id="btn-accept-all" type="button">Accept every criterion</button></div></div></div>
-${cards || `<p class="muted">No requirements yet.</p>`}`;
+<div class="card summary"><div class="row" style="align-items:center"><div class="grow"><div class="bigcount"><strong>${decided}</strong> of ${progress.criteria} criteria decided</div>
+<div class="pbar" role="img" aria-label="${progress.accepted} accepted, ${progress.rejected} rejected, ${progress.pending} undecided"><span class="a" style="width:${pct(progress.accepted)}%"></span><span class="r" style="width:${pct(progress.rejected)}%"></span></div>
+<div class="meta">${progress.accepted} accepted \xB7 ${progress.rejected} rejected \xB7 ${progress.pending} undecided \xB7 ${progress.requirements} requirement(s) in scope \xB7 deferred / out ${progress.deferred} / ${progress.excluded}</div></div>
+<div><button id="btn-accept-all" type="button">Accept every criterion</button></div></div>
+${chips ? `<nav class="chips" aria-label="Requirements">${chips}</nav>` : ""}</div>
+${sections || `<p class="muted">No requirements yet.</p>`}`;
   return shell(state2, "requirements", "Requirements review", body2, {}, options2, `<label class="marks"><input type="checkbox" id="accept-all"> Mark the review complete (accept everything still undecided)</label>`);
 }
 function renderPrototypeReview(state2, options2 = {}) {
@@ -9209,46 +9957,14 @@ function renderPrototypeReview(state2, options2 = {}) {
   if (!proto) {
     return shell(state2, "prototype", "Prototype review", `<p class="muted">There is no prototype yet. Ask Claude to build one from the accepted requirements.</p>`, {}, options2, "");
   }
-  const vars = [
-    ...Object.entries(proto.styles.colors).filter(([, v]) => COLOR_OK.test(v)).map(([k, v]) => `--p-${k.replace(/[^\w-]/g, "")}:${v}`),
-    ...proto.styles.fonts.body && COLOR_OK.test(proto.styles.fonts.body.replace(/['"]/g, "")) ? [`--p-font:${proto.styles.fonts.body}`] : [],
-    ...proto.styles.radius && COLOR_OK.test(proto.styles.radius) ? [`--p-radius:${proto.styles.radius}`] : []
-  ].join(";");
-  const tokenNote = proto.styles.sources.length > 0 ? `Styles read from ${proto.styles.sources.map((s) => esc3(s.file)).join(", ")}.` : "Neutral styles: no application styles were found, so the look is generic.";
-  const traceRows = [
-    ...proto.screens.flatMap((s) => s.elements.filter((e) => e.requirementIds.length || e.acIds.length).map((e) => `<tr><td>${esc3(s.id)}#${esc3(e.id)}</td><td>${esc3(e.label || e.kind)}</td><td>${esc3([...e.requirementIds, ...e.acIds].join(", "))}</td></tr>`)),
-    ...proto.endpoints.map((e) => `<tr><td>${esc3(e.method)} ${esc3(e.path)}</td><td>${esc3(e.summary)}</td><td>${esc3([...e.requirementIds, ...e.acIds].join(", "))}</td></tr>`)
-  ].join("");
-  const viewer = proto.kind === "ui" ? `<div class="proto" style="${esc3(vars)}"><div class="nav" id="proto-nav" role="tablist">${proto.screens.map((s) => `<button type="button" role="tab" data-screen="${esc3(s.id)}">${esc3(s.title)}</button>`).join("")}</div>
-<div class="row" style="padding:8px"><label class="meta">State <select id="proto-state"></select></label>${proto.roles.length ? `<label class="meta">Role <select id="proto-role">${proto.roles.map((r) => `<option>${esc3(r)}</option>`).join("")}</select></label>` : ""}<button id="proto-reset" type="button">Reset mock data</button></div>
-<div class="screen" id="proto-screen"></div></div>
-<p class="meta">Mock data only: nothing here talks to a real system. ${tokenNote}</p>` : `<p class="meta">Technical prototype of an API: request and response examples, no screens.</p>${proto.endpoints.map((e) => `<div class="card"><h2>${pill(e.method)} ${esc3(e.path)}</h2><p>${esc3(e.summary)}</p><div class="meta">${e.auth ? `Auth: ${esc3(e.auth)} \xB7 ` : ""}${esc3([...e.requirementIds, ...e.acIds].join(" "))}</div>
-${e.request !== void 0 ? `<h3>Request</h3><pre>${esc3(JSON.stringify(e.request, null, 2))}</pre>` : ""}${e.responses.map((r) => `<h3>Response ${r.status} ${esc3(r.description)}</h3>${r.example !== void 0 ? `<pre>${esc3(JSON.stringify(r.example, null, 2))}</pre>` : ""}`).join("")}</div>`).join("")}`;
-  const feedback = proto.feedback.map((f) => `<div class="card"><div class="row"><label class="marks"><input type="checkbox" data-resolve="${esc3(f.id)}"${f.resolved ? " checked disabled" : ""}> ${f.resolved ? "Resolved" : "Mark resolved"}</label><span class="meta">${esc3(f.target)} \xB7 ${esc3(f.at)}</span></div><p>${esc3(f.comment)}</p></div>`).join("");
-  const body2 = `${staleBanner(state2, "prototype")}
-<p>${pill(`${proto.kind === "ui" ? "UI" : "API"} prototype`)} ${pill(`revision ${proto.revision}`)} ${pill(proto.status, proto.status === "accepted" ? "ok" : "warn")}</p>
-${proto.notes ? `<p>${esc3(proto.notes)}</p>` : ""}
-${viewer}
-<h2 style="margin-top:18px">Your comments</h2><div id="fb-list"></div><button id="fb-add" type="button">Add a comment</button>
-${feedback ? `<h3>Earlier comments</h3>${feedback}` : ""}
-<h2 style="margin-top:18px">What it covers</h2>
-<table style="width:100%;border-collapse:collapse;font-size:13px"><tbody>${traceRows || `<tr><td class="muted">Nothing is linked to requirements yet.</td></tr>`}</tbody></table>`;
-  const clientData = {
-    proto: {
-      kind: proto.kind,
-      startScreen: proto.startScreen,
-      roles: proto.roles,
-      screens: proto.screens,
-      mock: proto.mock
-    }
-  };
-  return shell(state2, "prototype", "Prototype review", body2, clientData, options2, `<label class="marks"><input type="checkbox" id="accept-proto"> Accept this prototype</label>`);
+  const { body: body2, clientData } = renderPrototypeBody(state2, proto, staleBanner(state2, "prototype"));
+  return shell(state2, "prototype", "Prototype review", body2, clientData, options2, `<label class="marks"><input type="checkbox" id="accept-proto"> Accept this prototype</label>`, proto.kind === "ui");
 }
 function renderStoryPlanReview(state2, options2 = {}) {
   const plan = state2.storyPlan;
   if (!plan)
     return shell(state2, "story-plan", "Story plan review", `<p class="muted">There is no story plan yet.</p>`, {}, options2, "");
-  const coverage = analyzeStoryCoverage(state2);
+  const coverage2 = analyzeStoryCoverage(state2);
   const cards = plan.entries.map((e) => {
     const out = e.status === "excluded";
     return `<section class="card${out ? " out" : ""}" data-entry="${esc3(e.id)}" data-initial-status="${esc3(e.review.status)}" data-base="${planEntryBase(e)}">
@@ -9266,7 +9982,7 @@ function renderStoryPlanReview(state2, options2 = {}) {
 ${out ? `<p class="meta">Excluded: ${esc3(e.excludedReason ?? "")}</p><label class="marks"><input type="checkbox" data-f="restore"> Restore this story</label>` : `<label class="meta">Exclude from scope (reason)<input type="text" data-f="exclude"></label>`}
 <label class="meta">Comment<input type="text" data-f="comment" value="${esc3(e.review.comment ?? "")}"></label></section>`;
   }).join("");
-  const gaps = coverage.gaps.map((g) => `<li>${esc3(g.requirementId)}: ${esc3(g.reason)}</li>`).join("");
+  const gaps = coverage2.gaps.map((g) => `<li>${esc3(g.requirementId)}: ${esc3(g.reason)}</li>`).join("");
   const body2 = `${staleBanner(state2, "story_plan")}
 <p>${pill(`revision ${plan.revision}`)} ${pill(plan.status, plan.status === "agreed" ? "ok" : "warn")} ${pill(`${plan.entries.length} planned stories`)}</p>
 ${gaps ? `<div class="stale"><strong>Possible gaps</strong><ul>${gaps}</ul></div>` : ""}
@@ -9332,9 +10048,11 @@ function renderReview(state2, view, options2 = {}) {
       return renderStoriesReview(state2, options2);
   }
 }
-var CSS, SCRIPT, COLOR_OK;
+var CSS, SCRIPT;
 var init_review_html = __esm({
   "node_modules/@praxis/contracts/dist/review-html.js"() {
+    init_review_util();
+    init_prototype_viewer();
     init_review_submission();
     init_planning();
     CSS = `
@@ -9374,6 +10092,37 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,select:focus-vis
 .denied{background:var(--badbg);color:var(--bad);padding:8px;border-radius:6px}
 .state-msg{padding:16px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:8px}
 pre{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:8px;overflow:auto;font-size:12px;margin:4px 0}
+${PROTOTYPE_CSS}
+:root[data-theme=dark]{--bg:#14171f;--fg:#e6e9f0;--muted:#9aa3b5;--line:#2c3242;--card:#1c202b;--accent:#7aa2ff;--ok:#5ad08a;--bad:#ff8a80;--warn:#ffc266;--okbg:#14301f;--badbg:#3a1a18;--on-accent:#0b1020}
+.card.summary{position:sticky;top:0;z-index:4}
+.bigcount{font-size:15px;margin-bottom:6px}
+.pbar{display:flex;height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin:4px 0 6px}.pbar .a{background:var(--ok)}.pbar .r{background:var(--bad)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chip{font-size:12px;border:1px solid var(--line);border-radius:99px;padding:1px 9px;color:var(--fg);text-decoration:none;background:var(--bg)}
+.chip.accepted{border-color:var(--ok);color:var(--ok)}.chip.out{color:var(--muted)}.chip.open{border-color:var(--warn)}
+.grouph{font-size:15px;margin:22px 0 4px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+.card.req{padding:14px 16px;scroll-margin-top:150px}
+.reqhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.reqhead h2{font-size:16px}.rid{font-family:ui-monospace,Menlo,monospace}
+textarea.auto{overflow:hidden;line-height:1.55;min-height:28px}
+textarea.reqtext{font-size:16px;font-weight:500;margin:6px 0 8px;border-color:transparent;background:transparent;padding:4px 0}
+textarea.reqtext:hover,textarea.reqtext:focus{border-color:var(--line);background:var(--bg);padding:4px 8px}
+.scoperow{margin-bottom:6px}.scoperow select{width:auto}
+.achead{display:flex;justify-content:space-between;align-items:center;margin-top:10px}.achead h3{margin:0}.achead button{font-size:12px;padding:2px 8px}
+.ac{display:grid;grid-template-columns:52px 1fr;gap:4px 10px;padding:10px 0;border-top:1px solid var(--line)}
+.acid{font-size:12px;color:var(--muted);padding-top:6px}
+.acbody textarea.auto{border-color:transparent;background:transparent;padding:4px 0;min-height:0}
+.acbody textarea.auto:hover,.acbody textarea.auto:focus{border-color:var(--line);background:var(--bg);padding:4px 8px}
+.acctl{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:2px}
+.acctl input[type=text]{flex:1;min-width:140px;font-size:13px;padding:3px 8px}
+.acctl .rm{font-size:12px;color:var(--muted);display:flex;gap:4px;align-items:center;cursor:pointer}
+.prev{font-size:12px;color:var(--warn);background:var(--card);border-left:3px solid var(--warn);padding:2px 8px;margin:2px 0}
+.marks.tri{display:inline-flex;gap:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:var(--bg)}
+.marks.tri label{position:relative;gap:0;margin:0}.marks.tri label+label{border-left:1px solid var(--line)}
+.marks.tri input{position:absolute;inset:0;width:100%;height:100%;margin:0;opacity:0;cursor:pointer}
+.marks.tri span{display:block;padding:3px 10px;font-size:13px}
+.marks.tri label:has(input:checked).m-accepted span{background:var(--ok);color:#fff}.marks.tri label:has(input:checked).m-rejected span{background:var(--bad);color:#fff}.marks.tri label:has(input:checked).m-pending span{background:var(--card);font-weight:600}
+.marks.tri label:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:1px}
+.addrow{margin-top:8px}.addrow textarea{min-height:34px}
+@media (max-width:560px){.ac{grid-template-columns:1fr}.bar button{padding:4px 8px;font-size:13px}.card.summary{position:static}}
 `;
     SCRIPT = `
 (function(){
@@ -9466,82 +10215,11 @@ $('#btn-copy').addEventListener('click',function(){var t=summary(collect());show
 $('#btn-download').addEventListener('click',function(){var t=summary(collect());var b=new Blob([t],{type:'application/json'});var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=D.view+'-review-'+D.workItemId+'.json';document.body.appendChild(a);a.click();setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},0)});
 var acc=$('#btn-accept-all');if(acc)acc.addEventListener('click',function(){$$('input[type=radio][value=accepted]').forEach(function(r){if(!r.closest('.card.out'))r.checked=true})});
 $$('[data-accept-card]').forEach(function(b){b.addEventListener('click',function(){$$('input[type=radio][value=accepted]',b.closest('.card')).forEach(function(r){r.checked=true})})});
-// prototype viewer
-if(D.view==='prototype'&&D.proto&&D.proto.kind==='ui'){
-  var P=D.proto,mock=JSON.parse(JSON.stringify(P.mock)),cur=P.startScreen||(P.screens[0]&&P.screens[0].id),role=(P.roles&&P.roles[0])||'',stateName='default',modal=null;
-  var host=$('#proto-screen');
-  function h(t,a,c){var e=document.createElement(t);for(var k in (a||{})){if(k==='class')e.className=a[k];else e.setAttribute(k,a[k])}(c||[]).forEach(function(x){e.appendChild(typeof x==='string'?document.createTextNode(x):x)});return e}
-  function tag(el){var t=[].concat(el.requirementIds||[],el.acIds||[]);return t.length?h('span',{class:'tag'},[t.join(' ')]):document.createTextNode('')}
-  function coll(id){return mock.filter(function(c){return c.id===id})[0]}
-  function fillTable(box,el){
-    box.textContent='';
-    var c=coll(el.collection);
-    if(!c){box.appendChild(h('div',{class:'state-msg'},['No data']));return}
-    var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
-    var t=h('table',{},[]);t.appendChild(h('tr',{},cols.map(function(key){var f=c.fields.filter(function(x){return x.key===key})[0];return h('th',{},[f?f.label:key])})));
-    var rows=c.rows.filter(function(r){return !(P._q&&P._q[el.id])||JSON.stringify(r).toLowerCase().indexOf(P._q[el.id].toLowerCase())>=0});
-    if(!rows.length)box.appendChild(h('div',{class:'state-msg'},['No rows']));
-    rows.forEach(function(r){t.appendChild(h('tr',{},cols.map(function(key){return h('td',{},[String(r[key]==null?'':r[key])])})))});
-    if(rows.length)box.appendChild(t)
-  }
-  function render(){
-    P._tables=[];
-    host.textContent='';
-    var scr=P.screens.filter(function(s){return s.id===cur})[0];if(!scr)return;
-    var sw=$('#proto-state');sw.textContent='';scr.states.forEach(function(s){var o=h('option',{value:s},[s]);if(s===stateName)o.selected=true;sw.appendChild(o)});
-    if(scr.states.indexOf(stateName)<0)stateName='default';
-    host.appendChild(h('h2',{},[scr.title]));if(scr.description)host.appendChild(h('p',{class:'muted'},[scr.description]));
-    if(stateName!=='default'){host.appendChild(h('div',{class:'state-msg'},[(scr.stateMessages&&scr.stateMessages[stateName])||({loading:'Loading...',empty:'Nothing here yet.',error:'Something went wrong.',success:'Done.',denied:'You do not have permission.'}[stateName]||stateName)]));return}
-    scr.elements.forEach(function(el){
-      var wrap=h('div',{class:'el','data-el':scr.id+'#'+el.id});
-      if(el.allowedRoles&&el.allowedRoles.length&&el.allowedRoles.indexOf(role)<0){wrap.appendChild(h('div',{class:'denied'},['Not available for role "'+role+'"']));host.appendChild(wrap);return}
-      var k=el.kind;
-      if(k==='heading')wrap.appendChild(h('h3',{},[el.label||el.text||'']));
-      else if(k==='text')wrap.appendChild(h('p',{},[el.text||el.label||'']));
-      else if(k==='table'||k==='list'){
-        var box=h('div',{class:'tblbox'});wrap.appendChild(box);(P._tables=P._tables||[]).push({wrap:box,el:el});fillTable(box,el)}
-      else if(k==='__old_table'){
-        var c=coll(el.collection);
-        if(!c){wrap.appendChild(h('div',{class:'state-msg'},['No data']))}
-        else{
-          var cols=el.columns&&el.columns.length?el.columns:c.fields.map(function(f){return f.key});
-          var q=$('[data-search="'+el.id+'"]');
-          var t=h('table',{},[]);var hr=h('tr',{},cols.map(function(key){var f=c.fields.filter(function(x){return x.key===key})[0];return h('th',{},[f?f.label:key])}));t.appendChild(hr);
-          var rows=c.rows.filter(function(r){return !(P._q&&P._q[el.id])||JSON.stringify(r).toLowerCase().indexOf(P._q[el.id].toLowerCase())>=0});
-          if(!rows.length)wrap.appendChild(h('div',{class:'state-msg'},['No rows']));
-          rows.forEach(function(r){t.appendChild(h('tr',{},cols.map(function(key){return h('td',{},[String(r[key]==null?'':r[key])])})))});
-          if(rows.length)wrap.appendChild(t)}
-      }
-      else if(k==='search'){var i=h('input',{type:'text',placeholder:el.label||'Search','data-search':el.id});i.value=(P._q&&P._q[el.id])||'';if(P._focus===el.id){setTimeout(function(){i.focus();try{i.setSelectionRange(i.value.length,i.value.length)}catch(e){}},0)}i.addEventListener('input',function(){P._focus=el.id;P._q=P._q||{};P._q[el.collection||'']=i.value;(P.screens.filter(function(s){return s.id===cur})[0].elements).forEach(function(e2){if(e2.collection===el.collection){P._q[e2.id]=i.value}});(P._tables||[]).forEach(function(x){fillTable(x.wrap,x.el)})});wrap.appendChild(i)}
-      else if(k==='field'){wrap.appendChild(h('label',{},[el.label||el.field||'']));wrap.appendChild(h('input',{type:'text',placeholder:el.text||''}))}
-      else if(k==='button'||k==='link'){
-        var b=h('button',{class:'btn'+(k==='link'?' sec':''),type:'button'},[el.label||'Button']);
-        b.addEventListener('click',function(e){e.stopPropagation();
-          if(el.navigatesTo){cur=el.navigatesTo;stateName='default';render();syncNav()}
-          else if(el.action==='add-row'&&coll(el.collection)){var c=coll(el.collection),row={};c.fields.forEach(function(f){row[f.key]=f.type==='number'?c.rows.length+1:f.type==='boolean'?false:'New '+f.label});c.rows.push(row);render()}
-          else if(el.action==='delete-row'&&coll(el.collection)){coll(el.collection).rows.pop();render()}
-          else if(el.action==='submit'){stateName='success';render()}
-        });wrap.appendChild(b)}
-      else wrap.appendChild(h('div',{},[el.label||el.text||k]));
-      wrap.appendChild(tag(el));
-      var cb=h('button',{type:'button',style:'font-size:11px;margin-left:8px;padding:0 6px','aria-label':'Comment on '+el.id},['comment']);
-      cb.addEventListener('click',function(e){e.stopPropagation();var ta=$('[data-fb="'+scr.id+'#'+el.id+'"]');if(!ta)ta=addFb(scr.id+'#'+el.id);if(ta.scrollIntoView)ta.scrollIntoView({block:'center'});ta.focus()});
-      wrap.appendChild(cb);
-      host.appendChild(wrap)
-    })
-  }
-  function addFb(target){var box=$('#fb-list');var w=h('div',{class:'card'},[h('div',{class:'meta'},['Comment on '+target]),h('textarea',{'data-fb':target})]);box.appendChild(w);return $('textarea',w)}
-  function syncNav(){$$('#proto-nav button').forEach(function(b){b.classList.toggle('on',b.getAttribute('data-screen')===cur)})}
-  $$('#proto-nav button').forEach(function(b){b.addEventListener('click',function(){cur=b.getAttribute('data-screen');stateName='default';render();syncNav()})});
-  var sw=$('#proto-state');sw.addEventListener('change',function(){stateName=sw.value;render()});
-  var rl=$('#proto-role');if(rl){rl.addEventListener('change',function(){role=rl.value;render()})}
-  var rs=$('#proto-reset');if(rs)rs.addEventListener('click',function(){mock=JSON.parse(JSON.stringify(P.mock));P._q={};render()});
-  var add=$('#fb-add');if(add)add.addEventListener('click',function(){addFb('prototype')});
-  syncNav();render();
-}
+function fit(t){t.style.height='auto';t.style.height=(t.scrollHeight+2)+'px'}
+$$('textarea.auto').forEach(function(t){fit(t);t.addEventListener('input',function(){fit(t)})});
+${PROTOTYPE_SCRIPT}
 })();
 `;
-    COLOR_OK = /^[#\w(),.%\s/-]{1,60}$/;
   }
 });
 
@@ -9652,7 +10330,7 @@ var init_context_trust = __esm({
 
 // node_modules/@praxis/contracts/dist/briefing.js
 function buildResumeBriefing(state2) {
-  const coverage = analyzeStoryCoverage(state2);
+  const coverage2 = analyzeStoryCoverage(state2);
   return {
     workItem: { id: state2.workItem.id, title: state2.workItem.title, kind: state2.workItem.kind ?? "feature", mode: state2.mode, request: state2.history[0]?.note ?? "" },
     phase: state2.phase,
@@ -9673,7 +10351,7 @@ function buildResumeBriefing(state2) {
         detailed: state2.storyPlan?.entries.filter((e) => e.status === "detailed").length ?? 0,
         acceptance: acceptanceStatus(state2, "story_plan")
       },
-      stories: { ...storyReviewProgress(state2), acceptance: acceptanceStatus(state2, "stories_review"), coverageOk: coverage.ok },
+      stories: { ...storyReviewProgress(state2), acceptance: acceptanceStatus(state2, "stories_review"), coverageOk: coverage2.ok },
       services: state2.services.map((s) => ({ id: s.id, status: s.status, repositoryId: s.repositoryId }))
     },
     decisions: state2.decisions.map((d) => ({ id: d.id, statement: d.statement, confirmed: d.confirmed })),
@@ -9857,6 +10535,8 @@ var init_command_catalog = __esm({
     USE = {
       "revise-acceptance": "Change the TEXT of one or more existing acceptance criteria, each by its stable id (REQ-...-AC-nn). Only those criteria change: their revision goes up, their review returns to pending, and the earlier decision and remark are kept as 'previous'. Other criteria are not touched. expectedRevision (optional) refuses the edit if the criterion changed since you read it.",
       "revise-requirement": "Change the statement of a whole requirement (its id is REQ-...). It does not take an acceptance criterion id; for one criterion use revise-acceptance.",
+      "set-prototype": "Build the prototype as something the reviewer can USE, not a set of static screens: a filter element (param, filters) narrows a table, a click on a row (rowOpens) opens a drawer or modal (param, idField, detailFields, related, withinTable, onMissing) and both live in the URL query; add tabs, showWhen, required fields, datasets (empty, legacy records) and scenarios with expect so the situations can be checked in the page. Link every element to its REQ and AC ids and list what it does not reproduce in limitations. Tokens come from praxis_frontend_discover. See docs/workflow-stages.md, Interactive prototype.",
+      "update-prototype": "Operations include set-dataset, set-scenario and set-meta (limitations) next to the screen, element and mock operations.",
       "review-requirements": "Record marks and remarks on criteria, change scope, add or remove criteria. To only reword existing criteria prefer revise-acceptance."
     };
   }
@@ -79537,7 +80217,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"10136e15c3d1b1ff1964fdea13a47aff1c35399e4856d070414dee06eef4acf3","coreBaseline":"4042ae18c6be248ed0c03cd93dda48d90eaeb9c2","inputs":33}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"9bbf3b85aeeacb7636e7004ace5d3556eecd4a36b1e70099ca89b658295063d4","coreBaseline":"3756cb3d0fce6ebb6df72c8fdfa90652c8c2dc01","inputs":33}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80964,19 +81644,34 @@ function diffPaths(diff, root) {
 function assertDiffTouchesOnly(root, file2) {
   if (!file2.diff)
     return;
-  const allowed = containedPath(root, file2.path);
+  const allowedReal = containedPath(root, file2.path);
+  const realRoot = (0, import_node_fs9.realpathSync)((0, import_node_path8.resolve)(root));
+  const allowedLexical = (0, import_node_path8.resolve)(realRoot, file2.path);
+  const top = (0, import_node_child_process3.spawnSync)("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? (0, import_node_fs9.realpathSync)(top.stdout.trim()) : realRoot;
   const touched = diffPaths(file2.diff, root);
   if (touched.length === 0)
     throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes nothing`);
   for (const path of touched) {
+    const absolute = (0, import_node_path8.resolve)(topLevel, path);
+    const relative6 = (0, import_node_path8.relative)(realRoot, absolute);
+    if (relative6 === "" || relative6.startsWith("..") || (0, import_node_path8.isAbsolute)(relative6))
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}, outside the checkout`);
     let real;
     try {
-      real = containedPath(root, path);
+      real = containedPath(root, relative6);
     } catch {
       throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}, outside the checkout`);
     }
-    if (real !== allowed)
+    if (absolute !== allowedLexical || real !== allowedReal)
       throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}`);
+    try {
+      if ((0, import_node_fs9.lstatSync)(absolute).isSymbolicLink())
+        throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes ${path}, which is a link`);
+    } catch (error64) {
+      if (error64 instanceof Error && error64.message.startsWith("PROPOSAL_INVALID"))
+        throw error64;
+    }
   }
 }
 function applyProposal(root, proposal) {
