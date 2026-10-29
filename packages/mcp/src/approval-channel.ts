@@ -17,7 +17,10 @@ export type ElicitInput = (params: {
   requestedSchema: { type: "object"; properties: Record<string, unknown>; required: string[] };
 }, options?: { timeout?: number }) => Promise<ElicitResult>;
 
-/** A long preview (a Story, a plan) must still be readable; the dialog gets all of it, bounded. */
+/**
+ * The dialog must show the whole action: Approve binds everything in it. A message the dialog cannot carry in full is therefore
+ * refused, never cut (a cut message leaves out the lines the person most needs, and the Approve button still binds them).
+ */
 const MAX_MESSAGE = 12_000;
 
 export function approvalMessage(request: ApprovalRequest): string {
@@ -32,7 +35,14 @@ export function approvalMessage(request: ApprovalRequest): string {
     "Choose Approve to run exactly this. Choose Reject (or decline) to stop it.",
   ];
   const text = lines.join("\n");
-  return text.length <= MAX_MESSAGE ? text : `${text.slice(0, MAX_MESSAGE)}\n… (truncated: ask the agent to show the full preview before you approve)`;
+  if (text.length > MAX_MESSAGE) {
+    throw new ApprovalError(
+      "APPROVAL_TOO_LARGE",
+      `${request.summary} was NOT executed: what you would approve is ${text.length} characters, more than one approval dialog can show in full (${MAX_MESSAGE}). Approving something that is only partly shown is not allowed. Split it into smaller steps (fewer items per file or per command) and ask again.`,
+      { executed: false },
+    );
+  }
+  return text;
 }
 
 /** Error text that means "this connection cannot show the dialog", as opposed to a failure while showing it. */
@@ -137,6 +147,13 @@ export function hostPermissionChannel(planText: string | undefined): UserApprova
   return {
     kind: "host-permission",
     async ask(request: ApprovalRequest): Promise<AskAnswer> {
+      if (PERSONAL_ACTS.has(request.action) || request.action === "praxis_quality_service_fix") {
+        throw new ApprovalError(
+          "APPROVAL_CLIENT_UI_REQUIRED",
+          `${request.summary} was NOT executed. Host-permission mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item): the host's tool-permission prompt can be switched to "always allow", and then the agent would have approved itself. Do it in a client that shows an approval dialog (for example Claude Code).`,
+          { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } },
+        );
+      }
       const expected = planTextOf(request);
       if (planText === undefined) {
         throw new ApprovalError(
@@ -165,22 +182,41 @@ export function hostPermissionChannel(planText: string | undefined): UserApprova
  */
 export const trustedClientMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
 
-/** Acts only a person may perform. A standing "always allow" is not the person doing them. */
-const PERSONAL_ACTS = new Set(["confirm-story", "confirm-decision", "approve-service"]);
+/**
+ * Acts only a person may perform. A standing "always allow", whether Trusted Client mode or the host's own tool-permission
+ * prompt, is not the person doing them: only the client's own dialog (the answer an agent cannot write) can stand for them.
+ */
+export const PERSONAL_ACTS: ReadonlySet<string> = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item"]);
 
-export const trustedClientChannel: UserApprovalChannel = {
-  kind: "trusted-client",
-  async ask(request: ApprovalRequest): Promise<AskAnswer> {
-    if (PERSONAL_ACTS.has(request.action)) {
-      throw new ApprovalError(
-        "APPROVAL_CLIENT_UI_REQUIRED",
-        `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code), or in the praxis CLI.`,
-        { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } },
-      );
-    }
-    return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
-  },
-};
+/**
+ * The Trusted Client channel. Acts only a person may perform are not covered by the standing permission: when the client has
+ * a real dialog it is asked for those (the permission only replaces the confirmation of ordinary protected actions); when it
+ * has none they are refused.
+ */
+export function trustedClientChannelWith(dialog: UserApprovalChannel | undefined): UserApprovalChannel {
+  let delegated = false;
+  return {
+    // the person's own answer is recorded as the dialog's, not as the weaker standing permission
+    get kind() {
+      return delegated && dialog ? dialog.kind : ("trusted-client" as const);
+    },
+    async ask(request: ApprovalRequest): Promise<AskAnswer> {
+      if (PERSONAL_ACTS.has(request.action)) {
+        if (dialog) {
+          delegated = true;
+          return dialog.ask(request);
+        }
+        throw new ApprovalError(
+          "APPROVAL_CLIENT_UI_REQUIRED",
+          `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code).`,
+          { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } },
+        );
+      }
+      return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
+    },
+  };
+}
+export const trustedClientChannel: UserApprovalChannel = trustedClientChannelWith(undefined);
 
 /** A channel that never answers: used to compute what the user would be asked, without running anything. */
 export const planOnlyChannel: UserApprovalChannel = {

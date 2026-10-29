@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool } from "./tools.js";
 import { readPersistedState } from "./workflow-test-helpers.js";
 
@@ -25,7 +26,7 @@ async function step(repo: string, command: object, role: string): Promise<Envelo
   const applied = (await callTool(
     "praxis_workflow_apply",
     { repo, command: JSON.stringify(command), confirmation: "YES", previewFingerprint: fingerprint },
-    { role, version: VERSION },
+    { role, version: VERSION, approvalChannel: channelForOpenClassic("praxis_workflow_apply", { command: JSON.stringify(command) }) },
   )) as Envelope;
   expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
   return applied;
@@ -46,7 +47,7 @@ describe("Quality evidence through MCP workflow tools", () => {
             scenarioId: "US-QEV-001-S1",
             storyId: "US-QEV-001",
             requirementId: "REQ-QEV-101",
-            acceptanceCriterionId: "US-QEV-001-AC-01",
+            acceptanceCriterionId: "REQ-QEV-101-AC-01",
             kind: "happy",
             serviceId: "svc",
             module: "scrub.mjs",
@@ -57,7 +58,7 @@ describe("Quality evidence through MCP workflow tools", () => {
       }),
     );
 
-    await step(repo, { action: "open", projectId: "qev", title: "Evidence", request: "Evidence consistency" }, "ba");
+    await step(repo, { action: "open", mode: "classic", projectId: "qev", title: "Evidence", request: "Evidence consistency" }, "ba");
     await step(
       repo,
       {
@@ -80,7 +81,7 @@ describe("Quality evidence through MCP workflow tools", () => {
         objective: "Placeholders are unset",
         userValue: "Accurate diagnostics",
         happyPath: ["Scrub a placeholder"],
-        acceptanceCriteria: [{ id: "US-QEV-001-AC-01", given: "a placeholder", when: "scrubbed", then: "null" }],
+        acceptanceCriteria: [{ id: "REQ-QEV-101-AC-01", given: "a placeholder", when: "scrubbed", then: "null" }],
         expectedResults: ["null"],
         serviceIds: ["svc"],
         confirmedBehavior: false,

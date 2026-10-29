@@ -27,11 +27,14 @@ function logStderr(line: string): void {
  * Hints for the client's own permission UI: a preview or status reads, an apply changes something outside the
  * agent's notes (so a client that prompts per tool call prompts here, in addition to Praxis asking for the decision).
  */
+/** Tools filed as reads that still write into the work item or start a local page server: clients must not treat them as harmless. */
+const STATE_WRITING_READS = new Set(["praxis_repository_inspect", "praxis_review_render"]);
+
 function annotationsFor(tool: ToolDef) {
   const applies = tool.kind === "apply";
   return {
     title: tool.name,
-    readOnlyHint: !applies,
+    readOnlyHint: !applies && !STATE_WRITING_READS.has(tool.name),
     destructiveHint: applies,
     idempotentHint: false,
     openWorldHint: applies || tool.name.includes("jira") || tool.name.includes("git"),

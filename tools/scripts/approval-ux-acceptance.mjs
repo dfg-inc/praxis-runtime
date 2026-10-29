@@ -130,8 +130,11 @@ const repoWithPackageJson = () => {
       expect(result.ok, `${command.action}: ${JSON.stringify(result)}`);
     };
     next = answer("accept", "approve");
+    // opening a classic item is the user's choice: it asks once, in the dialog
+    const beforeOpen = session.elicited.length;
+    await record({ action: "open", projectId: "ux", title: "Approval UX", request: "r", mode: "classic" });
+    expect(session.elicited.length === beforeOpen + 1 && /CLASSIC mode/.test(session.elicited.at(-1).message), "opening a classic work item did not ask the user exactly once");
     const askedBefore = session.elicited.length;
-    await record({ action: "open", projectId: "ux", title: "Approval UX", request: "r" });
     await record({ action: "add-requirement", id: "REQ-UX-001", statement: "The user approves.", acceptanceCriteria: ["Done."] });
     await record({
       action: "add-story",
@@ -184,7 +187,7 @@ const repoWithPackageJson = () => {
     expect(noConfirm.isError === true && !existsSync(join(repo, ".project")), `no confirmation: ${JSON.stringify(noConfirm).slice(0, 300)}`);
     for (const confirmation of ["YES", "yes", "APPROVED"]) {
       // a value outside the tool's schema is refused by the host itself (no envelope); either way nothing runs
-      const refused = await call(session, "praxis_project_init_apply", { repo, confirmation, approved: true, userApproval: { decision: "approved" } }).catch(() => null);
+      const refused = await call(session, "praxis_project_init_apply", { repo, confirmation }).catch(() => null);
       expect((refused === null || refused.ok === false) && !existsSync(join(repo, ".project")), `confirmation=${confirmation} without a dialog ran: ${JSON.stringify(refused)}`);
       if (confirmation === "YES") {
         expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && /NOT executed/.test(refused.errors.join(" ")), `refusal: ${JSON.stringify(refused)}`);

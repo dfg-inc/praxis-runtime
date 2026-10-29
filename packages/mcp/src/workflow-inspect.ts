@@ -1,11 +1,15 @@
 import { basename, resolve } from "node:path";
 import {
+  approvalSummary,
+  acceptanceStatus,
   decisionContentFingerprint,
   evaluateFeature,
   featureReadiness,
   redactPersistent,
   requirementEvidence,
+  requirementsFingerprint,
   resumeWorkflow,
+  reviewProgress,
   storyContentFingerprint,
   type WorkflowState,
 } from "@praxis/contracts";
@@ -33,11 +37,12 @@ export const INSPECT_VIEWS = [
   "open-items",
   "quality",
   "links",
+  "approvals",
   "all",
 ] as const;
 export type InspectView = (typeof INSPECT_VIEWS)[number];
 
-const SECRET_VALUE = /\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
+const SECRET_VALUE = /(?:sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)|\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
 
 function scrub<T>(repo: string, value: T): T {
   const root = resolve(repo);
@@ -118,6 +123,51 @@ function overview(state: WorkflowState, repo: string) {
   };
 }
 
+/**
+ * The user's decision about one criterion, as stored: status, the reason they gave, and where/when. `at`/`via` are the STATUS
+ * decision (they move only when the status changes); `commentAt`/`commentVia` are the last comment change. `previous` is the decision
+ * the text had before it was revised (its reason stays readable once the criterion is back to pending).
+ */
+function reviewOf(review: WorkflowState["requirements"][number]["acceptanceCriteria"][number]["review"]) {
+  return {
+    status: review.status,
+    comment: review.comment ?? null,
+    decidedAt: review.at ?? null,
+    decidedVia: review.via ?? null,
+    commentAt: review.commentAt ?? null,
+    commentVia: review.commentVia ?? null,
+    previous: review.previous ?? null,
+  };
+}
+
+/** What the user said in the requirements review: the list a BA works through. Derived from the same stored marks as the page. */
+function requirementReview(state: WorkflowState) {
+  // only what is in scope: progress counts the same set, so the lists and the numbers agree
+  const rows = state.requirements
+    .filter((req) => req.status !== "superseded" && req.scope === "in")
+    .flatMap((req) =>
+      req.acceptanceCriteria.map((c) => ({
+        requirementId: req.id,
+        scope: req.scope,
+        criterionId: c.id,
+        statement: c.statement,
+        revision: c.revision,
+        ...reviewOf(c.review),
+      })),
+    );
+  return {
+    acceptance: acceptanceStatus(state, "requirements_review"),
+    fingerprint: requirementsFingerprint(state),
+    progress: reviewProgress(state),
+    rejected: rows.filter((r) => r.status === "rejected"),
+    commented: rows.filter((r) => r.comment !== null),
+    pending: rows.filter((r) => r.status === "pending").map((r) => r.criterionId),
+    requirementComments: state.requirements
+      .filter((req) => req.status !== "superseded" && req.scope === "in" && req.comment)
+      .map((req) => ({ requirementId: req.id, comment: req.comment as string })),
+  };
+}
+
 function requirements(state: WorkflowState) {
   return state.requirements.map((req) => {
     const evidence = requirementEvidence(state, req.id);
@@ -126,7 +176,10 @@ function requirements(state: WorkflowState) {
       statement: req.statement,
       revision: req.revision,
       status: req.status,
-      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision })),
+      scope: req.scope,
+      scopeNote: req.scopeNote ?? null,
+      comment: req.comment ?? null,
+      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision, review: reviewOf(c.review) })),
       serviceIds: req.serviceIds,
       assumptions: state.assumptions.filter((a) => req.assumptionIds.includes(a.id) || a.requirementIds.includes(req.id)),
       storyIds: state.stories.filter((s) => s.requirementIds.includes(req.id)).map((s) => s.id),
@@ -229,10 +282,17 @@ function openItems(state: WorkflowState) {
   };
 }
 
+/** Every decision that needed a person, with what its channel proves; decisions without a record are listed as unverified provenance. */
+function approvals(state: WorkflowState) {
+  return { summary: approvalSummary(state as never), records: state.approvals ?? [], note: "trust: independent-human = the client's approval dialog; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode; test-only = the test harness. No client identifies the person: actor stays empty." };
+}
+
 function quality(state: WorkflowState) {
   const feature = evaluateFeature(state);
   return {
-    featureVerdict: { verdict: feature.verdict, gaps: feature.gaps },
+    featureVerdict: { verdict: feature.verdict, gaps: feature.gaps, evidence: feature.evidence.verdict, readinessGaps: feature.readinessGaps },
+    coverageRevision: state.coverageRevision,
+    criteria: { totals: feature.evidence.totals, requirements: feature.evidence.requirements, stories: feature.evidence.stories },
     verdicts: state.verdicts,
     findings: state.findings,
     coverage: state.coverage,
@@ -313,11 +373,14 @@ export async function inspectWorkflow(
         return quality(state);
       case "links":
         return links(state, repo);
+      case "approvals":
+        return approvals(state);
     }
   };
   const body: Record<string, unknown> = {};
   if (view === "all") {
     for (const name of INSPECT_VIEWS.filter((v) => v !== "all")) body[name] = await section(name);
+    body.requirementReview = requirementReview(state);
   } else {
     const value = await section(view);
     if (id && Array.isArray(value) && value.length === 0) {
@@ -327,6 +390,7 @@ export async function inspectWorkflow(
       throw new WorkItemError("INSPECT_NOT_FOUND", `no handoff ${id} in work item ${state.workItem.id}`);
     }
     body[view] = value;
+    if (view === "requirements") body.requirementReview = requirementReview(state);
   }
   return scrub(repo, {
     schema: INSPECT_SCHEMA,

@@ -1,9 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
+import { containedPath } from "./path-guard.js";
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ApprovalError, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
-import { inspectionPlan, runProjectChecks, type Finding, type Scenario } from "./generic-verification.js";
+import { ApprovalError, effectiveServices, type EvidenceSource, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
+import { tmpdir } from "node:os";
+import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
+import { inspectionPlan, runProjectChecks, type BrowserEvidence, type Finding, type Scenario } from "./generic-verification.js";
 import { inspectService, type ProjectProfile, type ServiceLocation } from "./project-profile.js";
 import { loadWorkflow } from "./workflow-store.js";
 
@@ -14,7 +18,7 @@ type Proposal = { files: ProposalFile[] };
 
 export type VerificationMeta = {
   strategy: "project-adapter" | "executable-checks" | "inspection-only";
-  evidenceLevel: "module" | "unit" | "static" | "service-integration" | "api" | "contract";
+  evidenceLevel: "module" | "unit" | "static" | "service-integration" | "api" | "contract" | "browser";
   deployedEndToEnd: false;
   limitations: string[];
   profiles: ProjectProfile[];
@@ -29,7 +33,12 @@ type VerificationCommand = {
   testsGreen: boolean;
   scenarios: Scenario[];
   findings: Finding[];
+  /** This run is complete for what the Runtime executes: its earlier results that were not repeated are retired, evidence from other sources stays. */
+  replaceSource: "executed";
+  baseCoverageRevision: number;
   meta: VerificationMeta;
+  /** Per-scenario provenance for what ran in a browser. Never part of the command an agent can send. */
+  evidenceSources: Record<string, EvidenceSource>;
 };
 
 function git(repo: string, args: string[], input?: string): string {
@@ -41,37 +50,13 @@ function git(repo: string, args: string[], input?: string): string {
 }
 
 function safeFile(root: string, relative: string): string {
-  if (!relative || relative.startsWith("/") || relative.includes("\0") || relative.split(/[/\\]/).includes("..")) {
-    throw new Error("UNSAFE_PATH");
-  }
-  const absolute = resolve(root, relative);
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) throw new Error("UNSAFE_PATH");
-  return absolute;
+  return containedPath(root, relative);
 }
 
-async function loadAdapter(workflowRepo: string): Promise<{
-  verify?: (ctx: unknown) => Promise<{ scenarios: Scenario[]; findings: Finding[] }>;
-  propose?: (serviceId: string) => Proposal | null;
-} | undefined> {
+/** The project adapter runs in its own process with a scrubbed environment (see project-code-runner.ts); only JSON crosses. */
+function adapterFile(workflowRepo: string): string | undefined {
   const file = join(workflowRepo, ".praxis", "quality", "adapter.mjs");
-  if (!existsSync(file)) return undefined;
-  return import(`${pathToFileURL(file).href}?v=${Date.now()}-${Math.random()}`) as Promise<{
-    verify?: (ctx: unknown) => Promise<{ scenarios: Scenario[]; findings: Finding[] }>;
-    propose?: (serviceId: string) => Proposal | null;
-  }>;
-}
-
-async function loadModule(service: ServiceLocation, relative: string) {
-  if (!service.localPath) {
-    return { missingLocation: true, repository: service.repository, file: relative };
-  }
-  const file = safeFile(service.localPath, relative);
-  if (!existsSync(file)) return { missingModule: true, repository: service.repository, file };
-  const mod = (await import(`${pathToFileURL(file).href}?v=${Date.now()}-${Math.random()}`)) as Record<
-    string,
-    unknown
-  >;
-  return { mod, repository: service.repository, file };
+  return existsSync(file) ? file : undefined;
 }
 
 function testsAreGreen(services: ServiceLocation[]): boolean {
@@ -86,6 +71,7 @@ function testsAreGreen(services: ServiceLocation[]): boolean {
         const result = spawnSync(process.execPath, ["--test", ...tests.map((name) => join("src", name))], {
           cwd: service.localPath,
           encoding: "utf8",
+          env: scrubbedEnv(tmpdir()),
         });
         if ((result.status ?? 1) !== 0) return false;
       }
@@ -99,6 +85,7 @@ function testsAreGreen(services: ServiceLocation[]): boolean {
       const result = spawnSync("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
         cwd: service.localPath,
         encoding: "utf8",
+        env: scrubbedEnv(tmpdir()),
       });
       if ((result.status ?? 1) !== 0) return false;
     }
@@ -120,7 +107,13 @@ function serviceVerdicts(scenarios: Scenario[]): VerificationMeta["serviceVerdic
 }
 
 function readHostProposal(workflowRepo: string, serviceId: string): Proposal | undefined {
-  const file = join(workflowRepo, ".praxis", "quality", "proposals", `${serviceId}.json`);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(serviceId) || serviceId.includes("..")) throw new Error("UNSAFE_PATH");
+  let file: string;
+  try {
+    file = containedPath(workflowRepo, join(".praxis", "quality", "proposals", `${serviceId}.json`));
+  } catch {
+    return undefined; // a link that leaves the repository is not a proposal
+  }
   if (!existsSync(file)) return undefined;
   const parsed = JSON.parse(readFileSync(file, "utf8")) as Proposal;
   if (!Array.isArray(parsed.files) || parsed.files.length === 0) throw new Error("PROPOSAL_INVALID");
@@ -131,6 +124,8 @@ export async function buildStoryVerification(
   repo: string,
   independentRerun: boolean,
   workItemId?: string,
+  /** Where screenshots of a browser run are written. Omitted for a preview, which writes nothing. */
+  artifactsDir?: string,
 ): Promise<VerificationCommand> {
   const state = loadWorkflow(repo, workItemId);
   if (!state) throw new Error("WORKFLOW_MISSING");
@@ -138,17 +133,19 @@ export async function buildStoryVerification(
   const requirements = state.requirements.filter((item) => item.status !== "superseded");
   // A work item with requirements but no Story is verified from checks bound to its acceptance criteria.
   if (!stories.length && !requirements.length) throw new Error("STORY_MISSING");
-  const services = state.services as ServiceLocation[];
+  const services = effectiveServices(state) as ServiceLocation[];
   const profiles = services.map((service) => inspectService(service));
-  const adapter = await loadAdapter(repo);
+  const adapter = adapterFile(repo);
   let scenarios: Scenario[] = [];
   let findings: Finding[] = [];
   let strategy: VerificationMeta["strategy"] = "inspection-only";
   let evidenceLevel: VerificationMeta["evidenceLevel"] = "static";
   let limitations: string[] = [];
   let plan: VerificationMeta["plan"] = [];
-  if (adapter?.verify) {
-    const verified = await adapter.verify({ state, independentRerun, loadModule });
+  let browser: BrowserEvidence[] = [];
+  const adapterResult = adapter ? await runIsolated<{ scenarios: Scenario[]; findings: Finding[] } | null>({ file: adapter, cwd: repo, op: "verify", state: { ...state, services }, independentRerun }) : null;
+  if (adapterResult) {
+    const verified = adapterResult;
     scenarios = verified.scenarios;
     findings = verified.findings;
     strategy = "project-adapter";
@@ -164,7 +161,7 @@ export async function buildStoryVerification(
       status: scenario.status,
     }));
   } else {
-    const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state.workItem.id, stories, services, profiles });
+    const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state.workItem.id, stories, services, profiles, ...(artifactsDir ? { artifactsDir } : {}) });
     if (!executed && !stories.length) {
       throw new Error(
         "EVIDENCE_MISSING: this work item has requirements but no Story and no executable checks. Add " +
@@ -177,6 +174,7 @@ export async function buildStoryVerification(
     strategy = executed ? "executable-checks" : "inspection-only";
     evidenceLevel = selected.evidenceLevel;
     limitations = selected.limitations;
+    browser = (selected as { browser?: BrowserEvidence[] }).browser ?? [];
     plan = selected.plan;
   }
   if (independentRerun) {
@@ -212,7 +210,33 @@ export async function buildStoryVerification(
     testsGreen: testsAreGreen(services),
     scenarios,
     findings,
+    replaceSource: "executed",
+    baseCoverageRevision: state.coverageRevision,
     meta,
+    // a browser check that could not run (no browser, no serve root) is still browser-level evidence: BLOCKED, not "executed"
+    evidenceSources: Object.fromEntries([
+      ...scenarios
+        .filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId)))
+        .map((sc): [string, EvidenceSource] => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${randomUUID()}`, artifacts: [] }]),
+      ...browser.flatMap((run) =>
+        run.scenarioIds.map((id): [string, EvidenceSource] => {
+          const shot = run.artifacts[id];
+          return [
+            id,
+            {
+              kind: "browser",
+              runner: `${run.runner}@${run.browserVersion}`,
+              // the same id as the artifacts directory, so a result can be matched to the screenshots of its run
+              runId: artifactsDir ? basename(artifactsDir) : `run-${randomUUID()}`,
+              startedAt: run.startedAt,
+              finishedAt: run.finishedAt,
+              subjectDigest: run.subjectDigest,
+              artifacts: shot ? [{ path: shot.path && artifactsDir ? relativePath(repo, join(artifactsDir, shot.path)).split(sep).join("/") : `(not stored in a preview) ${id}.png`, sha256: shot.sha256, bytes: shot.bytes }] : [],
+            },
+          ];
+        }),
+      ),
+    ]),
   };
 }
 
@@ -243,15 +267,18 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
   const branch = existingBranch ?? `quality/${serviceId}-story-fix`;
   if (PROTECTED.has(branch)) throw new Error("PROTECTED_BRANCH");
   const hostProposal = readHostProposal(repo, serviceId);
-  const adapter = hostProposal ? undefined : await loadAdapter(repo);
-  const proposal = hostProposal ?? adapter?.propose?.(serviceId) ?? null;
+  const adapter = hostProposal ? undefined : adapterFile(repo);
+  const proposal = hostProposal ?? (adapter ? await runIsolated<Proposal | null>({ file: adapter, cwd: repo, op: "propose", serviceId }) : null);
   if (!proposal) {
     throw new Error(
       "HOST_EDIT_UNAVAILABLE: no coding-agent patch is available. Write .praxis/quality/proposals/" +
         `${serviceId}.json and authorize prepare-fix. No files were changed.`,
     );
   }
-  for (const file of proposal.files) safeFile(service.localPath, file.path);
+  for (const file of proposal.files) {
+    safeFile(service.localPath, file.path);
+    assertDiffTouchesOnly(service.localPath, file);
+  }
   const findings = state.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
   const branchRef = spawnSync("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
   const baseSha = (branchRef.status ?? 1) === 0 ? branchRef.stdout.trim() : git(service.localPath, ["rev-parse", "HEAD"]);
@@ -276,9 +303,69 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
   };
 }
 
+/**
+ * Every path `git apply` would touch for this diff, as git itself reads it (it strips the leading component, handles renames,
+ * copies, creations, deletions, quoted names and hunk lines that look like headers). Our own parser would disagree with git.
+ */
+export function diffPaths(diff: string, root: string): string[] {
+  const out = spawnSync("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
+  if ((out.status ?? 1) !== 0) throw new Error(`PROPOSAL_INVALID: git cannot read the diff (${(out.stderr || "").trim().slice(0, 160)})`);
+  const tokens = out.stdout.split("\0");
+  const paths = new Set<string>();
+  for (let i = 0; i < tokens.length; i += 1) {
+    const m = tokens[i].match(/^(\S+)\t(\S+)\t(.*)$/s);
+    if (!m) continue;
+    if (m[3] === "") {
+      // a rename or copy: the old and the new name follow
+      paths.add(tokens[i + 1] ?? "");
+      paths.add(tokens[i + 2] ?? "");
+      i += 2;
+    } else {
+      paths.add(m[3]);
+    }
+  }
+  paths.delete("");
+  return [...paths];
+}
+
+/**
+ * A diff may only touch the file it was proposed for (and that file must stay inside the checkout): the approval lists exactly
+ * that file. `git apply --numstat` prints paths relative to the top of the git repository (the service root can be a
+ * subdirectory of it, and git then prefixes header-less names), so they are resolved from there and compared, lexically, with
+ * the approved file; a touched path that is itself a link, or that reaches the approved file through a link, does not count.
+ */
+export function assertDiffTouchesOnly(root: string, file: { path: string; diff?: string }): void {
+  if (!file.diff) return;
+  const allowedReal = containedPath(root, file.path);
+  const realRoot = realpathSync(resolve(root));
+  const allowedLexical = resolve(realRoot, file.path);
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? realpathSync(top.stdout.trim()) : realRoot;
+  const touched = diffPaths(file.diff, root);
+  if (touched.length === 0) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} changes nothing`);
+  for (const path of touched) {
+    const absolute = resolve(topLevel, path);
+    const relative = relativePath(realRoot, absolute);
+    if (relative === "" || relative.startsWith("..") || isAbsolute(relative)) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}, outside the checkout`);
+    let real: string;
+    try {
+      real = containedPath(root, relative);
+    } catch {
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}, outside the checkout`);
+    }
+    if (absolute !== allowedLexical || real !== allowedReal) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} also changes ${path}`);
+    try {
+      if (lstatSync(absolute).isSymbolicLink()) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} changes ${path}, which is a link`);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("PROPOSAL_INVALID")) throw error;
+    }
+  }
+}
+
 function applyProposal(root: string, proposal: Proposal): void {
   for (const file of proposal.files) {
     const absolute = safeFile(root, file.path);
+    assertDiffTouchesOnly(root, file);
     if (file.diff) {
       git(root, ["apply", "--whitespace=nowarn"], file.diff);
       continue;

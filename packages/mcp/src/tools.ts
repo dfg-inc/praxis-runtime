@@ -1,25 +1,38 @@
 import { diagnosticsPath } from "./diagnostics-log.js";
-import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { OpContext } from "@praxis/cli/operations";
 import {
   ApprovalError,
   ApprovalNeedsInput,
+  obtainUserApproval,
   approvalsGivenInThisCall,
   logDecision,
   subjectDigest,
   withApprovalChannel,
+  WorkflowError,
+  commandCatalog,
+  explainCommandError,
+  type EvidenceSource,
   type UserApprovalChannel,
   type WorkflowRole,
+  parseWorkflowCommand,
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
-import { hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannel, trustedClientMode } from "./approval-channel.js";
+import { containedPath } from "./path-guard.js";
+import { PERSONAL_ACTS, hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannelWith, trustedClientMode } from "./approval-channel.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
-import { toolsForRole, type PraxisRole } from "./catalog.js";
+import { TOOLS as CATALOG_TOOLS, toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
 import { developerWorkItemStatus, inspectWorkflow } from "./workflow-inspect.js";
 import { sessionStart } from "./session-start.js";
-import { applyResolved, applyWorkflow, applyWorkflowApproved, capabilityRoute, previewWorkflow, workflowStatus } from "./workflow-store.js";
+import { applyCanonInit, planCanonInit } from "./canon-init.js";
+import { diagnoseContextTool } from "./context-tool.js";
+import { discoverFrontend } from "./frontend-discover.js";
+import { inspectRepository, repositoryBrief } from "./repository-tools.js";
+import { applyHandedOver, readSubmissionFile, renderReviewTool } from "./review-service.js";
+import { applyResolved, applyWorkflow, applyWorkflowApproved, capabilityRoute, loadWorkflow, previewWorkflow, workflowStatus } from "./workflow-store.js";
 
 export {
   TOOLS,
@@ -99,6 +112,7 @@ const PROTECTED_TOOLS = new Set([
   "praxis_developer_git_merge_request",
   "praxis_developer_git_link_jira_apply",
   "praxis_workflow_apply",
+  "praxis_canon_init_apply",
 ]);
 
 /** What the connected MCP client declared at initialize, as far as approvals are concerned. */
@@ -120,6 +134,15 @@ export type ClientReport = {
  * What the user would be asked for a protected apply tool, computed from the live state, running nothing: the apply tool
  * runs against a channel that never answers, and everything that changes something asks before it changes anything.
  */
+/** An argument the tool does not declare, named with its accepted neighbours; null when every argument is declared. */
+function strayArguments(name: string, def: { inputSchema: { properties: Record<string, unknown> } }, args: Record<string, unknown>): string | null {
+  const accepted = Object.keys(def.inputSchema.properties);
+  const stray = Object.keys(args).filter((key) => !accepted.includes(key) && args[key] !== undefined);
+  if (stray.length === 0) return null;
+  const suggest = (key: string) => accepted.find((a) => a.toLowerCase() === key.toLowerCase()) ?? accepted.find((a) => key.length > 3 && (a.toLowerCase().startsWith(key.toLowerCase().slice(0, 4)) || key.toLowerCase().startsWith(a.toLowerCase().slice(0, 4))));
+  return `${name} does not take ${stray.map((key) => `"${key}"${suggest(key) ? ` (did you mean "${suggest(key)}"?)` : ""}`).join(", ")}. Accepted arguments: ${accepted.join(", ")}. Nothing was changed.`;
+}
+
 async function approvalPlan(args: Record<string, unknown>, ctx: OpContext, opts: { role: PraxisRole; version: string; extra?: Partial<OpContext>; client?: ClientReport }): Promise<unknown> {
   const target = str(args.tool);
   if (!target || !PROTECTED_TOOLS.has(target)) throw new Error(`INVALID_INPUT: tool must be one of ${[...PROTECTED_TOOLS].join(", ")}`);
@@ -134,10 +157,15 @@ async function approvalPlan(args: Record<string, unknown>, ctx: OpContext, opts:
     action: request.action,
     kind: request.kind,
     summary: request.summary,
-    planText: planTextOf(request as never),
+    // an act only a person may perform has no plan text to hand to the host's prompt: that prompt cannot stand for the person
+    ...(hostPermissionMode() && PERSONAL_ACTS.has(request.action) ? { planText: null, available: false, reason: "this act needs a client with an approval dialog; host-permission mode does not cover it" } : { planText: planTextOf(request as never) }),
     ...(request.subject ? { subjectDigest: subjectDigest(request.subject) } : {}),
     note: "This is what the user is asked to approve. It runs nothing.",
   });
+  // the arguments the plan is for are held to the target tool's own list: a misspelt workItemId must not plan the current item
+  const targetDef = CATALOG_TOOLS.find((t) => t.name === target);
+  const strayTarget = targetDef ? strayArguments(target, targetDef, targetArgs) : null;
+  if (strayTarget) throw new Error(`INVALID_INPUT: ${strayTarget}`);
   if (target === "praxis_workflow_apply") {
     // an agent-authored record needs no approval; only a human act does
     const command = JSON.parse(String(targetArgs.command ?? "{}")) as Record<string, unknown>;
@@ -246,7 +274,7 @@ export async function callTool(
   // exact plan in the arguments (see approval-channel.ts). Never chosen when the client has a dialog.
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
   // Trusted Client (explicit opt-in) replaces any dialog for protected tools: the owner chose not to be asked per action.
-  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannel : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
+  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannelWith(opts.approvalChannel) : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 
@@ -268,6 +296,11 @@ async function callToolInner(
     });
   }
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
+  // An argument the tool does not declare is refused, never dropped: a misspelt workItemId must not run the action on the current work item.
+  const strayMessage = strayArguments(name, def, args);
+  if (strayMessage) {
+    return mcpEnvelope({ ok: false, operation: name, version: opts.version, code: "INVALID_INPUT", errors: [strayMessage] });
+  }
   const ctx = ctxFromArgs(args, {
     ...opts.extra,
   });
@@ -299,6 +332,9 @@ async function callToolInner(
         version: opts.version,
         ...withApprovalNote(name, await runWorkflowTool(name, args, ctx.repo, opts.version)),
       });
+    }
+    if (name === "praxis_canon_init_preview" || name === "praxis_canon_init_apply" || name === "praxis_workflow_commands" || name === "praxis_review_render" || name === "praxis_review_apply" || name === "praxis_frontend_discover" || name === "praxis_repository_inspect" || name === "praxis_repository_brief" || name === "praxis_context_diagnose") {
+      return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await runPlanningTool(name, args, ctx.repo, opts.role) });
     }
     if (name === "praxis_developer_status" && str(args.workItemId)) {
       if (str(args.workPackage) ?? str(args.wp) ?? str(args.workPackageId)) {
@@ -352,10 +388,15 @@ async function callToolInner(
   } catch (err) {
     // not an error: the protocol layer must ask the user (2026-07-28 round trip) and re-run the call
     if (err instanceof ApprovalNeedsInput) throw err;
-    const message = ops.redact(err instanceof Error ? err.message : String(err));
+    const message = ops.redact(explainCommandError(err) ?? (err instanceof Error ? err.message : String(err)));
     const coded = err as { code?: unknown };
+    const prefixed = explainCommandError(err) ? "INVALID_INPUT" : message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH|REVIEW_CHANGED):/)?.[1];
     const code =
-      err instanceof ops.PraxisOpError
+      err instanceof WorkflowError
+        ? err.code
+        : typeof prefixed === "string" && prefixed
+          ? prefixed
+          : err instanceof ops.PraxisOpError
         ? err.code
         : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code)
           ? coded.code
@@ -365,7 +406,9 @@ async function callToolInner(
               ? "INVALID_INPUT"
               : "EXTERNAL_SERVICE_ERROR";
     const details =
-      err instanceof ops.PraxisOpError
+      err instanceof WorkflowError
+        ? { ...(err.details ?? {}) }
+        : err instanceof ops.PraxisOpError
         ? {
             ...(err.stage ? { stage: err.stage } : {}),
             ...(typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {}),
@@ -385,22 +428,136 @@ async function callToolInner(
   }
 }
 
+const MAX_IMPLEMENTATION_BYTES = 2 * 1024 * 1024;
+
 function hydrateWorkflowCommand(repo: string, raw: unknown): unknown {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
   const command = { ...(raw as Record<string, unknown>) };
   const relative = command.implementationPath;
   if (typeof relative !== "string" || relative.length === 0) return command;
-  const root = resolve(repo);
-  const absolute = resolve(root, relative);
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
-    throw new Error("implementation path escapes the repository");
+  let real: string;
+  try {
+    real = containedPath(repo, relative);
+    const info = statSync(real);
+    if (!info.isFile()) throw new Error("UNSAFE_PATH");
+    if (info.size > MAX_IMPLEMENTATION_BYTES) throw new Error("INVALID_INPUT: the implementation file is too large to read");
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("INVALID_INPUT")) throw error;
+    throw new Error("INVALID_INPUT: implementation path escapes the repository or is not a regular file inside it");
   }
-  command.implementationSource = readFileSync(absolute, "utf8");
+  command.implementationSource = readFileSync(real, "utf8");
   delete command.implementationPath;
   return command;
 }
 
-async function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string, version: string): Promise<unknown> {
+async function runPlanningTool(name: string, args: Record<string, unknown>, repo: string, role: PraxisRole): Promise<unknown> {
+  const workItemId = str(args.workItemId);
+  switch (name) {
+    case "praxis_canon_init_preview": {
+      const plan = planCanonInit(repo, { product: str(args.product) });
+      return { dryRun: true, repo: plan.repo, willCreate: plan.create.map((c) => c.path), alreadyThere: plan.skipped, next: plan.next, note: "Nothing was written. praxis_canon_init_apply creates these paths after the user approves them." };
+    }
+    case "praxis_canon_init_apply": {
+      const plan = planCanonInit(repo, { product: str(args.product) });
+      if (plan.create.length === 0) return { created: [], alreadyThere: plan.skipped, note: "The canon root is already complete: nothing to create." };
+      await obtainUserApproval(
+        {
+          action: "praxis_canon_init_apply",
+          kind: "development_action",
+          summary: `Create the BA canon root in ${plan.repo} (${plan.create.length} path(s))`,
+          description: `Creates, and never overwrites:\n${plan.create.map((c) => `- ${c.path}`).join("\n")}\n\nLeft untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
+          subject: JSON.stringify(plan.create.map((c) => [c.path, c.content ?? ""])),
+        },
+        { confirmation: str(args.confirmation), repo },
+      );
+      const created = applyCanonInit(plan);
+      return { created, alreadyThere: plan.skipped, next: plan.next };
+    }
+    case "praxis_workflow_commands": {
+      const only = str(args.action);
+      const all = commandCatalog();
+      return { count: all.length, commands: only ? all.filter((c) => c.action === only) : all.map(({ example: _e, ...c }) => c), note: "Pass the command to praxis_workflow_preview and praxis_workflow_apply as JSON text. Ask for one action to get an example. userOnly commands record the user's decisions and are refused when an agent sends them; use praxis_review_render / praxis_review_apply." };
+    }
+    case "praxis_review_render":
+      return renderReviewTool(repo, { view: str(args.view) ?? "", workItemId, serve: args.serve === false ? false : true, reopen: args.reopen === true });
+    case "praxis_review_apply": {
+      const text = str(args.submission);
+      const file = str(args.file);
+      if ((text === undefined) === (file === undefined)) throw new Error("INVALID_INPUT: pass exactly one of submission or file");
+      let raw: unknown;
+      try {
+        raw = text !== undefined ? JSON.parse(text) : readSubmissionFile(repo, file as string);
+      } catch (error) {
+        throw new Error(`INVALID_INPUT: the decisions could not be read: ${error instanceof SyntaxError ? "not valid JSON" : error instanceof Error && /^INVALID_INPUT/.test(error.message) ? error.message.replace(/^INVALID_INPUT: /, "") : "the file could not be opened"}`);
+      }
+      return applyHandedOver(repo, workItemId, raw, str(args.confirmation));
+    }
+    case "praxis_frontend_discover": {
+      const registered = str(args.repositoryId);
+      // The application to look at is often a different checkout from the workflow repository (several repositories per item),
+      // so an explicit path is allowed; discovery only reads style files and returns names and values, never file contents.
+      let target = str(args.path) ?? repo;
+      if (registered) {
+        const state = loadWorkflow(repo, workItemId);
+        const entry = state?.repositories.find((r) => r.id === registered);
+        if (!entry?.localPath) throw new Error(`INVALID_INPUT: repository ${registered} is not registered with a local path`);
+        target = resolve(repo, entry.localPath);
+      }
+      return discoverFrontend(target);
+    }
+    case "praxis_repository_inspect":
+      return inspectRepository(repo, { repositoryId: str(args.repositoryId) ?? "", workItemId });
+    case "praxis_repository_brief":
+      return repositoryBrief(repo, { repositoryId: str(args.repositoryId), workItemId });
+    default:
+      return diagnoseContextTool(repo, { workItemId, role: (["ba", "architect", "developer", "quality"] as const).find((r) => r === str(args.role)) ?? (role === "runtime" ? undefined : role) });
+  }
+}
+
+/**
+ * In a guided work item an implementation record must point at something real: a file that exists inside the service's
+ * checkout (its path, its registered repository's path, or this repository). Records for work that does not exist are what
+ * made "entered" and "implemented" fakeable.
+ */
+function assertImplementationPath(repo: string, command: Record<string, unknown>, workItemId: string | undefined): void {
+  const state = loadWorkflow(repo, workItemId);
+  if (!state || state.mode !== "guided") return;
+  const service = state.services.find((s) => s.id === command.serviceId);
+  if (!service) return; // the reducer reports the unknown service
+  const registered = state.repositories.find((r) => r.id === service.repositoryId);
+  const root = realpathSync(resolve(repo, service.localPath ?? registered?.localPath ?? "."));
+  let target: string;
+  try {
+    target = realpathSync(resolve(root, String(command.path ?? "")));
+    if (!statSync(target).isFile()) throw new Error("not a file");
+  } catch {
+    throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is not an existing file in ${service.id}'s checkout (${root}); record real work only`);
+  }
+  if (target !== root && !target.startsWith(`${root}${sep}`)) throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
+}
+
+const MAX_COMMAND_FILE = 4 * 1024 * 1024;
+
+/** A command may come from a file inside the repository: large commands are written once instead of being retyped (and cut) in every call. */
+function withCommandFile(args: Record<string, unknown>, repo: string): Record<string, unknown> {
+  if (args.commandFile === undefined) return args;
+  if (args.command !== undefined) throw new Error("INVALID_INPUT: give command or commandFile, not both");
+  if (typeof args.commandFile !== "string") throw new Error("INVALID_INPUT: commandFile must be a path inside the repository");
+  const file = containedPath(repo, args.commandFile);
+  if (!statSync(file).isFile() || statSync(file).size > MAX_COMMAND_FILE) throw new Error("INVALID_INPUT: commandFile must be a regular file of at most 4 MB");
+  const { commandFile: _file, ...rest } = args;
+  return { ...rest, command: readFileSync(file, "utf8") };
+}
+
+/** The default preview answer is small: the briefing of the whole work item (80-140 KB) goes out only on request. */
+function compactPreview<T>(preview: T, verbose: boolean): T {
+  if (verbose || !preview || typeof preview !== "object") return preview;
+  const { resume: _resume, ...rest } = preview as Record<string, unknown>;
+  return rest as T;
+}
+
+async function runWorkflowTool(name: string, rawArgs: Record<string, unknown>, repo: string, version: string): Promise<unknown> {
+  const args = withCommandFile(rawArgs, repo);
   const workItemId = str(args.workItemId);
   if (name === "praxis_workflow_inspect") {
     return inspectWorkflow(repo, { view: str(args.view), workItemId, id: str(args.id) });
@@ -413,15 +570,33 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
     const resolved = allowed.includes(role as WorkflowRole) ? (role as WorkflowRole) : "user";
     return capabilityRoute({ request: str(args.request) ?? "", role: resolved });
   }
+  if (str(args.command) === undefined) throw new Error("INVALID_INPUT: give command (JSON text) or commandFile (a file inside the repository)");
+  const verbose = args.verbose === true;
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? "")) as Record<string, unknown>;
+  if (parsed.action === "record-implementation") assertImplementationPath(repo, parsed, workItemId);
+  if (parsed.action === "record-repository-inspection") {
+    throw new Error("INVALID_INPUT: a repository inspection is read by the Runtime, not written by an agent: call praxis_repository_inspect");
+  }
+  if (parsed.action === "verify-stories" || parsed.action === "prepare-fix") {
+    // these two are built by the Runtime from its own plan, but what the agent sent is still held to the schema: a misspelt key is an error
+    parseWorkflowCommand(JSON.parse(str(args.command) ?? ""));
+  }
   if (parsed.action === "verify-stories") {
-    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
-    const meta = recorded.meta;
-    if (name === "praxis_workflow_preview") {
-      const preview = previewWorkflow(repo, recorded, workItemId);
-      return { ...preview, result: { ...(preview.result as object), ...meta } };
+    const startedAt = new Date().toISOString();
+    const runId = `run-${randomUUID()}`;
+    const isPreview = name === "praxis_workflow_preview";
+    const current = loadWorkflow(repo, workItemId);
+    // screenshots are stored only when the result is applied: a preview writes nothing
+    const artifactsDir = !isPreview && current ? resolve(repo, ".praxis", "quality", current.workItem.id, "artifacts", runId) : undefined;
+    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId, artifactsDir);
+    const { meta, evidenceSources, ...command } = recorded;
+    // the Runtime ran these checks itself: this, not anything in a command, is what makes the evidence "executed" or "browser"
+    const source: EvidenceSource = { kind: "executed", runner: "praxis-runtime:verify-stories", runId, startedAt, finishedAt: new Date().toISOString(), artifacts: [] };
+    if (isPreview) {
+      const preview = previewWorkflow(repo, command, workItemId, source, evidenceSources);
+      return compactPreview({ ...preview, result: { ...(preview.result as object), ...meta } }, verbose);
     }
-    const applied = applyWorkflow(repo, recorded, str(args.previewFingerprint) ?? "", workItemId);
+    const applied = applyWorkflow(repo, command, str(args.previewFingerprint) ?? "", workItemId, undefined, source, evidenceSources);
     return { ...applied, result: { ...(applied.result as object), ...meta } };
   }
   if (parsed.action === "prepare-fix") {
@@ -432,11 +607,13 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
       typeof parsed.existingBranch === "string" ? parsed.existingBranch : undefined,
       workItemId,
     );
-    if (name === "praxis_workflow_preview") return previewWorkflow(repo, planned, workItemId);
+    // the patch travels with the Runtime's own plan; the workflow command is only the change record
+    const asCommand = ({ proposal: _proposal, ...command }: typeof planned) => command;
+    if (name === "praxis_workflow_preview") return compactPreview(previewWorkflow(repo, asCommand(planned), workItemId), verbose);
     const committed = await commitServiceFix(repo, planned, workItemId, str(args.confirmation));
-    return applyResolved(repo, str(args.previewFingerprint) ?? "", planned, committed, workItemId);
+    return applyResolved(repo, str(args.previewFingerprint) ?? "", asCommand(planned), asCommand(committed), workItemId);
   }
-  if (name === "praxis_workflow_preview") return previewWorkflow(repo, parsed, workItemId);
+  if (name === "praxis_workflow_preview") return compactPreview(previewWorkflow(repo, parsed, workItemId), verbose);
   return applyWorkflowApproved(repo, parsed, str(args.previewFingerprint) ?? "", workItemId, str(args.confirmation));
 }
 

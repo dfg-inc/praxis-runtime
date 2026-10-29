@@ -21,7 +21,11 @@ import { connectOfficialMcp, parseDoctorEnvelope, versionNegotiationModern } fro
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const option = (name) => args.find((arg, i) => args[i - 1] === `--${name}`) ?? args.find((arg) => arg.startsWith(`--${name}=`))?.split("=")[1];
-const marketplaceSource = resolve(option("marketplace") ?? join(here, "../../../praxis-marketplace"));
+// --marketplace may be a local directory, a git URL, or a GitHub shorthand (owner/repo). A URL or shorthand is also what the
+// full-set and single-role installs add (exactly what a user types in Claude); a local directory is cloned first.
+const marketplaceArg = option("marketplace");
+const remoteSource = marketplaceArg && (/^https?:\/\//.test(marketplaceArg) || /^[\w.-]+\/[\w.-]+$/.test(marketplaceArg) ? marketplaceArg : undefined);
+const marketplaceSource = remoteSource ? (/^https?:/.test(remoteSource) ? remoteSource : `https://github.com/${remoteSource}.git`) : resolve(marketplaceArg ?? join(here, "../../../praxis-marketplace"));
 const previousRef = option("previous");
 
 const proven = [];
@@ -55,20 +59,25 @@ expect(["praxis", "praxis-runtime", "praxis-ba", "praxis-architect", "praxis-dev
 
 function listInstalled(configDir) {
   const out = claude(configDir, "plugin", "list").out;
-  return [...out.matchAll(/❯ (\S+)@praxis\s+Version: (\S+)\s+Read from: (\S+)/g)].map((m) => ({ name: m[1], version: m[2], path: m[3] }));
+  // A marketplace read in place (local directory) prints "Read from"; a git-sourced one is copied into the plugin cache.
+  return [...out.matchAll(/❯ (\S+)@praxis\s+Version: (\S+)(?:\s+Read from: (\S+))?/g)].map((m) => ({
+    name: m[1],
+    version: m[2],
+    path: m[3] ?? join(configDir, "plugins", "cache", "praxis", m[1], m[2]),
+  }));
 }
 
 // 1 + 3 + 4 + 5 + 6: the full set
 const full = join(work, "config-full");
 mkdirSync(full);
-let r = claude(full, "plugin", "marketplace", "add", mk);
+let r = claude(full, "plugin", "marketplace", "add", remoteSource ?? mk);
 expect(r.ok, `marketplace add: ${r.out}`);
 r = claude(full, "plugin", "install", "praxis@praxis");
 expect(r.ok && /\+ 5 dependencies/.test(r.out), `install praxis: ${r.out}`);
 const installed = listInstalled(full);
 expect(installed.map((p) => p.name).sort().join() === "praxis,praxis-architect,praxis-ba,praxis-developer,praxis-quality,praxis-runtime", `installed: ${JSON.stringify(installed)}`);
 expect(installed.every((p) => p.version === marketplaceVersion), `versions: ${JSON.stringify(installed)}`);
-prove(`installing only "praxis" also installed praxis-runtime, praxis-ba, praxis-architect, praxis-developer, praxis-quality (all ${marketplaceVersion})`);
+prove(`${remoteSource ? `marketplace added by "${remoteSource}"; ` : ""}installing only "praxis" also installed praxis-runtime, praxis-ba, praxis-architect, praxis-developer, praxis-quality (all ${marketplaceVersion})`);
 
 const mcpConfigs = installed.filter((p) => existsSync(join(p.path, ".mcp.json")));
 expect(mcpConfigs.length === 1 && mcpConfigs[0].name === "praxis-runtime", `MCP configs: ${mcpConfigs.map((p) => p.name)}`);
@@ -81,6 +90,42 @@ for (const p of installed.filter((item) => item.name.startsWith("praxis-") && it
   expect(skills.includes("local-workflow") && skills.includes("present-plan"), `${p.name} skills: ${skills}`);
 }
 prove("every role plugin ships local-workflow and present-plan skills");
+
+const baInstalled = installed.find((p) => p.name === "praxis-ba");
+const baSkills = readdirSync(join(baInstalled.path, "skills")).filter((s) => existsSync(join(baInstalled.path, "skills", s, "SKILL.md")));
+const wantedBa = ["capture-cr", "grill-cr", "ba-plan-slice", "shape-requirement", "prepare-wp", "approve-plan", "accept", "ba-lint", "one-pager", "requirements-review", "prototype", "story-plan", "stories-review", "change-request", "resume-work"];
+expect(wantedBa.every((s) => baSkills.includes(s)), `installed praxis-ba lacks: ${wantedBa.filter((s) => !baSkills.includes(s)).join(", ")}`);
+// every file a BA skill points at exists in the installed plugin
+for (const s of baSkills) {
+  for (const m of readFileSync(join(baInstalled.path, "skills", s, "SKILL.md"), "utf8").matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([A-Za-z0-9_./-]+)/g)) {
+    const rel = m[1].replace(/[.,;:)]+$/, "");
+    expect(existsSync(join(baInstalled.path, rel)), `BA skill ${s} points at ${rel}, which the installed plugin does not contain`);
+  }
+}
+prove(`installed praxis-ba carries ${baSkills.length} skills including capture-cr, grill-cr, ba-plan-slice, shape-requirement, prepare-wp, approve-plan, accept and the review skills; every ${"$"}{CLAUDE_PLUGIN_ROOT} path they use exists`);
+
+// Generated build outputs must be in what a user installs (they are build products, not source): BA's validator CLI and every
+// role's session bootstrap, runnable with no npm install.
+{
+  const ba = installed.find((p) => p.name === "praxis-ba");
+  expect(existsSync(join(ba.path, "canon-graph/dist/cli.js")) && existsSync(join(ba.path, "bin/praxis-ba.cjs")), "installed praxis-ba lacks canon-graph/dist or bin/praxis-ba.cjs");
+  const bare = mkdtempSync(join(work, "canon-"));
+  const baCli = (...cliArgs) => spawnSync(process.execPath, [join(ba.path, "bin/praxis-ba.cjs"), ...cliArgs, "--repo", bare], { cwd: bare, encoding: "utf8", env: { PATH: process.env.PATH } });
+  const noCanon = baCli("status");
+  expect(/no canon here: run praxis-ba init/.test(`${noCanon.stdout}${noCanon.stderr}`), `a new project: status must say to run init: ${noCanon.stdout}${noCanon.stderr}`);
+  const init = baCli("init");
+  expect(init.status === 0, `installed BA CLI init: ${init.stdout}${init.stderr}`);
+  const status = baCli("status");
+  expect(/VERIFY-OK/.test(status.stdout), `installed BA CLI: ${status.stdout}${status.stderr}`);
+  expect(baCli("id", "next", "--scope", "cr").status === 0, "a canon created by the installed plugin's init can allocate ids");
+  for (const role of ["ba", "architect", "developer", "quality"]) {
+    const plugin = installed.find((p) => p.name === `praxis-${role}`);
+    const dir = mkdtempSync(join(work, `${role}-`));
+    const boot = spawnSync(process.execPath, [join(plugin.path, "tools/session-bootstrap.cjs"), dir], { cwd: dir, encoding: "utf8", env: { PATH: process.env.PATH } });
+    expect(boot.status === 0, `installed ${role} session-bootstrap.cjs: ${boot.stderr}`);
+  }
+  prove("generated build outputs are in the installed plugins: BA canon-graph/dist and the self-contained bin/praxis-ba.cjs (runs, VERIFY-OK), session-bootstrap.cjs of all four roles (run)");
+}
 
 const runtime = installed.find((p) => p.name === "praxis-runtime");
 const mcpJson = JSON.parse(readFileSync(join(runtime.path, ".mcp.json"), "utf8"));
@@ -137,7 +182,7 @@ await withRuntime({ PRAXIS_STATE_HOME: stateHome, PRAXIS_APPROVAL_MODE: "trusted
 // 2: a single role pulls the Runtime by itself
 const roleOnly = join(work, "config-role");
 mkdirSync(roleOnly);
-expect(claude(roleOnly, "plugin", "marketplace", "add", mk).ok, "role marketplace add");
+expect(claude(roleOnly, "plugin", "marketplace", "add", remoteSource ?? mk).ok, "role marketplace add");
 r = claude(roleOnly, "plugin", "install", "praxis-quality@praxis");
 expect(r.ok && /\+ 1 dependency: praxis-runtime/.test(r.out), `role install: ${r.out}`);
 expect(listInstalled(roleOnly).map((p) => p.name).sort().join() === "praxis-quality,praxis-runtime", "role-only set");
@@ -149,12 +194,13 @@ if (previousRef) {
   mkdirSync(upgrade);
   const old = join(work, "marketplace-old");
   git(work, "clone", "-q", mk, old);
+  const currentSha = git(old, "rev-parse", "HEAD");
   git(old, "checkout", "-q", previousRef);
   const oldVersion = JSON.parse(readFileSync(join(old, ".claude-plugin/marketplace.json"), "utf8")).metadata.version;
   expect(claude(upgrade, "plugin", "marketplace", "add", old).ok, "upgrade: add old");
   for (const name of ["praxis-ba", "praxis-runtime"]) expect(claude(upgrade, "plugin", "install", `${name}@praxis`).ok, `upgrade: install old ${name}`);
   expect(listInstalled(upgrade).every((p) => p.version === oldVersion), "old versions installed");
-  git(old, "checkout", "-q", "master");
+  git(old, "checkout", "-q", currentSha);
   expect(claude(upgrade, "plugin", "marketplace", "update", "praxis").ok, "upgrade: marketplace update");
   for (const name of ["praxis-ba", "praxis-runtime"]) {
     r = claude(upgrade, "plugin", "update", `${name}@praxis`);
@@ -172,17 +218,17 @@ const scan = (dir) => {
     if (statSync(path).isDirectory()) scan(path);
     else if (/\.(json|md|mjs|js|cjs|yml|yaml|txt)$/.test(name) && statSync(path).size < 3_000_000) {
       const text = readFileSync(path, "utf8");
-      if (/\/Users\/serg\b/.test(text) && !/\/docs\//.test(path)) offenders.push(path.replace(mk, ""));
+      if (/\/Users\/(?!example\b|you\b|me\b|user\b|name\b)[A-Za-z0-9._-]+\//.test(text) && !/\/docs\//.test(path)) offenders.push(path.replace(mk, ""));
     }
   }
 };
 scan(join(mk, "plugins"));
 scan(join(mk, ".claude-plugin"));
 expect(offenders.length === 0, `developer paths in shipped plugins: ${offenders.slice(0, 5).join(", ")}`);
-prove("no /Users/serg path in the shipped plugins or manifests");
+prove("no developer home path (/Users/<name>) in the shipped plugins or manifests");
 
 rmSync(work, { recursive: true, force: true });
 console.log(`PASS marketplace-install (${proven.length} checks, Claude Code CLI)`);
 for (const line of proven) console.log(`  ok ${line}`);
-console.log("NOT PROVEN: the Claude UI flow (Customize -> Plugins -> Add marketplace); Claude Desktop Chat; a hosted GitHub marketplace.");
+console.log("NOT PROVEN: the Claude UI flow (Customize -> Plugins -> Add marketplace); Claude Desktop Chat.");
 void dirname;

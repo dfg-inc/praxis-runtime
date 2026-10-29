@@ -601,6 +601,7 @@ export const TOOLS: ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] },
         workPackage: wpProp,
         repo: repoProp,
         remoteName: { type: "string" },
@@ -643,6 +644,7 @@ export const TOOLS: ToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] },
         workPackage: wpProp,
         repo: repoProp,
         remoteName: { type: "string" },
@@ -702,7 +704,8 @@ export const TOOLS: ToolDef[] = [
       "READ-ONLY Git Delivery journal: commit SHA, remote identity, PR/MR URL, CI status if known. Does not write. Role: Developer.",
     inputSchema: {
       type: "object",
-      properties: { workPackage: wpProp, repo: repoProp },
+      properties: {
+        provider: { type: "string", enum: ["github", "gitlab"] }, workPackage: wpProp, repo: repoProp },
       required: ["workPackage"],
       additionalProperties: false,
     },
@@ -758,7 +761,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_workflow_inspect",
     description:
-      "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria, User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA→Architect→Developer→Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | all. id narrows requirements/stories/decisions/work/handoffs to one record.",
+      "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria and the user's review of each criterion (status, comment, who and when; `requirementReview` (view requirements) lists the rejected and commented ones, so a BA can act on the user's remarks), User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA→Architect→Developer→Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | approvals | all. `approvals` lists every decision that needed a person with its channel and what it proves; `stories` and `decisions` carry the revision and contentFingerprint confirm-story / confirm-decision need; `quality` carries per-requirement and per-story criteria counts. id narrows requirements/stories/decisions/work/handoffs to one record.",
     inputSchema: {
       type: "object",
       properties: {
@@ -766,10 +769,149 @@ export const TOOLS: ToolDef[] = [
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         view: {
           type: "string",
-          enum: ["overview", "requirements", "stories", "decisions", "work", "handoffs", "open-items", "quality", "links", "all"],
+          enum: ["overview", "requirements", "stories", "decisions", "work", "handoffs", "open-items", "quality", "links", "approvals", "all"],
           description: "Which part of the stored workflow to return. Default overview.",
         },
         id: { type: "string", description: "Optional record id (REQ-..., US-..., decision id, service id, handoff id) to return only that record." },
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_workflow_commands",
+    description:
+      "READ-ONLY list of every workflow command (action) with its required and optional fields, whether it records the user's own decisions (userOnly: refused from an agent), and a working JSON example for the non-obvious ones (pass action to get one). Use it before writing a command for praxis_workflow_preview / praxis_workflow_apply instead of guessing field names.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, action: { type: "string", description: "One action, for its example (for example add-story, set-prototype, record-impact)." } },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_canon_init_preview",
+    description:
+      "READ-ONLY plan for starting the BA canon in a NEW project without any manual service files and without the BA CLI: lists exactly what would be created (.ba/config.yaml, .ba/counters.yaml, a draft vision.md, the canon folders) and what already exists and is left alone. Writes nothing. Refuses (and says why) a symbolic link or a path of the wrong kind. Same files as `praxis-ba init`.",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, product: { type: "string", description: "Product name for the heading of the draft vision (optional)." } },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_canon_init_apply",
+    description:
+      "Create the BA canon root listed by praxis_canon_init_preview. Only ever creates: an existing file or folder is left untouched. The user approves exactly the listed paths in the client's own dialog before anything is written. Does not create a first epic or the documentation layer (praxis-ba epic add and the ba-scaffold skill do).",
+    inputSchema: {
+      type: "object",
+      properties: { repo: repoProp, product: { type: "string", description: "Product name for the heading of the draft vision (optional)." }, confirmation: confirmProp },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_review_render",
+    description:
+      "Build the standard HTML review for one stage and return a link the USER opens: view requirements (every acceptance criterion with its own accept/reject/comment control, edit by id, add/remove criteria, scope: in / deferred / out), prototype (clickable screens on mock data with states and roles, comments on elements), story-plan (one line per planned story, edit, exclude, agree), or stories (a checkbox for every criterion, step, rule and result). Writes an offline copy under .praxis/workflow/reviews and serves a live copy on 127.0.0.1 so the user's Save records their decisions directly. The page is a view, never the source of truth. Does not change workflow state.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        view: { type: "string", enum: ["requirements", "prototype", "story-plan", "stories", "contracts"], description: "Which review to build." },
+        serve: { type: "boolean", description: "Serve the live page on loopback (default true). False writes only the offline file." },
+        reopen: { type: "boolean", description: "Open a fresh page even if this review was opened less than ten minutes ago (by default the open one is reused and no new tab is opened)." },
+      },
+      required: ["view"],
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_review_apply",
+    description:
+      "Record the decisions a user made in an HTML review when the page could not save them itself (they copied or downloaded the decisions file). Pass the JSON text as submission or the downloaded file as file. Edits are applied; whatever records that the user ACCEPTED or REJECTED something is shown to the user in the client's approval dialog first, bound to exactly those decisions, and is refused without a dialog. Items that changed since the page was rendered are skipped and reported as conflicts; the rest is applied. The agent cannot record the user's acceptance any other way.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        submission: { type: "string", description: "The decisions JSON (contract praxis.review.submission) copied from the review page." },
+        file: { type: "string", description: "Path of the downloaded decisions file (inside the repository or ~/Downloads)." },
+        confirmation: confirmProp,
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "apply",
+  },
+  {
+    name: "praxis_frontend_discover",
+    description:
+      "READ-ONLY look at a repository's frontend before building a prototype: framework, style files, component directories, screen candidates and the design tokens (colors, font, radius) found in its styles and theme files, with the files they came from. Returns only values it parsed; file contents are not passed back. Reports when no tokens were found so the prototype says it uses neutral styles, and when there is no frontend so a backend task gets an API prototype instead.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        repositoryId: { type: "string", description: "A registered repository of the work item to look at. Omitted means repo itself." },
+        path: { type: "string", description: "Directory to look at instead (for a checkout that is not registered)." },
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_repository_inspect",
+    description:
+      "Inspect a REGISTERED repository of the work item (register it first with the register-repository workflow command) and record what the Runtime itself reads: head commit, branch, manifests, frameworks, frontend, and which agent-instruction files exist (listed, never followed). The inspection cannot be typed in by the agent. Read-only on the repository; writes the inspection record into the work item.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        repositoryId: { type: "string", description: "Id of the registered repository." },
+      },
+      required: ["repositoryId"],
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_repository_brief",
+    description:
+      "READ-ONLY brief of one repository (or of all) in a work item that spans several: its requirements and stories, the services there, contracts it provides or consumes, what it waits for in other repositories, the implementation order across repositories, regression checks, and what Developer and Quality must do there. Also reports per repository whether anyone has actually implemented or verified anything there.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        repositoryId: { type: "string", description: "Repository to brief. Omitted returns the overview of all repositories." },
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
+    name: "praxis_context_diagnose",
+    description:
+      "READ-ONLY explanation of what steers the agent: the order of instruction sources (host system instructions first, repository content last as data), the Praxis skills the current role and stage load, the context the work item restores, and agent-instruction files (CLAUDE.md, AGENTS.md, skills, rules) found in the repository or in analysed repositories, with any text in them aimed at the agent flagged. Never returns file contents.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
+        role: { type: "string", enum: ["ba", "architect", "developer", "quality"], description: "Role to list tools for." },
       },
       additionalProperties: false,
     },
@@ -796,15 +938,17 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_workflow_preview",
     description:
-      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, set-service, quality-check). A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional.",
+      "PREVIEW a local workflow command (open, select-work-item, link-work-item, add-requirement, handoff, revise-requirement, revise-acceptance, set-service, quality-check). To change the text of ONE or more existing acceptance criteria by id (REQ-...-AC-nn) use revise-acceptance {edits:[{id,statement}]}: only those criteria get a new revision and return to pending (their earlier decision and remark stay as 'previous'); the result lists each criterion before and after (acceptanceChanges). Applying it asks the USER to approve the exact wording in the client's dialog (an agent's confirmation=YES is not enough; a client without a dialog cannot run it); an agent cannot reword an accepted criterion any other way. A key the command does not accept is refused (UNKNOWN_COMMAND_PARAMETER), never ignored; a command that changes nothing reports noChange. A repository can hold several work items; pass workItemId to address one, otherwise the current one is used. Does not write. Returns previewFingerprint. Jira is optional. Every command with its fields and an example: praxis_workflow_commands.",
     inputSchema: {
       type: "object",
       properties: {
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand" },
+        commandFile: { type: "string", description: "Instead of command: a file inside the repository that holds the JSON WorkflowCommand (for a large command: write it once, then preview and apply refer to it, nothing is retyped or cut)." },
+        verbose: { type: "boolean", description: "Also return the resume briefing of the work item (large). The default answer is compact: fingerprint, result and, for a human act, what the user will be asked." },
       },
-      required: ["command"],
+      required: [],
       additionalProperties: false,
     },
     roles: ["ba", "architect", "developer", "quality"],
@@ -820,10 +964,11 @@ export const TOOLS: ToolDef[] = [
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand matching the preview" },
+        commandFile: { type: "string", description: "Instead of command: the same file the preview used (inside the repository). The command read now must be the one that was previewed." },
         confirmation: confirmProp,
         previewFingerprint: fingerprintProp,
       },
-      required: ["command", "confirmation", "previewFingerprint"],
+      required: ["confirmation", "previewFingerprint"],
       additionalProperties: false,
     },
     roles: ["ba", "architect", "developer", "quality"],

@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool, toolsForRole } from "./tools.js";
 import { readPersistedState, type McpEnvelope } from "./workflow-test-helpers.js";
 
 const VERSION = "test";
 
 async function call(tool: string, repo: string, role: string, args: Record<string, unknown> = {}): Promise<McpEnvelope> {
-  return (await callTool(tool, { repo, ...args }, { role: role as "ba", version: VERSION })) as McpEnvelope;
+  return (await callTool(tool, { repo, ...args }, { role: role as "ba", version: VERSION, approvalChannel: channelForOpenClassic(tool, args) })) as McpEnvelope;
 }
 
 /** Real MCP preview then apply with a host approval bound to the preview fingerprint. */
@@ -44,7 +45,7 @@ function snapshot(dir: string): string {
 /** A work item that went through BA → Architect → Developer → Quality with every kind of context. */
 async function populated(): Promise<{ repo: string; workItemId: string }> {
   const repo = mkdtempSync(join(tmpdir(), "praxis-inspect-"));
-  const opened = await step(repo, "ba", { action: "open", projectId: "ins", title: "Inspect everything", request: "Show me the project" });
+  const opened = await step(repo, "ba", { action: "open", mode: "classic", projectId: "ins", title: "Inspect everything", request: "Show me the project" });
   const workItemId = opened.data.workItemId as string;
   await step(repo, "ba", {
     action: "add-requirement",
@@ -100,8 +101,19 @@ async function populated(): Promise<{ repo: string; workItemId: string }> {
         storyId: "US-INS-001",
         storyRevision: 1,
         requirementId: "REQ-INS-101",
-        acceptanceCriterionId: "US-INS-001-AC-01",
+        acceptanceCriterionId: "REQ-INS-101-AC-01",
         scenarioId: "US-INS-001-HAPPY-1",
+        kind: "happy",
+        serviceId: "svc-inspect",
+        status: "PASS_WITH_RISKS",
+        evidence: ["executed inspect against the stored state"],
+      },
+      {
+        storyId: "US-INS-001",
+        storyRevision: 1,
+        requirementId: "REQ-INS-101",
+        acceptanceCriterionId: "REQ-INS-101-AC-02",
+        scenarioId: "US-INS-001-HAPPY-2",
         kind: "happy",
         serviceId: "svc-inspect",
         status: "PASS_WITH_RISKS",
@@ -183,7 +195,7 @@ describe("praxis_workflow_inspect through the MCP tool entry point", () => {
 
   it("reports resolved items and revisions", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-inspect-"));
-    await step(repo, "ba", { action: "open", projectId: "ins", title: "Resolve", request: "r" });
+    await step(repo, "ba", { action: "open", mode: "classic", projectId: "ins", title: "Resolve", request: "r" });
     await step(repo, "ba", { action: "add-requirement", id: "REQ-INS-201", statement: "S", acceptanceCriteria: ["A"] });
     const common = { requirementIds: ["REQ-INS-201"], readiness: "ready" };
     await step(repo, "ba", { action: "handoff", sourceRole: "ba", targetRole: "architect", ...common, blockers: ["B-1"] });
@@ -224,14 +236,14 @@ describe("praxis_workflow_inspect through the MCP tool entry point", () => {
     const { repo } = await populated();
     const res = await call("praxis_workflow_inspect", repo, "ba", { view: "all" });
     expect(Object.keys(res.data).filter((k) => !["schema", "view", "present", "workItemId", "readOnly"].includes(k)).sort()).toEqual(
-      ["decisions", "handoffs", "links", "open-items", "overview", "quality", "requirements", "stories", "work"].sort(),
+      ["approvals", "decisions", "handoffs", "links", "open-items", "overview", "quality", "requirementReview", "requirements", "stories", "work"].sort(),
     );
   });
 
   it("scopes strictly to the addressed work item and shows links", async () => {
     const repo = mkdtempSync(join(tmpdir(), "praxis-inspect-"));
-    const a = (await step(repo, "ba", { action: "open", projectId: "ins", title: "Item A", request: "a" })).data.workItemId as string;
-    const b = (await step(repo, "ba", { action: "open", projectId: "ins", title: "Item B", request: "b" })).data.workItemId as string;
+    const a = (await step(repo, "ba", { action: "open", mode: "classic", projectId: "ins", title: "Item A", request: "a" })).data.workItemId as string;
+    const b = (await step(repo, "ba", { action: "open", mode: "classic", projectId: "ins", title: "Item B", request: "b" })).data.workItemId as string;
     await step(repo, "ba", { action: "add-requirement", id: "REQ-INS-301", statement: "Only A", acceptanceCriteria: ["x"] }, a);
     await step(repo, "ba", { action: "link-work-item", workItemId: b, link: { repository: "praxis-core", workItemId: "WI-OTHER-001", relation: "depends-on" } }, b).catch(() => undefined);
     const forB = await call("praxis_workflow_inspect", repo, "ba", { view: "requirements", workItemId: b });
@@ -249,8 +261,8 @@ describe("praxis_workflow_inspect through the MCP tool entry point", () => {
     const empty = await call("praxis_workflow_inspect", repo, "ba", {});
     expect(empty.ok).toBe(true);
     expect(empty.data.present).toBe(false);
-    await step(repo, "ba", { action: "open", projectId: "ins", title: "One", request: "1" });
-    await step(repo, "ba", { action: "open", projectId: "ins", title: "Two", request: "2" });
+    await step(repo, "ba", { action: "open", mode: "classic", projectId: "ins", title: "One", request: "1" });
+    await step(repo, "ba", { action: "open", mode: "classic", projectId: "ins", title: "Two", request: "2" });
     // The most recently opened item is current, so an unaddressed call answers for it, not for both.
     const unaddressed = await call("praxis_workflow_inspect", repo, "ba", { view: "overview" });
     expect(unaddressed.data.overview.workItem.title).toBe("Two");

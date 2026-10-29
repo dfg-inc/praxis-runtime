@@ -368,7 +368,6 @@ describe("Architect MCP fixture", () => {
         epic: epic.key,
         repo,
         confirmation: "YES",
-        planId: `arch-${epic.key}`,
         previewFingerprint: "sha256:deadbeef",
       },
       { role: "architect", version: VERSION, extra },

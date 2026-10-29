@@ -1,8 +1,12 @@
+import { tmpdir } from "node:os";
+import { containedPath } from "./path-guard.js";
+import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ProjectProfile, ServiceLocation } from "./project-profile.js";
+import { runBrowserChecks, validateBrowserConfig, validateBrowserSteps, type BrowserConfig, type BrowserRun, type BrowserStep } from "./browser-verification.js";
 
 export type Scenario = {
   /** Absent when a requirement is verified directly, without a Story. */
@@ -59,17 +63,29 @@ type Check = {
   kind?: Scenario["kind"];
   serviceId: string;
   level?: string;
-  module: string;
-  steps?: CheckStep[];
+  module?: string;
+  steps?: CheckStep[] | BrowserStep[];
   call?: CheckStep;
   expect: unknown;
   critical?: boolean;
 };
 
+export type BrowserEvidence = {
+  runner: string;
+  browserVersion: string;
+  subjectDigest: string;
+  startedAt: string;
+  finishedAt: string;
+  /** scenarioId -> the screenshot recorded for it (path relative to the artifacts directory) */
+  artifacts: Record<string, { path?: string; sha256: string; bytes: number }>;
+  scenarioIds: string[];
+};
+
 export type VerificationRun = {
   scenarios: Scenario[];
   findings: Finding[];
-  evidenceLevel: "unit" | "static" | "service-integration" | "api" | "contract";
+  browser?: BrowserEvidence[];
+  evidenceLevel: "unit" | "static" | "service-integration" | "api" | "contract" | "browser";
   limitations: string[];
   plan: Array<{ scenarioId: string; level: string; serviceId: string; status: string }>;
 };
@@ -79,12 +95,7 @@ function sameJson(left: unknown, right: unknown): boolean {
 }
 
 function safeFile(root: string, relative: string): string {
-  if (!relative || relative.startsWith("/") || relative.includes("\0") || relative.split(/[/\\]/).includes("..")) {
-    throw new Error("UNSAFE_PATH");
-  }
-  const absolute = resolve(root, relative);
-  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) throw new Error("UNSAFE_PATH");
-  return absolute;
+  return containedPath(root, relative);
 }
 
 const PYTHON = `import importlib.util, json, sys
@@ -104,33 +115,40 @@ async function runSteps(root: string, modulePath: string, steps: CheckStep[]): P
     const result = spawnSync("python3", ["-c", PYTHON, file, JSON.stringify(steps)], {
       cwd: root,
       encoding: "utf8",
+      env: scrubbedEnv(tmpdir()),
     });
     if ((result.status ?? 1) !== 0) {
       throw new Error((result.stderr || result.stdout || "python check failed").trim());
     }
     return JSON.parse(result.stdout.trim());
   }
-  const imported = (await import(`${pathToFileURL(file).href}?v=${Date.now()}-${Math.random()}`)) as Record<
-    string,
-    unknown
-  >;
-  let value: unknown;
-  for (const step of steps) {
-    const fn = imported[step.function];
-    if (typeof fn !== "function") throw new Error(`EXPORT_MISSING:${step.function}`);
-    value = await (fn as (...args: unknown[]) => unknown)(...(step.args ?? []));
-  }
-  return value;
+  return runIsolated({ file, cwd: root, op: "steps", steps });
 }
 
 /** Checks scoped to one work item win over the repository-wide checks. */
-function readChecks(workflowRepo: string, workItemId?: string): Check[] | undefined {
+/** Checks scoped to one work item win over the repository-wide checks. */
+function readChecks(workflowRepo: string, workItemId?: string): { checks: Check[]; browser?: BrowserConfig } | undefined {
   const scoped = workItemId ? join(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : undefined;
   const file = scoped && existsSync(scoped) ? scoped : join(workflowRepo, ".praxis", "quality", "checks.json");
   if (!existsSync(file)) return undefined;
-  const parsed = JSON.parse(readFileSync(file, "utf8")) as { checks?: Check[] };
+  const parsed = JSON.parse(readFileSync(file, "utf8")) as { checks?: Check[]; browser?: unknown };
   if (!Array.isArray(parsed.checks) || parsed.checks.length === 0) throw new Error("CHECKS_INVALID");
-  return parsed.checks;
+  const browser = parsed.browser === undefined ? undefined : validateBrowserConfig(parsed.browser);
+  // a malformed browser check is refused before anything runs, even when no browser is available
+  for (const check of parsed.checks) if ((check.level === "browser" || check.level === "e2e") && check.steps !== undefined) validateBrowserSteps(check.scenarioId, check.steps);
+  return { checks: parsed.checks, ...(browser ? { browser } : {}) };
+}
+
+/** The directory the browser checks serve, as named in checks.json (nothing is validated or run). */
+export function browserServeRoot(workflowRepo: string, workItemId?: string): string | undefined {
+  try {
+    const scoped = workItemId ? join(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : undefined;
+    const file = scoped && existsSync(scoped) ? scoped : join(workflowRepo, ".praxis", "quality", "checks.json");
+    const root = (JSON.parse(readFileSync(file, "utf8")) as { browser?: { serve?: { root?: unknown } } }).browser?.serve?.root;
+    return typeof root === "string" ? root : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export async function runProjectChecks(input: {
@@ -139,9 +157,14 @@ export async function runProjectChecks(input: {
   stories: Story[];
   services: ServiceLocation[];
   profiles: ProjectProfile[];
+  /** Screenshots are written here when set (apply); a preview leaves it out and writes nothing. */
+  artifactsDir?: string;
 }): Promise<VerificationRun | undefined> {
-  const checks = readChecks(input.workflowRepo, input.workItemId);
-  if (!checks) return undefined;
+  const read = readChecks(input.workflowRepo, input.workItemId);
+  if (!read) return undefined;
+  const checks = read.checks;
+  const browserConfig = read.browser;
+  const browserQueue: Array<{ check: Check; base: Omit<Scenario, "status" | "evidence">; root: string }> = [];
   const story = input.stories.find((item) => item.status !== "superseded") ?? input.stories[0];
   const services = new Map(input.services.map((service) => [service.id, service]));
   const scenarios: Scenario[] = [];
@@ -153,13 +176,19 @@ export async function runProjectChecks(input: {
   for (const check of checks) {
     const service = services.get(check.serviceId);
     const profile = input.profiles.find((item) => item.serviceId === check.serviceId);
-    const requirementId = check.requirementId ?? story?.requirementIds[0];
+    // a check belongs to the Story that states its criterion (or names it); only then to the first Story, as before
+    const owner =
+      (check.storyId ? input.stories.find((item) => item.id === check.storyId && item.status !== "superseded") : undefined) ??
+      (check.acceptanceCriterionId ? input.stories.find((item) => item.status !== "superseded" && item.acceptanceCriteria.some((c) => c.id === check.acceptanceCriterionId)) : undefined) ??
+      (check.requirementId ? input.stories.find((item) => item.status !== "superseded" && item.requirementIds.includes(check.requirementId as string)) : undefined) ??
+      story;
+    const requirementId = check.requirementId ?? owner?.requirementIds[0];
     if (!requirementId) {
       throw new Error(`CHECKS_INVALID: check ${check.scenarioId} names no requirementId and there is no Story to take one from`);
     }
     // Without a Story, a check must say which acceptance criterion it proves; guessing one would
     // claim coverage the check does not give.
-    const criterionId = check.acceptanceCriterionId ?? story?.acceptanceCriteria[0]?.id ?? story?.id;
+    const criterionId = check.acceptanceCriterionId ?? owner?.acceptanceCriteria[0]?.id ?? owner?.id;
     if (!criterionId) {
       throw new Error(`CHECKS_INVALID: check ${check.scenarioId} must name acceptanceCriterionId when no Story exists`);
     }
@@ -168,15 +197,15 @@ export async function runProjectChecks(input: {
     const level = check.level ?? "unit";
     covered.add(check.serviceId);
     const base = {
-      ...((check.storyId ?? story?.id) ? { storyId: (check.storyId ?? story?.id) as string } : {}),
+      ...((check.storyId ?? owner?.id) ? { storyId: (check.storyId ?? owner?.id) as string } : {}),
       requirementId,
       acceptanceCriterionId: criterionId,
       scenarioId,
       kind,
       serviceId: check.serviceId,
       repository: service?.repository ?? profile?.repository ?? check.serviceId,
-      implementationPath: check.module,
-      testRef: check.module,
+      implementationPath: check.module ?? "",
+      testRef: check.module ?? "",
       critical: check.critical ?? (kind === "happy" || kind === "security" || kind === "contract"),
     };
     if (!service?.localPath) {
@@ -190,25 +219,26 @@ export async function runProjectChecks(input: {
     }
     if (level === "browser" || level === "e2e") {
       const runner = profile?.testRunners.find((item) => item === "playwright" || item === "cypress");
-      scenarios.push({
-        ...base,
-        status: "BLOCKED",
-        critical: true,
-        evidence: [
-          `level:${level}`,
-          runner ? `${runner} is installed but this run does not drive a browser` : "no browser runner is available",
-          "deployed end-to-end coverage was not claimed",
-        ],
-      });
-      findings.push(findingFor(base, "BLOCKED", "browser or deployed end-to-end execution is unavailable", check.expect));
+      const blockWith = (reason: string, why: string) => {
+        scenarios.push({ ...base, status: "BLOCKED", critical: true, evidence: [`level:${level}`, reason, "deployed end-to-end coverage was not claimed"] });
+        findings.push(findingFor(base, "BLOCKED", why, check.expect));
+      };
+      if (!browserConfig || !Array.isArray(check.steps) || check.steps.length === 0) {
+        blockWith(
+          browserConfig ? "this browser check has no steps" : runner ? `${runner} is installed but checks.json has no "browser" section to serve the built app` : "no browser configuration: add \"browser\": {\"serve\": {\"root\": \"dist\"}} and steps to the check",
+          "browser or deployed end-to-end execution is not configured",
+        );
+        continue;
+      }
+      browserQueue.push({ check, base, root: service.localPath });
       continue;
     }
-    const steps = check.steps ?? (check.call ? [check.call] : []);
+    const steps = (check.steps ?? (check.call ? [check.call] : [])) as CheckStep[];
     if (level === "service-integration") sawIntegration = true;
     if (level === "api") sawApi = true;
     if (level === "contract") sawContract = true;
     try {
-      const actual = await runSteps(service.localPath, check.module, steps);
+      const actual = await runSteps(service.localPath, check.module ?? "", steps);
       const ok = sameJson(actual, check.expect);
       scenarios.push({
         ...base,
@@ -226,44 +256,78 @@ export async function runProjectChecks(input: {
       findings.push(findingFor(base, "FAIL", observed, check.expect));
     }
   }
-  for (const serviceId of story?.serviceIds ?? []) {
-    if (!story || covered.has(serviceId)) continue;
-    const service = services.get(serviceId);
-    const blocked = !service?.localPath;
-    const scenarioId = `${story.id}-${blocked ? "BLOCKED" : "UNVERIFIED"}-${serviceId.toUpperCase()}`;
-    const entry: Scenario = {
-      storyId: story.id,
-      requirementId: story.requirementIds[0]!,
-      acceptanceCriterionId: story.acceptanceCriteria[0]?.id ?? story.id,
-      scenarioId,
-      kind: "happy",
-      serviceId,
-      repository: service?.repository ?? serviceId,
-      implementationPath: "",
-      testRef: "",
-      status: blocked ? "BLOCKED" : "NOT_VERIFIED",
-      critical: true,
-      evidence: [
-        blocked
-          ? "mandatory service has no repository location"
-          : "no executable check is bound to this mandatory service",
-        "deployed end-to-end coverage was not claimed",
-      ],
-    };
-    scenarios.push(entry);
-    findings.push(
-      findingFor(
-        entry,
-        entry.status,
-        blocked ? "repository location is missing" : "behavior was not executed",
-        story.acceptanceCriteria[0]?.then ?? story.happyPath[0] ?? "the user story outcome",
-      ),
-    );
+  const browserEvidence: BrowserEvidence[] = [];
+  const byRoot = new Map<string, typeof browserQueue>();
+  for (const item of browserQueue) byRoot.set(item.root, [...(byRoot.get(item.root) ?? []), item]);
+  for (const [root, queue] of byRoot) {
+    const run: BrowserRun = await runBrowserChecks({
+      serviceRoot: root,
+      config: browserConfig as BrowserConfig,
+      checks: queue.map((q) => ({ scenarioId: q.check.scenarioId, steps: q.check.steps as BrowserStep[] })),
+      ...(input.artifactsDir ? { artifactsDir: input.artifactsDir } : {}),
+    });
+    if (!run.available) {
+      for (const q of queue) {
+        scenarios.push({ ...q.base, status: "BLOCKED", critical: true, evidence: [`level:${q.check.level}`, `browser run unavailable: ${run.reason}`, "deployed end-to-end coverage was not claimed"] });
+        findings.push(findingFor(q.base, "BLOCKED", run.reason, q.check.expect));
+      }
+      continue;
+    }
+    const artifacts: BrowserEvidence["artifacts"] = {};
+    for (const q of queue) {
+      const r = run.results[q.check.scenarioId];
+      if (!r) {
+        scenarios.push({ ...q.base, status: "BLOCKED", critical: true, evidence: [`level:${q.check.level}`, "the browser driver returned no result for this check"] });
+        continue;
+      }
+      if (r.screenshot) artifacts[q.check.scenarioId] = r.screenshot;
+      const lines = [
+        `level:${q.check.level}`,
+        `runner:${run.runner}`,
+        `steps:${r.steps}`,
+        `final-url:${r.finalUrl}`,
+        `bundle:${run.subjectDigest.slice(0, 16)}`,
+        ...(r.consoleErrors ? [`console-errors:${r.consoleErrors}`] : []),
+        ...(r.failed ? [`failed-step:${r.failed.index}:${r.failed.kind}`, `observed:${r.failed.message}`] : []),
+        "local bundle in a real browser; deployed end-to-end coverage was not claimed",
+      ];
+      scenarios.push({ ...q.base, status: r.ok ? "PASS" : "FAIL", evidence: lines });
+      if (!r.ok) findings.push(findingFor(q.base, "FAIL", r.failed?.message ?? "failed", q.check.steps));
+    }
+    browserEvidence.push({ runner: run.runner, browserVersion: run.browserVersion, subjectDigest: run.subjectDigest, startedAt: run.startedAt, finishedAt: run.finishedAt, artifacts, scenarioIds: queue.map((q) => q.check.scenarioId) });
+  }
+  for (const item of input.stories.filter((x) => x.status !== "superseded")) {
+    for (const serviceId of item.serviceIds) {
+      if (covered.has(serviceId)) continue;
+      const service = services.get(serviceId);
+      const blocked = !service?.localPath;
+      const scenarioId = `${item.id}-${blocked ? "BLOCKED" : "UNVERIFIED"}-${serviceId.toUpperCase()}`;
+      const entry: Scenario = {
+        storyId: item.id,
+        requirementId: item.requirementIds[0]!,
+        acceptanceCriterionId: item.acceptanceCriteria[0]?.id ?? item.id,
+        scenarioId,
+        kind: "happy",
+        serviceId,
+        repository: service?.repository ?? serviceId,
+        implementationPath: "",
+        testRef: "",
+        status: blocked ? "BLOCKED" : "NOT_VERIFIED",
+        critical: true,
+        evidence: [
+          blocked ? "mandatory service has no repository location" : "no executable check is bound to this mandatory service",
+          "deployed end-to-end coverage was not claimed",
+        ],
+      };
+      scenarios.push(entry);
+      findings.push(findingFor(entry, entry.status, blocked ? "repository location is missing" : "behavior was not executed", item.acceptanceCriteria[0]?.then ?? item.happyPath[0] ?? "the user story outcome"));
+    }
   }
   return {
     scenarios,
     findings,
-    evidenceLevel: sawIntegration ? "service-integration" : sawApi ? "api" : sawContract ? "contract" : "unit",
+    ...(browserEvidence.length ? { browser: browserEvidence } : {}),
+    evidenceLevel: browserEvidence.length ? "browser" : sawIntegration ? "service-integration" : sawApi ? "api" : sawContract ? "contract" : "unit",
     limitations: [
       "Executable checks ran in the local project. This is not deployed end-to-end coverage.",
       "A passing check is evidence for that check only. Green unit tests are recorded separately and are not a verdict.",

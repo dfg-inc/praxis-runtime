@@ -35,5 +35,6 @@ export function jsonSchemaToZod(schema: JsonSchema): z.ZodObject<Record<string, 
     if (!schema.required?.includes(key)) field = field.optional();
     shape[key] = field;
   }
-  return z.object(shape);
+  // Unknown keys must reach callTool, which refuses them with a Praxis error naming the tool and its accepted arguments.
+  return z.looseObject(shape) as unknown as z.ZodObject<Record<string, z.ZodTypeAny>>;
 }

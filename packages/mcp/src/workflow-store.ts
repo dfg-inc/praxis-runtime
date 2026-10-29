@@ -1,24 +1,36 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
+import { bundleDigest } from "./browser-verification.js";
+import { browserServeRoot } from "./generic-verification.js";
 import { humanApprovalView, requireUserApproval } from "./human-approval.js";
 import {
   applyWorkflowCommand,
+  effectiveServices,
+  buildResumeBriefing,
   commandFingerprint,
-  redactPersistent,
+  migrateWorkflowState,
+  nextStep,
+  obtainUserApproval,
+  redactState,
+  reviewApprovalRequest,
   requireMutationLease,
   resumeWorkflow,
   routeCapabilities,
   runWorkflowRecordWrite,
+  parseWorkflowCommand,
+  dryRunCommand,
   WorkflowCommandSchema,
   WorkflowStateSchema,
   workItemIdFor,
   type Capability,
+  type ReviewChannel,
   type UserApproval,
   type WorkflowCommand,
   type WorkItemLink,
   type WorkflowRole,
   type WorkflowState,
+  type EvidenceSource,
 } from "@praxis/contracts";
 
 export const PRAXIS_CAPABILITIES: Capability[] = [
@@ -97,6 +109,7 @@ export const PRAXIS_CAPABILITIES: Capability[] = [
 const INDEX_CONTRACT = "praxis.workflow.index";
 const MIGRATED_CONTRACT = "praxis.workflow.migrated";
 const LOCK_STALE_MS = 30_000;
+const WORKFLOW_STATE_VERSION = "1.1.0";
 const LOCK_WAIT_MS = 10_000;
 const WORK_ITEM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -107,6 +120,10 @@ export type WorkItemSummary = {
   title: string;
   jiraIssueKey?: string;
   stage: string;
+  /** Where the work is in the end-to-end flow (request ... delivery). Absent in summaries written before 1.1.0. */
+  phase?: string;
+  mode?: string;
+  kind?: string;
   revision: number;
   updatedAt: string;
   links: WorkItemLink[];
@@ -165,6 +182,9 @@ function summarize(state: WorkflowState): WorkItemSummary {
     title: state.workItem.title,
     ...(state.workItem.jiraIssueKey ? { jiraIssueKey: state.workItem.jiraIssueKey } : {}),
     stage: state.stage,
+    phase: state.phase,
+    mode: state.mode,
+    kind: state.workItem.kind,
     revision: state.workItem.revision,
     updatedAt: new Date().toISOString(),
     links: state.workItem.links ?? [],
@@ -213,7 +233,7 @@ function readLegacy(repo: string): WorkflowState | null {
     throw err;
   }
   if ((raw as { contract?: string })?.contract === MIGRATED_CONTRACT) return null;
-  return toAbsolute(repo, WorkflowStateSchema.parse(raw));
+  return toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(raw)));
 }
 
 function itemFiles(repo: string): string[] {
@@ -304,7 +324,7 @@ function fingerprintFor(repo: string, command: WorkflowCommand, workItemId?: str
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state = loadWorkflow(repo, workItemId);
-    token = state ? `state:${createHash("sha256").update(canonicalJson(state)).digest("hex")}` : "state:none";
+    token = state ? `state:${createHash("sha256").update(canonicalJson(withoutDrift(state))).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token } as unknown as WorkflowCommand);
 }
@@ -328,7 +348,34 @@ function resolveId(layout: Layout, explicit?: string): string | null {
 
 function readItem(repo: string, layout: Layout, id: string): WorkflowState {
   if (layout.legacy) return readLegacy(repo) as WorkflowState;
-  return toAbsolute(repo, WorkflowStateSchema.parse(readJson(itemPath(repo, id))));
+  return markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id))))));
+}
+
+/**
+ * Browser evidence describes the bundle that was served. When that bundle has changed (or is gone) the result no longer proves the
+ * current product: it is marked in memory only, so every reader, gate and verdict sees it as stale until verify-stories runs again.
+ * The mark is stripped before anything is written.
+ */
+function markSubjectDrift(repo: string, state: WorkflowState): WorkflowState {
+  const recorded = state.coverage.filter((e) => e.source?.kind === "browser" && e.source.subjectDigest);
+  if (recorded.length === 0) return state;
+  const serve = browserServeRoot(repo, state.workItem.id);
+  const services = effectiveServices(state) as Array<{ id: string; localPath?: string }>;
+  for (const entry of recorded) {
+    const base = services.find((s) => s.id === entry.serviceId)?.localPath || repo;
+    const root = serve === undefined ? undefined : resolve(base, serve);
+    let current: string | undefined;
+    if (root) {
+      current = bundleDigest(root);
+    }
+    if (current !== entry.source?.subjectDigest) entry.source = { ...(entry.source as EvidenceSource), drifted: true };
+  }
+  return state;
+}
+
+function withoutDrift(state: WorkflowState): WorkflowState {
+  if (!state.coverage.some((e) => e.source?.drifted)) return state;
+  return { ...state, coverage: state.coverage.map((e) => { if (!e.source?.drifted) return e; const { drifted: _d, ...source } = e.source; return { ...e, source }; }) };
 }
 
 export function loadWorkflow(repo: string, workItemId?: string): WorkflowState | null {
@@ -364,6 +411,14 @@ export function workflowStatus(repo: string, workItemId?: string): {
   guidance?: Array<{ id: string; description: string }>;
   suggested?: string[];
   executed?: [];
+  /** Where the work is in the end-to-end flow, what to do next, and what a new chat needs to continue. */
+  phase?: string;
+  mode?: string;
+  next?: ReturnType<typeof nextStep>;
+  briefing?: ReturnType<typeof buildResumeBriefing>;
+  /** When several work items are candidates: what each one is and where it stands, so the user can choose. */
+  choose?: string;
+  modeNote?: string;
 } {
   const layout = readLayout(repo);
   if (layout && workItemId === undefined && layout.index.current === null && layout.index.items.length > 1) {
@@ -372,6 +427,7 @@ export function workflowStatus(repo: string, workItemId?: string): {
       currentWorkItemId: null,
       selectionRequired: true,
       workItems: layout.index.items.map((item) => ({ ...item, current: false })),
+      choose: "Several work items exist and none is selected. Ask the user which one to continue, listing: " + layout.index.items.map((item) => `${item.workItemId} \"${item.title}\" (${item.phase ?? item.stage})`).join("; ") + ". Then select it with select-work-item or pass workItemId.",
     };
   }
   const state = loadWorkflow(repo, workItemId);
@@ -398,6 +454,14 @@ export function workflowStatus(repo: string, workItemId?: string): {
     guidance: routed.guidance.map((item) => ({ id: item.id, description: item.description })),
     suggested: routed.suggested.map((item) => item.id),
     executed: routed.executed,
+    phase: state.phase,
+    mode: state.mode,
+    next: nextStep(state),
+    briefing: buildResumeBriefing(state),
+    ...(state.mode === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {}),
+    ...(items.length > 1
+      ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} \"${item.title}\" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` }
+      : {}),
   };
 }
 
@@ -478,10 +542,22 @@ function writeIndex(repo: string, index: WorkflowIndex): void {
   writeAtomic(indexPath(repo), index);
 }
 
+/** The first write after an upgrade keeps the file as the previous Runtime wrote it, next to the new one. */
+function keepPreviousVersion(path: string): void {
+  try {
+    const previous = readJson(path) as { version?: string };
+    const backup = `${path}.v${previous.version ?? "unknown"}.bak`;
+    if (previous.version && previous.version !== WORKFLOW_STATE_VERSION && !existsSync(backup)) writeFileSync(backup, readFileSync(path));
+  } catch {
+    /* no previous file, or not readable: nothing to keep */
+  }
+}
+
 function writeItem(repo: string, state: WorkflowState): string {
   requireMutationLease();
   const path = itemPath(repo, state.workItem.id);
-  writeAtomic(path, redactPersistent(toPortable(repo, state)));
+  keepPreviousVersion(path);
+  writeAtomic(path, redactState(toPortable(repo, withoutDrift(state))));
   return path;
 }
 
@@ -551,10 +627,19 @@ function resolveCommand(repo: string, command: WorkflowCommand, workItemId?: str
     const same = items.find(
       (item) =>
         item.projectId === command.projectId &&
-        item.title === command.title &&
+        item.title.trim().toLowerCase() === command.title.trim().toLowerCase() &&
         (item.jiraIssueKey ?? null) === (command.jiraIssueKey ?? null),
     );
-    if (same && layout) return { command, state: null, reopen: readItem(repo, layout, same.workItemId) };
+    if (same && layout && !command.newItem) {
+      const existing = readItem(repo, layout, same.workItemId);
+      // the same command again (same request) is a replay and returns the item; a different request under the same title is
+      // ambiguous: never silently hand back the old item, ask for an explicit choice
+      if ((existing.history[0]?.note ?? "") === command.request.slice(0, 500)) return { command, state: null, reopen: existing };
+      throw new WorkItemError(
+        "WORK_ITEM_TITLE_EXISTS",
+        `a work item titled "${command.title}" already exists (${same.workItemId}) and was opened with a different request. To continue that one: select-work-item with workItemId ${same.workItemId}. To start a separate one: open again with "newItem": true (it gets its own id) or use a different title.`,
+      );
+    }
     let sequence = 1;
     while (items.some((item) => item.workItemId === workItemIdFor(command.title, sequence))) sequence += 1;
     return { command: { ...command, sequence }, state: null };
@@ -562,7 +647,7 @@ function resolveCommand(repo: string, command: WorkflowCommand, workItemId?: str
   return { command, state: loadWorkflow(repo, workItemId) };
 }
 
-export function previewWorkflow(repo: string, raw: unknown, workItemId?: string): {
+export function previewWorkflow(repo: string, raw: unknown, workItemId?: string, evidenceSource?: EvidenceSource, evidenceSources?: Record<string, EvidenceSource>): {
   fingerprint: string;
   duplicate: boolean;
   result: unknown;
@@ -571,10 +656,14 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
   /** Present when the command is a human act: what the user will be asked to approve. */
   humanApproval?: ReturnType<typeof humanApprovalView>;
 } {
-  const command = WorkflowCommandSchema.parse(raw);
+  const command = parseWorkflowCommand(raw);
   const resolved = resolveCommand(repo, command, workItemId);
   const fingerprint = fingerprintFor(repo, command, workItemId);
   const current = listWorkItems(repo).current;
+  if (command.action === "open" && command.mode === "classic" && !resolved.reopen) {
+    // a new classic item is the user's choice: show what they will be asked, write nothing
+    return { fingerprint, duplicate: false, result: { awaitingUserApproval: "open-classic-work-item" }, resume: null, currentWorkItemId: current, humanApproval: openClassicView(command) as never };
+  }
   if (resolved.select) {
     return {
       fingerprint,
@@ -597,16 +686,18 @@ export function previewWorkflow(repo: string, raw: unknown, workItemId?: string)
   // Show what the user will be asked, built from the same state the apply will use.
   const humanApproval = humanApprovalView(resolved.state, resolved.command);
   if (humanApproval && resolved.state) {
+    // a rewording shows its exact outcome (and any conflict) before the user is asked: the dry run writes nothing
+    const dry = resolved.command.action === "revise-acceptance" ? dryRunCommand(resolved.state, resolved.command) : null;
     return {
       fingerprint,
       duplicate: false,
-      result: { awaitingUserApproval: humanApproval.action },
+      result: { awaitingUserApproval: humanApproval.action, ...(dry ? (dry.result as object) : {}) },
       resume: resumeWorkflow(resolved.state),
       currentWorkItemId: workItemId ?? current,
       humanApproval,
     };
   }
-  const applied = applyWorkflowCommand(resolved.state, resolved.command);
+  const applied = applyWorkflowCommand(resolved.state, resolved.command, evidenceSource ? { evidenceSource, ...(evidenceSources ? { evidenceSources } : {}) } : undefined);
   return {
     fingerprint,
     duplicate: applied.duplicate,
@@ -627,10 +718,10 @@ export type WorkflowApplyResult = {
 };
 
 /** One locked read-modify-write of a single work item (or the index, for select/reopen). */
-function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval): WorkflowApplyResult {
+function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel, evidenceSource?: EvidenceSource, evidenceSources?: Record<string, EvidenceSource>): WorkflowApplyResult {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
-    const finalCommand = WorkflowCommandSchema.parse(final);
+    const finalCommand = parseWorkflowCommand(final);
     const resolved = resolveCommand(repo, finalCommand, workItemId);
     const layout = readLayout(repo);
     const previousCurrent = layout?.index.current ?? null;
@@ -663,7 +754,7 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
     }
     // A human act carries the user's approval (made by the Runtime, never part of the command); the contract verifies
     // it against the exact content again before it changes anything.
-    const applied = applyWorkflowCommand(resolved.state, resolved.command, userApproval ? { userApproval } : undefined);
+    const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...(userApproval ? { userApproval } : {}), ...(channel ? { channel } : {}), ...(evidenceSource ? { evidenceSource } : {}), ...(evidenceSources ? { evidenceSources } : {}) });
     const path = writeItem(repo, applied.state);
     const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1 as const, current: null, items: [] };
     const entry = summarize(applied.state);
@@ -688,14 +779,14 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
   });
 }
 
-function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval): WorkflowApplyResult {
-  const command = WorkflowCommandSchema.parse(planned);
+function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel, evidenceSource?: EvidenceSource, evidenceSources?: Record<string, EvidenceSource>): WorkflowApplyResult {
+  const command = parseWorkflowCommand(planned);
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) {
     throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   }
   // Agent-authored records need no approval. Human acts are protected by the user's approval, verified inside the write.
-  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval));
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource, evidenceSources));
 }
 
 export function applyResolved(
@@ -708,8 +799,9 @@ export function applyResolved(
   return guarded(repo, fingerprint, planned, final, workItemId);
 }
 
-export function applyWorkflow(repo: string, raw: unknown, fingerprint: string, workItemId?: string, userApproval?: UserApproval): WorkflowApplyResult {
-  return guarded(repo, fingerprint, raw, raw, workItemId, userApproval);
+/** `evidenceSource` is set only by Runtime modules that executed the check themselves (verify-stories): it is never read from a command. */
+export function applyWorkflow(repo: string, raw: unknown, fingerprint: string, workItemId?: string, userApproval?: UserApproval, evidenceSource?: EvidenceSource, evidenceSources?: Record<string, EvidenceSource>): WorkflowApplyResult {
+  return guarded(repo, fingerprint, raw, raw, workItemId, userApproval, undefined, evidenceSource, evidenceSources);
 }
 
 /**
@@ -717,6 +809,19 @@ export function applyWorkflow(repo: string, raw: unknown, fingerprint: string, w
  * run), then a human act (confirm a Story or decision, approve a service) asks the user, then the write verifies that
  * approval. Everything else is an agent-authored record and is written as before.
  */
+function openClassicView(command: { title: string; projectId: string; request: string }) {
+  const request = reviewApprovalRequest([{ action: "open" }], `Open "${command.title}" in classic mode`);
+  return {
+    required: true,
+    kind: "requirement_acceptance",
+    action: "open-classic-work-item",
+    summary: `Open the work item "${command.title}" in classic mode`,
+    description: `OPEN a new work item "${command.title}" (project ${command.projectId}) in CLASSIC mode: stage gates, plan-before-stories and coverage checks are not enforced from the start (your decisions still are). Without this choice it would be opened in the guided flow.`,
+    risks: request.risks,
+    explanation: "Applying this asks you in the client's own approval dialog. A client without a dialog cannot open a classic item; open it without a mode to get the guided flow.",
+  };
+}
+
 export async function applyWorkflowApproved(
   repo: string,
   raw: unknown,
@@ -724,10 +829,18 @@ export async function applyWorkflowApproved(
   workItemId: string | undefined,
   confirmation: string | undefined,
 ): Promise<WorkflowApplyResult> {
-  const command = WorkflowCommandSchema.parse(raw);
+  const command = parseWorkflowCommand(raw);
   const expected = fingerprintFor(repo, command, workItemId);
   if (fingerprint !== expected) throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
   const resolved = resolveCommand(repo, command, workItemId);
+  if (command.action === "open" && command.mode === "classic" && !resolved.reopen) {
+    const view = openClassicView(command);
+    const batch = [JSON.parse(JSON.stringify(raw)) as Record<string, unknown>];
+    const approval = await obtainUserApproval({ ...reviewApprovalRequest(batch, view.summary), description: view.description }, { confirmation, repo });
+    return guarded(repo, fingerprint, raw, raw, workItemId, undefined, { via: "approved", approval, batch });
+  }
+  // a refusal the user could not fix by approving (unknown id, changed revision) comes before the dialog
+  if (resolved.state && resolved.command.action === "revise-acceptance") dryRunCommand(resolved.state, resolved.command);
   const userApproval = resolved.state ? await requireUserApproval(repo, resolved.state, resolved.command, confirmation) : undefined;
   return guarded(repo, fingerprint, raw, raw, workItemId, userApproval);
 }
@@ -743,4 +856,14 @@ export function capabilityRoute(input: {
     stage: input.stage ?? "in_progress",
     capabilities: PRAXIS_CAPABILITIES,
   });
+}
+
+/**
+ * Writes made by the Runtime itself, or on the user's own decision: the review page (channel html-review) or a batch the
+ * user approved in the client's dialog (channel approved). Not reachable with an agent-supplied fingerprint: callers are
+ * Runtime modules that built the command from verified input.
+ */
+export function applyRuntimeCommand(repo: string, command: Record<string, unknown>, workItemId?: string, channel?: ReviewChannel): WorkflowApplyResult {
+  const parsed = parseWorkflowCommand(command);
+  return runWorkflowRecordWrite(() => writeCommand(repo, parsed, parsed, workItemId, undefined, channel));
 }

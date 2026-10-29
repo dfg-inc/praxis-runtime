@@ -1,7 +1,7 @@
 {
   "name": "praxis-runtime",
   "private": true,
-  "version": "0.1.0-alpha.48",
+  "version": "0.1.0-alpha.49",
   "description": "Praxis Runtime Desktop Extension (MCPB) and Quality HTTP worker",
   "workspaces": [
     "packages/*",
@@ -12,7 +12,7 @@
     "build": "npm run build -w @praxis/mcp -w @praxis/quality-service --if-present",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "pack:mcpb": "node tools/scripts/pack-claude-extension.mjs --version 0.1.0-alpha.48",
+    "pack:mcpb": "node tools/scripts/pack-claude-extension.mjs --version 0.1.0-alpha.49",
     "accept:git-delivery": "PRAXIS_TEST_APPROVALS=1 node tools/scripts/git-delivery-acceptance.mjs",
     "accept:git-delivery-e2e": "PRAXIS_TEST_APPROVALS=1 node tools/scripts/git-delivery-e2e-acceptance.mjs",
     "accept:quality-startup": "node tools/scripts/quality-startup-acceptance.mjs",
@@ -24,25 +24,30 @@
     "accept:workflow": "npm run build -w @praxis/mcp && node tools/scripts/workflow-external-acceptance.mjs",
     "accept:stories": "npm run build -w @praxis/mcp && node tools/scripts/story-quality-acceptance.mjs",
     "accept:generic": "npm run build -w @praxis/mcp && node tools/scripts/generic-quality-acceptance.mjs",
-    "verify": "npm run build && npm run typecheck && npm run test && npm run check:tests && npm run pack:mcpb && npm run accept:git-delivery && npm run accept:git-delivery-e2e && npm run accept:quality-startup && npm run accept:quality-review && npm run accept:quality-apply && npm run accept:quality-state-consistency && npm run accept:quality-readback && npm run accept:mcpb-runtime && npm run accept:approval-ux",
+    "verify": "npm run build && npm run typecheck && npm run test && npm run check:tests && npm run pack:mcpb && npm run accept:git-delivery && npm run accept:git-delivery-e2e && npm run accept:quality-startup && npm run accept:quality-review && npm run accept:quality-apply && npm run accept:quality-state-consistency && npm run accept:quality-readback && npm run accept:mcpb-runtime && npm run accept:approval-ux && npm run accept:ux-overhaul && npm run accept:ux-multirepo && npm run accept:ux-browser && npm run accept:quality-browser && npm run accept:tool-compat",
     "check:version": "node tools/scripts/check-ecosystem-version.mjs",
     "check:tests": "node tools/scripts/check-test-completeness.mjs",
     "report:tool-origins": "node tools/scripts/tool-origins-report.mjs",
     "accept:approval-ux": "node tools/scripts/approval-ux-acceptance.mjs",
     "accept:claude-code-approval": "node tools/scripts/claude-code-approval-acceptance.mjs",
-    "accept:marketplace-install": "node tools/scripts/marketplace-install-acceptance.mjs --previous 002da09"
+    "accept:marketplace-install": "node tools/scripts/marketplace-install-acceptance.mjs --previous 002da09",
+    "accept:ux-overhaul": "node tools/scripts/ux-overhaul-acceptance.mjs",
+    "accept:ux-browser": "node tools/scripts/ux-browser-acceptance.mjs",
+    "accept:ux-multirepo": "node tools/scripts/ux-multirepo-e2e.mjs",
+    "accept:tool-compat": "node tools/scripts/tool-compat-acceptance.mjs",
+    "accept:quality-browser": "node tools/scripts/quality-browser-acceptance.mjs"
   },
   "engines": {
     "node": ">=20"
   },
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "dependencies": {
-    "@praxis/contracts": "file:vendor/praxis-contracts-0.1.0-alpha.48.tgz",
-    "@praxis/project-config": "file:vendor/praxis-project-config-0.1.0-alpha.48.tgz",
-    "@praxis/knowledge": "file:vendor/praxis-knowledge-0.1.0-alpha.48.tgz",
-    "@praxis/jira": "file:vendor/praxis-jira-0.1.0-alpha.48.tgz",
-    "@praxis/vcs": "file:vendor/praxis-vcs-0.1.0-alpha.48.tgz",
-    "@praxis/cli": "file:vendor/praxis-cli-0.1.0-alpha.48.tgz"
+    "@praxis/cli": "file:vendor/praxis-cli-0.1.0-alpha.49.tgz",
+    "@praxis/contracts": "file:vendor/praxis-contracts-0.1.0-alpha.49.tgz",
+    "@praxis/jira": "file:vendor/praxis-jira-0.1.0-alpha.49.tgz",
+    "@praxis/knowledge": "file:vendor/praxis-knowledge-0.1.0-alpha.49.tgz",
+    "@praxis/project-config": "file:vendor/praxis-project-config-0.1.0-alpha.49.tgz",
+    "@praxis/vcs": "file:vendor/praxis-vcs-0.1.0-alpha.49.tgz"
   },
   "repository": {
     "type": "git",
@@ -51,5 +56,8 @@
   "bugs": {
     "url": "https://github.com/dfg-inc/praxis-runtime/issues"
   },
-  "homepage": "https://github.com/dfg-inc/praxis-runtime"
+  "homepage": "https://github.com/dfg-inc/praxis-runtime",
+  "devDependencies": {
+    "playwright-core": "^1.64.1"
+  }
 }
