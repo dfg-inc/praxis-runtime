@@ -80723,7 +80723,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"de183f6d74ce4f3735afc0009b462b54a24fdb5c32a270af9b258fdb95deae41","coreBaseline":"e4eab5fb2541cd1d45be0beb6e2da5998cf5dd7a","inputs":34}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"6193e23a097d7e2628cb2506ea69d9cdd803eee25fb6741ce798799949c82423","coreBaseline":"52539b71a43dfd50dca26788938fdba523bfc69b","inputs":34}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81177,6 +81177,23 @@ var DEFAULT_EXECUTABLES = [
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser"
 ];
+function sweepProcesses(home) {
+  try {
+    const listing = (0, import_node_child_process2.spawnSync)("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 }).stdout ?? "";
+    for (const line of listing.split("\n")) {
+      if (!line.includes(home))
+        continue;
+      const pid = Number(line.trim().split(/\s+/)[0]);
+      if (Number.isInteger(pid) && pid > 1 && pid !== process.pid) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+        }
+      }
+    }
+  } catch {
+  }
+}
 async function runBrowserChecks(input2) {
   const home = (0, import_node_fs6.mkdtempSync)((0, import_node_path5.join)((0, import_node_os4.tmpdir)(), "praxis-browser-"));
   const { existsSync: existsSync26 } = await import("node:fs");
@@ -81242,6 +81259,7 @@ async function runBrowserChecks(input2) {
       }));
     });
   } finally {
+    sweepProcesses(home);
     try {
       (0, import_node_fs6.rmSync)(home, { recursive: true, force: true, maxRetries: 3 });
     } catch {
