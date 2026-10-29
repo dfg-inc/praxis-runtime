@@ -4,6 +4,7 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: runtime-ci-${{ github.ref }}
@@ -22,6 +23,12 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run typecheck
+      - name: Chromium for the browser driver tests (version pinned by playwright-core)
+        run: |
+          npx playwright-core install --with-deps chromium
+          echo "PRAXIS_BROWSER_EXECUTABLE=$(node -p "require('playwright-core').chromium.executablePath()")" >> "$GITHUB_ENV"
+          # The driver keeps Chromium's sandbox on. Ubuntu 24.04 restricts unprivileged user namespaces by default, which the sandbox needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - run: npm run test
 
   git_delivery:
