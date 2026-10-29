@@ -1,12 +1,13 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { containedPath } from "./path-guard.js";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ApprovalError, effectiveServices, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
+import { ApprovalError, effectiveServices, type EvidenceSource, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
 import { tmpdir } from "node:os";
 import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
-import { inspectionPlan, runProjectChecks, type Finding, type Scenario } from "./generic-verification.js";
+import { inspectionPlan, runProjectChecks, type BrowserEvidence, type Finding, type Scenario } from "./generic-verification.js";
 import { inspectService, type ProjectProfile, type ServiceLocation } from "./project-profile.js";
 import { loadWorkflow } from "./workflow-store.js";
 
@@ -17,7 +18,7 @@ type Proposal = { files: ProposalFile[] };
 
 export type VerificationMeta = {
   strategy: "project-adapter" | "executable-checks" | "inspection-only";
-  evidenceLevel: "module" | "unit" | "static" | "service-integration" | "api" | "contract";
+  evidenceLevel: "module" | "unit" | "static" | "service-integration" | "api" | "contract" | "browser";
   deployedEndToEnd: false;
   limitations: string[];
   profiles: ProjectProfile[];
@@ -36,6 +37,8 @@ type VerificationCommand = {
   replaceSource: "executed";
   baseCoverageRevision: number;
   meta: VerificationMeta;
+  /** Per-scenario provenance for what ran in a browser. Never part of the command an agent can send. */
+  evidenceSources: Record<string, EvidenceSource>;
 };
 
 function git(repo: string, args: string[], input?: string): string {
@@ -121,6 +124,8 @@ export async function buildStoryVerification(
   repo: string,
   independentRerun: boolean,
   workItemId?: string,
+  /** Where screenshots of a browser run are written. Omitted for a preview, which writes nothing. */
+  artifactsDir?: string,
 ): Promise<VerificationCommand> {
   const state = loadWorkflow(repo, workItemId);
   if (!state) throw new Error("WORKFLOW_MISSING");
@@ -137,6 +142,7 @@ export async function buildStoryVerification(
   let evidenceLevel: VerificationMeta["evidenceLevel"] = "static";
   let limitations: string[] = [];
   let plan: VerificationMeta["plan"] = [];
+  let browser: BrowserEvidence[] = [];
   const adapterResult = adapter ? await runIsolated<{ scenarios: Scenario[]; findings: Finding[] } | null>({ file: adapter, cwd: repo, op: "verify", state, independentRerun }) : null;
   if (adapterResult) {
     const verified = adapterResult;
@@ -155,7 +161,7 @@ export async function buildStoryVerification(
       status: scenario.status,
     }));
   } else {
-    const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state.workItem.id, stories, services, profiles });
+    const executed = await runProjectChecks({ workflowRepo: repo, workItemId: state.workItem.id, stories, services, profiles, ...(artifactsDir ? { artifactsDir } : {}) });
     if (!executed && !stories.length) {
       throw new Error(
         "EVIDENCE_MISSING: this work item has requirements but no Story and no executable checks. Add " +
@@ -168,6 +174,7 @@ export async function buildStoryVerification(
     strategy = executed ? "executable-checks" : "inspection-only";
     evidenceLevel = selected.evidenceLevel;
     limitations = selected.limitations;
+    browser = (selected as { browser?: BrowserEvidence[] }).browser ?? [];
     plan = selected.plan;
   }
   if (independentRerun) {
@@ -206,6 +213,29 @@ export async function buildStoryVerification(
     replaceSource: "executed",
     baseCoverageRevision: state.coverageRevision,
     meta,
+    // a browser check that could not run (no browser, no serve root) is still browser-level evidence: BLOCKED, not "executed"
+    evidenceSources: Object.fromEntries([
+      ...scenarios
+        .filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId)))
+        .map((sc): [string, EvidenceSource] => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${randomUUID()}`, artifacts: [] }]),
+      ...browser.flatMap((run) =>
+        run.scenarioIds.map((id): [string, EvidenceSource] => {
+          const shot = run.artifacts[id];
+          return [
+            id,
+            {
+              kind: "browser",
+              runner: `${run.runner}@${run.browserVersion}`,
+              runId: `run-${randomUUID()}`,
+              startedAt: run.startedAt,
+              finishedAt: run.finishedAt,
+              subjectDigest: run.subjectDigest,
+              artifacts: shot ? [{ path: shot.path && artifactsDir ? relativePath(repo, join(artifactsDir, shot.path)).split(sep).join("/") : `(not stored in a preview) ${id}.png`, sha256: shot.sha256, bytes: shot.bytes }] : [],
+            },
+          ];
+        }),
+      ),
+    ]),
   };
 }
 

@@ -560,15 +560,20 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
   }
   if (parsed.action === "verify-stories") {
     const startedAt = new Date().toISOString();
-    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId);
-    const { meta, ...command } = recorded;
-    // the Runtime ran these checks itself: this, not anything in a command, is what makes the evidence "executed"
-    const source: EvidenceSource = { kind: "executed", runner: "praxis-runtime:verify-stories", runId: `run-${randomUUID()}`, startedAt, finishedAt: new Date().toISOString(), artifacts: [] };
-    if (name === "praxis_workflow_preview") {
-      const preview = previewWorkflow(repo, command, workItemId, source);
+    const runId = `run-${randomUUID()}`;
+    const isPreview = name === "praxis_workflow_preview";
+    const current = loadWorkflow(repo, workItemId);
+    // screenshots are stored only when the result is applied: a preview writes nothing
+    const artifactsDir = !isPreview && current ? resolve(repo, ".praxis", "quality", current.workItem.id, "artifacts", runId) : undefined;
+    const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId, artifactsDir);
+    const { meta, evidenceSources, ...command } = recorded;
+    // the Runtime ran these checks itself: this, not anything in a command, is what makes the evidence "executed" or "browser"
+    const source: EvidenceSource = { kind: "executed", runner: "praxis-runtime:verify-stories", runId, startedAt, finishedAt: new Date().toISOString(), artifacts: [] };
+    if (isPreview) {
+      const preview = previewWorkflow(repo, command, workItemId, source, evidenceSources);
       return { ...preview, result: { ...(preview.result as object), ...meta } };
     }
-    const applied = applyWorkflow(repo, command, str(args.previewFingerprint) ?? "", workItemId, undefined, source);
+    const applied = applyWorkflow(repo, command, str(args.previewFingerprint) ?? "", workItemId, undefined, source, evidenceSources);
     return { ...applied, result: { ...(applied.result as object), ...meta } };
   }
   if (parsed.action === "prepare-fix") {
