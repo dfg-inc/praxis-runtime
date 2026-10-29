@@ -28,7 +28,19 @@ build_test:
   script:
     - npm run build
     - npm run typecheck
-    - npm run test
+    # The browser driver tests start a real Chromium with its sandbox ON, and Chromium does not run its sandbox as root:
+    # install the Chromium pinned by playwright-core and run the tests as the image's unprivileged user (no --no-sandbox).
+    - |
+      export PLAYWRIGHT_BROWSERS_PATH=/opt/pw
+      npx playwright-core install --with-deps chromium
+      chown -R node:node /opt/pw "$CI_PROJECT_DIR"
+      su -p node -c '
+        export HOME=/home/node
+        cd "$CI_PROJECT_DIR"
+        export PRAXIS_BROWSER_EXECUTABLE="$(node -p "require(\"playwright-core\").chromium.executablePath()")"
+        echo "browser: $PRAXIS_BROWSER_EXECUTABLE"
+        npm run test
+      '
 
 git_delivery:
   stage: verify
