@@ -38,7 +38,9 @@ build_test:
         export HOME=/home/node
         cd "$CI_PROJECT_DIR"
         export PRAXIS_BROWSER_EXECUTABLE="$(node -p "require(\"playwright-core\").chromium.executablePath()")"
-        echo "browser: $PRAXIS_BROWSER_EXECUTABLE"
+        echo "browser: $PRAXIS_BROWSER_EXECUTABLE; cpus: $(nproc); cgroup cpu.max: $(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo n/a)"
+        # The shared pod is CPU-limited: fewer parallel test workers keep the unchanged 5 s test timeouts meaningful.
+        export VITEST_MAX_WORKERS=2
         npm run test
       '
 
