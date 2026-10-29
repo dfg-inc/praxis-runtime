@@ -143,7 +143,7 @@ export async function buildStoryVerification(
   let limitations: string[] = [];
   let plan: VerificationMeta["plan"] = [];
   let browser: BrowserEvidence[] = [];
-  const adapterResult = adapter ? await runIsolated<{ scenarios: Scenario[]; findings: Finding[] } | null>({ file: adapter, cwd: repo, op: "verify", state, independentRerun }) : null;
+  const adapterResult = adapter ? await runIsolated<{ scenarios: Scenario[]; findings: Finding[] } | null>({ file: adapter, cwd: repo, op: "verify", state: { ...state, services }, independentRerun }) : null;
   if (adapterResult) {
     const verified = adapterResult;
     scenarios = verified.scenarios;

@@ -120,6 +120,9 @@ await must(story("US-ORD-003", acs[2], "Mobile order search"), wi);
 await must({ action: "advance-phase", to: "stories_review" }, wi);
 await userSave("stories", wi, { stories: { items: [], stories: ["US-ORD-001", "US-ORD-002", "US-ORD-003"].map((id) => ({ storyId: id, revision: 1, acceptAll: true })), accept: true } });
 eq(stateOf(wi).phaseAcceptance.stories_review?.via, "html-review", "stories accepted by the user's save");
+// reviewing the stories and confirming their behaviour are two decisions: the gate wants every story confirmed (the client's dialog answers)
+const storyView = (await call(agent, "praxis_workflow_inspect", { repo, workItemId: wi, view: "stories" })).data.stories;
+for (const st of storyView) await must({ action: "confirm-story", id: st.id, revision: st.revision, contentFingerprint: st.contentFingerprint }, wi);
 await must({ action: "advance-phase", to: "architecture" }, wi);
 step("BA: requirements, prototype, plan and stories accepted by the user (page saves); stories carry repositories and services from the plan");
 
@@ -203,7 +206,27 @@ const contractCheck = () => {
 const first = contractCheck();
 eq(first.out, { api: true, web: true, mobile: false }, "Quality's executed contract check catches the mobile defect");
 const scenarios = (res, rerun) => [["US-ORD-001", "api", "svc-api", "orders.js"], ["US-ORD-002", "web", "svc-web", "src/client.js"], ["US-ORD-003", "mobile", "svc-mobile", "src/client.js"]].map(([sid, k, svcId, path]) => ({ storyId: sid, storyRevision: 1, requirementId: "REQ-ORD-001", acceptanceCriterionId: `${sid}-AC-01`, scenarioId: `${sid}-HAPPY-1`, kind: "happy", serviceId: svcId, repository: k, implementationPath: path, evidence: [`contract check ${rerun ? "rerun " : ""}output: ${JSON.stringify(res.out)}`], status: res.out[k] ? "PASS" : "FAIL", critical: true }));
-await must({ action: "record-verification", scenarios: scenarios(first, false), findings: [] }, wi);
+
+// Quality's contract check as a project adapter: the Runtime runs it in an isolated process, so its result is executed evidence (an agent's own record would only be attested)
+mkdirSync(join(repo, ".praxis", "quality"), { recursive: true });
+writeFileSync(
+  join(repo, ".praxis", "quality", "adapter.mjs"),
+  `export async function verify({ state, loadModule }) {
+  const svc = Object.fromEntries(state.services.map((s) => [s.id, s]));
+  const api = await loadModule(svc["svc-api"], "orders.js");
+  const web = await loadModule(svc["svc-web"], "src/client.js");
+  const mobile = await loadModule(svc["svc-mobile"], "src/client.js");
+  const provider = { searchOrders: api.mod.searchOrders };
+  const out = { api: api.mod.searchOrders("b-2").length === 1, web: web.mod.renderRows(provider, "b-2").join() === "B-2 Globex paid", mobile: mobile.mod.renderRows(provider, "b-2").join().startsWith("B-2 ") };
+  const acs = state.requirements.find((r) => r.id === "REQ-ORD-001").acceptanceCriteria.map((c) => c.id);
+  const rows = [["US-ORD-001", 0, "api", "svc-api", "orders.js"], ["US-ORD-002", 1, "web", "svc-web", "src/client.js"], ["US-ORD-003", 2, "mobile", "svc-mobile", "src/client.js"]];
+  const scenarios = rows.map(([sid, i, k, svcId, path]) => ({ storyId: sid, requirementId: "REQ-ORD-001", acceptanceCriterionId: acs[i], scenarioId: sid + "-HAPPY-1", kind: "happy", serviceId: svcId, repository: k, implementationPath: path, testRef: path, evidence: ["contract check output: " + JSON.stringify(out)], status: out[k] ? "PASS" : "FAIL", critical: true }));
+  const findings = out.mobile ? [] : [{ id: "F-MOBILE-CONTRACT", requirementIds: ["REQ-ORD-001"], serviceIds: ["svc-mobile"], owner: "developer", summary: "svc-mobile does not follow the contract", evidence: ["observed: order_number"], status: "open", severity: "high", storyIds: ["US-ORD-003"], acceptanceCriterionIds: [acs[2]], repository: "mobile", file: "src/client.js", expected: "reads number", observed: "reads order_number", reproduction: ["run the contract check"], suggestion: "read number" }];
+  return { scenarios, findings };
+}
+`,
+);
+await must({ action: "verify-stories", independentRerun: false }, wi);
 const failing = stateOf(wi).verdicts.filter((v) => v.scope === "feature").at(-1);
 eq(failing.verdict, "FAIL", "the feature verdict is FAIL while one repository fails the contract");
 const blocked = await call(agent, "praxis_workflow_preview", { repo, workItemId: wi, command: JSON.stringify({ action: "advance-phase", to: "delivery" }) });
@@ -246,7 +269,7 @@ for (const id of ["US-ORD-001", "US-ORD-002", "US-ORD-003"]) {
   const a = await call(agent, "praxis_workflow_apply", { repo, workItemId: wi, command: JSON.stringify(command), confirmation: "YES", previewFingerprint: p.data.fingerprint });
   check(a.ok, `confirm ${id}: ${JSON.stringify(a.errors)}`);
 }
-await must({ action: "record-verification", independentRerun: true, scenarios: scenarios(second, true), findings: [] }, wi);
+await must({ action: "verify-stories", independentRerun: true }, wi);
 const verdicts = stateOf(wi).verdicts;
 check(verdicts.some((v) => v.scope === "feature" && v.verdict === "PASS" && !v.stale), `a current PASS feature verdict: ${JSON.stringify(verdicts.map((v) => [v.scope, v.verdict, v.stale]))}`);
 const gate = await call(agent, "praxis_workflow_preview", { repo, workItemId: wi, command: JSON.stringify({ action: "advance-phase", to: "delivery" }) });
