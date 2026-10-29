@@ -61,4 +61,17 @@ describe("S9 / W2: a preview that fits, and a command that does not have to be r
     expect(res.data.approvals.summary).toMatchObject({ total: 0, testOnly: 0, unverifiedProvenance: [] });
     expect(res.data.approvals.note).toContain("No client identifies the person");
   });
+
+  it("P4: the address of a review without its secret says why it does not open and what to do, and the result says the url is not a working link", async () => {
+    process.env.PRAXIS_TEST_REVIEW_NO_BROWSER = "1";
+    const repo = await opened();
+    const rendered = await call("praxis_review_render", repo, { view: "requirements" });
+    expect(rendered.ok, JSON.stringify(rendered.errors)).toBe(true);
+    const response = await fetch(rendered.data.url as string);
+    expect(response.status).toBe(403);
+    const text = await response.text();
+    expect(text).toContain("does not open here");
+    expect(text).toContain("reopen: true");
+    expect(JSON.stringify(rendered.data)).not.toMatch(/\?t=[a-f0-9]{20}/);
+  });
 });

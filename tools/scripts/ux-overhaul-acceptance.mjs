@@ -456,7 +456,12 @@ await scenario("S09", "Full flow BA, Architect, Developer, Quality with handoffs
   const confirmed = await call(agent, "praxis_workflow_apply", { repo, workItemId: id, command: JSON.stringify(confirmCommand), confirmation: "YES", previewFingerprint: preview.data.fingerprint });
   check(confirmed.ok, `confirm: ${JSON.stringify(confirmed.errors)}`);
   eq(stateOf(repo, id).stories[0].confirmedBehavior, true, "story confirmed by the user through the dialog");
-  await must(agent, repo, { action: "record-verification", independentRerun: true, scenarios: [{ storyId: "US-ORD-001", storyRevision: 1, requirementId: "REQ-ORD-001", acceptanceCriterionId: "US-ORD-001-AC-01", scenarioId: "US-ORD-001-HAPPY-1", kind: "happy", serviceId: "svc-orders", implementationPath: "svc/orders.js", evidence: ["called list() and checked the result"], status: "PASS", critical: true }], findings: [] }, id);
+  // the Runtime runs the check itself: only that makes the criterion PASS (an agent's own record-verification is attested, never PASS)
+  mkdirSync(join(repo, ".praxis", "quality", id), { recursive: true });
+  writeFileSync(join(repo, ".praxis", "quality", id, "checks.json"), JSON.stringify({ checks: [{ scenarioId: "US-ORD-001-HAPPY-1", storyId: "US-ORD-001", requirementId: "REQ-ORD-001", acceptanceCriterionId: "REQ-ORD-001-AC-01", kind: "happy", serviceId: "svc-orders", module: "orders.js", call: { function: "list", args: [] }, expect: [] }] }));
+  const attested = await must(agent, repo, { action: "record-verification", independentRerun: true, scenarios: [{ storyId: "US-ORD-001", storyRevision: 1, requirementId: "REQ-ORD-001", acceptanceCriterionId: "REQ-ORD-001-AC-01", scenarioId: "AGENT-SAYS-PASS", kind: "happy", serviceId: "svc-orders", implementationPath: "svc/orders.js", evidence: ["called list() and checked the result"], status: "PASS", critical: true }], findings: [] }, id);
+  check(!stateOf(repo, id).verdicts.some((v) => v.scope === "feature" && v.verdict === "PASS"), "an agent's own PASS does not make the feature PASS");
+  await must(agent, repo, { action: "verify-stories", independentRerun: true }, id);
   const verdicts = stateOf(repo, id).verdicts;
   check(verdicts.some((v) => v.scope === "feature" && v.verdict === "PASS" && !v.stale), `feature verdict PASS: ${JSON.stringify(verdicts.map((v) => [v.scope, v.verdict]))}`);
   eq(stateOf(repo, id).handoffs.map((h) => `${h.sourceRole}>${h.targetRole}`), ["ba>architect", "architect>developer", "developer>quality"], "handoffs in order");

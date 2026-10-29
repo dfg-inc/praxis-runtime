@@ -213,7 +213,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (!match || !session) return json(res, 404, { error: "unknown or expired review" });
   session.lastUsed = Date.now();
   if (req.method === "GET" && !match[2]) {
-    if (Date.now() > session.loadUntil || !safeEqual(url.searchParams.get("t") ?? "", session.loadToken)) return json(res, 403, { error: "bad or expired link" });
+    if (Date.now() > session.loadUntil || !safeEqual(url.searchParams.get("t") ?? "", session.loadToken)) {
+      // The address without its secret opens nothing, on purpose: only the browser tab Praxis opened can save a decision. Say so, and say what to do.
+      res.writeHead(403, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+      res.end(`<!doctype html><meta charset="utf-8"><title>Review link</title><body style="font:16px system-ui;max-width:40em;margin:3em auto;padding:0 1em"><h1>This review link does not open here</h1><p>A review page opens only from the tab Praxis opened for you, and the link works for a few minutes. If you closed that tab or too much time has passed, ask Claude to open the review again (it calls <code>praxis_review_render</code> with <code>reopen: true</code>). Your saved decisions are not affected.</p></body>`);
+      return;
+    }
     try {
       const state = requireState(session.repo, session.workItemId);
       // Each page load gets its own save token; the link token only opens the page.
@@ -320,7 +325,7 @@ export async function renderReviewTool(repo: string, input: { view: string; work
     // a page for this view is already open and its link still valid: do not open another browser tab on every call
     const live = [...sessions.values()].find((s) => s.repo === repo && s.workItemId === state.workItem.id && s.view === view && s.loadUntil > Date.now() && s.openedAt !== undefined);
     if (live && !input.reopen) {
-      return { view, workItemId: state.workItem.id, file, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: live.shown?.fingerprint ?? null, baseState: live.shown?.baseState ?? null, progress: progressFor(state, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened, so call again with reopen true if the content changed since. Tell them to use that tab, or call again with reopen true to open a fresh page.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
+      return { view, workItemId: state.workItem.id, file, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: live.shown?.fingerprint ?? null, baseState: live.shown?.baseState ?? null, progress: progressFor(state, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened. The url in this result is NOT a working link (the working link is secret and only the tab Praxis opened has it): tell the user to use that tab, or call again with reopen true to open a fresh page, which is needed whenever the content changed or the tab was closed.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
     const id = randomBytes(8).toString("hex");
     const loadToken = randomBytes(24).toString("hex");
