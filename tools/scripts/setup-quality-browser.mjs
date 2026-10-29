@@ -18,6 +18,7 @@ import { createRequire } from "node:module";
 const PINNED = "1.64.1";
 const args = process.argv.slice(2);
 const di = args.indexOf("--dir");
+if (di >= 0 && !args[di + 1]) { console.error("setup-quality-browser: --dir needs a directory"); process.exit(2); }
 const dir = resolve(di >= 0 ? args[di + 1] : join(homedir(), ".praxis", "quality-browser"));
 const checkOnly = args.includes("--check-only");
 
@@ -39,8 +40,8 @@ const installed = () => { try { return JSON.parse(readFileSync(join(dir, "node_m
 
 if (!checkOnly && installed() !== PINNED) {
   mkdirSync(dir, { recursive: true });
-  writeFileSync(pkgPath, JSON.stringify({ name: "praxis-quality-browser", private: true, type: "module", dependencies: { "playwright-core": PINNED } }, null, 2) + "\n");
-  const r = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", "--prefix", dir], { cwd: dir, stdio: "inherit" });
+  if (!existsSync(pkgPath)) writeFileSync(pkgPath, JSON.stringify({ name: "praxis-quality-browser", private: true, type: "module", dependencies: {} }, null, 2) + "\n");
+  const r = spawnSync("npm", ["install", "--no-audit", "--no-fund", "--ignore-scripts", "--save-exact", `playwright-core@${PINNED}`, "--prefix", dir], { cwd: dir, stdio: "inherit", shell: process.platform === "win32" });
   if (r.status !== 0) fail("npm install failed");
 }
 const have = installed();
