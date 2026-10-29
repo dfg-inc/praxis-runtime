@@ -4313,6 +4313,8 @@ function trusted(entry) {
 }
 function locate(state2, entry, ac) {
   let current = true;
+  if (entry.source?.drifted)
+    current = false;
   if (entry.storyId !== void 0) {
     const story = state2.stories.find((s) => s.id === entry.storyId);
     if (!story || story.status === "superseded" || story.status === "excluded")
@@ -4628,6 +4630,8 @@ var init_story = __esm({
       finishedAt: external_exports.string().optional(),
       /** Digest of what was exercised (the served bundle, or the module). */
       subjectDigest: external_exports.string().optional(),
+      /** Set only in memory by the Runtime when the bundle this result was recorded for is no longer the bundle on disk. Never persisted. */
+      drifted: external_exports.boolean().optional(),
       artifacts: external_exports.array(external_exports.object({ path: external_exports.string(), sha256: external_exports.string(), bytes: external_exports.number().int().nonnegative().optional() })).default([])
     });
     CoverageEntrySchema = external_exports.object({
@@ -5716,7 +5720,7 @@ function applyRequirementDecisions(state2, command, now, approvedRewording = fal
       requirement.acceptanceCriteria[index] = criterion;
     }
     for (const statement of decision.addAcceptance) {
-      const used = [...requirement.acceptanceCriteria.map((c) => c.id), ...requirement.retiredCriteria ?? [], ...next.coverage.filter((e) => e.requirementId === requirement.id).map((e) => e.acceptanceCriterionId)].map((id) => Number(id.match(/-AC-(\d+)$/)?.[1] ?? 0));
+      const used = [...requirement.acceptanceCriteria.map((c) => c.id), ...requirement.retiredCriteria ?? [], ...next.coverage.filter((e) => e.requirementId === requirement.id).map((e) => e.acceptanceCriterionId)].map((id) => Number(id.match(/-AC-(\d{1,6})$/)?.[1] ?? 0));
       const nextNumber = Math.max(0, ...used) + 1;
       requirement.acceptanceCriteria.push({
         id: `${requirement.id}-AC-${String(nextNumber).padStart(2, "0")}`,
@@ -7317,7 +7321,7 @@ function redactPersistent(value) {
     }
     return out;
   }
-  if (typeof value === "string" && /^(Bearer\s+)?[A-Za-z0-9_\-]{40,}$/.test(value) && !/^[0-9a-f]{40}$/i.test(value) && !/^[0-9a-f]{64}$/i.test(value)) {
+  if (typeof value === "string" && /^(Bearer\s+)?[A-Za-z0-9_\-]{40,}$/.test(value) && !/^[0-9a-f]{40}$/i.test(value) && !/^[0-9a-f]{64}$/i.test(value) && !/^run-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) {
     return "[redacted]";
   }
   return value;
@@ -8196,7 +8200,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
         throw new WorkflowError("EVIDENCE_PROTECTED", `a ${runtime ? "Runtime" : "agent"} record cannot replace ${command.replaceSource} evidence`);
       coverage2 = coverage2.filter((e) => !(ownedBy(e) && !seen.has(e.scenarioId)));
     }
-    const comparable = (e) => JSON.stringify({ ...e, recordedAt: void 0, source: e.source && { kind: e.source.kind, runner: e.source.runner, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
+    const comparable = (e) => JSON.stringify({ ...e, recordedAt: void 0, source: e.source && { kind: e.source.kind, runner: e.source.runner, runId: e.source.runId, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
     for (const scenario of incoming) {
       const index = coverage2.findIndex((e) => e.scenarioId === scenario.scenarioId);
       if (index < 0) {
@@ -15268,10 +15272,10 @@ var require_resolve_block_map = __commonJS({
       let offset = bm.offset;
       let commentEnd = null;
       for (const collItem of bm.items) {
-        const { start, key, sep: sep9, value } = collItem;
+        const { start, key, sep: sep10, value } = collItem;
         const keyProps = resolveProps.resolveProps(start, {
           indicator: "explicit-key-ind",
-          next: key ?? sep9?.[0],
+          next: key ?? sep10?.[0],
           offset,
           onError,
           parentIndent: bm.indent,
@@ -15285,7 +15289,7 @@ var require_resolve_block_map = __commonJS({
             else if ("indent" in key && key.indent !== bm.indent)
               onError(offset, "BAD_INDENT", startColMsg);
           }
-          if (!keyProps.anchor && !keyProps.tag && !sep9) {
+          if (!keyProps.anchor && !keyProps.tag && !sep10) {
             commentEnd = keyProps.end;
             if (keyProps.comment) {
               if (map2.comment)
@@ -15309,7 +15313,7 @@ var require_resolve_block_map = __commonJS({
         ctx.atKey = false;
         if (utilMapIncludes.mapIncludes(ctx, map2.items, keyNode))
           onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-        const valueProps = resolveProps.resolveProps(sep9 ?? [], {
+        const valueProps = resolveProps.resolveProps(sep10 ?? [], {
           indicator: "map-value-ind",
           next: value,
           offset: keyNode.range[2],
@@ -15325,7 +15329,7 @@ var require_resolve_block_map = __commonJS({
             if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
               onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep9, null, valueProps, onError);
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep10, null, valueProps, onError);
           if (ctx.schema.compat)
             utilFlowIndentCheck.flowIndentCheck(bm.indent, value, onError);
           offset = valueNode.range[2];
@@ -15416,7 +15420,7 @@ var require_resolve_end = __commonJS({
       let comment = "";
       if (end) {
         let hasSpace = false;
-        let sep9 = "";
+        let sep10 = "";
         for (const token of end) {
           const { source, type } = token;
           switch (type) {
@@ -15430,13 +15434,13 @@ var require_resolve_end = __commonJS({
               if (!comment)
                 comment = cb;
               else
-                comment += sep9 + cb;
-              sep9 = "";
+                comment += sep10 + cb;
+              sep10 = "";
               break;
             }
             case "newline":
               if (comment)
-                sep9 += source;
+                sep10 += source;
               hasSpace = true;
               break;
             default:
@@ -15479,18 +15483,18 @@ var require_resolve_flow_collection = __commonJS({
       let offset = fc.offset + fc.start.source.length;
       for (let i = 0; i < fc.items.length; ++i) {
         const collItem = fc.items[i];
-        const { start, key, sep: sep9, value } = collItem;
+        const { start, key, sep: sep10, value } = collItem;
         const props = resolveProps.resolveProps(start, {
           flow: fcName,
           indicator: "explicit-key-ind",
-          next: key ?? sep9?.[0],
+          next: key ?? sep10?.[0],
           offset,
           onError,
           parentIndent: fc.indent,
           startOnNewline: false
         });
         if (!props.found) {
-          if (!props.anchor && !props.tag && !sep9 && !value) {
+          if (!props.anchor && !props.tag && !sep10 && !value) {
             if (i === 0 && props.comma)
               onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
             else if (i < fc.items.length - 1)
@@ -15544,8 +15548,8 @@ var require_resolve_flow_collection = __commonJS({
             }
           }
         }
-        if (!isMap && !sep9 && !props.found) {
-          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep9, null, props, onError);
+        if (!isMap && !sep10 && !props.found) {
+          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep10, null, props, onError);
           coll.items.push(valueNode);
           offset = valueNode.range[2];
           if (isBlock(value))
@@ -15557,7 +15561,7 @@ var require_resolve_flow_collection = __commonJS({
           if (isBlock(key))
             onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
           ctx.atKey = false;
-          const valueProps = resolveProps.resolveProps(sep9 ?? [], {
+          const valueProps = resolveProps.resolveProps(sep10 ?? [], {
             flow: fcName,
             indicator: "map-value-ind",
             next: value,
@@ -15568,8 +15572,8 @@ var require_resolve_flow_collection = __commonJS({
           });
           if (valueProps.found) {
             if (!isMap && !props.found && ctx.options.strict) {
-              if (sep9)
-                for (const st of sep9) {
+              if (sep10)
+                for (const st of sep10) {
                   if (st === valueProps.found)
                     break;
                   if (st.type === "newline") {
@@ -15586,7 +15590,7 @@ var require_resolve_flow_collection = __commonJS({
             else
               onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep9, null, valueProps, onError) : null;
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep10, null, valueProps, onError) : null;
           if (valueNode) {
             if (isBlock(value))
               onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -15766,7 +15770,7 @@ var require_resolve_block_scalar = __commonJS({
           chompStart = i + 1;
       }
       let value = "";
-      let sep9 = "";
+      let sep10 = "";
       let prevMoreIndented = false;
       for (let i = 0; i < contentStart; ++i)
         value += lines[i][0].slice(trimIndent) + "\n";
@@ -15783,24 +15787,24 @@ var require_resolve_block_scalar = __commonJS({
           indent = "";
         }
         if (type === Scalar.Scalar.BLOCK_LITERAL) {
-          value += sep9 + indent.slice(trimIndent) + content;
-          sep9 = "\n";
+          value += sep10 + indent.slice(trimIndent) + content;
+          sep10 = "\n";
         } else if (indent.length > trimIndent || content[0] === "	") {
-          if (sep9 === " ")
-            sep9 = "\n";
-          else if (!prevMoreIndented && sep9 === "\n")
-            sep9 = "\n\n";
-          value += sep9 + indent.slice(trimIndent) + content;
-          sep9 = "\n";
+          if (sep10 === " ")
+            sep10 = "\n";
+          else if (!prevMoreIndented && sep10 === "\n")
+            sep10 = "\n\n";
+          value += sep10 + indent.slice(trimIndent) + content;
+          sep10 = "\n";
           prevMoreIndented = true;
         } else if (content === "") {
-          if (sep9 === "\n")
+          if (sep10 === "\n")
             value += "\n";
           else
-            sep9 = "\n";
+            sep10 = "\n";
         } else {
-          value += sep9 + content;
-          sep9 = " ";
+          value += sep10 + content;
+          sep10 = " ";
           prevMoreIndented = false;
         }
       }
@@ -15979,25 +15983,25 @@ var require_resolve_flow_scalar = __commonJS({
         trimBoth = /^[ \t]+|[ \t]+$/g;
       }
       let res = match[1].replace(trimEnd, "");
-      let sep9 = " ";
+      let sep10 = " ";
       let pos = line.lastIndex;
       while (match = line.exec(source)) {
         const lm = match[1].replace(trimBoth, "");
         if (lm === "") {
-          if (sep9 === "\n")
-            res += sep9;
+          if (sep10 === "\n")
+            res += sep10;
           else
-            sep9 = "\n";
+            sep10 = "\n";
         } else {
-          res += sep9 + lm;
-          sep9 = " ";
+          res += sep10 + lm;
+          sep10 = " ";
         }
         pos = line.lastIndex;
       }
       const last = /[ \t]*(.*)/sy;
       last.lastIndex = pos;
       match = last.exec(source);
-      return res + sep9 + (match?.[1] ?? "");
+      return res + sep10 + (match?.[1] ?? "");
     }
     function doubleQuotedValue(source, onError) {
       let res = "";
@@ -16807,14 +16811,14 @@ var require_cst_stringify = __commonJS({
         }
       }
     }
-    function stringifyItem({ start, key, sep: sep9, value }) {
+    function stringifyItem({ start, key, sep: sep10, value }) {
       let res = "";
       for (const st of start)
         res += st.source;
       if (key)
         res += stringifyToken(key);
-      if (sep9)
-        for (const st of sep9)
+      if (sep10)
+        for (const st of sep10)
           res += st.source;
       if (value)
         res += stringifyToken(value);
@@ -17974,18 +17978,18 @@ var require_parser = __commonJS({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep9;
+          let sep10;
           if (scalar.end) {
-            sep9 = scalar.end;
-            sep9.push(this.sourceToken);
+            sep10 = scalar.end;
+            sep10.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep9 = [this.sourceToken];
+            sep10 = [this.sourceToken];
           const map2 = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep9 }]
+            items: [{ start, key: scalar, sep: sep10 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map2;
@@ -18137,15 +18141,15 @@ var require_parser = __commonJS({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key = it.key;
-                  const sep9 = it.sep;
-                  sep9.push(this.sourceToken);
+                  const sep10 = it.sep;
+                  sep10.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key, sep: sep9 }]
+                    items: [{ start: start2, key, sep: sep10 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -18339,13 +18343,13 @@ var require_parser = __commonJS({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep9 = fc.end.splice(1, fc.end.length);
-            sep9.push(this.sourceToken);
+            const sep10 = fc.end.splice(1, fc.end.length);
+            sep10.push(this.sourceToken);
             const map2 = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep9 }]
+              items: [{ start, key: fc, sep: sep10 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map2;
@@ -31833,11 +31837,11 @@ var require_excerpt = __commonJS({
       if (typeof opts.excerpt === "function") {
         return opts.excerpt(file2, opts);
       }
-      const sep9 = file2.data.excerpt_separator || opts.excerpt_separator;
-      if (sep9 == null && (opts.excerpt === false || opts.excerpt == null)) {
+      const sep10 = file2.data.excerpt_separator || opts.excerpt_separator;
+      if (sep10 == null && (opts.excerpt === false || opts.excerpt == null)) {
         return file2;
       }
-      const delimiter = typeof opts.excerpt === "string" ? opts.excerpt : sep9 || opts.delimiters[0];
+      const delimiter = typeof opts.excerpt === "string" ? opts.excerpt : sep10 || opts.delimiters[0];
       const idx = file2.content.indexOf(delimiter);
       if (idx !== -1) {
         file2.excerpt = file2.content.slice(0, idx);
@@ -53907,41 +53911,41 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
-  function resolveComponent(base, relative6, options2, skipNormalization) {
+  function resolveComponent(base, relative7, options2, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
       base = parse6(serialize(base, options2), options2);
-      relative6 = parse6(serialize(relative6, options2), options2);
+      relative7 = parse6(serialize(relative7, options2), options2);
     }
     options2 = options2 || {};
-    if (!options2.tolerant && relative6.scheme) {
-      target.scheme = relative6.scheme;
-      target.userinfo = relative6.userinfo;
-      target.host = relative6.host;
-      target.port = relative6.port;
-      target.path = removeDotSegments(relative6.path || "");
-      target.query = relative6.query;
+    if (!options2.tolerant && relative7.scheme) {
+      target.scheme = relative7.scheme;
+      target.userinfo = relative7.userinfo;
+      target.host = relative7.host;
+      target.port = relative7.port;
+      target.path = removeDotSegments(relative7.path || "");
+      target.query = relative7.query;
     } else {
-      if (relative6.userinfo !== void 0 || relative6.host !== void 0 || relative6.port !== void 0) {
-        target.userinfo = relative6.userinfo;
-        target.host = relative6.host;
-        target.port = relative6.port;
-        target.path = removeDotSegments(relative6.path || "");
-        target.query = relative6.query;
+      if (relative7.userinfo !== void 0 || relative7.host !== void 0 || relative7.port !== void 0) {
+        target.userinfo = relative7.userinfo;
+        target.host = relative7.host;
+        target.port = relative7.port;
+        target.path = removeDotSegments(relative7.path || "");
+        target.query = relative7.query;
       } else {
-        if (!relative6.path) {
+        if (!relative7.path) {
           target.path = base.path;
-          if (relative6.query !== void 0) target.query = relative6.query;
+          if (relative7.query !== void 0) target.query = relative7.query;
           else target.query = base.query;
         } else {
-          if (relative6.path[0] === "/") target.path = removeDotSegments(relative6.path);
+          if (relative7.path[0] === "/") target.path = removeDotSegments(relative7.path);
           else {
-            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative6.path;
-            else if (!base.path) target.path = relative6.path;
-            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative6.path;
+            if ((base.userinfo !== void 0 || base.host !== void 0 || base.port !== void 0) && !base.path) target.path = "/" + relative7.path;
+            else if (!base.path) target.path = relative7.path;
+            else target.path = base.path.slice(0, base.path.lastIndexOf("/") + 1) + relative7.path;
             target.path = removeDotSegments(target.path);
           }
-          target.query = relative6.query;
+          target.query = relative7.query;
         }
         target.userinfo = base.userinfo;
         target.host = base.host;
@@ -53949,7 +53953,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
       }
       target.scheme = base.scheme;
     }
-    target.fragment = relative6.fragment;
+    target.fragment = relative7.fragment;
     return target;
   }
   function equal(uriA, uriB, options2) {
@@ -80723,7 +80727,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"6193e23a097d7e2628cb2506ea69d9cdd803eee25fb6741ce798799949c82423","coreBaseline":"52539b71a43dfd50dca26788938fdba523bfc69b","inputs":34}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"f21ea667142dc5acdbac61321e2975c902ab77aa7118c057b42197ed81dc0c1d","coreBaseline":"fdb3ca30b6670fcbbf3975f3f570efa0aeb85733","inputs":34}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80759,8 +80763,8 @@ function toolOrigin(role) {
 var import_node_fs4 = require("node:fs");
 var import_node_path3 = require("node:path");
 var within = (root, path) => path === root || path.startsWith(`${root}${import_node_path3.sep}`);
-function containedPath(root, relative6) {
-  if (typeof relative6 !== "string" || relative6.length === 0 || relative6.includes("\0") || (0, import_node_path3.isAbsolute)(relative6) || relative6.split(/[/\\]/).includes("..")) {
+function containedPath(root, relative7) {
+  if (typeof relative7 !== "string" || relative7.length === 0 || relative7.includes("\0") || (0, import_node_path3.isAbsolute)(relative7) || relative7.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
   let realRoot;
@@ -80769,7 +80773,7 @@ function containedPath(root, relative6) {
   } catch {
     throw new Error("UNSAFE_PATH");
   }
-  const lexical = (0, import_node_path3.resolve)(realRoot, relative6);
+  const lexical = (0, import_node_path3.resolve)(realRoot, relative7);
   if (!within(realRoot, lexical))
     throw new Error("UNSAFE_PATH");
   let existing = lexical;
@@ -81017,14 +81021,14 @@ function validateBrowserConfig(raw) {
   if (!rec(raw) || !rec(raw.serve) || !str2(raw.serve.root))
     throw new Error('CHECKS_INVALID: "browser" needs {"serve": {"root": "<directory of the built app>"}}');
   const viewport = raw.viewport;
-  if (viewport !== void 0 && !(rec(viewport) && Number.isInteger(viewport.width) && Number.isInteger(viewport.height)))
-    throw new Error("CHECKS_INVALID: browser.viewport needs integer width and height");
+  if (viewport !== void 0 && !(rec(viewport) && Number.isInteger(viewport.width) && Number.isInteger(viewport.height) && viewport.width >= 200 && viewport.width <= 3e3 && viewport.height >= 200 && viewport.height <= 3e3))
+    throw new Error("CHECKS_INVALID: browser.viewport needs integer width and height (200-3000)");
   return { serve: { root: raw.serve.root, ...raw.serve.spa === false ? { spa: false } : { spa: true } }, ...viewport ? { viewport } : {} };
 }
 var DRIVER = String.raw`
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8"));
@@ -81057,6 +81061,28 @@ function digestOf(root) {
   visit(root);
   return createHash("sha256").update(entries.join("\n")).digest("hex");
 }
+// The page is served from a private COPY of the bundle: the digest is of the bytes that were served, a background process of the
+// project cannot edit them afterwards, and nothing that starts with a dot (.env, .git, .praxis) is ever copied.
+function snapshot(src, dst) {
+  let entries = 0;
+  let bytes = 0;
+  const visit = (from, to) => {
+    mkdirSync(to, { recursive: true });
+    for (const name of readdirSync(from).sort()) {
+      if (name.startsWith(".")) continue;
+      const p = join(from, name);
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) { visit(p, join(to, name)); continue; }
+      if (!st.isFile()) continue;
+      entries += 1;
+      bytes += st.size;
+      if (entries > 5000 || bytes > 200 * 1024 * 1024) throw new Error("BUNDLE_TOO_LARGE");
+      copyFileSync(p, join(to, name));
+    }
+  };
+  visit(src, dst);
+}
 function loadPlaywright() {
   for (const dir of input.playwrightDirs) {
     try { return createRequire(join(dir, "noop.js"))("playwright-core"); } catch { /* try the next place */ }
@@ -81068,8 +81094,14 @@ async function main() {
   const pw = loadPlaywright();
   if (!pw) return out({ ok: true, result: { available: false, reason: "playwright-core was not found: the operator sets PRAXIS_PLAYWRIGHT_DIR to a directory whose node_modules has it (it is never taken from the project under test)" } });
   let root;
-  try { root = containedDir(input.serviceRoot, input.serve.root); } catch { return out({ ok: true, result: { available: false, reason: "browser.serve.root is missing or outside the service directory: build the app first" } }); }
+  try {
+    root = containedDir(input.serviceRoot, input.serve.root);
+    if (root === realpathSync(resolve(input.serviceRoot))) throw new Error("UNSAFE_PATH");
+  } catch { return out({ ok: true, result: { available: false, reason: "browser.serve.root is missing or outside the service directory: build the app first" } }); }
   if (!existsSync(join(root, "index.html"))) return out({ ok: true, result: { available: false, reason: "browser.serve.root has no index.html: build the app first" } });
+  const served = join(input.workDir, "bundle");
+  try { snapshot(root, served); } catch (error) { return out({ ok: true, result: { available: false, reason: "the bundle could not be copied for serving (" + String((error && error.message) || error).slice(0, 120) + ")" } }); }
+  root = realpathSync(served);
   const subjectDigest = digestOf(root);
   const server = createServer((req, res) => {
     try {
@@ -81089,9 +81121,13 @@ async function main() {
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   const origin = "http://127.0.0.1:" + server.address().port;
   let browser;
+  // a run that outlives its caller (killed parent, hung page) stops itself and Chromium with it
+  const die = async () => { try { await Promise.race([browser && browser.close(), new Promise((r) => setTimeout(r, 1500))]); } catch { /* going down anyway */ } process.exit(3); };
+  setTimeout(die, (input.timeoutMs || 240000) + 3000).unref();
+  setInterval(() => { if (process.ppid !== input.parentPid) die(); }, 1000).unref();
   try {
     if (typeof pw.chromium.launch !== "function") throw new Error("playwright-core without chromium");
-    browser = await pw.chromium.launch({ headless: true, chromiumSandbox: !input.noSandbox, ...(input.executable ? { executablePath: input.executable } : {}) });
+    browser = await pw.chromium.launch({ headless: true, chromiumSandbox: !input.noSandbox, args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--webrtc-ip-handling-policy=disable_non_proxied_udp"], ...(input.executable ? { executablePath: input.executable } : {}) });
   } catch (error) {
     server.close();
     return out({ ok: true, result: { available: false, reason: "no browser could be started (" + String((error && error.message) || error).split("\n")[0].slice(0, 200) + "): install Chrome or set PRAXIS_BROWSER_EXECUTABLE" } });
@@ -81156,7 +81192,9 @@ async function main() {
       if (input.artifactsDir) {
         mkdirSync(input.artifactsDir, { recursive: true });
         const name = createHash("sha256").update(check.scenarioId).digest("hex").slice(0, 8) + "-" + check.scenarioId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) + ".png";
-        writeFileSync(join(input.artifactsDir, name), png);
+        const target = join(input.artifactsDir, name);
+        if (lstatSync(target, { throwIfNoEntry: false })) unlinkSync(target);
+        writeFileSync(target, png, { flag: "wx" });
         screenshot.path = name;
       }
     } catch { /* no screenshot */ }
@@ -81177,6 +81215,36 @@ var DEFAULT_EXECUTABLES = [
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser"
 ];
+function bundleDigest(root) {
+  try {
+    const entries = [];
+    let bytes = 0;
+    const visit2 = (dir) => {
+      for (const name of (0, import_node_fs6.readdirSync)(dir).sort()) {
+        if (name.startsWith("."))
+          continue;
+        const p = (0, import_node_path5.join)(dir, name);
+        const st = (0, import_node_fs6.lstatSync)(p);
+        if (st.isSymbolicLink())
+          continue;
+        if (st.isDirectory()) {
+          visit2(p);
+          continue;
+        }
+        if (!st.isFile())
+          continue;
+        bytes += st.size;
+        if (entries.length >= 5e3 || bytes > 200 * 1024 * 1024)
+          throw new Error("BUNDLE_TOO_LARGE");
+        entries.push(`${(0, import_node_path5.relative)(root, p).split(import_node_path5.sep).join("/")}\0${(0, import_node_crypto7.createHash)("sha256").update((0, import_node_fs6.readFileSync)(p)).digest("hex")}`);
+      }
+    };
+    visit2(root);
+    return (0, import_node_crypto7.createHash)("sha256").update(entries.join("\n")).digest("hex");
+  } catch {
+    return void 0;
+  }
+}
 function sweepProcesses(home) {
   try {
     const listing = (0, import_node_child_process2.spawnSync)("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 }).stdout ?? "";
@@ -81255,7 +81323,10 @@ async function runBrowserChecks(input2) {
         executable,
         artifactsDir: input2.artifactsDir,
         nonce,
-        noSandbox: process.env.PRAXIS_BROWSER_NO_SANDBOX === "1"
+        noSandbox: process.env.PRAXIS_BROWSER_NO_SANDBOX === "1",
+        workDir: home,
+        parentPid: process.pid,
+        timeoutMs: input2.timeoutMs ?? 24e4
       }));
     });
   } finally {
@@ -81271,8 +81342,8 @@ async function runBrowserChecks(input2) {
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
-function safeFile(root, relative6) {
-  return containedPath(root, relative6);
+function safeFile(root, relative7) {
+  return containedPath(root, relative7);
 }
 var PYTHON = `import importlib.util, json, sys
 spec = importlib.util.spec_from_file_location("praxis_target", sys.argv[1])
@@ -81313,6 +81384,16 @@ function readChecks(workflowRepo, workItemId) {
     if ((check2.level === "browser" || check2.level === "e2e") && check2.steps !== void 0)
       validateBrowserSteps(check2.scenarioId, check2.steps);
   return { checks: parsed.checks, ...browser ? { browser } : {} };
+}
+function browserServeRoot(workflowRepo, workItemId) {
+  try {
+    const scoped = workItemId ? (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
+    const file2 = scoped && (0, import_node_fs7.existsSync)(scoped) ? scoped : (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", "checks.json");
+    const root = JSON.parse((0, import_node_fs7.readFileSync)(file2, "utf8")).browser?.serve?.root;
+    return typeof root === "string" ? root : void 0;
+  } catch {
+    return void 0;
+  }
 }
 async function runProjectChecks(input2) {
   const read = readChecks(input2.workflowRepo, input2.workItemId);
@@ -81972,7 +82053,42 @@ function resolveId(layout, explicit) {
 function readItem(repo, layout, id) {
   if (layout.legacy)
     return readLegacy(repo);
-  return toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson2(itemPath(repo, id)))));
+  return markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson2(itemPath(repo, id))))));
+}
+var digestCache = /* @__PURE__ */ new Map();
+function markSubjectDrift(repo, state2) {
+  const recorded = state2.coverage.filter((e) => e.source?.kind === "browser" && e.source.subjectDigest);
+  if (recorded.length === 0)
+    return state2;
+  const serve = browserServeRoot(repo, state2.workItem.id);
+  const services = effectiveServices(state2);
+  for (const entry of recorded) {
+    const base = services.find((s) => s.id === entry.serviceId)?.localPath || repo;
+    const root = serve === void 0 ? void 0 : (0, import_node_path8.resolve)(base, serve);
+    let current;
+    if (root) {
+      const hit = digestCache.get(root);
+      if (hit && Date.now() - hit.at < 1500)
+        current = hit.digest;
+      else {
+        current = bundleDigest(root);
+        digestCache.set(root, { at: Date.now(), digest: current });
+      }
+    }
+    if (current !== entry.source?.subjectDigest)
+      entry.source = { ...entry.source, drifted: true };
+  }
+  return state2;
+}
+function withoutDrift(state2) {
+  if (!state2.coverage.some((e) => e.source?.drifted))
+    return state2;
+  return { ...state2, coverage: state2.coverage.map((e) => {
+    if (!e.source?.drifted)
+      return e;
+    const { drifted: _d, ...source } = e.source;
+    return { ...e, source };
+  }) };
 }
 function loadWorkflow(repo, workItemId) {
   const layout = readLayout(repo);
@@ -82116,7 +82232,7 @@ function writeItem(repo, state2) {
   requireMutationLease();
   const path = itemPath(repo, state2.workItem.id);
   keepPreviousVersion(path);
-  writeAtomic(path, redactState(toPortable(repo, state2)));
+  writeAtomic(path, redactState(toPortable(repo, withoutDrift(state2))));
   return path;
 }
 function ensureMigrated(repo) {
@@ -82325,8 +82441,8 @@ function git(repo, args, input2) {
   }
   return result.stdout.trim();
 }
-function safeFile2(root, relative6) {
-  return containedPath(root, relative6);
+function safeFile2(root, relative7) {
+  return containedPath(root, relative7);
 }
 function adapterFile(workflowRepo) {
   const file2 = (0, import_node_path9.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
@@ -82486,7 +82602,8 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
           {
             kind: "browser",
             runner: `${run.runner}@${run.browserVersion}`,
-            runId: `run-${(0, import_node_crypto9.randomUUID)()}`,
+            // the same id as the artifacts directory, so a result can be matched to the screenshots of its run
+            runId: artifactsDir ? (0, import_node_path9.basename)(artifactsDir) : `run-${(0, import_node_crypto9.randomUUID)()}`,
             startedAt: run.startedAt,
             finishedAt: run.finishedAt,
             subjectDigest: run.subjectDigest,
@@ -82574,12 +82691,12 @@ function assertDiffTouchesOnly(root, file2) {
     throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes nothing`);
   for (const path of touched) {
     const absolute = (0, import_node_path9.resolve)(topLevel, path);
-    const relative6 = (0, import_node_path9.relative)(realRoot, absolute);
-    if (relative6 === "" || relative6.startsWith("..") || (0, import_node_path9.isAbsolute)(relative6))
+    const relative7 = (0, import_node_path9.relative)(realRoot, absolute);
+    if (relative7 === "" || relative7.startsWith("..") || (0, import_node_path9.isAbsolute)(relative7))
       throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}, outside the checkout`);
     let real;
     try {
-      real = containedPath(root, relative6);
+      real = containedPath(root, relative7);
     } catch {
       throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}, outside the checkout`);
     }
@@ -84452,12 +84569,12 @@ function hydrateWorkflowCommand(repo, raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw))
     return raw;
   const command = { ...raw };
-  const relative6 = command.implementationPath;
-  if (typeof relative6 !== "string" || relative6.length === 0)
+  const relative7 = command.implementationPath;
+  if (typeof relative7 !== "string" || relative7.length === 0)
     return command;
   let real;
   try {
-    real = containedPath(repo, relative6);
+    real = containedPath(repo, relative7);
     const info = (0, import_node_fs33.statSync)(real);
     if (!info.isFile())
       throw new Error("UNSAFE_PATH");

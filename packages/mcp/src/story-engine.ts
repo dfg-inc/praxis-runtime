@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { containedPath } from "./path-guard.js";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ApprovalError, effectiveServices, type EvidenceSource, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
 import { tmpdir } from "node:os";
@@ -226,7 +226,8 @@ export async function buildStoryVerification(
             {
               kind: "browser",
               runner: `${run.runner}@${run.browserVersion}`,
-              runId: `run-${randomUUID()}`,
+              // the same id as the artifacts directory, so a result can be matched to the screenshots of its run
+              runId: artifactsDir ? basename(artifactsDir) : `run-${randomUUID()}`,
               startedAt: run.startedAt,
               finishedAt: run.finishedAt,
               subjectDigest: run.subjectDigest,

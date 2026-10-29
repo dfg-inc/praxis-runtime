@@ -1,9 +1,12 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
+import { bundleDigest } from "./browser-verification.js";
+import { browserServeRoot } from "./generic-verification.js";
 import { humanApprovalView, requireUserApproval } from "./human-approval.js";
 import {
   applyWorkflowCommand,
+  effectiveServices,
   buildResumeBriefing,
   commandFingerprint,
   migrateWorkflowState,
@@ -345,7 +348,41 @@ function resolveId(layout: Layout, explicit?: string): string | null {
 
 function readItem(repo: string, layout: Layout, id: string): WorkflowState {
   if (layout.legacy) return readLegacy(repo) as WorkflowState;
-  return toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id)))));
+  return markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id))))));
+}
+
+const digestCache = new Map<string, { at: number; digest: string | undefined }>();
+
+/**
+ * Browser evidence describes the bundle that was served. When that bundle has changed (or is gone) the result no longer proves the
+ * current product: it is marked in memory only, so every reader, gate and verdict sees it as stale until verify-stories runs again.
+ * The mark is stripped before anything is written.
+ */
+function markSubjectDrift(repo: string, state: WorkflowState): WorkflowState {
+  const recorded = state.coverage.filter((e) => e.source?.kind === "browser" && e.source.subjectDigest);
+  if (recorded.length === 0) return state;
+  const serve = browserServeRoot(repo, state.workItem.id);
+  const services = effectiveServices(state) as Array<{ id: string; localPath?: string }>;
+  for (const entry of recorded) {
+    const base = services.find((s) => s.id === entry.serviceId)?.localPath || repo;
+    const root = serve === undefined ? undefined : resolve(base, serve);
+    let current: string | undefined;
+    if (root) {
+      const hit = digestCache.get(root);
+      if (hit && Date.now() - hit.at < 1500) current = hit.digest;
+      else {
+        current = bundleDigest(root);
+        digestCache.set(root, { at: Date.now(), digest: current });
+      }
+    }
+    if (current !== entry.source?.subjectDigest) entry.source = { ...(entry.source as EvidenceSource), drifted: true };
+  }
+  return state;
+}
+
+function withoutDrift(state: WorkflowState): WorkflowState {
+  if (!state.coverage.some((e) => e.source?.drifted)) return state;
+  return { ...state, coverage: state.coverage.map((e) => { if (!e.source?.drifted) return e; const { drifted: _d, ...source } = e.source; return { ...e, source }; }) };
 }
 
 export function loadWorkflow(repo: string, workItemId?: string): WorkflowState | null {
@@ -527,7 +564,7 @@ function writeItem(repo: string, state: WorkflowState): string {
   requireMutationLease();
   const path = itemPath(repo, state.workItem.id);
   keepPreviousVersion(path);
-  writeAtomic(path, redactState(toPortable(repo, state)));
+  writeAtomic(path, redactState(toPortable(repo, withoutDrift(state))));
   return path;
 }
 

@@ -1,8 +1,8 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { scrubbedEnv } from "./project-code-runner.js";
 
 /**
@@ -88,7 +88,7 @@ export function validateBrowserSteps(scenarioId: string, steps: unknown): Browse
 export function validateBrowserConfig(raw: unknown): BrowserConfig {
   if (!rec(raw) || !rec(raw.serve) || !str(raw.serve.root)) throw new Error('CHECKS_INVALID: "browser" needs {"serve": {"root": "<directory of the built app>"}}');
   const viewport = raw.viewport;
-  if (viewport !== undefined && !(rec(viewport) && Number.isInteger(viewport.width) && Number.isInteger(viewport.height))) throw new Error("CHECKS_INVALID: browser.viewport needs integer width and height");
+  if (viewport !== undefined && !(rec(viewport) && Number.isInteger(viewport.width) && Number.isInteger(viewport.height) && (viewport.width as number) >= 200 && (viewport.width as number) <= 3000 && (viewport.height as number) >= 200 && (viewport.height as number) <= 3000)) throw new Error("CHECKS_INVALID: browser.viewport needs integer width and height (200-3000)");
   return { serve: { root: raw.serve.root as string, ...(raw.serve.spa === false ? { spa: false } : { spa: true }) }, ...(viewport ? { viewport: viewport as { width: number; height: number } } : {}) };
 }
 
@@ -108,7 +108,7 @@ export type BrowserRun =
 const DRIVER = String.raw`
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8"));
@@ -141,6 +141,28 @@ function digestOf(root) {
   visit(root);
   return createHash("sha256").update(entries.join("\n")).digest("hex");
 }
+// The page is served from a private COPY of the bundle: the digest is of the bytes that were served, a background process of the
+// project cannot edit them afterwards, and nothing that starts with a dot (.env, .git, .praxis) is ever copied.
+function snapshot(src, dst) {
+  let entries = 0;
+  let bytes = 0;
+  const visit = (from, to) => {
+    mkdirSync(to, { recursive: true });
+    for (const name of readdirSync(from).sort()) {
+      if (name.startsWith(".")) continue;
+      const p = join(from, name);
+      const st = lstatSync(p);
+      if (st.isSymbolicLink()) continue;
+      if (st.isDirectory()) { visit(p, join(to, name)); continue; }
+      if (!st.isFile()) continue;
+      entries += 1;
+      bytes += st.size;
+      if (entries > 5000 || bytes > 200 * 1024 * 1024) throw new Error("BUNDLE_TOO_LARGE");
+      copyFileSync(p, join(to, name));
+    }
+  };
+  visit(src, dst);
+}
 function loadPlaywright() {
   for (const dir of input.playwrightDirs) {
     try { return createRequire(join(dir, "noop.js"))("playwright-core"); } catch { /* try the next place */ }
@@ -152,8 +174,14 @@ async function main() {
   const pw = loadPlaywright();
   if (!pw) return out({ ok: true, result: { available: false, reason: "playwright-core was not found: the operator sets PRAXIS_PLAYWRIGHT_DIR to a directory whose node_modules has it (it is never taken from the project under test)" } });
   let root;
-  try { root = containedDir(input.serviceRoot, input.serve.root); } catch { return out({ ok: true, result: { available: false, reason: "browser.serve.root is missing or outside the service directory: build the app first" } }); }
+  try {
+    root = containedDir(input.serviceRoot, input.serve.root);
+    if (root === realpathSync(resolve(input.serviceRoot))) throw new Error("UNSAFE_PATH");
+  } catch { return out({ ok: true, result: { available: false, reason: "browser.serve.root is missing or outside the service directory: build the app first" } }); }
   if (!existsSync(join(root, "index.html"))) return out({ ok: true, result: { available: false, reason: "browser.serve.root has no index.html: build the app first" } });
+  const served = join(input.workDir, "bundle");
+  try { snapshot(root, served); } catch (error) { return out({ ok: true, result: { available: false, reason: "the bundle could not be copied for serving (" + String((error && error.message) || error).slice(0, 120) + ")" } }); }
+  root = realpathSync(served);
   const subjectDigest = digestOf(root);
   const server = createServer((req, res) => {
     try {
@@ -173,9 +201,13 @@ async function main() {
   await new Promise((done) => server.listen(0, "127.0.0.1", done));
   const origin = "http://127.0.0.1:" + server.address().port;
   let browser;
+  // a run that outlives its caller (killed parent, hung page) stops itself and Chromium with it
+  const die = async () => { try { await Promise.race([browser && browser.close(), new Promise((r) => setTimeout(r, 1500))]); } catch { /* going down anyway */ } process.exit(3); };
+  setTimeout(die, (input.timeoutMs || 240000) + 3000).unref();
+  setInterval(() => { if (process.ppid !== input.parentPid) die(); }, 1000).unref();
   try {
     if (typeof pw.chromium.launch !== "function") throw new Error("playwright-core without chromium");
-    browser = await pw.chromium.launch({ headless: true, chromiumSandbox: !input.noSandbox, ...(input.executable ? { executablePath: input.executable } : {}) });
+    browser = await pw.chromium.launch({ headless: true, chromiumSandbox: !input.noSandbox, args: ["--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--webrtc-ip-handling-policy=disable_non_proxied_udp"], ...(input.executable ? { executablePath: input.executable } : {}) });
   } catch (error) {
     server.close();
     return out({ ok: true, result: { available: false, reason: "no browser could be started (" + String((error && error.message) || error).split("\n")[0].slice(0, 200) + "): install Chrome or set PRAXIS_BROWSER_EXECUTABLE" } });
@@ -240,7 +272,9 @@ async function main() {
       if (input.artifactsDir) {
         mkdirSync(input.artifactsDir, { recursive: true });
         const name = createHash("sha256").update(check.scenarioId).digest("hex").slice(0, 8) + "-" + check.scenarioId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) + ".png";
-        writeFileSync(join(input.artifactsDir, name), png);
+        const target = join(input.artifactsDir, name);
+        if (lstatSync(target, { throwIfNoEntry: false })) unlinkSync(target);
+        writeFileSync(target, png, { flag: "wx" });
         screenshot.path = name;
       }
     } catch { /* no screenshot */ }
@@ -262,6 +296,34 @@ const DEFAULT_EXECUTABLES = [
   "/usr/bin/chromium",
   "/usr/bin/chromium-browser",
 ];
+
+/** Digest of a directory the way the driver digests its served copy (dot-names and links are not part of it). Used to tell whether recorded browser evidence still describes the bundle on disk. */
+export function bundleDigest(root: string): string | undefined {
+  try {
+    const entries: string[] = [];
+    let bytes = 0;
+    const visit = (dir: string): void => {
+      for (const name of readdirSync(dir).sort()) {
+        if (name.startsWith(".")) continue;
+        const p = join(dir, name);
+        const st = lstatSync(p);
+        if (st.isSymbolicLink()) continue;
+        if (st.isDirectory()) {
+          visit(p);
+          continue;
+        }
+        if (!st.isFile()) continue;
+        bytes += st.size;
+        if (entries.length >= 5000 || bytes > 200 * 1024 * 1024) throw new Error("BUNDLE_TOO_LARGE");
+        entries.push(`${relative(root, p).split(sep).join("/")}\0${createHash("sha256").update(readFileSync(p)).digest("hex")}`);
+      }
+    };
+    visit(root);
+    return createHash("sha256").update(entries.join("\n")).digest("hex");
+  } catch {
+    return undefined;
+  }
+}
 
 export type BrowserRunInput = {
   serviceRoot: string;
@@ -361,6 +423,9 @@ export async function runBrowserChecks(input: BrowserRunInput): Promise<BrowserR
           artifactsDir: input.artifactsDir,
           nonce,
           noSandbox: process.env.PRAXIS_BROWSER_NO_SANDBOX === "1",
+          workDir: home,
+          parentPid: process.pid,
+          timeoutMs: input.timeoutMs ?? 240_000,
         }),
       );
     });

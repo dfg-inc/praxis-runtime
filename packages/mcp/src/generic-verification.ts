@@ -139,6 +139,18 @@ function readChecks(workflowRepo: string, workItemId?: string): { checks: Check[
   return { checks: parsed.checks, ...(browser ? { browser } : {}) };
 }
 
+/** The directory the browser checks serve, as named in checks.json (nothing is validated or run). */
+export function browserServeRoot(workflowRepo: string, workItemId?: string): string | undefined {
+  try {
+    const scoped = workItemId ? join(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : undefined;
+    const file = scoped && existsSync(scoped) ? scoped : join(workflowRepo, ".praxis", "quality", "checks.json");
+    const root = (JSON.parse(readFileSync(file, "utf8")) as { browser?: { serve?: { root?: unknown } } }).browser?.serve?.root;
+    return typeof root === "string" ? root : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function runProjectChecks(input: {
   workflowRepo: string;
   workItemId?: string;
