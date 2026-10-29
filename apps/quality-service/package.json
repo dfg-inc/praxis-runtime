@@ -1,10 +1,10 @@
 {
   "name": "@praxis/quality-service",
-  "version": "0.1.0-alpha.48",
+  "version": "0.1.0-alpha.49",
   "private": true,
   "type": "module",
   "description": "Praxis quality-service: reviews, audits, rollback/return metrics",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "bin": {
     "praxis-quality": "./bin/praxis-quality.mjs"
   },
@@ -23,8 +23,8 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@praxis/contracts": "file:../../vendor/praxis-contracts-0.1.0-alpha.48.tgz",
-    "@praxis/knowledge": "file:../../vendor/praxis-knowledge-0.1.0-alpha.48.tgz",
+    "@praxis/contracts": "file:../../vendor/praxis-contracts-0.1.0-alpha.49.tgz",
+    "@praxis/knowledge": "file:../../vendor/praxis-knowledge-0.1.0-alpha.49.tgz",
     "sql.js": "^1.13.0"
   },
   "devDependencies": {

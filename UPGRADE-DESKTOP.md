@@ -1,6 +1,6 @@
 # Upgrading the Claude Desktop extension (local build)
 
-This procedure installs `claude-extensions/praxis-runtime.mcpb` (0.1.0-alpha.48) over an older
+This procedure installs `claude-extensions/praxis-runtime.mcpb` (0.1.0-alpha.49) over an older
 Praxis Runtime in Claude Desktop **Chat** (Code, Cowork and the Claude CLI use the marketplace plugin instead). It has **not** been
 executed through Claude Desktop yet: the sections marked *check* are how you confirm it worked.
 Nothing here publishes, tags or bumps a version.

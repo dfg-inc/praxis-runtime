@@ -74,6 +74,12 @@ try {
   if (!extracted.wasm || !existsSync(extracted.wasm)) {
     fail("MCPB missing bundled Quality sql-wasm.wasm");
   }
+  for (const f of ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"]) {
+    if (!existsSync(join(outside, "unpack", f))) fail(`MCPB missing ${f}`);
+  }
+  if (!readFileSync(join(outside, "unpack", "LICENSE"), "utf8").includes("Apache License\n                           Version 2.0, January 2004")) {
+    fail("MCPB LICENSE is not the Apache License 2.0 text");
+  }
   const manifest = extracted.manifest;
   if (manifest.manifest_version !== MCPB_MANIFEST_VERSION) {
     fail(`manifest_version ${manifest.manifest_version} != ${MCPB_MANIFEST_VERSION}`);

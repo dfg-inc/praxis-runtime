@@ -6,6 +6,7 @@
  */
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -67,6 +68,10 @@ export async function packClaudeExtension(version, { kind = "production" } = {})
   const quality = join(staging, "server", "praxis-quality.cjs");
   await bundlePraxisQuality(quality, version);
   chmodSync(quality, 0o644);
+  for (const f of ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.md"]) {
+    if (!existsSync(join(root, f))) fail(`missing ${f} at the repository root (Apache-2.0 redistribution)`);
+    copyFileSync(join(root, f), join(staging, f));
+  }
   const manifest = praxisRuntimeManifest(version);
   writeFileSync(join(staging, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
   const validate = spawnSync(process.execPath, [mcpbBin(), "validate", join(staging, "manifest.json")], {
