@@ -137,7 +137,7 @@ describe("round 8 review: egress, serve root, parent loss", () => {
 
   it("a driver whose parent was killed stops itself and Chromium (no leftover process, no temp directory)", async () => {
     const { spawn, spawnSync } = await import("node:child_process");
-    const { readdirSync, existsSync } = await import("node:fs");
+    const { readdirSync, existsSync, rmSync } = await import("node:fs");
     const project = mkdtempSync(join(tmpdir(), "praxis-bdh-"));
     mkdirSync(join(project, "dist"), { recursive: true });
     writeFileSync(join(project, "dist", "index.html"), "<!doctype html><title>t</title>");
@@ -154,7 +154,10 @@ describe("round 8 review: egress, serve root, parent loss", () => {
     const ps = spawnSync("ps", ["-axo", "command"], { encoding: "utf8" }).stdout;
     const mine = readdirSync(tmpdir()).filter((n) => n.startsWith("praxis-browser-") && !before.has(n));
     const alive = ps.split("\n").filter((l) => mine.some((n) => l.includes(n)));
+    const leftoverDirs = mine.filter((n) => existsSync(join(tmpdir(), n)));
     for (const n of mine) spawnSync("pkill", ["-9", "-f", n]); // never leave it behind, even when the assertion fails
+    for (const n of leftoverDirs) rmSync(join(tmpdir(), n), { recursive: true, force: true });
     expect(alive.length).toBe(0);
+    expect(leftoverDirs).toEqual([]);
   }, 90_000);
 });

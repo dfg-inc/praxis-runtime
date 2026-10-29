@@ -324,7 +324,7 @@ function fingerprintFor(repo: string, command: WorkflowCommand, workItemId?: str
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state = loadWorkflow(repo, workItemId);
-    token = state ? `state:${createHash("sha256").update(canonicalJson(state)).digest("hex")}` : "state:none";
+    token = state ? `state:${createHash("sha256").update(canonicalJson(withoutDrift(state))).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token } as unknown as WorkflowCommand);
 }
@@ -351,8 +351,6 @@ function readItem(repo: string, layout: Layout, id: string): WorkflowState {
   return markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id))))));
 }
 
-const digestCache = new Map<string, { at: number; digest: string | undefined }>();
-
 /**
  * Browser evidence describes the bundle that was served. When that bundle has changed (or is gone) the result no longer proves the
  * current product: it is marked in memory only, so every reader, gate and verdict sees it as stale until verify-stories runs again.
@@ -368,12 +366,7 @@ function markSubjectDrift(repo: string, state: WorkflowState): WorkflowState {
     const root = serve === undefined ? undefined : resolve(base, serve);
     let current: string | undefined;
     if (root) {
-      const hit = digestCache.get(root);
-      if (hit && Date.now() - hit.at < 1500) current = hit.digest;
-      else {
-        current = bundleDigest(root);
-        digestCache.set(root, { at: Date.now(), digest: current });
-      }
+      current = bundleDigest(root);
     }
     if (current !== entry.source?.subjectDigest) entry.source = { ...(entry.source as EvidenceSource), drifted: true };
   }

@@ -33,15 +33,17 @@ describe("round 8: browser evidence follows the bundle it was recorded for", () 
 
     const status = () => { const s = loadWorkflow(repo)!; return criterionStatus(s, "REQ-DRF-001", { id: ac.id, revision: s.requirements[0]!.acceptanceCriteria[0]!.revision ?? 1 }, ac.id).state; };
     expect(status()).toBe("passed");
-    await new Promise((r) => setTimeout(r, 1700));
+    const probe = JSON.stringify({ action: "add-requirement", id: "REQ-DRF-009", statement: "z", acceptanceCriteria: ["c"] });
+    const before = (await call("praxis_workflow_preview", repo, { command: probe })).data.fingerprint;
     appendFileSync(join(repo, "dist", "index.html"), "<!-- changed -->");
     expect(status()).toBe("stale");
+    // what a preview was bound to does not change because a build touched dist
+    expect((await call("praxis_workflow_preview", repo, { command: probe })).data.fingerprint).toBe(before);
     // nothing about the drift is written when the state is saved by an unrelated command
     await apply(repo, { action: "add-requirement", id: "REQ-DRF-002", statement: "y", acceptanceCriteria: ["b"] });
     expect(readFileSync(item, "utf8")).not.toContain("drifted");
     // the bundle restored to what was recorded: current again
     writeFileSync(join(repo, "dist", "index.html"), "<!doctype html><title>v1</title>");
-    await new Promise((r) => setTimeout(r, 1700));
     expect(status()).toBe("passed");
   }, 30_000);
 });

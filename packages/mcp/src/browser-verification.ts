@@ -108,7 +108,7 @@ export type BrowserRun =
 const DRIVER = String.raw`
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { copyFileSync, createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, rmSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8"));
@@ -202,7 +202,7 @@ async function main() {
   const origin = "http://127.0.0.1:" + server.address().port;
   let browser;
   // a run that outlives its caller (killed parent, hung page) stops itself and Chromium with it
-  const die = async () => { try { await Promise.race([browser && browser.close(), new Promise((r) => setTimeout(r, 1500))]); } catch { /* going down anyway */ } process.exit(3); };
+  const die = async () => { try { await Promise.race([browser && browser.close(), new Promise((r) => setTimeout(r, 1500))]); } catch { /* going down anyway */ } try { rmSync(input.workDir, { recursive: true, force: true }); } catch { /* the parent removes it too */ } process.exit(3); };
   setTimeout(die, (input.timeoutMs || 240000) + 3000).unref();
   setInterval(() => { if (process.ppid !== input.parentPid) die(); }, 1000).unref();
   try {

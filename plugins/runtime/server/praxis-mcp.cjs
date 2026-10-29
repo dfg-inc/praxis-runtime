@@ -8200,7 +8200,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
         throw new WorkflowError("EVIDENCE_PROTECTED", `a ${runtime ? "Runtime" : "agent"} record cannot replace ${command.replaceSource} evidence`);
       coverage2 = coverage2.filter((e) => !(ownedBy(e) && !seen.has(e.scenarioId)));
     }
-    const comparable = (e) => JSON.stringify({ ...e, recordedAt: void 0, source: e.source && { kind: e.source.kind, runner: e.source.runner, runId: e.source.runId, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
+    const comparable = (e) => JSON.stringify({ ...e, recordedAt: void 0, source: e.source && { kind: e.source.kind, runner: e.source.runner, subjectDigest: e.source.subjectDigest, artifacts: e.source.artifacts } });
     for (const scenario of incoming) {
       const index = coverage2.findIndex((e) => e.scenarioId === scenario.scenarioId);
       if (index < 0) {
@@ -8236,6 +8236,8 @@ function applyWorkflowCommandCore(state2, raw, options2) {
       const entries = coverage2.filter((e) => e.serviceId === serviceId);
       const current = entries.filter((e) => {
         const story = e.storyId ? next2.stories.find((st) => st.id === e.storyId) : void 0;
+        if (e.source?.drifted)
+          return false;
         return !e.storyId || story && story.status !== "superseded" && (e.storyRevision ?? 1) === story.revision;
       });
       const rolled = rollupStoryVerdict(current);
@@ -80727,7 +80729,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"f21ea667142dc5acdbac61321e2975c902ab77aa7118c057b42197ed81dc0c1d","coreBaseline":"fdb3ca30b6670fcbbf3975f3f570efa0aeb85733","inputs":34}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"9f48d5dcf87b8d0a67579163e275ba5422a5a3adb58609edece7a9fc179a4488","coreBaseline":"6764f929c6865b7150beaeb25fba26940ab7c9ae","inputs":34}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81028,7 +81030,7 @@ function validateBrowserConfig(raw) {
 var DRIVER = String.raw`
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { copyFileSync, createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, createReadStream, existsSync, rmSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8"));
@@ -81122,7 +81124,7 @@ async function main() {
   const origin = "http://127.0.0.1:" + server.address().port;
   let browser;
   // a run that outlives its caller (killed parent, hung page) stops itself and Chromium with it
-  const die = async () => { try { await Promise.race([browser && browser.close(), new Promise((r) => setTimeout(r, 1500))]); } catch { /* going down anyway */ } process.exit(3); };
+  const die = async () => { try { await Promise.race([browser && browser.close(), new Promise((r) => setTimeout(r, 1500))]); } catch { /* going down anyway */ } try { rmSync(input.workDir, { recursive: true, force: true }); } catch { /* the parent removes it too */ } process.exit(3); };
   setTimeout(die, (input.timeoutMs || 240000) + 3000).unref();
   setInterval(() => { if (process.ppid !== input.parentPid) die(); }, 1000).unref();
   try {
@@ -82033,7 +82035,7 @@ function fingerprintFor2(repo, command, workItemId) {
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state2 = loadWorkflow(repo, workItemId);
-    token = state2 ? `state:${(0, import_node_crypto8.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
+    token = state2 ? `state:${(0, import_node_crypto8.createHash)("sha256").update(canonicalJson(withoutDrift(state2))).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token });
 }
@@ -82055,7 +82057,6 @@ function readItem(repo, layout, id) {
     return readLegacy(repo);
   return markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson2(itemPath(repo, id))))));
 }
-var digestCache = /* @__PURE__ */ new Map();
 function markSubjectDrift(repo, state2) {
   const recorded = state2.coverage.filter((e) => e.source?.kind === "browser" && e.source.subjectDigest);
   if (recorded.length === 0)
@@ -82067,13 +82068,7 @@ function markSubjectDrift(repo, state2) {
     const root = serve === void 0 ? void 0 : (0, import_node_path8.resolve)(base, serve);
     let current;
     if (root) {
-      const hit = digestCache.get(root);
-      if (hit && Date.now() - hit.at < 1500)
-        current = hit.digest;
-      else {
-        current = bundleDigest(root);
-        digestCache.set(root, { at: Date.now(), digest: current });
-      }
+      current = bundleDigest(root);
     }
     if (current !== entry.source?.subjectDigest)
       entry.source = { ...entry.source, drifted: true };
