@@ -6,7 +6,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { packClaudeExtension } from "./pack-claude-extension.mjs";
@@ -448,7 +448,7 @@ try {
   if (process.env.PRAXIS_JIRA_BASE_URL && process.env.PRAXIS_JIRA_TOKEN) {
     const jira = await callTool(
       "praxis_ba_status",
-      { repo: "/Users/serg/work/praxis-acceptance/praxis-test", epic: "PRX-5" },
+      { repo: join(homedir(), "praxis-acceptance", "praxis-test"), epic: "PRX-5" },
       { role: "ba", version },
     );
     const data = jira.data && typeof jira.data === "object" ? jira.data : {};

@@ -77,7 +77,7 @@ A completed review with failing code/acceptance checks → **200** with `verdict
 Example (external acceptance):
 
 ```bash
-export PRAXIS_QUALITY_ALLOWED_ROOT=/Users/serg/work/praxis-acceptance
+export PRAXIS_QUALITY_ALLOWED_ROOT=/path/to/praxis-acceptance
 export PRAXIS_QUALITY_DB=/tmp/praxis-quality.sqlite
 export PORT=8787
 npm run start -w @praxis/quality-service
@@ -97,6 +97,6 @@ npm run start -w @praxis/quality-service
 docker compose up --build quality-service
 ```
 
-Compose mounts host `${PRAXIS_QUALITY_HOST_ROOT:-.}` at `/work` and sets `PRAXIS_QUALITY_ALLOWED_ROOT=/work`. Override `PRAXIS_QUALITY_HOST_ROOT` to your acceptance tree (e.g. `/Users/serg/work/praxis-acceptance`).
+Compose mounts host `${PRAXIS_QUALITY_HOST_ROOT:-.}` at `/work` and sets `PRAXIS_QUALITY_ALLOWED_ROOT=/work`. Override `PRAXIS_QUALITY_HOST_ROOT` to your acceptance tree (e.g. `/path/to/praxis-acceptance`).
 
 Reviews persist under the `quality-data` volume (`PRAXIS_QUALITY_DB=/data/quality.sqlite`) across restarts.

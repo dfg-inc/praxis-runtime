@@ -1,8 +1,12 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { runBrowserChecks, validateBrowserSteps } from "./browser-verification.js";
+
+// The repository root: the tests load Playwright from its node_modules, as an operator would from PRAXIS_PLAYWRIGHT_DIR.
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
 describe("browser driver hardening (round 7 review)", () => {
   it("a playwright-core planted in the project under test is never loaded, and a printed result line cannot pose as the driver's", async () => {
@@ -30,7 +34,7 @@ describe("browser driver hardening (round 7 review)", () => {
     const project = mkdtempSync(join(tmpdir(), "praxis-bdh-"));
     mkdirSync(join(project, "dist"), { recursive: true });
     writeFileSync(join(project, "dist", "index.html"), "<!doctype html>");
-    process.env.PRAXIS_PLAYWRIGHT_DIR = "/Users/serg/work/praxis-split/praxis-runtime";
+    process.env.PRAXIS_PLAYWRIGHT_DIR = REPO_ROOT;
     try {
       const run = await runBrowserChecks({ serviceRoot: project, config: { serve: { root: "dist" } }, checks: [{ scenarioId: "S", steps: [{ goto: "/" }] }], timeoutMs: 300 });
       expect(run.available).toBe(false);
@@ -51,7 +55,7 @@ describe("a timeout takes Chromium down with it", () => {
     const project = mkdtempSync(join(tmpdir(), "praxis-bdh-"));
     mkdirSync(join(project, "dist"), { recursive: true });
     writeFileSync(join(project, "dist", "index.html"), "<!doctype html><title>t</title>");
-    process.env.PRAXIS_PLAYWRIGHT_DIR = "/Users/serg/work/praxis-split/praxis-runtime";
+    process.env.PRAXIS_PLAYWRIGHT_DIR = REPO_ROOT;
     process.env.PRAXIS_BROWSER_EXECUTABLE = process.env.PRAXIS_BROWSER_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     try {
       // long enough for the browser to start, short enough to hit the timeout in the middle of the run
@@ -68,7 +72,7 @@ describe("a timeout takes Chromium down with it", () => {
 
 describe("round 8 review: egress, serve root, parent loss", () => {
   const withPlaywright = async <T>(fn: () => Promise<T>) => {
-    process.env.PRAXIS_PLAYWRIGHT_DIR = "/Users/serg/work/praxis-split/praxis-runtime";
+    process.env.PRAXIS_PLAYWRIGHT_DIR = REPO_ROOT;
     process.env.PRAXIS_BROWSER_EXECUTABLE = process.env.PRAXIS_BROWSER_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
     try {
       return await fn();
@@ -147,7 +151,7 @@ describe("round 8 review: egress, serve root, parent loss", () => {
       runBrowserChecks({ serviceRoot: ${JSON.stringify(project)}, config: { serve: { root: "dist" } }, checks: [{ scenarioId: "S", steps: [{ goto: "/" }, { expectVisible: "#never" }] }], timeoutMs: 20000 });`;
     const scriptPath = join(project, "parent.mjs");
     writeFileSync(scriptPath, script);
-    const parent = spawn(process.execPath, ["--import", "tsx", scriptPath], { env: { ...process.env, PRAXIS_PLAYWRIGHT_DIR: "/Users/serg/work/praxis-split/praxis-runtime", PRAXIS_BROWSER_EXECUTABLE: process.env.PRAXIS_BROWSER_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" }, stdio: "ignore" });
+    const parent = spawn(process.execPath, ["--import", "tsx", scriptPath], { env: { ...process.env, PRAXIS_PLAYWRIGHT_DIR: REPO_ROOT, PRAXIS_BROWSER_EXECUTABLE: process.env.PRAXIS_BROWSER_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" }, stdio: "ignore" });
     await new Promise((r) => setTimeout(r, 4000));
     parent.kill("SIGKILL");
     await new Promise((r) => setTimeout(r, 6000));

@@ -24608,7 +24608,7 @@ function previewConnect(opts) {
   }
   const url4 = opts.remoteUrl || existing?.fetchUrl;
   if (!url4) {
-    throw new VcsError(VCS_CODES.GIT_REMOTE_REQUIRED, "No remote configured. Provide remoteUrl for the target GitHub or GitLab repository. Praxis will not guess gl.jetru.by, github.com, or any other host.");
+    throw new VcsError(VCS_CODES.GIT_REMOTE_REQUIRED, "No remote configured. Provide remoteUrl for the target GitHub or GitLab repository. Praxis will not guess github.com, gitlab.com, or any other host.");
   }
   const parsed = parseRemoteUrl(url4);
   const provider = resolveProvider({
@@ -80729,7 +80729,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49","sourceDigest":"d7e69078ffdb1728dd55f07a9db80adb9bbca5fb460c12b548e297ab8b9c37b5","coreBaseline":"cab84dff5d55949b661c6445903583629aa766ef","inputs":34}';
+    const raw = '{"version":"0.1.0-alpha.49","sourceDigest":"9d8d3e7c870124fc7653de43aab8f52975ccc6453a3e66690050cd114e1aed36","coreBaseline":"5e78f55efb8d493189b492cfc864f05b502668da","inputs":34}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

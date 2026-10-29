@@ -218,14 +218,14 @@ const scan = (dir) => {
     if (statSync(path).isDirectory()) scan(path);
     else if (/\.(json|md|mjs|js|cjs|yml|yaml|txt)$/.test(name) && statSync(path).size < 3_000_000) {
       const text = readFileSync(path, "utf8");
-      if (/\/Users\/serg\b/.test(text) && !/\/docs\//.test(path)) offenders.push(path.replace(mk, ""));
+      if (/\/Users\/(?!example\b|you\b|me\b|user\b|name\b)[A-Za-z0-9._-]+\//.test(text) && !/\/docs\//.test(path)) offenders.push(path.replace(mk, ""));
     }
   }
 };
 scan(join(mk, "plugins"));
 scan(join(mk, ".claude-plugin"));
 expect(offenders.length === 0, `developer paths in shipped plugins: ${offenders.slice(0, 5).join(", ")}`);
-prove("no /Users/serg path in the shipped plugins or manifests");
+prove("no developer home path (/Users/<name>) in the shipped plugins or manifests");
 
 rmSync(work, { recursive: true, force: true });
 console.log(`PASS marketplace-install (${proven.length} checks, Claude Code CLI)`);
