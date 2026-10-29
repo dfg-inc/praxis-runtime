@@ -437,7 +437,7 @@ await scenario("S09", "Full flow BA, Architect, Developer, Quality with handoffs
   writeFileSync(join(code, "orders.js"), "export const list = () => [];\n");
   const id = await openItem(agent, repo, "Order list", "classic");
   await must(agent, repo, { action: "add-requirement", id: "REQ-ORD-001", statement: "Managers can view orders", acceptanceCriteria: ["The list shows all orders"] }, id);
-  await must(agent, repo, story("US-ORD-001", ["REQ-ORD-001"], "As a manager, I want orders, so that I see them.", { serviceIds: ["svc-orders"] }), id);
+  await must(agent, repo, story("US-ORD-001", ["REQ-ORD-001"], "As a manager, I want orders, so that I see them.", { serviceIds: ["svc-orders"], acceptanceCriteria: [{ id: "REQ-ORD-001-AC-01", given: "orders exist", when: "the manager opens the list", then: "all orders are shown" }] }), id);
   await must(agent, repo, { action: "handoff", sourceRole: "ba", targetRole: "architect", requirementIds: ["REQ-ORD-001"], readiness: "ready" }, id);
   await must(agent, repo, { action: "record-decision", id: "DEC-1", statement: "One service owns orders", rationale: "simple" }, id);
   await must(agent, repo, { action: "set-service", service: { id: "svc-orders", name: "Orders", kind: "module", localPath: code, responsibilities: ["orders"], requirementIds: ["REQ-ORD-001"], dependsOn: [], status: "in_progress" } }, id);
