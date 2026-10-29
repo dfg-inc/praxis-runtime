@@ -4327,7 +4327,7 @@ function locate(state2, entry, ac) {
   return { entry, current };
 }
 function criterionStatus(state2, requirementId, ac, acId) {
-  const mine = state2.coverage.filter((e) => e.requirementId === requirementId && e.acceptanceCriterionId === acId && !e.scenarioId.endsWith("-CONFIRMATION"));
+  const mine = state2.coverage.filter((e) => e.requirementId === requirementId && e.acceptanceCriterionId === acId);
   const located = mine.map((e) => locate(state2, e, ac));
   const current = located.filter((l) => l.current).map((l) => l.entry);
   const stale = located.filter((l) => !l.current).map((l) => l.entry.scenarioId);
@@ -4360,7 +4360,7 @@ function describe3(c) {
     case "stale":
       return `${c.id} only has results for an older revision (${c.stale.join(", ")}): verify it again`;
     case "attested":
-      return `${c.id} is attested by an agent, not independently executed (${c.scenarios.join(", ")})`;
+      return `${c.id} has no independently executed result: it was attested by an agent or recorded before provenance existed (${c.scenarios.join(", ")}); run verify-stories again`;
     case "risk":
       return `${c.id} passed with risks (${c.scenarios.join(", ")})`;
     case "missing":
@@ -4399,7 +4399,7 @@ function requirementCoverage(state2, requirementId) {
   }
   let extraRisks = 0;
   for (const story of state2.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded" && s.requirementIds.includes(requirementId))) {
-    const verified = state2.coverage.some((e) => e.storyId === story.id && e.requirementId === requirementId && (e.storyRevision ?? 1) === story.revision && !e.scenarioId.endsWith("-CONFIRMATION"));
+    const verified = state2.coverage.some((e) => e.storyId === story.id && e.requirementId === requirementId && (e.storyRevision ?? 1) === story.revision);
     if (!verified) {
       reasons.push(`story-not-verified:${story.id}@${story.revision}`);
       extraRisks += 1;
@@ -4410,7 +4410,7 @@ function requirementCoverage(state2, requirementId) {
   }
   const own4 = new Set(requirement.acceptanceCriteria.map((c) => c.id));
   let anyCurrent = false;
-  for (const e of state2.coverage.filter((x) => x.requirementId === requirementId && !x.scenarioId.endsWith("-CONFIRMATION"))) {
+  for (const e of state2.coverage.filter((x) => x.requirementId === requirementId)) {
     if (!locate(state2, e, void 0).current)
       continue;
     anyCurrent = true;
@@ -4461,16 +4461,22 @@ function evaluateEvidence(state2) {
   });
   const stories2 = state2.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded").map((s) => {
     const cov = storyCoverage(state2, s.id);
+    if (cov.verdict === "FAIL") {
+      gaps.push(cov.noEvidence ? `${s.id}: no evidence for any of its ${cov.counts.total} criteria` : `${s.id} is FAIL: ${cov.counts.passed} of ${cov.counts.total} criteria passed (failed ${cov.counts.failed}, blocked ${cov.counts.blocked}, missing ${cov.counts.missing}, stale ${cov.counts.stale})`);
+      if (!cov.noEvidence)
+        for (const reason of cov.reasons)
+          gaps.push(`  ${reason}`);
+    }
     return { id: s.id, verdict: cov.verdict, counts: cov.counts };
   });
   const totals = requirements2.reduce((sum, r) => ({ total: sum.total + r.counts.total, verified: sum.verified + r.counts.verified, passed: sum.passed + r.counts.passed, failed: sum.failed + r.counts.failed, blocked: sum.blocked + r.counts.blocked, missing: sum.missing + r.counts.missing, stale: sum.stale + r.counts.stale, attested: sum.attested + r.counts.attested, risk: sum.risk + r.counts.risk }), count([]));
-  const verdict = requirements2.length === 0 || requirements2.some((r) => r.verdict === "FAIL") ? "FAIL" : requirements2.some((r) => r.verdict === "PASS_WITH_RISKS") ? "PASS_WITH_RISKS" : "PASS";
+  const verdict = requirements2.length === 0 || requirements2.some((r) => r.verdict === "FAIL") || stories2.some((x) => x.verdict === "FAIL") ? "FAIL" : requirements2.some((r) => r.verdict === "PASS_WITH_RISKS") || stories2.some((x) => x.verdict === "PASS_WITH_RISKS") ? "PASS_WITH_RISKS" : "PASS";
   return { verdict, gaps, requirements: requirements2, stories: stories2, totals };
 }
 var TRUSTED;
 var init_quality_model = __esm({
   "node_modules/@praxis/contracts/dist/quality-model.js"() {
-    TRUSTED = /* @__PURE__ */ new Set(["executed", "browser", "legacy"]);
+    TRUSTED = /* @__PURE__ */ new Set(["executed", "browser"]);
   }
 });
 
@@ -5370,9 +5376,9 @@ function inferCapabilities(text) {
   return [...found];
 }
 function maskLiterals(text, dataValues = []) {
-  let out = text.replace(/«[^»]*»|“[^”]*”|"[^"]*"|`[^`]*`|'[^']*'/g, " ").replace(/[?&]?\b[\w.-]+=\S*/g, " ").replace(/\bhttps?:\/\/\S+/g, " ");
+  let out = text.replace(/«[^»]*»|“[^”]*”|"[^"]*"|`[^`]*`|(?<![A-Za-z0-9])'[^']*'(?![A-Za-z0-9])/g, " ").replace(/[?&]?\b[\w.-]+=\S*/g, " ").replace(/\bhttps?:\/\/\S+/g, " ");
   for (const value of dataValues.filter((v) => v.length > 1))
-    out = out.replace(new RegExp(`\\b${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), " ");
+    out = out.replace(new RegExp(`\\b${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"), " ");
   return out;
 }
 function capabilityEvidence(text) {
@@ -5385,7 +5391,7 @@ function capabilityEvidence(text) {
   return found;
 }
 function statedOperations(statement, dataValues = []) {
-  const masked = maskLiterals(statement, dataValues);
+  const masked = maskLiterals(statement, dataValues).replace(/\b(?:e\.g\.|i\.e\.|etc\.|vs\.)/gi, " ");
   const out = [];
   for (const m of masked.matchAll(MODAL))
     for (const hit of capabilityEvidence(m[1] ?? ""))
@@ -5710,7 +5716,7 @@ function applyRequirementDecisions(state2, command, now, approvedRewording = fal
       requirement.acceptanceCriteria[index] = criterion;
     }
     for (const statement of decision.addAcceptance) {
-      const used = requirement.acceptanceCriteria.map((c) => Number(c.id.match(/-AC-(\d+)$/)?.[1] ?? 0));
+      const used = [...requirement.acceptanceCriteria.map((c) => c.id), ...requirement.retiredCriteria ?? []].map((id) => Number(id.match(/-AC-(\d+)$/)?.[1] ?? 0));
       const nextNumber = Math.max(0, ...used) + 1;
       requirement.acceptanceCriteria.push({
         id: `${requirement.id}-AC-${String(nextNumber).padStart(2, "0")}`,
@@ -5729,6 +5735,7 @@ function applyRequirementDecisions(state2, command, now, approvedRewording = fal
         throw new WorkflowError("USER_DECISION_REQUIRED", `${id} is accepted by the user; an agent does not remove it. The user removes it in the review page.`);
       }
       requirement.acceptanceCriteria = requirement.acceptanceCriteria.filter((c) => c.id !== id);
+      requirement.retiredCriteria = [.../* @__PURE__ */ new Set([...requirement.retiredCriteria ?? [], id])];
       revised = true;
       summary.push(`${id} removed`);
     }
@@ -6301,6 +6308,10 @@ function phaseGates(state2, to) {
     for (const phase of phases)
       need(acceptanceStatus(state2, phase) !== "stale", `${STALE_LABEL[phase]} changed after you accepted ${phase === "story_plan" ? "it" : "them"}: review and accept again`);
   };
+  const confirmedStories = () => {
+    const unconfirmed = activeStories(state2).filter((st) => !st.confirmedBehavior);
+    need(unconfirmed.length === 0, `every story confirmed by the user (confirm-story): ${unconfirmed.map((st) => st.id).join(", ")} still ${unconfirmed.length === 1 ? "needs" : "need"} it`);
+  };
   switch (to) {
     case "requirements_review":
       need(reqs.length > 0, "at least one in-scope requirement");
@@ -6327,14 +6338,14 @@ function phaseGates(state2, to) {
     case "architecture": {
       need(acceptanceStatus(state2, "stories_review") === "accepted", "stories reviewed and accepted, unchanged since");
       upstreamFresh(["requirements_review", "prototype", "story_plan"]);
-      const unconfirmed = activeStories(state2).filter((st) => !st.confirmedBehavior);
-      need(unconfirmed.length === 0, `every story confirmed by the user (confirm-story): ${unconfirmed.map((st) => st.id).join(", ")} still ${unconfirmed.length === 1 ? "needs" : "need"} it`);
+      confirmedStories();
       const coverage2 = analyzeStoryCoverage(state2);
       need(coverage2.ok, `coverage gaps: ${coverage2.gaps.map((g) => g.reason).concat(coverage2.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
       break;
     }
     case "development":
       upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
+      confirmedStories();
       need(state2.services.length > 0, "at least one service (set-service)");
       for (const service of state2.services) {
         const repo = service.repositoryId ? state2.repositories.find((r) => r.id === service.repositoryId) : void 0;
@@ -6357,6 +6368,7 @@ function phaseGates(state2, to) {
       break;
     case "quality": {
       upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
+      confirmedStories();
       for (const contract of state2.contracts)
         need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user (it was changed after implementation started?)`);
       for (const service of state2.services)
@@ -6367,6 +6379,9 @@ function phaseGates(state2, to) {
       for (const contract of state2.contracts)
         need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user`);
       need(state2.verdicts.some((v) => v.scope === "feature" && v.verdict !== "FAIL" && !v.stale), "a current feature verdict that is not FAIL");
+      const evidence = evaluateEvidence(state2);
+      need(evidence.totals.attested === 0, `every passing criterion has an independently executed result (${evidence.totals.attested} rest on an agent's own record or on a record from before provenance existed: run verify-stories)`);
+      need(evidence.verdict !== "FAIL", `the evidence for the current criteria and stories is complete and passing${evidence.gaps.length ? `: ${evidence.gaps.slice(0, 4).join("; ")}${evidence.gaps.length > 4 ? "; ..." : ""}` : ""}`);
       for (const service of state2.services) {
         need(state2.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
         need(service.status === "approved" || service.status === "completed" || state2.verdicts.some((v) => v.scope === "service" && v.scopeId === service.id && v.verdict !== "FAIL" && !v.stale), `service ${service.id} has no current non-FAIL verdict`);
@@ -7074,6 +7089,7 @@ var init_planning = __esm({
     init_errors2();
     init_human_acts();
     init_user_approval();
+    init_quality_model();
     init_ids();
     init_planning_schemas();
     init_story();
@@ -7391,6 +7407,7 @@ function addRequirement(state2, input2) {
       review: { status: "pending" }
     })),
     scope: "in",
+    retiredCriteria: [],
     repositoryIds: []
   };
   return { ...state2, requirements: [...state2.requirements, requirement] };
@@ -7859,7 +7876,14 @@ function applyWorkflowCommand(state2, raw, options2) {
     record5 = { at: a.decidedAt, action: command.action === "set-service" ? "approve-service" : command.action, subjects: subjectsOf(command, state2, out.state), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
   } else if (options2?.channel?.via === "approved" && (userDecision || command.action === "open")) {
     const a = options2.channel.approval;
-    record5 = { at: a.decidedAt, action: command.action === "open" ? "open-classic-work-item" : "review-decisions", subjects: subjectsOf(command, state2, out.state), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
+    const batchSubjects = options2.channel.batch.flatMap((c) => {
+      try {
+        return subjectsOf(parseWorkflowCommand(c), state2, out.state);
+      } catch {
+        return [];
+      }
+    });
+    record5 = { at: a.decidedAt, action: command.action === "open" ? "open-classic-work-item" : "review-decisions", subjects: (batchSubjects.length ? batchSubjects : subjectsOf(command, state2, out.state)).slice(0, 200), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
     if ((out.state.approvals ?? []).some((r) => r.subjectDigest === a.subjectDigest && r.at === a.decidedAt))
       record5 = null;
   } else if (options2?.channel?.via === "html-review" && userDecision) {
@@ -8205,7 +8229,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
     const touchedServices = [...new Set(incoming.map((scenario) => scenario.serviceId))];
     const serviceVerdicts2 = [];
     for (const serviceId of touchedServices) {
-      const entries = coverage2.filter((e) => e.serviceId === serviceId && !e.scenarioId.endsWith("-CONFIRMATION"));
+      const entries = coverage2.filter((e) => e.serviceId === serviceId);
       const current = entries.filter((e) => {
         const story = e.storyId ? next2.stories.find((st) => st.id === e.storyId) : void 0;
         return !e.storyId || story && story.status !== "superseded" && (e.storyRevision ?? 1) === story.revision;
@@ -8560,7 +8584,9 @@ var init_workflow = __esm({
       scope: ScopeSchema.default("in"),
       scopeNote: external_exports.string().optional(),
       repositoryIds: external_exports.array(external_exports.string()).default([]),
-      comment: external_exports.string().optional()
+      comment: external_exports.string().optional(),
+      /** Ids of criteria that were removed: never handed out again, so a result recorded for the old one cannot count for a new one. */
+      retiredCriteria: external_exports.array(external_exports.string()).default([])
     });
     ServiceSchema = external_exports.object({
       id: external_exports.string().min(1),
@@ -9389,7 +9415,12 @@ function submissionToCommands(state2, raw) {
   const unbased = (what) => `this page is out of date and does not say what it showed for ${what}: ${reload}`;
   const stateStamp = workStateStamp(state2);
   const wholeItemConflict = (what) => submission.baseState === void 0 ? `${what} is a decision about the whole work item and this file does not say which state it was made for: render the review again (it returns baseState) and decide on the current state` : submission.baseState !== stateStamp ? `the work item changed since this ${what} was made (mode, stage, requirements, stories, contracts or waivers): render the review again and decide on the current state` : null;
+  const seenWaivers = /* @__PURE__ */ new Set();
   for (const w of submission.waivers) {
+    const waiverKey = JSON.stringify([w.kind, w.requirementId ?? null]);
+    if (seenWaivers.has(waiverKey))
+      continue;
+    seenWaivers.add(waiverKey);
     if (state2.waivers.some((x) => x.kind === w.kind && (x.requirementId ?? null) === (w.requirementId ?? null) && x.reason === w.reason))
       continue;
     const waiverConflict = wholeItemConflict(`waiver of ${w.kind}`);
@@ -9446,7 +9477,7 @@ function submissionToCommands(state2, raw) {
           conflicts.push({ item: criterion.id, reason: unbased(`the remark on ${criterion.id}`) });
           continue;
         }
-        if (criterion.fromComment !== void 0 && criterion.comment !== void 0 && liveComment !== criterion.fromComment) {
+        if (criterion.fromComment !== void 0 && criterion.comment !== void 0 && liveComment !== criterion.fromComment && criterion.comment !== liveComment) {
           conflicts.push({ item: criterion.id, reason: `the remark changed since you opened this page (now "${liveComment.slice(0, 120)}"): ${reload}; your remark was not saved` });
           continue;
         }
@@ -9455,7 +9486,7 @@ function submissionToCommands(state2, raw) {
           conflicts.push({ item: criterion.id, reason: unbased(`the decision on ${criterion.id}`) });
           continue;
         }
-        if (criterion.from !== void 0 && criterion.status !== void 0 && live.review.status !== criterion.from) {
+        if (criterion.from !== void 0 && criterion.status !== void 0 && live.review.status !== criterion.from && live.review.status !== criterion.status) {
           conflicts.push({ item: criterion.id, reason: `already marked ${live.review.status} since you opened this page (the page showed ${criterion.from}): ${reload}; your decision was not saved` });
           continue;
         }
@@ -9659,7 +9690,7 @@ function submissionToCommands(state2, raw) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: unbased(`the remark on ${item.storyId} ${item.key}`) });
         return false;
       }
-      if (item.fromComment !== void 0 && item.comment !== void 0 && itemComment !== item.fromComment) {
+      if (item.fromComment !== void 0 && item.comment !== void 0 && itemComment !== item.fromComment && item.comment !== itemComment) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `the remark changed since you opened this page: ${reload}; your remark was not saved` });
         return false;
       }
@@ -9667,7 +9698,7 @@ function submissionToCommands(state2, raw) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: unbased(`the decision on ${item.storyId} ${item.key}`) });
         return false;
       }
-      if (item.from !== void 0 && current !== item.from) {
+      if (item.from !== void 0 && current !== item.from && current !== item.status) {
         conflicts.push({ item: `${item.storyId} ${item.key}`, reason: `already marked ${current} since you opened this page (the page showed ${item.from}): ${reload}; your decision was not saved` });
         return false;
       }
@@ -20962,7 +20993,7 @@ var init_artifact_id = __esm({
 
 // node_modules/@praxis/jira/dist/ba-write.js
 function contentFingerprint(spec) {
-  return (0, import_node_crypto9.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto10.createHash)("sha256").update(JSON.stringify({
     summary: spec.summary,
     userStory: spec.userStory,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -21191,10 +21222,10 @@ async function planAndApplyBaStories(opts) {
     flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey)
   };
 }
-var import_node_crypto9;
+var import_node_crypto10;
 var init_ba_write = __esm({
   "node_modules/@praxis/jira/dist/ba-write.js"() {
-    import_node_crypto9 = require("node:crypto");
+    import_node_crypto10 = require("node:crypto");
     init_artifact_id();
     init_managed_scope();
     init_write_journal();
@@ -21624,7 +21655,7 @@ ${paths.qualityHandoffPath}`
   };
 }
 function fingerprint(value) {
-  return `sha256:${(0, import_node_crypto10.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 async function previewDeveloperCompleteRecovery(opts) {
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
@@ -21725,10 +21756,10 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto10, import_node_fs16, import_node_path17, import_node_child_process5, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto11, import_node_fs16, import_node_path17, import_node_child_process5, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
-    import_node_crypto10 = require("node:crypto");
+    import_node_crypto11 = require("node:crypto");
     import_node_fs16 = require("node:fs");
     import_node_path17 = require("node:path");
     import_node_child_process5 = require("node:child_process");
@@ -21755,10 +21786,10 @@ var init_developer_complete = __esm({
 
 // node_modules/@praxis/jira/dist/quality-apply.js
 function digest(value) {
-  return (0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
+  return (0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sha256Text(text) {
-  return (0, import_node_crypto11.createHash)("sha256").update(text).digest("hex");
+  return (0, import_node_crypto12.createHash)("sha256").update(text).digest("hex");
 }
 function qualityApplyFingerprint(plan) {
   return `sha256:${digest({
@@ -22432,10 +22463,10 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto11, import_node_fs17, import_node_path18, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto12, import_node_fs17, import_node_path18, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
-    import_node_crypto11 = require("node:crypto");
+    import_node_crypto12 = require("node:crypto");
     import_node_fs17 = require("node:fs");
     import_node_path18 = require("node:path");
     init_mutation_auth();
@@ -22961,7 +22992,7 @@ async function claimWorkPackage(opts) {
       workItemId: opts.wpKey
     }), () => claimWorkPackage(opts));
   }
-  const token = (0, import_node_crypto12.randomUUID)();
+  const token = (0, import_node_crypto13.randomUUID)();
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
     ...manifest?.storyKeys ?? [],
@@ -23104,10 +23135,10 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto12, import_node_fs18, import_node_path19, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto13, import_node_fs18, import_node_path19, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
-    import_node_crypto12 = require("node:crypto");
+    import_node_crypto13 = require("node:crypto");
     import_node_fs18 = require("node:fs");
     import_node_path19 = require("node:path");
     init_dist();
@@ -23647,13 +23678,13 @@ function fileSha256(repo, rel2) {
   const abs = (0, import_node_path21.join)(repo, rel2);
   if (!(0, import_node_fs20.existsSync)(abs) || !(0, import_node_fs20.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto13.createHash)("sha256").update((0, import_node_fs20.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto14.createHash)("sha256").update((0, import_node_fs20.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel2) {
   const r = runGit(repo, ["show", `${rev}:${rel2}`]);
   if (r.status !== 0)
     return null;
-  return (0, import_node_crypto13.createHash)("sha256").update(r.stdout).digest("hex");
+  return (0, import_node_crypto14.createHash)("sha256").update(r.stdout).digest("hex");
 }
 function listCommitFiles(repo, rev) {
   const r = runGit(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]);
@@ -23814,10 +23845,10 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto13, import_node_fs20, import_node_path21, import_node_child_process6;
+var import_node_crypto14, import_node_fs20, import_node_path21, import_node_child_process6;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
-    import_node_crypto13 = require("node:crypto");
+    import_node_crypto14 = require("node:crypto");
     import_node_fs20 = require("node:fs");
     import_node_path21 = require("node:path");
     import_node_child_process6 = require("node:child_process");
@@ -23968,7 +23999,7 @@ function compareToQualitySnapshot(repo, selected, snapshot2) {
       consistency = "mismatch";
     return { path, liveSha256, snapshotSha256, consistency };
   });
-  const liveDigest = (0, import_node_crypto14.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
+  const liveDigest = (0, import_node_crypto15.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
     const live = liveFileHash(repo, path);
     return live ? { path, sha256: live } : { path, missing: true };
   }))).digest("hex");
@@ -23978,12 +24009,12 @@ function compareToQualitySnapshot(repo, selected, snapshot2) {
     liveDigest
   };
 }
-var import_node_fs22, import_node_path23, import_node_crypto14;
+var import_node_fs22, import_node_path23, import_node_crypto15;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
     import_node_fs22 = require("node:fs");
     import_node_path23 = require("node:path");
-    import_node_crypto14 = require("node:crypto");
+    import_node_crypto15 = require("node:crypto");
     init_git_local();
   }
 });
@@ -24398,12 +24429,12 @@ var init_journal = __esm({
 
 // node_modules/@praxis/vcs/dist/fingerprint.js
 function deliveryFingerprint(value) {
-  return `sha256:${(0, import_node_crypto15.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto16.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
 }
-var import_node_crypto15;
+var import_node_crypto16;
 var init_fingerprint = __esm({
   "node_modules/@praxis/vcs/dist/fingerprint.js"() {
-    import_node_crypto15 = require("node:crypto");
+    import_node_crypto16 = require("node:crypto");
   }
 });
 
@@ -26872,7 +26903,7 @@ __export(operations_exports, {
   workPackageShowOp: () => workPackageShowOp
 });
 function previewFingerprint(plan) {
-  return `sha256:${(0, import_node_crypto16.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto17.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 function redact(text) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
@@ -28261,10 +28292,10 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto16, import_node_child_process8, import_node_fs25, import_node_path28, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto17, import_node_child_process8, import_node_fs25, import_node_path28, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
-    import_node_crypto16 = require("node:crypto");
+    import_node_crypto17 = require("node:crypto");
     import_node_child_process8 = require("node:child_process");
     import_node_fs25 = require("node:fs");
     import_node_path28 = require("node:path");
@@ -80681,7 +80712,7 @@ function recordDiagnostic(entry) {
 }
 
 // packages/mcp/dist/tools.js
-var import_node_crypto18 = require("node:crypto");
+var import_node_crypto19 = require("node:crypto");
 var import_node_fs33 = require("node:fs");
 var import_node_path38 = require("node:path");
 init_dist();
@@ -80692,7 +80723,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"c259160206e7810a2e8caef523836c51614e92d7633e220422d72fa0162d447e","coreBaseline":"15516dc64b0cacc0872927e567107c0e27fd64da","inputs":34}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"e7aada28e0826e491e552ffc3fccac09e974ba7f0bb02b7c8a0089f0e430551f","coreBaseline":"41a5a78311a5d3e87640084513a25c29d8bcfc66","inputs":34}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -80786,7 +80817,7 @@ function mcpEnvelope(opts) {
 
 // packages/mcp/dist/story-engine.js
 var import_node_child_process4 = require("node:child_process");
-var import_node_crypto8 = require("node:crypto");
+var import_node_crypto9 = require("node:crypto");
 var import_node_fs10 = require("node:fs");
 var import_node_path9 = require("node:path");
 init_dist();
@@ -80902,6 +80933,7 @@ var import_node_path6 = require("node:path");
 
 // packages/mcp/dist/browser-verification.js
 var import_node_child_process2 = require("node:child_process");
+var import_node_crypto7 = require("node:crypto");
 var import_node_fs6 = require("node:fs");
 var import_node_os4 = require("node:os");
 var import_node_path5 = require("node:path");
@@ -80996,7 +81028,8 @@ import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readd
 import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8"));
-const out = (value) => { process.stdout.write("\n__PRAXIS_RESULT__" + JSON.stringify(value) + "\n", () => process.exit(0)); };
+const NONCE = input.nonce;
+const out = (value) => { process.stdout.write("\n__PRAXIS_RESULT__" + NONCE + "__" + JSON.stringify(value) + "\n", () => process.exit(0)); };
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon", ".woff2": "font/woff2", ".map": "application/json", ".txt": "text/plain" };
 function within(root, p) { return p === root || p.startsWith(root + sep); }
 function containedDir(base, rel) {
@@ -81033,7 +81066,7 @@ function loadPlaywright() {
 async function main() {
   const startedAt = new Date().toISOString();
   const pw = loadPlaywright();
-  if (!pw) return out({ ok: true, result: { available: false, reason: "playwright-core was not found: set PRAXIS_PLAYWRIGHT_DIR to a directory whose node_modules has it, or install it in the project (npm i -D playwright-core)" } });
+  if (!pw) return out({ ok: true, result: { available: false, reason: "playwright-core was not found: the operator sets PRAXIS_PLAYWRIGHT_DIR to a directory whose node_modules has it (it is never taken from the project under test)" } });
   let root;
   try { root = containedDir(input.serviceRoot, input.serve.root); } catch { return out({ ok: true, result: { available: false, reason: "browser.serve.root is missing or outside the service directory: build the app first" } }); }
   if (!existsSync(join(root, "index.html"))) return out({ ok: true, result: { available: false, reason: "browser.serve.root has no index.html: build the app first" } });
@@ -81057,7 +81090,8 @@ async function main() {
   const origin = "http://127.0.0.1:" + server.address().port;
   let browser;
   try {
-    browser = await pw.chromium.launch({ headless: true, ...(input.executable ? { executablePath: input.executable } : {}) });
+    if (typeof pw.chromium.launch !== "function") throw new Error("playwright-core without chromium");
+    browser = await pw.chromium.launch({ headless: true, chromiumSandbox: !input.noSandbox, ...(input.executable ? { executablePath: input.executable } : {}) });
   } catch (error) {
     server.close();
     return out({ ok: true, result: { available: false, reason: "no browser could be started (" + String((error && error.message) || error).split("\n")[0].slice(0, 200) + "): install Chrome or set PRAXIS_BROWSER_EXECUTABLE" } });
@@ -81068,6 +81102,8 @@ async function main() {
     const context = await browser.newContext({ viewport: input.viewport || { width: 1280, height: 800 }, serviceWorkers: "block", acceptDownloads: false });
     const blocked = [];
     await context.route("**/*", (route) => { const u = route.request().url(); if (u.startsWith(origin + "/") || u === origin || u.startsWith("data:") || u.startsWith("blob:")) return route.continue(); blocked.push(u.slice(0, 120)); return route.abort(); });
+    if (typeof context.routeWebSocket !== "function") { await context.close(); await browser.close(); server.close(); return out({ ok: true, result: { available: false, reason: "this Playwright cannot block WebSocket connections (routeWebSocket is missing): use playwright-core 1.48 or newer" } }); }
+    await context.routeWebSocket(/.*/, (ws) => { blocked.push("websocket " + String(ws.url()).slice(0, 100)); ws.close(); });
     const page = await context.newPage();
     let consoleErrors = 0;
     page.on("console", (m) => { if (m.type() === "error") consoleErrors += 1; });
@@ -81118,7 +81154,7 @@ async function main() {
       screenshot = { sha256, bytes: png.length };
       if (input.artifactsDir) {
         mkdirSync(input.artifactsDir, { recursive: true });
-        const name = check.scenarioId.replace(/[^A-Za-z0-9._-]/g, "_") + ".png";
+        const name = createHash("sha256").update(check.scenarioId).digest("hex").slice(0, 8) + "-" + check.scenarioId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) + ".png";
         writeFileSync(join(input.artifactsDir, name), png);
         screenshot.path = name;
       }
@@ -81144,21 +81180,29 @@ async function runBrowserChecks(input2) {
   const home = (0, import_node_fs6.mkdtempSync)((0, import_node_path5.join)((0, import_node_os4.tmpdir)(), "praxis-browser-"));
   const { existsSync: existsSync26 } = await import("node:fs");
   const executable = process.env.PRAXIS_BROWSER_EXECUTABLE || DEFAULT_EXECUTABLES.find((p) => existsSync26(p));
-  const playwrightDirs = [...process.env.PRAXIS_PLAYWRIGHT_DIR ? [process.env.PRAXIS_PLAYWRIGHT_DIR] : [], ...input2.playwrightDirs];
+  const playwrightDirs = process.env.PRAXIS_PLAYWRIGHT_DIR ? [process.env.PRAXIS_PLAYWRIGHT_DIR] : [];
   try {
     return await new Promise((done) => {
       const env = { ...scrubbedEnv(home), ...executable ? {} : {} };
-      const child = (0, import_node_child_process2.spawn)(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input2.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"] });
+      const nonce = (0, import_node_crypto7.randomBytes)(16).toString("hex");
+      const child = (0, import_node_child_process2.spawn)(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input2.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
+      const killGroup = () => {
+        try {
+          if (child.pid)
+            process.kill(-child.pid, "SIGKILL");
+        } catch {
+        }
+      };
       let stdout = "";
       let stderr = "";
       const timer = setTimeout(() => {
-        child.kill("SIGKILL");
+        killGroup();
         done({ available: false, reason: "the browser run did not finish in time and was stopped" });
       }, input2.timeoutMs ?? 24e4);
       child.stdout.on("data", (c) => {
         stdout += c.toString();
         if (stdout.length > 5e6)
-          child.kill("SIGKILL");
+          killGroup();
       });
       child.stderr.on("data", (c) => {
         stderr = (stderr + c.toString()).slice(-2e3);
@@ -81169,11 +81213,13 @@ async function runBrowserChecks(input2) {
       });
       child.on("close", () => {
         clearTimeout(timer);
-        const marker = stdout.lastIndexOf("__PRAXIS_RESULT__");
+        killGroup();
+        const tag = `__PRAXIS_RESULT__${nonce}__`;
+        const marker = stdout.lastIndexOf(tag);
         if (marker < 0)
           return done({ available: false, reason: `the browser driver gave no result: ${(stderr || stdout).trim().slice(-200)}` });
         try {
-          const parsed = JSON.parse(stdout.slice(marker + "__PRAXIS_RESULT__".length).trim());
+          const parsed = JSON.parse(stdout.slice(marker + tag.length).trim());
           if (!parsed.ok || !parsed.result)
             return done({ available: false, reason: `the browser driver failed: ${parsed.error ?? "unknown"}` });
           done(parsed.result);
@@ -81188,11 +81234,16 @@ async function runBrowserChecks(input2) {
         checks: input2.checks,
         playwrightDirs,
         executable,
-        artifactsDir: input2.artifactsDir
+        artifactsDir: input2.artifactsDir,
+        nonce,
+        noSandbox: process.env.PRAXIS_BROWSER_NO_SANDBOX === "1"
       }));
     });
   } finally {
-    (0, import_node_fs6.rmSync)(home, { recursive: true, force: true });
+    try {
+      (0, import_node_fs6.rmSync)(home, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+    }
   }
 }
 
@@ -81344,7 +81395,6 @@ async function runProjectChecks(input2) {
       serviceRoot: root,
       config: browserConfig,
       checks: queue.map((q) => ({ scenarioId: q.check.scenarioId, steps: q.check.steps })),
-      playwrightDirs: [root, input2.workflowRepo],
       ...input2.artifactsDir ? { artifactsDir: input2.artifactsDir } : {}
     });
     if (!run.available) {
@@ -81641,7 +81691,7 @@ function inspectService(service) {
 // packages/mcp/dist/workflow-store.js
 var import_node_fs9 = require("node:fs");
 var import_node_path8 = require("node:path");
-var import_node_crypto7 = require("node:crypto");
+var import_node_crypto8 = require("node:crypto");
 
 // packages/mcp/dist/human-approval.js
 init_dist();
@@ -81882,7 +81932,7 @@ function fingerprintFor2(repo, command, workItemId) {
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state2 = loadWorkflow(repo, workItemId);
-    token = state2 ? `state:${(0, import_node_crypto7.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
+    token = state2 ? `state:${(0, import_node_crypto8.createHash)("sha256").update(canonicalJson(state2)).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token });
 }
@@ -82342,7 +82392,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
   let limitations = [];
   let plan = [];
   let browser = [];
-  const adapterResult = adapter ? await runIsolated({ file: adapter, cwd: repo, op: "verify", state: state2, independentRerun }) : null;
+  const adapterResult = adapter ? await runIsolated({ file: adapter, cwd: repo, op: "verify", state: { ...state2, services }, independentRerun }) : null;
   if (adapterResult) {
     const verified = adapterResult;
     scenarios = verified.scenarios;
@@ -82408,7 +82458,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
     meta: meta5,
     // a browser check that could not run (no browser, no serve root) is still browser-level evidence: BLOCKED, not "executed"
     evidenceSources: Object.fromEntries([
-      ...scenarios.filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId))).map((sc) => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${(0, import_node_crypto8.randomUUID)()}`, artifacts: [] }]),
+      ...scenarios.filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId))).map((sc) => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${(0, import_node_crypto9.randomUUID)()}`, artifacts: [] }]),
       ...browser.flatMap((run) => run.scenarioIds.map((id) => {
         const shot = run.artifacts[id];
         return [
@@ -82416,7 +82466,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
           {
             kind: "browser",
             runner: `${run.runner}@${run.browserVersion}`,
-            runId: `run-${(0, import_node_crypto8.randomUUID)()}`,
+            runId: `run-${(0, import_node_crypto9.randomUUID)()}`,
             startedAt: run.startedAt,
             finishedAt: run.finishedAt,
             subjectDigest: run.subjectDigest,
@@ -83825,7 +83875,7 @@ function repositoryBrief(repo, input2) {
 // packages/mcp/dist/review-service.js
 var import_node_child_process10 = require("node:child_process");
 var import_node_http = require("node:http");
-var import_node_crypto17 = require("node:crypto");
+var import_node_crypto18 = require("node:crypto");
 var import_node_fs32 = require("node:fs");
 var import_node_os7 = require("node:os");
 var import_node_path37 = require("node:path");
@@ -83861,7 +83911,7 @@ function progressFor(state2, view) {
 function safeEqual(a, b) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
-  return x.length === y.length && (0, import_node_crypto17.timingSafeEqual)(x, y);
+  return x.length === y.length && (0, import_node_crypto18.timingSafeEqual)(x, y);
 }
 function outcome(repo, workItemId, view, applied, conflicts, stale, summary) {
   const state2 = requireState2(repo, workItemId);
@@ -83981,7 +84031,7 @@ async function handle(req, res) {
     }
     try {
       const state2 = requireState2(session.repo, session.workItemId);
-      const saveToken = (0, import_node_crypto17.randomBytes)(24).toString("hex");
+      const saveToken = (0, import_node_crypto18.randomBytes)(24).toString("hex");
       session.saveTokens.add(saveToken);
       if (session.saveTokens.size > 20)
         session.saveTokens.delete(session.saveTokens.values().next().value);
@@ -84077,8 +84127,8 @@ async function renderReviewTool(repo, input2) {
     if (live && !input2.reopen) {
       return { view, workItemId: state2.workItem.id, file: file2, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: live.shown?.fingerprint ?? null, baseState: live.shown?.baseState ?? null, progress: progressFor(state2, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened. The url in this result is NOT a working link (the working link is secret and only the tab Praxis opened has it): tell the user to use that tab, or call again with reopen true to open a fresh page, which is needed whenever the content changed or the tab was closed.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
-    const id = (0, import_node_crypto17.randomBytes)(8).toString("hex");
-    const loadToken = (0, import_node_crypto17.randomBytes)(24).toString("hex");
+    const id = (0, import_node_crypto18.randomBytes)(8).toString("hex");
+    const loadToken = (0, import_node_crypto18.randomBytes)(24).toString("hex");
     sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now(), shown: { fingerprint: fingerprintFor(state2, view), baseState: workStateStamp(state2) } });
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
     opened = await openInBrowser(secretUrl);
@@ -84536,7 +84586,7 @@ async function runWorkflowTool(name, rawArgs, repo, version4) {
   }
   if (parsed.action === "verify-stories") {
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const runId = `run-${(0, import_node_crypto18.randomUUID)()}`;
+    const runId = `run-${(0, import_node_crypto19.randomUUID)()}`;
     const isPreview = name === "praxis_workflow_preview";
     const current = loadWorkflow(repo, workItemId);
     const artifactsDir = !isPreview && current ? (0, import_node_path38.resolve)(repo, ".praxis", "quality", current.workItem.id, "artifacts", runId) : void 0;

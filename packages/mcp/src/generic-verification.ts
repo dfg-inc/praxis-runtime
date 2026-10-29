@@ -252,7 +252,6 @@ export async function runProjectChecks(input: {
       serviceRoot: root,
       config: browserConfig as BrowserConfig,
       checks: queue.map((q) => ({ scenarioId: q.check.scenarioId, steps: q.check.steps as BrowserStep[] })),
-      playwrightDirs: [root, input.workflowRepo],
       ...(input.artifactsDir ? { artifactsDir: input.artifactsDir } : {}),
     });
     if (!run.available) {

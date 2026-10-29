@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -111,7 +112,8 @@ import { createReadStream, existsSync, lstatSync, mkdirSync, readFileSync, readd
 import { createRequire } from "node:module";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 const input = JSON.parse(readFileSync(0, "utf8"));
-const out = (value) => { process.stdout.write("\n__PRAXIS_RESULT__" + JSON.stringify(value) + "\n", () => process.exit(0)); };
+const NONCE = input.nonce;
+const out = (value) => { process.stdout.write("\n__PRAXIS_RESULT__" + NONCE + "__" + JSON.stringify(value) + "\n", () => process.exit(0)); };
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon", ".woff2": "font/woff2", ".map": "application/json", ".txt": "text/plain" };
 function within(root, p) { return p === root || p.startsWith(root + sep); }
 function containedDir(base, rel) {
@@ -148,7 +150,7 @@ function loadPlaywright() {
 async function main() {
   const startedAt = new Date().toISOString();
   const pw = loadPlaywright();
-  if (!pw) return out({ ok: true, result: { available: false, reason: "playwright-core was not found: set PRAXIS_PLAYWRIGHT_DIR to a directory whose node_modules has it, or install it in the project (npm i -D playwright-core)" } });
+  if (!pw) return out({ ok: true, result: { available: false, reason: "playwright-core was not found: the operator sets PRAXIS_PLAYWRIGHT_DIR to a directory whose node_modules has it (it is never taken from the project under test)" } });
   let root;
   try { root = containedDir(input.serviceRoot, input.serve.root); } catch { return out({ ok: true, result: { available: false, reason: "browser.serve.root is missing or outside the service directory: build the app first" } }); }
   if (!existsSync(join(root, "index.html"))) return out({ ok: true, result: { available: false, reason: "browser.serve.root has no index.html: build the app first" } });
@@ -172,7 +174,8 @@ async function main() {
   const origin = "http://127.0.0.1:" + server.address().port;
   let browser;
   try {
-    browser = await pw.chromium.launch({ headless: true, ...(input.executable ? { executablePath: input.executable } : {}) });
+    if (typeof pw.chromium.launch !== "function") throw new Error("playwright-core without chromium");
+    browser = await pw.chromium.launch({ headless: true, chromiumSandbox: !input.noSandbox, ...(input.executable ? { executablePath: input.executable } : {}) });
   } catch (error) {
     server.close();
     return out({ ok: true, result: { available: false, reason: "no browser could be started (" + String((error && error.message) || error).split("\n")[0].slice(0, 200) + "): install Chrome or set PRAXIS_BROWSER_EXECUTABLE" } });
@@ -183,6 +186,8 @@ async function main() {
     const context = await browser.newContext({ viewport: input.viewport || { width: 1280, height: 800 }, serviceWorkers: "block", acceptDownloads: false });
     const blocked = [];
     await context.route("**/*", (route) => { const u = route.request().url(); if (u.startsWith(origin + "/") || u === origin || u.startsWith("data:") || u.startsWith("blob:")) return route.continue(); blocked.push(u.slice(0, 120)); return route.abort(); });
+    if (typeof context.routeWebSocket !== "function") { await context.close(); await browser.close(); server.close(); return out({ ok: true, result: { available: false, reason: "this Playwright cannot block WebSocket connections (routeWebSocket is missing): use playwright-core 1.48 or newer" } }); }
+    await context.routeWebSocket(/.*/, (ws) => { blocked.push("websocket " + String(ws.url()).slice(0, 100)); ws.close(); });
     const page = await context.newPage();
     let consoleErrors = 0;
     page.on("console", (m) => { if (m.type() === "error") consoleErrors += 1; });
@@ -233,7 +238,7 @@ async function main() {
       screenshot = { sha256, bytes: png.length };
       if (input.artifactsDir) {
         mkdirSync(input.artifactsDir, { recursive: true });
-        const name = check.scenarioId.replace(/[^A-Za-z0-9._-]/g, "_") + ".png";
+        const name = createHash("sha256").update(check.scenarioId).digest("hex").slice(0, 8) + "-" + check.scenarioId.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) + ".png";
         writeFileSync(join(input.artifactsDir, name), png);
         screenshot.path = name;
       }
@@ -261,7 +266,8 @@ export type BrowserRunInput = {
   serviceRoot: string;
   config: BrowserConfig;
   checks: Array<{ scenarioId: string; steps: BrowserStep[] }>;
-  playwrightDirs: string[];
+  /** Kept for callers; ignored: see PRAXIS_PLAYWRIGHT_DIR. */
+  playwrightDirs?: string[];
   /** When set, screenshots are written here (apply). A preview passes nothing and writes nothing. */
   artifactsDir?: string;
   timeoutMs?: number;
@@ -271,20 +277,30 @@ export async function runBrowserChecks(input: BrowserRunInput): Promise<BrowserR
   const home = mkdtempSync(join(tmpdir(), "praxis-browser-"));
   const { existsSync } = await import("node:fs");
   const executable = process.env.PRAXIS_BROWSER_EXECUTABLE || DEFAULT_EXECUTABLES.find((p) => existsSync(p));
-  const playwrightDirs = [...(process.env.PRAXIS_PLAYWRIGHT_DIR ? [process.env.PRAXIS_PLAYWRIGHT_DIR] : []), ...input.playwrightDirs];
+  // Playwright runs inside the driver process: it comes from a directory the OPERATOR names, never from the project under test (that code is agent-writable)
+  const playwrightDirs = process.env.PRAXIS_PLAYWRIGHT_DIR ? [process.env.PRAXIS_PLAYWRIGHT_DIR] : [];
   try {
     return await new Promise<BrowserRun>((done) => {
       const env = { ...scrubbedEnv(home), ...(executable ? {} : {}) };
-      const child = spawn(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"] });
+      const nonce = randomBytes(16).toString("hex");
+      // its own process group: a timeout or the end of the run stops Chromium and its helpers too, not only the driver
+      const child = spawn(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
+      const killGroup = () => {
+        try {
+          if (child.pid) process.kill(-child.pid, "SIGKILL");
+        } catch {
+          /* already gone */
+        }
+      };
       let stdout = "";
       let stderr = "";
       const timer = setTimeout(() => {
-        child.kill("SIGKILL");
+        killGroup();
         done({ available: false, reason: "the browser run did not finish in time and was stopped" });
       }, input.timeoutMs ?? 240_000);
       child.stdout.on("data", (c: Buffer) => {
         stdout += c.toString();
-        if (stdout.length > 5_000_000) child.kill("SIGKILL");
+        if (stdout.length > 5_000_000) killGroup();
       });
       child.stderr.on("data", (c: Buffer) => {
         stderr = (stderr + c.toString()).slice(-2000);
@@ -295,10 +311,13 @@ export async function runBrowserChecks(input: BrowserRunInput): Promise<BrowserR
       });
       child.on("close", () => {
         clearTimeout(timer);
-        const marker = stdout.lastIndexOf("__PRAXIS_RESULT__");
+        killGroup();
+        // only a line carrying this run's nonce is a result: anything the app or a module printed cannot pose as one
+        const tag = `__PRAXIS_RESULT__${nonce}__`;
+        const marker = stdout.lastIndexOf(tag);
         if (marker < 0) return done({ available: false, reason: `the browser driver gave no result: ${(stderr || stdout).trim().slice(-200)}` });
         try {
-          const parsed = JSON.parse(stdout.slice(marker + "__PRAXIS_RESULT__".length).trim()) as { ok: boolean; result?: BrowserRun; error?: string };
+          const parsed = JSON.parse(stdout.slice(marker + tag.length).trim()) as { ok: boolean; result?: BrowserRun; error?: string };
           if (!parsed.ok || !parsed.result) return done({ available: false, reason: `the browser driver failed: ${parsed.error ?? "unknown"}` });
           done(parsed.result);
         } catch {
@@ -314,10 +333,16 @@ export async function runBrowserChecks(input: BrowserRunInput): Promise<BrowserR
           playwrightDirs,
           executable,
           artifactsDir: input.artifactsDir,
+          nonce,
+          noSandbox: process.env.PRAXIS_BROWSER_NO_SANDBOX === "1",
         }),
       );
     });
   } finally {
-    rmSync(home, { recursive: true, force: true });
+    try {
+      rmSync(home, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      /* a helper still holding the directory must not turn a result into a crash */
+    }
   }
 }

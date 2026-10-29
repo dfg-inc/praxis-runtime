@@ -81,7 +81,7 @@ describe("Quality evidence through MCP workflow tools", () => {
         objective: "Placeholders are unset",
         userValue: "Accurate diagnostics",
         happyPath: ["Scrub a placeholder"],
-        acceptanceCriteria: [{ id: "US-QEV-001-AC-01", given: "a placeholder", when: "scrubbed", then: "null" }],
+        acceptanceCriteria: [{ id: "REQ-QEV-101-AC-01", given: "a placeholder", when: "scrubbed", then: "null" }],
         expectedResults: ["null"],
         serviceIds: ["svc"],
         confirmedBehavior: false,
