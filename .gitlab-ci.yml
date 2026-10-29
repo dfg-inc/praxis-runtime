@@ -23,24 +23,28 @@ default:
 variables:
   npm_config_cache: "$CI_PROJECT_DIR/.npm"
 
+# The browser driver tests start a real Chromium with its sandbox ON, and Chromium does not run its sandbox as root:
+# install the Chromium pinned by playwright-core, then run the test commands as the image's unprivileged user (no --no-sandbox).
+.chromium_setup: &chromium_setup |
+  export PLAYWRIGHT_BROWSERS_PATH=/opt/pw
+  npx playwright-core install --with-deps chromium
+  chown -R node:node /opt/pw "$CI_PROJECT_DIR"
+
 build_test:
   stage: verify
+  variables:
+    # The shared pod is loaded by other jobs: a longer per-test timeout, the assertions are unchanged.
+    PRAXIS_TEST_TIMEOUT_MS: "30000"
   script:
     - npm run build
     - npm run typecheck
-    # The browser driver tests start a real Chromium with its sandbox ON, and Chromium does not run its sandbox as root:
-    # install the Chromium pinned by playwright-core and run the tests as the image's unprivileged user (no --no-sandbox).
+    - *chromium_setup
     - |
-      export PLAYWRIGHT_BROWSERS_PATH=/opt/pw
-      npx playwright-core install --with-deps chromium
-      chown -R node:node /opt/pw "$CI_PROJECT_DIR"
       su -p node -c '
         export HOME=/home/node
         cd "$CI_PROJECT_DIR"
         export PRAXIS_BROWSER_EXECUTABLE="$(node -p "require(\"playwright-core\").chromium.executablePath()")"
-        echo "browser: $PRAXIS_BROWSER_EXECUTABLE; cpus: $(nproc); cgroup cpu.max: $(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo n/a)"
-        # The shared pod is CPU-limited: fewer parallel test workers keep the unchanged 5 s test timeouts meaningful.
-        export VITEST_MAX_WORKERS=2
+        echo "browser: $PRAXIS_BROWSER_EXECUTABLE"
         npm run test
       '
 
@@ -63,11 +67,20 @@ quality_gates:
 
 pack_mcpb:
   stage: package
+  variables:
+    PRAXIS_TEST_TIMEOUT_MS: "30000"
   needs: [build_test, git_delivery, quality_gates]
   script:
     - npm run build
     - npm run pack:mcpb
-    - npm run accept:mcpb-runtime
+    - *chromium_setup
+    - |
+      su -p node -c '
+        export HOME=/home/node
+        cd "$CI_PROJECT_DIR"
+        export PRAXIS_BROWSER_EXECUTABLE="$(node -p "require(\"playwright-core\").chromium.executablePath()")"
+        npm run accept:mcpb-runtime
+      '
     - |
       python3 - <<'PY'
       import hashlib, json, pathlib
