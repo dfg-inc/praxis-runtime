@@ -44,3 +44,24 @@ describe("browser driver hardening (round 7 review)", () => {
     expect(() => validateBrowserSteps("S", [{ goto: "/\\x.test" }])).not.toThrow(); // stays on the served origin (the browser reads it as a path)
   });
 });
+
+describe("a timeout takes Chromium down with it", () => {
+  it("no browser process with the run's profile survives a timeout", async () => {
+    const { spawnSync } = await import("node:child_process");
+    const project = mkdtempSync(join(tmpdir(), "praxis-bdh-"));
+    mkdirSync(join(project, "dist"), { recursive: true });
+    writeFileSync(join(project, "dist", "index.html"), "<!doctype html><title>t</title>");
+    process.env.PRAXIS_PLAYWRIGHT_DIR = "/Users/serg/work/praxis-split/praxis-runtime";
+    process.env.PRAXIS_BROWSER_EXECUTABLE = process.env.PRAXIS_BROWSER_EXECUTABLE ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+    try {
+      // long enough for the browser to start, short enough to hit the timeout in the middle of the run
+      const run = await runBrowserChecks({ serviceRoot: project, config: { serve: { root: "dist" } }, checks: [{ scenarioId: "S", steps: [{ goto: "/" }, { expectVisible: "#never" }] }], timeoutMs: 2500 });
+      expect(run.available).toBe(false);
+      await new Promise((r) => setTimeout(r, 3000));
+      const ps = spawnSync("ps", ["-axo", "command"], { encoding: "utf8" }).stdout;
+      expect(ps.split("\n").filter((l) => l.includes("praxis-browser-") && l.includes("--user-data-dir")).length).toBe(0);
+    } finally {
+      delete process.env.PRAXIS_PLAYWRIGHT_DIR;
+    }
+  }, 60_000);
+});

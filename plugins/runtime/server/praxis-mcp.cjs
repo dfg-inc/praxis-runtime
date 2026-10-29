@@ -5716,7 +5716,7 @@ function applyRequirementDecisions(state2, command, now, approvedRewording = fal
       requirement.acceptanceCriteria[index] = criterion;
     }
     for (const statement of decision.addAcceptance) {
-      const used = [...requirement.acceptanceCriteria.map((c) => c.id), ...requirement.retiredCriteria ?? []].map((id) => Number(id.match(/-AC-(\d+)$/)?.[1] ?? 0));
+      const used = [...requirement.acceptanceCriteria.map((c) => c.id), ...requirement.retiredCriteria ?? [], ...next.coverage.filter((e) => e.requirementId === requirement.id).map((e) => e.acceptanceCriterionId)].map((id) => Number(id.match(/-AC-(\d+)$/)?.[1] ?? 0));
       const nextNumber = Math.max(0, ...used) + 1;
       requirement.acceptanceCriteria.push({
         id: `${requirement.id}-AC-${String(nextNumber).padStart(2, "0")}`,
@@ -80723,7 +80723,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"e7aada28e0826e491e552ffc3fccac09e974ba7f0bb02b7c8a0089f0e430551f","coreBaseline":"41a5a78311a5d3e87640084513a25c29d8bcfc66","inputs":34}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"de183f6d74ce4f3735afc0009b462b54a24fdb5c32a270af9b258fdb95deae41","coreBaseline":"e4eab5fb2541cd1d45be0beb6e2da5998cf5dd7a","inputs":34}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81096,6 +81096,7 @@ async function main() {
     server.close();
     return out({ ok: true, result: { available: false, reason: "no browser could be started (" + String((error && error.message) || error).split("\n")[0].slice(0, 200) + "): install Chrome or set PRAXIS_BROWSER_EXECUTABLE" } });
   }
+  process.on("SIGTERM", async () => { try { await browser.close(); } catch { /* going down anyway */ } process.exit(1); });
   const results = {};
   const wait = async (fn, ms = 3000) => { const end = Date.now() + ms; let last; for (;;) { try { const v = await fn(); if (v === true) return; last = v; } catch (e) { last = String((e && e.message) || e); } if (Date.now() > end) throw new Error(typeof last === "string" ? last : "condition not met"); await new Promise((r) => setTimeout(r, 50)); } };
   for (const check of input.checks) {
@@ -81186,23 +81187,24 @@ async function runBrowserChecks(input2) {
       const env = { ...scrubbedEnv(home), ...executable ? {} : {} };
       const nonce = (0, import_node_crypto7.randomBytes)(16).toString("hex");
       const child = (0, import_node_child_process2.spawn)(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input2.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
-      const killGroup = () => {
+      const killGroup = (signal = "SIGKILL") => {
         try {
           if (child.pid)
-            process.kill(-child.pid, "SIGKILL");
+            process.kill(-child.pid, signal);
         } catch {
         }
       };
       let stdout = "";
       let stderr = "";
       const timer = setTimeout(() => {
-        killGroup();
+        killGroup("SIGTERM");
+        setTimeout(() => killGroup("SIGKILL"), 1500).unref();
         done({ available: false, reason: "the browser run did not finish in time and was stopped" });
       }, input2.timeoutMs ?? 24e4);
       child.stdout.on("data", (c) => {
         stdout += c.toString();
         if (stdout.length > 5e6)
-          killGroup();
+          killGroup("SIGKILL");
       });
       child.stderr.on("data", (c) => {
         stderr = (stderr + c.toString()).slice(-2e3);

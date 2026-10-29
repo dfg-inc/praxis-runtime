@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -180,6 +180,7 @@ async function main() {
     server.close();
     return out({ ok: true, result: { available: false, reason: "no browser could be started (" + String((error && error.message) || error).split("\n")[0].slice(0, 200) + "): install Chrome or set PRAXIS_BROWSER_EXECUTABLE" } });
   }
+  process.on("SIGTERM", async () => { try { await browser.close(); } catch { /* going down anyway */ } process.exit(1); });
   const results = {};
   const wait = async (fn, ms = 3000) => { const end = Date.now() + ms; let last; for (;;) { try { const v = await fn(); if (v === true) return; last = v; } catch (e) { last = String((e && e.message) || e); } if (Date.now() > end) throw new Error(typeof last === "string" ? last : "condition not met"); await new Promise((r) => setTimeout(r, 50)); } };
   for (const check of input.checks) {
@@ -273,6 +274,29 @@ export type BrowserRunInput = {
   timeoutMs?: number;
 };
 
+/**
+ * Chromium and its helpers do not share the driver's process group. Everything the run started carries the run's private
+ * HOME/TMPDIR in its command line, so whatever still lives after the run is found by that path and stopped.
+ */
+function sweepProcesses(home: string): void {
+  try {
+    const listing = spawnSync("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 }).stdout ?? "";
+    for (const line of listing.split("\n")) {
+      if (!line.includes(home)) continue;
+      const pid = Number(line.trim().split(/\s+/)[0]);
+      if (Number.isInteger(pid) && pid > 1 && pid !== process.pid) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* gone already */
+        }
+      }
+    }
+  } catch {
+    /* best effort: the result is already decided */
+  }
+}
+
 export async function runBrowserChecks(input: BrowserRunInput): Promise<BrowserRun> {
   const home = mkdtempSync(join(tmpdir(), "praxis-browser-"));
   const { existsSync } = await import("node:fs");
@@ -285,9 +309,9 @@ export async function runBrowserChecks(input: BrowserRunInput): Promise<BrowserR
       const nonce = randomBytes(16).toString("hex");
       // its own process group: a timeout or the end of the run stops Chromium and its helpers too, not only the driver
       const child = spawn(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
-      const killGroup = () => {
+      const killGroup = (signal: NodeJS.Signals = "SIGKILL") => {
         try {
-          if (child.pid) process.kill(-child.pid, "SIGKILL");
+          if (child.pid) process.kill(-child.pid, signal);
         } catch {
           /* already gone */
         }
@@ -295,12 +319,14 @@ export async function runBrowserChecks(input: BrowserRunInput): Promise<BrowserR
       let stdout = "";
       let stderr = "";
       const timer = setTimeout(() => {
-        killGroup();
+        // Chromium sits in a group of its own: ask the driver to stop (Playwright closes the browser on SIGTERM), then make sure
+        killGroup("SIGTERM");
+        setTimeout(() => killGroup("SIGKILL"), 1500).unref();
         done({ available: false, reason: "the browser run did not finish in time and was stopped" });
       }, input.timeoutMs ?? 240_000);
       child.stdout.on("data", (c: Buffer) => {
         stdout += c.toString();
-        if (stdout.length > 5_000_000) killGroup();
+        if (stdout.length > 5_000_000) killGroup("SIGKILL");
       });
       child.stderr.on("data", (c: Buffer) => {
         stderr = (stderr + c.toString()).slice(-2000);
@@ -339,6 +365,7 @@ export async function runBrowserChecks(input: BrowserRunInput): Promise<BrowserR
       );
     });
   } finally {
+    sweepProcesses(home);
     try {
       rmSync(home, { recursive: true, force: true, maxRetries: 3 });
     } catch {
