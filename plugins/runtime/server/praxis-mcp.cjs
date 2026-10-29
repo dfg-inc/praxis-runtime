@@ -5024,7 +5024,11 @@ var init_planning_schemas = __esm({
       kind: external_exports.string().min(1),
       requirementId: RequirementIdSchema.optional(),
       reason: external_exports.string().min(1),
-      at: external_exports.string()
+      at: external_exports.string(),
+      /** How the person decided (the review page, or an approved batch). Absent on waivers recorded before this existed. */
+      decidedVia: external_exports.enum(["html-review", "approved", "chat", "system"]).optional(),
+      /** What asked for the capability when the person waived it (the phrase or prototype element): lets a reader check the waiver closes that and not a real requirement. */
+      gap: external_exports.string().optional()
     });
     PlanningStateFields = {
       mode: WorkflowModeSchema.default("classic"),
@@ -5305,7 +5309,7 @@ function prototypeFingerprint(prototype) {
 function storyPlanFingerprint(plan) {
   if (!plan)
     return "none";
-  return hash(plan.entries.map(({ review: _r, status, ...entry }) => ({ ...entry, excluded: status === "excluded" })));
+  return hash(plan.entries.map(({ review: _r, status, excludedReason, ...entry }) => ({ ...entry, excluded: status === "excluded", ...status === "excluded" && excludedReason !== void 0 ? { excludedReason } : {} })));
 }
 function storiesFingerprint(state2) {
   return hash(activeStories(state2).map((s) => ({
@@ -5363,6 +5367,30 @@ function inferCapabilities(text) {
       found.add(capability);
   return [...found];
 }
+function maskLiterals(text, dataValues = []) {
+  let out = text.replace(/«[^»]*»|“[^”]*”|"[^"]*"|`[^`]*`|'[^']*'/g, " ").replace(/[?&]?\b[\w.-]+=\S*/g, " ").replace(/\bhttps?:\/\/\S+/g, " ");
+  for (const value of dataValues.filter((v) => v.length > 1))
+    out = out.replace(new RegExp(`\\b${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "gi"), " ");
+  return out;
+}
+function capabilityEvidence(text) {
+  const found = [];
+  for (const [capability, pattern] of KEYWORDS) {
+    const match = pattern.exec(text);
+    if (match)
+      found.push({ capability, phrase: match[0] });
+  }
+  return found;
+}
+function statedOperations(statement, dataValues = []) {
+  const masked = maskLiterals(statement, dataValues);
+  const out = [];
+  for (const m of masked.matchAll(MODAL))
+    for (const hit of capabilityEvidence(m[1] ?? ""))
+      if (!out.some((x) => x.capability === hit.capability))
+        out.push(hit);
+  return out;
+}
 function storyCapabilities(story) {
   return [.../* @__PURE__ */ new Set([...story.capabilities, ...inferCapabilities(storyText(story))])];
 }
@@ -5384,41 +5412,61 @@ function elementCapability(element) {
       return null;
   }
 }
-function expectedCapabilities(state2, requirement) {
-  const expected = new Set(inferCapabilities([requirement.statement, ...requirement.acceptanceCriteria.map((c) => c.statement)].join(" ")));
-  const screens = state2.prototype?.screens ?? [];
+function dataValuesOf(state2) {
+  return (state2.prototype?.mock ?? []).flatMap((c) => c.fields.flatMap((f) => f.options ?? []));
+}
+function expectationsFor(state2, requirement) {
+  const data = dataValuesOf(state2);
+  const because = {};
+  const required4 = /* @__PURE__ */ new Set();
+  const need = (c, why) => {
+    required4.add(c);
+    because[c] ??= why;
+  };
+  for (const hit of statedOperations(requirement.statement, data))
+    need(hit.capability, `the statement says "${hit.phrase}"`);
   let uiLinked = false;
-  for (const screen of screens) {
+  for (const screen of state2.prototype?.screens ?? []) {
     for (const element of screen.elements) {
       if (!element.requirementIds.includes(requirement.id))
         continue;
       uiLinked = true;
       const capability = elementCapability(element);
       if (capability)
-        expected.add(capability);
+        need(capability, `prototype element ${screen.id}#${element.id} (${element.intent ? `intent ${element.intent}` : element.kind})`);
       if (element.allowedRoles.length > 0)
-        expected.add("permissions");
+        need("permissions", `prototype element ${screen.id}#${element.id} is limited to roles`);
     }
     if (screen.states.some((s) => s !== "default") && screen.elements.some((e) => e.requirementIds.includes(requirement.id))) {
-      expected.add("states");
+      need("states", `prototype screen ${screen.id} has states besides default`);
       if (screen.states.includes("denied"))
-        expected.add("permissions");
+        need("permissions", `prototype screen ${screen.id} has a denied state`);
     }
   }
   for (const endpoint of state2.prototype?.endpoints ?? []) {
     if (!endpoint.requirementIds.includes(requirement.id))
       continue;
-    expected.add(endpoint.method === "GET" ? "view" : endpoint.method === "DELETE" ? "delete" : endpoint.method === "POST" ? "create" : "edit");
+    const why = `endpoint ${endpoint.method} ${endpoint.path}`;
+    need(endpoint.method === "GET" ? "view" : endpoint.method === "DELETE" ? "delete" : endpoint.method === "POST" ? "create" : "edit", why);
     if (endpoint.auth)
-      expected.add("permissions");
+      need("permissions", `${why} needs authorization`);
     if (endpoint.responses.some((r) => r.status >= 400))
-      expected.add("error");
+      need("error", `${why} has an error response`);
   }
-  if (expected.has("create") || expected.has("edit"))
-    expected.add("view");
-  if (uiLinked && expected.has("view"))
-    expected.add("states");
-  return STORY_CAPABILITIES.filter((c) => c !== "other" && expected.has(c));
+  if ((required4.has("create") || required4.has("edit")) && !required4.has("view"))
+    need("view", `${required4.has("create") ? "create" : "edit"} implies the result can be seen`);
+  if (uiLinked && required4.has("view") && !required4.has("states"))
+    need("states", "the prototype shows this requirement on a screen");
+  const advisory = [];
+  const texts = [requirement.statement, ...requirement.acceptanceCriteria.map((c) => c.statement)];
+  for (const text of texts) {
+    for (const hit of capabilityEvidence(maskLiterals(text, data))) {
+      if (required4.has(hit.capability) || advisory.some((a) => a.capability === hit.capability))
+        continue;
+      advisory.push({ capability: hit.capability, because: `the text says "${hit.phrase}"` });
+    }
+  }
+  return { required: STORY_CAPABILITIES.filter((c) => c !== "other" && required4.has(c)), advisory, because };
 }
 function analyzeStoryCoverage(state2) {
   const waivers = state2.waivers;
@@ -5426,6 +5474,7 @@ function analyzeStoryCoverage(state2) {
   const stories2 = activeStories(state2);
   const planEntries = (state2.storyPlan?.entries ?? []).filter((e) => e.status !== "excluded");
   const gaps = [];
+  const advisories = [];
   const requirementsWithoutStories = [];
   const criteriaWithoutStory = [];
   const used = [];
@@ -5444,7 +5493,8 @@ function analyzeStoryCoverage(state2) {
     }
     if (covering.length + planned.length === 0 && !waived("requirement-without-story", requirement.id))
       requirementsWithoutStories.push(requirement.id);
-    const expected = expectedCapabilities(state2, requirement);
+    const expectation = expectationsFor(state2, requirement);
+    const expected = expectation.required;
     const missing2 = expected.filter((c) => !caps.has(c) && !waived(c, requirement.id));
     if (missing2.length > 0 && covering.length + planned.length > 0) {
       gaps.push({
@@ -5452,7 +5502,19 @@ function analyzeStoryCoverage(state2) {
         expected,
         covered: [...caps],
         missing: missing2,
-        reason: `${requirement.id} implies ${expected.join(", ")}; no story covers ${missing2.join(", ")}`
+        reason: `${requirement.id} implies ${expected.join(", ")}; no story covers ${missing2.join(", ")} (${missing2.map((c) => `${c}: ${expectation.because[c]}`).join("; ")})`,
+        because: Object.fromEntries(missing2.map((c) => [c, expectation.because[c] ?? ""]))
+      });
+    }
+    const suggested = expectation.advisory.filter((a) => !caps.has(a.capability) && !waived(a.capability, requirement.id));
+    if (suggested.length > 0 && covering.length + planned.length > 0) {
+      advisories.push({
+        requirementId: requirement.id,
+        expected: suggested.map((a) => a.capability),
+        covered: [...caps],
+        missing: suggested.map((a) => a.capability),
+        reason: `${requirement.id}: the wording suggests ${suggested.map((a) => `${a.capability} (${a.because})`).join("; ")}. A suggestion, not a gap: nothing blocks on it.`,
+        because: Object.fromEntries(suggested.map((a) => [a.capability, a.because]))
       });
     }
     for (const criterion of requirement.acceptanceCriteria) {
@@ -5467,6 +5529,7 @@ function analyzeStoryCoverage(state2) {
   return {
     ok: gaps.length === 0 && requirementsWithoutStories.length === 0 && storiesOutOfScope.length === 0,
     gaps,
+    advisories,
     requirementsWithoutStories,
     criteriaWithoutStory,
     waived: waivers.map((w) => `${w.kind}${w.requirementId ? `:${w.requirementId}` : ""}`),
@@ -6164,7 +6227,13 @@ function setPlanStatusFor(state2, storyId, status, reason) {
     ...state2,
     storyPlan: {
       ...state2.storyPlan,
-      entries: state2.storyPlan.entries.map((e) => e.id === storyId ? { ...e, status, ...reason ? { excludedReason: reason } : {} } : e)
+      // excludedReason belongs to the excluded state only: it is cleared when the entry leaves it
+      entries: state2.storyPlan.entries.map((e) => {
+        if (e.id !== storyId)
+          return e;
+        const { excludedReason: _drop, ...rest } = e;
+        return { ...rest, status, ...status === "excluded" && reason ? { excludedReason: reason } : {} };
+      })
     }
   };
 }
@@ -6215,6 +6284,11 @@ function phaseGates(state2, to) {
       missingItems.push(text);
   };
   const kind = state2.workItem.kind;
+  const STALE_LABEL = { requirements_review: "the requirements", prototype: "the prototype", story_plan: "the story plan", stories_review: "the stories" };
+  const upstreamFresh = (phases) => {
+    for (const phase of phases)
+      need(acceptanceStatus(state2, phase) !== "stale", `${STALE_LABEL[phase]} changed after you accepted ${phase === "story_plan" ? "it" : "them"}: review and accept again`);
+  };
   switch (to) {
     case "requirements_review":
       need(reqs.length > 0, "at least one in-scope requirement");
@@ -6240,11 +6314,15 @@ function phaseGates(state2, to) {
     }
     case "architecture": {
       need(acceptanceStatus(state2, "stories_review") === "accepted", "stories reviewed and accepted, unchanged since");
+      upstreamFresh(["requirements_review", "prototype", "story_plan"]);
+      const unconfirmed = activeStories(state2).filter((st) => !st.confirmedBehavior);
+      need(unconfirmed.length === 0, `every story confirmed by the user (confirm-story): ${unconfirmed.map((st) => st.id).join(", ")} still ${unconfirmed.length === 1 ? "needs" : "need"} it`);
       const coverage2 = analyzeStoryCoverage(state2);
       need(coverage2.ok, `coverage gaps: ${coverage2.gaps.map((g) => g.reason).concat(coverage2.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
       break;
     }
     case "development":
+      upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
       need(state2.services.length > 0, "at least one service (set-service)");
       for (const service of state2.services) {
         const repo = service.repositoryId ? state2.repositories.find((r) => r.id === service.repositoryId) : void 0;
@@ -6266,6 +6344,7 @@ function phaseGates(state2, to) {
       }
       break;
     case "quality": {
+      upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
       for (const contract of state2.contracts)
         need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user (it was changed after implementation started?)`);
       for (const service of state2.services)
@@ -6909,7 +6988,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
     case "waive-coverage": {
       if (command.requirementId)
         requirementOf(state2, command.requirementId);
-      const waiver = CoverageWaiverSchema.parse({ id: `W-${String(state2.waivers.length + 1).padStart(3, "0")}`, kind: command.kind, requirementId: command.requirementId, reason: command.reason, at: iso(now) });
+      const waiver = CoverageWaiverSchema.parse({ id: `W-${String(state2.waivers.length + 1).padStart(3, "0")}`, kind: command.kind, requirementId: command.requirementId, reason: command.reason, at: iso(now), decidedVia: verified ?? "chat", ...command.requirementId ? { gap: analyzeStoryCoverage(state2).gaps.find((g) => g.requirementId === command.requirementId)?.because[command.kind] || void 0 } : {} });
       return { state: touch({ ...state2, waivers: [...state2.waivers, waiver] }, now, `waived ${command.kind}${command.requirementId ? ` for ${command.requirementId}` : ""}: ${command.reason}`), duplicate: false, result: { waiverId: waiver.id } };
     }
     case "set-mode": {
@@ -6975,7 +7054,7 @@ function migrateWorkflowState(state2) {
   const migrated = { ...state2, version: "1.1.0", requirements: requirements2 };
   return { ...migrated, phase: inferPhase(migrated) };
 }
-var import_node_crypto2, iso, hash, activeRequirements, inScope, activeStories, EMPTY_ELEMENT_DEFAULTS, KEYWORDS, storyText, Via, ReviewStatus, AcDecision, RequirementDecision, PrototypeInput, PrototypeOperation, PlanOperation, StoryPatch, CriterionOp, NewStoryFromOriginal, PlanningCommandSchemas, PLANNING_ACTIONS, missing, requirementOf, REAL_SECRET, PATCH_ITEM_KEYS, REVIEW_DECISION_ACTION;
+var import_node_crypto2, iso, hash, activeRequirements, inScope, activeStories, EMPTY_ELEMENT_DEFAULTS, KEYWORDS, MODAL, storyText, Via, ReviewStatus, AcDecision, RequirementDecision, PrototypeInput, PrototypeOperation, PlanOperation, StoryPatch, CriterionOp, NewStoryFromOriginal, PlanningCommandSchemas, PLANNING_ACTIONS, missing, requirementOf, REAL_SECRET, PATCH_ITEM_KEYS, REVIEW_DECISION_ACTION;
 var init_planning = __esm({
   "node_modules/@praxis/contracts/dist/planning.js"() {
     import_node_crypto2 = require("node:crypto");
@@ -7004,6 +7083,7 @@ var init_planning = __esm({
       ["permissions", /\b(permission|role|access|authori[sz]\w*|forbidden|denied|admin|owner|read-only)\w*/i],
       ["states", /\b(loading|empty state|no results|spinner|skeleton|empty list)\w*/i]
     ];
+    MODAL = /\b(?:can|may|must|should|shall|able to|allows?|lets?|enables?|needs? to)\b([^.;:]{0,200})/gi;
     storyText = (story) => [story.title ?? "", story.narrative, story.objective, ...story.happyPath, ...story.alternatives, ...story.negative, ...story.edgeCases, ...story.businessRules, ...story.acceptanceCriteria.map((c) => `${c.given} ${c.when} ${c.then}`)].join(" ");
     Via = external_exports.enum(["html-review", "approved", "chat", "system"]).default("chat");
     ReviewStatus = external_exports.enum(["pending", "accepted", "rejected"]);
@@ -7130,6 +7210,67 @@ var init_planning = __esm({
     REAL_SECRET = /(Bearer\s+[A-Za-z0-9._~+\/-]{20,}|sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)/;
     PATCH_ITEM_KEYS = { happyPath: "step", alternatives: "alt", negative: "neg", edgeCases: "edge", businessRules: "rule", expectedResults: "result" };
     REVIEW_DECISION_ACTION = "review-decisions";
+  }
+});
+
+// node_modules/@praxis/contracts/dist/approval-audit.js
+function trustOfApproval(approval) {
+  if (approval.channel === "test")
+    return "test-only";
+  if (approval.assurance === "client-ui")
+    return "independent-human";
+  return "host-attested";
+}
+function describeApproval(approval) {
+  if (approval === "review-page")
+    return "saved from the review page (the person's click in the browser; the client did not vouch for it)";
+  switch (trustOfApproval(approval)) {
+    case "independent-human":
+      return "approved in the client's approval dialog";
+    case "host-attested":
+      return approval.channel === "trusted-client" ? "approved in Trusted Client mode (the host's own permission, no dialog was shown)" : "approved through the host's permission prompt (no Praxis dialog)";
+    default:
+      return "TEST harness approval (not a person)";
+  }
+}
+function approvalSummary(state2) {
+  const records = state2.approvals ?? [];
+  const has = (action, type, id) => records.some((r) => r.action === action && r.subjects.some((s) => s.type === type && s.id === id));
+  const unverified = [
+    ...state2.stories.filter((s) => s.confirmedBehavior && s.status !== "superseded" && !has("confirm-story", "story", s.id)).map((s) => `story ${s.id}`),
+    ...state2.decisions.filter((d) => d.confirmed && !has("confirm-decision", "decision", d.id)).map((d) => `decision ${d.id}`),
+    ...state2.services.filter((s) => (s.status === "approved" || s.status === "completed") && !has("approve-service", "service", s.id)).map((s) => `service ${s.id}`)
+  ];
+  const by = (trust) => records.filter((r) => r.trust === trust).length;
+  return { total: records.length, independentHuman: by("independent-human"), reviewPage: by("review-page"), hostAttested: by("host-attested"), testOnly: by("test-only"), unverifiedProvenance: unverified };
+}
+var APPROVAL_TRUST, ApprovalSubjectSchema, ApprovalRecordSchema;
+var init_approval_audit = __esm({
+  "node_modules/@praxis/contracts/dist/approval-audit.js"() {
+    init_zod();
+    APPROVAL_TRUST = ["independent-human", "review-page", "host-attested", "test-only"];
+    ApprovalSubjectSchema = external_exports.object({
+      type: external_exports.enum(["story", "decision", "service", "requirement", "criterion", "review", "work-item"]),
+      id: external_exports.string(),
+      revision: external_exports.number().int().optional(),
+      contentFingerprint: external_exports.string().optional()
+    });
+    ApprovalRecordSchema = external_exports.object({
+      id: external_exports.string(),
+      at: external_exports.string(),
+      action: external_exports.string(),
+      subjects: external_exports.array(ApprovalSubjectSchema).default([]),
+      summary: external_exports.string(),
+      /** Digest of the exact content the person was shown and approved (dialog channels). */
+      subjectDigest: external_exports.string().optional(),
+      channel: external_exports.string(),
+      assurance: external_exports.string(),
+      trust: external_exports.enum(APPROVAL_TRUST),
+      /** Reserved: clients do not identify the person today. */
+      actor: external_exports.string().optional(),
+      /** Work item revision after this decision was applied: the link to its history entry. */
+      workItemRevision: external_exports.number().int()
+    });
   }
 });
 
@@ -7282,6 +7423,10 @@ function humanActRequest(state2, command) {
     if (!story)
       return null;
     const contentFingerprint2 = storyContentFingerprint(story);
+    if (story.revision !== command.revision)
+      throw new WorkflowError("STORY_REVISION", `story ${command.id} is at revision ${story.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view stories)`);
+    if (contentFingerprint2 !== command.contentFingerprint)
+      throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view stories)`);
     const content = humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 });
     return {
       action: "confirm-story",
@@ -7321,6 +7466,10 @@ ${bullet(story.expectedResults)}`,
     if (!decision)
       return null;
     const contentFingerprint2 = decisionContentFingerprint(decision);
+    if (decision.revision !== command.revision)
+      throw new WorkflowError("DECISION_REVISION", `decision ${command.id} is at revision ${decision.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view decisions)`);
+    if (contentFingerprint2 !== command.contentFingerprint)
+      throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view decisions)`);
     const content = humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 });
     return {
       action: "confirm-decision",
@@ -7656,7 +7805,60 @@ function dryRunCommand(state2, raw) {
   const out = applyPlanningCommand(state2, command, { approvedRewording: true });
   return { duplicate: out.duplicate, result: out.result };
 }
+function subjectsOf(command, before, after) {
+  const c = command;
+  switch (command.action) {
+    case "confirm-story":
+      return [{ type: "story", id: command.id, revision: command.revision, contentFingerprint: command.contentFingerprint }];
+    case "confirm-decision":
+      return [{ type: "decision", id: command.id, revision: command.revision, contentFingerprint: command.contentFingerprint }];
+    case "set-service":
+      return [{ type: "service", id: command.service.id }];
+    case "revise-acceptance":
+      return command.edits.map((e) => ({ type: "criterion", id: e.id, revision: after.requirements.flatMap((r) => r.acceptanceCriteria).find((x) => x.id === e.id)?.revision }));
+    case "open":
+      return [{ type: "work-item", id: after.workItem.id }];
+    default: {
+      const ids = [];
+      for (const d of c.decisions ?? [])
+        for (const a of d.acceptance ?? [])
+          ids.push({ type: "criterion", id: a.id });
+      for (const id of c.requirementIds ?? [])
+        ids.push({ type: "requirement", id });
+      for (const item of c.items ?? [])
+        if (item.storyId)
+          ids.push({ type: "story", id: item.storyId });
+      if (!ids.length)
+        ids.push({ type: "review", id: command.action, revision: after.workItem.revision });
+      return ids.slice(0, 60);
+    }
+  }
+}
 function applyWorkflowCommand(state2, raw, options2) {
+  const out = applyWorkflowCommandCore(state2, raw, options2);
+  if (out.duplicate || out.state === state2)
+    return out;
+  const command = parseWorkflowCommand(raw);
+  const at = (options2?.now ?? /* @__PURE__ */ new Date()).toISOString();
+  let record5 = null;
+  const userDecision = isUserDecision(command);
+  if (options2?.userApproval && ["confirm-story", "confirm-decision", "approve-service", "revise-acceptance", "set-service"].includes(command.action)) {
+    const a = options2.userApproval;
+    record5 = { at: a.decidedAt, action: command.action === "set-service" ? "approve-service" : command.action, subjects: subjectsOf(command, state2, out.state), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
+  } else if (options2?.channel?.via === "approved" && (userDecision || command.action === "open")) {
+    const a = options2.channel.approval;
+    record5 = { at: a.decidedAt, action: command.action === "open" ? "open-classic-work-item" : "review-decisions", subjects: subjectsOf(command, state2, out.state), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
+    if ((out.state.approvals ?? []).some((r) => r.subjectDigest === a.subjectDigest && r.at === a.decidedAt))
+      record5 = null;
+  } else if (options2?.channel?.via === "html-review" && userDecision) {
+    record5 = { at, action: command.action, subjects: subjectsOf(command, state2, out.state), summary: `${command.action} from the review page`, channel: "html-review", assurance: "review-page", trust: "review-page", workItemRevision: out.state.workItem.revision };
+  }
+  if (!record5)
+    return out;
+  const approvals2 = [...out.state.approvals ?? [], { id: `APR-${String((out.state.approvals?.length ?? 0) + 1).padStart(4, "0")}`, ...record5 }];
+  return { ...out, state: { ...out.state, approvals: approvals2 } };
+}
+function applyWorkflowCommandCore(state2, raw, options2) {
   const command = parseWorkflowCommand(raw);
   if (command.action === "open") {
     if (state2)
@@ -7798,7 +8000,8 @@ function applyWorkflowCommand(state2, raw, options2) {
       next2 = transition(next2, "ready", `decision ${command.id} confirmed`);
       next2 = { ...next2, decisions: decisions2 };
     }
-    return { state: next2, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed } };
+    const recorded = next2.decisions.find((item) => item.id === command.id);
+    return { state: next2, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed, revision: recorded.revision, contentFingerprint: decisionContentFingerprint(recorded) } };
   }
   if (command.action === "record-implementation") {
     if (state2.mode === "guided" && !state2.services.some((s) => s.id === command.serviceId)) {
@@ -8239,6 +8442,7 @@ var init_workflow = __esm({
     init_planning_schemas();
     init_planning();
     init_human_acts();
+    init_approval_audit();
     init_user_approval();
     init_planning();
     init_story();
@@ -8497,6 +8701,8 @@ var init_workflow = __esm({
       coverage: external_exports.array(CoverageEntrySchema).default([]),
       /** Bumped on every change to coverage: lets a writer say which coverage it saw (EVIDENCE_STALE). */
       coverageRevision: external_exports.number().int().nonnegative().default(0),
+      /** Every decision that needed a person, with its channel and what that channel proves (approval-audit.ts). */
+      approvals: external_exports.array(ApprovalRecordSchema).default([]),
       changes: external_exports.array(ChangeRecordSchema).default([]),
       stage: WorkflowStageSchema,
       history: external_exports.array(external_exports.object({
@@ -9169,6 +9375,20 @@ function submissionToCommands(state2, raw) {
   const outdated = submission.baseStamp === void 0 || submission.baseStamp !== reviewStamp(state2, submission.view);
   const reload = "reload the page and decide again";
   const unbased = (what) => `this page is out of date and does not say what it showed for ${what}: ${reload}`;
+  const stateStamp = workStateStamp(state2);
+  const wholeItemConflict = (what) => submission.baseState === void 0 ? `${what} is a decision about the whole work item and this file does not say which state it was made for: render the review again (it returns baseState) and decide on the current state` : submission.baseState !== stateStamp ? `the work item changed since this ${what} was made (mode, stage, requirements, stories, contracts or waivers): render the review again and decide on the current state` : null;
+  for (const w of submission.waivers) {
+    if (state2.waivers.some((x) => x.kind === w.kind && (x.requirementId ?? null) === (w.requirementId ?? null) && x.reason === w.reason))
+      continue;
+    const waiverConflict = wholeItemConflict(`waiver of ${w.kind}`);
+    if (waiverConflict) {
+      conflicts.push({ item: `waive ${w.kind}`, reason: waiverConflict });
+      continue;
+    }
+    commands.push({ action: "waive-coverage", kind: w.kind, ...w.requirementId ? { requirementId: w.requirementId } : {}, reason: w.reason });
+    summary.push(`waive ${w.kind}`);
+    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason}'`);
+  }
   if (submission.view === "requirements" && submission.requirements) {
     const decisions2 = [];
     for (const item of submission.requirements.requirements) {
@@ -9501,26 +9721,12 @@ function submissionToCommands(state2, raw) {
       details.push(`REMOVE contract ${id} '${contract.name}' (${contract.status})`);
     }
   }
-  const stateStamp = workStateStamp(state2);
-  const wholeItemConflict = (what) => submission.baseState === void 0 ? `${what} is a decision about the whole work item and this file does not say which state it was made for: render the review again (it returns baseState) and decide on the current state` : submission.baseState !== stateStamp ? `the work item changed since this ${what} was made (mode, stage, requirements, stories, contracts or waivers): render the review again and decide on the current state` : null;
   if (submission.modeChange && submission.modeChange.to !== state2.mode && wholeItemConflict("mode change")) {
     conflicts.push({ item: "mode change", reason: wholeItemConflict("mode change") });
   } else if (submission.modeChange && submission.modeChange.to !== state2.mode) {
     commands.push({ action: "set-mode", via, mode: submission.modeChange.to, ...submission.modeChange.reason ? { reason: submission.modeChange.reason } : {} });
     summary.push(`mode -> ${submission.modeChange.to}`);
     details.push(`SWITCH this work item from ${state2.mode} to ${submission.modeChange.to}${submission.modeChange.to === "classic" ? ": stage gates, plan-before-stories and coverage checks stop being enforced (nothing is deleted)" : ""}`);
-  }
-  for (const w of submission.waivers) {
-    if (state2.waivers.some((x) => x.kind === w.kind && (x.requirementId ?? null) === (w.requirementId ?? null) && x.reason === w.reason))
-      continue;
-    const waiverConflict = wholeItemConflict(`waiver of ${w.kind}`);
-    if (waiverConflict) {
-      conflicts.push({ item: `waive ${w.kind}`, reason: waiverConflict });
-      continue;
-    }
-    commands.push({ action: "waive-coverage", kind: w.kind, ...w.requirementId ? { requirementId: w.requirementId } : {}, reason: w.reason });
-    summary.push(`waive ${w.kind}`);
-    details.push(`WAIVE ${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""}: '${w.reason}'`);
   }
   return { commands, conflicts, stale, summary, details, affectsStories };
 }
@@ -10184,11 +10390,24 @@ function renderPrototypeReview(state2, options2 = {}) {
   const { body: body2, clientData } = renderPrototypeBody(state2, proto, staleBanner(state2, "prototype"));
   return shell(state2, "prototype", "Prototype review", body2, clientData, options2, `<label class="marks"><input type="checkbox" id="accept-proto"> Accept this prototype</label>`, proto.kind === "ui");
 }
+function gapsPanel(state2) {
+  const coverage2 = analyzeStoryCoverage(state2);
+  const rows = coverage2.gaps.flatMap((g) => g.missing.map((cap) => ({ g, cap }))).map(({ g, cap }) => `<div class="gap" data-gap data-kind="${esc3(cap)}" data-req="${esc3(g.requirementId)}"><div><strong>${esc3(g.requirementId)}: ${esc3(cap)}</strong> <span class="meta">asked for by: ${esc3(g.because[cap] ?? "")}</span></div>
+<div class="row"><label class="marks"><input type="checkbox" data-f="waive"> This is not needed: waive it</label><input type="text" data-f="waive-reason" class="grow" placeholder="Why it is not needed (required to waive)" aria-label="Reason for waiving ${esc3(cap)} for ${esc3(g.requirementId)}"></div></div>`).join("");
+  const missingStories = coverage2.requirementsWithoutStories.map((id) => `<li>${esc3(id)} has no story at all (waive it only if the requirement needs none)</li>`).join("");
+  const advice = coverage2.advisories.map((a) => `<li>${esc3(a.reason)}</li>`).join("");
+  const waived = state2.waivers.map((w) => `<li>${esc3(w.kind)}${w.requirementId ? ` for ${esc3(w.requirementId)}` : ""}: ${esc3(w.reason)} <span class="meta">(${esc3(w.decidedVia ?? "recorded earlier")}, ${esc3(w.at)}${w.gap ? `; closed: ${esc3(w.gap)}` : ""})</span></li>`).join("");
+  if (!rows && !missingStories && !advice && !waived)
+    return "";
+  return `<section class="card gaps" aria-label="Coverage">
+${rows || missingStories ? `<h2>Gaps that block agreement</h2>${rows}${missingStories ? `<ul>${missingStories}</ul>` : ""}<p class="meta">Each gap says what asked for it. A gap you waive is recorded with your reason, the channel and the time; a criterion that no story covers can never be waived here.</p>` : ""}
+${advice ? `<h3>Suggestions from the wording (nothing blocks on these)</h3><ul>${advice}</ul>` : ""}
+${waived ? `<h3>Waived so far</h3><ul>${waived}</ul>` : ""}</section>`;
+}
 function renderStoryPlanReview(state2, options2 = {}) {
   const plan = state2.storyPlan;
   if (!plan)
     return shell(state2, "story-plan", "Story plan review", `<p class="muted">There is no story plan yet.</p>`, {}, options2, "");
-  const coverage2 = analyzeStoryCoverage(state2);
   const cards = plan.entries.map((e) => {
     const out = e.status === "excluded";
     return `<section class="card${out ? " out" : ""}" data-entry="${esc3(e.id)}" data-initial-status="${esc3(e.review.status)}" data-base="${planEntryBase(e)}">
@@ -10206,10 +10425,9 @@ function renderStoryPlanReview(state2, options2 = {}) {
 ${out ? `<p class="meta">Excluded: ${esc3(e.excludedReason ?? "")}</p><label class="marks"><input type="checkbox" data-f="restore"> Restore this story</label>` : `<label class="meta">Exclude from scope (reason)<input type="text" data-f="exclude"></label>`}
 <label class="meta">Comment<input type="text" data-f="comment" value="${esc3(e.review.comment ?? "")}"></label></section>`;
   }).join("");
-  const gaps = coverage2.gaps.map((g) => `<li>${esc3(g.requirementId)}: ${esc3(g.reason)}</li>`).join("");
   const body2 = `${staleBanner(state2, "story_plan")}
 <p>${pill(`revision ${plan.revision}`)} ${pill(plan.status, plan.status === "agreed" ? "ok" : "warn")} ${pill(`${plan.entries.length} planned stories`)}</p>
-${gaps ? `<div class="stale"><strong>Possible gaps</strong><ul>${gaps}</ul></div>` : ""}
+${gapsPanel(state2)}
 ${cards}`;
   return shell(state2, "story-plan", "Story plan review", body2, {}, options2, `<label class="marks"><input type="checkbox" id="agree-plan"> Agree this plan</label>`);
 }
@@ -10244,6 +10462,7 @@ ${out ? `<p class="meta">Excluded: ${esc3(story.excludedReason ?? "")}</p><label
   const body2 = `${staleBanner(state2, "stories_review")}
 <div class="card"><div class="kv"><span class="muted">Stories</span><span>${progress.stories}</span><span class="muted">Items</span><span>${progress.items}</span><span class="muted">Accepted</span><span>${progress.accepted}</span><span class="muted">Rejected</span><span>${progress.rejected}</span><span class="muted">Undecided</span><span>${progress.pending}</span></div>
 <p class="meta">Editing a story creates a new revision. Items you did not change keep their marks; an item whose text changed starts over, and so does the story's confirmation.</p></div>
+${gapsPanel(state2)}
 ${cards || `<p class="muted">No stories yet.</p>`}`;
   return shell(state2, "stories", "User stories review", body2, {}, options2, `<label class="marks"><input type="checkbox" id="accept-stories"> Accept the stories</label>`);
 }
@@ -10326,6 +10545,7 @@ ${PROTOTYPE_CSS}
 .grouph{font-size:15px;margin:22px 0 4px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
 .card.req{padding:14px 16px;scroll-margin-top:150px}
 .reqhead{display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap}.reqhead h2{font-size:16px}.rid{font-family:ui-monospace,Menlo,monospace}
+.gap{border-top:1px solid var(--line);padding:8px 0}.card.gaps{border-color:var(--warn)}
 textarea.auto{overflow:hidden;line-height:1.55;min-height:28px}
 textarea.reqtext{font-size:16px;font-weight:500;margin:6px 0 8px;border-color:transparent;background:transparent;padding:4px 0}
 textarea.reqtext:hover,textarea.reqtext:focus{border-color:var(--line);background:var(--bg);padding:4px 8px}
@@ -10421,11 +10641,14 @@ function collect(){
     });
     s.stories={items:items,stories:sts,accept:!!($('#accept-stories')&&$('#accept-stories').checked)};
   }
+  var wv=[];$$('[data-gap]').forEach(function(g){var c=$('[data-f=waive]',g);if(c&&c.checked)wv.push({kind:g.getAttribute('data-kind'),requirementId:g.getAttribute('data-req'),reason:val($('[data-f=waive-reason]',g))})});if(wv.length)s.waivers=wv;
   return s
 }
 function showOut(text){var o=$('#out');o.style.display='block';$('textarea',o).value=text}
 function summary(s){return JSON.stringify(s,null,2)}
 $('#btn-save').addEventListener('click',function(){
+  var noReason=$$('[data-gap]').filter(function(g){var c=$('[data-f=waive]',g);return c&&c.checked&&val($('[data-f=waive-reason]',g)).length<3});
+  if(noReason.length){toast('Give a reason (at least 3 characters) for each gap you waive.',true);return}
   var s=collect();var text=summary(s);
   if(!D.saveUrl){showOut(text);toast('No live connection: copy or download the decisions and give them to Claude: it records them with praxis_review_apply after you approve them in the dialog.',false);return}
   toast('Saving...',false);
@@ -10794,6 +11017,7 @@ var init_dist = __esm({
     init_command_catalog();
     init_quality_model();
     init_story();
+    init_approval_audit();
     ContractMetaSchema = external_exports.object({
       contract: external_exports.string().min(1),
       version: external_exports.string().regex(/^\d+\.\d+\.\d+$/)
@@ -60305,7 +60529,7 @@ var TOOLS = [
   },
   {
     name: "praxis_workflow_inspect",
-    description: "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria and the user's review of each criterion (status, comment, who and when; `requirementReview` (view requirements) lists the rejected and commented ones, so a BA can act on the user's remarks), User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA\u2192Architect\u2192Developer\u2192Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | all. id narrows requirements/stories/decisions/work/handoffs to one record.",
+    description: "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria and the user's review of each criterion (status, comment, who and when; `requirementReview` (view requirements) lists the rejected and commented ones, so a BA can act on the user's remarks), User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA\u2192Architect\u2192Developer\u2192Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | approvals | all. `approvals` lists every decision that needed a person with its channel and what it proves; `stories` and `decisions` carry the revision and contentFingerprint confirm-story / confirm-decision need; `quality` carries per-requirement and per-story criteria counts. id narrows requirements/stories/decisions/work/handoffs to one record.",
     inputSchema: {
       type: "object",
       properties: {
@@ -60313,7 +60537,7 @@ var TOOLS = [
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         view: {
           type: "string",
-          enum: ["overview", "requirements", "stories", "decisions", "work", "handoffs", "open-items", "quality", "links", "all"],
+          enum: ["overview", "requirements", "stories", "decisions", "work", "handoffs", "open-items", "quality", "links", "approvals", "all"],
           description: "Which part of the stored workflow to return. Default overview."
         },
         id: { type: "string", description: "Optional record id (REQ-..., US-..., decision id, service id, handoff id) to return only that record." }
@@ -60477,9 +60701,11 @@ var TOOLS = [
       properties: {
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
-        command: { type: "string", description: "JSON WorkflowCommand" }
+        command: { type: "string", description: "JSON WorkflowCommand" },
+        commandFile: { type: "string", description: "Instead of command: a file inside the repository that holds the JSON WorkflowCommand (for a large command: write it once, then preview and apply refer to it, nothing is retyped or cut)." },
+        verbose: { type: "boolean", description: "Also return the resume briefing of the work item (large). The default answer is compact: fingerprint, result and, for a human act, what the user will be asked." }
       },
-      required: ["command"],
+      required: [],
       additionalProperties: false
     },
     roles: ["ba", "architect", "developer", "quality"],
@@ -60494,10 +60720,11 @@ var TOOLS = [
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand matching the preview" },
+        commandFile: { type: "string", description: "Instead of command: the same file the preview used (inside the repository). The command read now must be the one that was previewed." },
         confirmation: confirmProp,
         previewFingerprint: fingerprintProp
       },
-      required: ["command", "confirmation", "previewFingerprint"],
+      required: ["confirmation", "previewFingerprint"],
       additionalProperties: false
     },
     roles: ["ba", "architect", "developer", "quality"],
@@ -80444,7 +80671,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"223b12d2a3a3c8bcdaf0094080288fd3882350ec824139187437bd9ffb8687b3","coreBaseline":"35d48ec437244fbefad49be9d7f0dd53e5dc6169","inputs":34}';
+    const raw = '{"version":"0.1.0-alpha.48","sourceDigest":"545e2ac5a682b9f7532bd49bab93f07373d55ca85c70d6d4054406588ba79b68","coreBaseline":"25a2237f203ddebad0e437408eabbfc6652b0488","inputs":34}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -82158,21 +82385,25 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
     replaceSource: "executed",
     baseCoverageRevision: state2.coverageRevision,
     meta: meta5,
-    evidenceSources: Object.fromEntries(browser.flatMap((run) => run.scenarioIds.map((id) => {
-      const shot = run.artifacts[id];
-      return [
-        id,
-        {
-          kind: "browser",
-          runner: `${run.runner}@${run.browserVersion}`,
-          runId: `run-${(0, import_node_crypto8.randomUUID)()}`,
-          startedAt: run.startedAt,
-          finishedAt: run.finishedAt,
-          subjectDigest: run.subjectDigest,
-          artifacts: shot ? [{ path: shot.path && artifactsDir ? (0, import_node_path9.relative)(repo, (0, import_node_path9.join)(artifactsDir, shot.path)).split(import_node_path9.sep).join("/") : `(not stored in a preview) ${id}.png`, sha256: shot.sha256, bytes: shot.bytes }] : []
-        }
-      ];
-    })))
+    // a browser check that could not run (no browser, no serve root) is still browser-level evidence: BLOCKED, not "executed"
+    evidenceSources: Object.fromEntries([
+      ...scenarios.filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId))).map((sc) => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${(0, import_node_crypto8.randomUUID)()}`, artifacts: [] }]),
+      ...browser.flatMap((run) => run.scenarioIds.map((id) => {
+        const shot = run.artifacts[id];
+        return [
+          id,
+          {
+            kind: "browser",
+            runner: `${run.runner}@${run.browserVersion}`,
+            runId: `run-${(0, import_node_crypto8.randomUUID)()}`,
+            startedAt: run.startedAt,
+            finishedAt: run.finishedAt,
+            subjectDigest: run.subjectDigest,
+            artifacts: shot ? [{ path: shot.path && artifactsDir ? (0, import_node_path9.relative)(repo, (0, import_node_path9.join)(artifactsDir, shot.path)).split(import_node_path9.sep).join("/") : `(not stored in a preview) ${id}.png`, sha256: shot.sha256, bytes: shot.bytes }] : []
+          }
+        ];
+      }))
+    ])
   };
 }
 async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
@@ -82407,6 +82638,7 @@ var INSPECT_VIEWS = [
   "open-items",
   "quality",
   "links",
+  "approvals",
   "all"
 ];
 var SECRET_VALUE = /(?:sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)|\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
@@ -82609,10 +82841,15 @@ function openItems(state2) {
     } : null
   };
 }
+function approvals(state2) {
+  return { summary: approvalSummary(state2), records: state2.approvals ?? [], note: "trust: independent-human = the client's approval dialog; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode; test-only = the test harness. No client identifies the person: actor stays empty." };
+}
 function quality(state2) {
   const feature = evaluateFeature(state2);
   return {
-    featureVerdict: { verdict: feature.verdict, gaps: feature.gaps },
+    featureVerdict: { verdict: feature.verdict, gaps: feature.gaps, evidence: feature.evidence.verdict, readinessGaps: feature.readinessGaps },
+    coverageRevision: state2.coverageRevision,
+    criteria: { totals: feature.evidence.totals, requirements: feature.evidence.requirements, stories: feature.evidence.stories },
     verdicts: state2.verdicts,
     findings: state2.findings,
     coverage: state2.coverage,
@@ -82679,6 +82916,8 @@ async function inspectWorkflow(repo, args) {
         return quality(state2);
       case "links":
         return links(state2, repo);
+      case "approvals":
+        return approvals(state2);
     }
   };
   const body2 = {};
@@ -83631,7 +83870,7 @@ function applyFromPage(repo, workItemId, view, raw) {
     }
   }
   if (applied > 0)
-    note(repo, workItemId, view, "html page", plan.summary);
+    note(repo, workItemId, view, describeApproval("review-page"), plan.summary);
   return outcome(repo, workItemId, view, applied, conflicts, plan.stale, plan.summary);
 }
 async function applyHandedOver(repo, workItemId, raw, confirmation) {
@@ -83664,7 +83903,7 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
     }
   }
   if (applied > 0)
-    note(repo, id, submission.view, approval ? "approved in the client dialog" : "edits only", plan.summary);
+    note(repo, id, submission.view, approval ? describeApproval(approval) : "edits only: no decision of a person is recorded", plan.summary);
   return outcome(repo, id, submission.view, applied, conflicts, plan.stale, plan.summary);
 }
 function readSubmissionFile(repo, file2) {
@@ -84223,7 +84462,28 @@ function assertImplementationPath(repo, command, workItemId) {
   if (target !== root && !target.startsWith(`${root}${import_node_path38.sep}`))
     throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
 }
-async function runWorkflowTool(name, args, repo, version4) {
+var MAX_COMMAND_FILE = 4 * 1024 * 1024;
+function withCommandFile(args, repo) {
+  if (args.commandFile === void 0)
+    return args;
+  if (args.command !== void 0)
+    throw new Error("INVALID_INPUT: give command or commandFile, not both");
+  if (typeof args.commandFile !== "string")
+    throw new Error("INVALID_INPUT: commandFile must be a path inside the repository");
+  const file2 = containedPath(repo, args.commandFile);
+  if (!(0, import_node_fs33.statSync)(file2).isFile() || (0, import_node_fs33.statSync)(file2).size > MAX_COMMAND_FILE)
+    throw new Error("INVALID_INPUT: commandFile must be a regular file of at most 4 MB");
+  const { commandFile: _file4, ...rest } = args;
+  return { ...rest, command: (0, import_node_fs33.readFileSync)(file2, "utf8") };
+}
+function compactPreview(preview, verbose) {
+  if (verbose || !preview || typeof preview !== "object")
+    return preview;
+  const { resume: _resume, ...rest } = preview;
+  return rest;
+}
+async function runWorkflowTool(name, rawArgs, repo, version4) {
+  const args = withCommandFile(rawArgs, repo);
   const workItemId = str3(args.workItemId);
   if (name === "praxis_workflow_inspect") {
     return inspectWorkflow(repo, { view: str3(args.view), workItemId, id: str3(args.id) });
@@ -84238,6 +84498,9 @@ async function runWorkflowTool(name, args, repo, version4) {
     const resolved = allowed.includes(role) ? role : "user";
     return capabilityRoute({ request: str3(args.request) ?? "", role: resolved });
   }
+  if (str3(args.command) === void 0)
+    throw new Error("INVALID_INPUT: give command (JSON text) or commandFile (a file inside the repository)");
+  const verbose = args.verbose === true;
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str3(args.command) ?? ""));
   if (parsed.action === "record-implementation")
     assertImplementationPath(repo, parsed, workItemId);
@@ -84258,7 +84521,7 @@ async function runWorkflowTool(name, args, repo, version4) {
     const source = { kind: "executed", runner: "praxis-runtime:verify-stories", runId, startedAt, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), artifacts: [] };
     if (isPreview) {
       const preview = previewWorkflow(repo, command, workItemId, source, evidenceSources);
-      return { ...preview, result: { ...preview.result, ...meta5 } };
+      return compactPreview({ ...preview, result: { ...preview.result, ...meta5 } }, verbose);
     }
     const applied = applyWorkflow(repo, command, str3(args.previewFingerprint) ?? "", workItemId, void 0, source, evidenceSources);
     return { ...applied, result: { ...applied.result, ...meta5 } };
@@ -84269,12 +84532,12 @@ async function runWorkflowTool(name, args, repo, version4) {
     const planned = await planServiceFix(repo, String(parsed.serviceId ?? ""), typeof parsed.existingBranch === "string" ? parsed.existingBranch : void 0, workItemId);
     const asCommand = ({ proposal: _proposal, ...command }) => command;
     if (name === "praxis_workflow_preview")
-      return previewWorkflow(repo, asCommand(planned), workItemId);
+      return compactPreview(previewWorkflow(repo, asCommand(planned), workItemId), verbose);
     const committed = await commitServiceFix(repo, planned, workItemId, str3(args.confirmation));
     return applyResolved(repo, str3(args.previewFingerprint) ?? "", asCommand(planned), asCommand(committed), workItemId);
   }
   if (name === "praxis_workflow_preview")
-    return previewWorkflow(repo, parsed, workItemId);
+    return compactPreview(previewWorkflow(repo, parsed, workItemId), verbose);
   return applyWorkflowApproved(repo, parsed, str3(args.previewFingerprint) ?? "", workItemId, str3(args.confirmation));
 }
 function withBuild(result, version4, role) {

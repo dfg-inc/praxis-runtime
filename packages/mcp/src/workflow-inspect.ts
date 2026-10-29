@@ -1,5 +1,6 @@
 import { basename, resolve } from "node:path";
 import {
+  approvalSummary,
   acceptanceStatus,
   decisionContentFingerprint,
   evaluateFeature,
@@ -36,6 +37,7 @@ export const INSPECT_VIEWS = [
   "open-items",
   "quality",
   "links",
+  "approvals",
   "all",
 ] as const;
 export type InspectView = (typeof INSPECT_VIEWS)[number];
@@ -280,10 +282,17 @@ function openItems(state: WorkflowState) {
   };
 }
 
+/** Every decision that needed a person, with what its channel proves; decisions without a record are listed as unverified provenance. */
+function approvals(state: WorkflowState) {
+  return { summary: approvalSummary(state as never), records: state.approvals ?? [], note: "trust: independent-human = the client's approval dialog; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode; test-only = the test harness. No client identifies the person: actor stays empty." };
+}
+
 function quality(state: WorkflowState) {
   const feature = evaluateFeature(state);
   return {
-    featureVerdict: { verdict: feature.verdict, gaps: feature.gaps },
+    featureVerdict: { verdict: feature.verdict, gaps: feature.gaps, evidence: feature.evidence.verdict, readinessGaps: feature.readinessGaps },
+    coverageRevision: state.coverageRevision,
+    criteria: { totals: feature.evidence.totals, requirements: feature.evidence.requirements, stories: feature.evidence.stories },
     verdicts: state.verdicts,
     findings: state.findings,
     coverage: state.coverage,
@@ -364,6 +373,8 @@ export async function inspectWorkflow(
         return quality(state);
       case "links":
         return links(state, repo);
+      case "approvals":
+        return approvals(state);
     }
   };
   const body: Record<string, unknown> = {};

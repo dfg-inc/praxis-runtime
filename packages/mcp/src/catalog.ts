@@ -761,7 +761,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_workflow_inspect",
     description:
-      "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria and the user's review of each criterion (status, comment, who and when; `requirementReview` (view requirements) lists the rejected and commented ones, so a BA can act on the user's remarks), User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA→Architect→Developer→Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | all. id narrows requirements/stories/decisions/work/handoffs to one record.",
+      "READ-ONLY inspection of the stored workflow for one repository and one Work Item: requirements with acceptance criteria and the user's review of each criterion (status, comment, who and when; `requirementReview` (view requirements) lists the rejected and commented ones, so a BA can act on the user's remarks), User Stories (revision, confirmation), architecture decisions with rationales, services and implementation, the BA→Architect→Developer→Quality handoff history (risks, blockers, open questions, notes, decision records, resolved items), Quality verdicts and evidence, and Work Item links. Needs no Jira or GitHub. Never writes, starts services or returns tokens. view: overview | requirements | stories | decisions | work | handoffs | open-items | quality | links | approvals | all. `approvals` lists every decision that needed a person with its channel and what it proves; `stories` and `decisions` carry the revision and contentFingerprint confirm-story / confirm-decision need; `quality` carries per-requirement and per-story criteria counts. id narrows requirements/stories/decisions/work/handoffs to one record.",
     inputSchema: {
       type: "object",
       properties: {
@@ -769,7 +769,7 @@ export const TOOLS: ToolDef[] = [
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         view: {
           type: "string",
-          enum: ["overview", "requirements", "stories", "decisions", "work", "handoffs", "open-items", "quality", "links", "all"],
+          enum: ["overview", "requirements", "stories", "decisions", "work", "handoffs", "open-items", "quality", "links", "approvals", "all"],
           description: "Which part of the stored workflow to return. Default overview.",
         },
         id: { type: "string", description: "Optional record id (REQ-..., US-..., decision id, service id, handoff id) to return only that record." },
@@ -945,8 +945,10 @@ export const TOOLS: ToolDef[] = [
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand" },
+        commandFile: { type: "string", description: "Instead of command: a file inside the repository that holds the JSON WorkflowCommand (for a large command: write it once, then preview and apply refer to it, nothing is retyped or cut)." },
+        verbose: { type: "boolean", description: "Also return the resume briefing of the work item (large). The default answer is compact: fingerprint, result and, for a human act, what the user will be asked." },
       },
-      required: ["command"],
+      required: [],
       additionalProperties: false,
     },
     roles: ["ba", "architect", "developer", "quality"],
@@ -962,10 +964,11 @@ export const TOOLS: ToolDef[] = [
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         command: { type: "string", description: "JSON WorkflowCommand matching the preview" },
+        commandFile: { type: "string", description: "Instead of command: the same file the preview used (inside the repository). The command read now must be the one that was previewed." },
         confirmation: confirmProp,
         previewFingerprint: fingerprintProp,
       },
-      required: ["command", "confirmation", "previewFingerprint"],
+      required: ["confirmation", "previewFingerprint"],
       additionalProperties: false,
     },
     roles: ["ba", "architect", "developer", "quality"],

@@ -25,6 +25,7 @@ import {
   type ReviewConflict,
   type ReviewView,
   type WorkflowState,
+  describeApproval,
 } from "@praxis/contracts";
 import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
 
@@ -117,7 +118,7 @@ export function applyFromPage(repo: string, workItemId: string, view: ReviewView
       conflicts.push({ item: String(command.action), reason: error instanceof Error ? error.message.replace(/^[A-Z_]+: /, "") : String(error) });
     }
   }
-  if (applied > 0) note(repo, workItemId, view, "html page", plan.summary);
+  if (applied > 0) note(repo, workItemId, view, describeApproval("review-page"), plan.summary);
   return outcome(repo, workItemId, view, applied, conflicts, plan.stale, plan.summary);
 }
 
@@ -160,7 +161,7 @@ export async function applyHandedOver(repo: string, workItemId: string | undefin
       conflicts.push({ item: String(command.action), reason: error instanceof Error ? error.message.replace(/^[A-Z_]+: /, "") : String(error) });
     }
   }
-  if (applied > 0) note(repo, id, submission.view, approval ? "approved in the client dialog" : "edits only", plan.summary);
+  if (applied > 0) note(repo, id, submission.view, approval ? describeApproval(approval) : "edits only: no decision of a person is recorded", plan.summary);
   return outcome(repo, id, submission.view, applied, conflicts, plan.stale, plan.summary);
 }
 

@@ -236,7 +236,7 @@ describe("praxis_workflow_inspect through the MCP tool entry point", () => {
     const { repo } = await populated();
     const res = await call("praxis_workflow_inspect", repo, "ba", { view: "all" });
     expect(Object.keys(res.data).filter((k) => !["schema", "view", "present", "workItemId", "readOnly"].includes(k)).sort()).toEqual(
-      ["decisions", "handoffs", "links", "open-items", "overview", "quality", "requirementReview", "requirements", "stories", "work"].sort(),
+      ["approvals", "decisions", "handoffs", "links", "open-items", "overview", "quality", "requirementReview", "requirements", "stories", "work"].sort(),
     );
   });
 

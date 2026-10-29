@@ -536,7 +536,28 @@ function assertImplementationPath(repo: string, command: Record<string, unknown>
   if (target !== root && !target.startsWith(`${root}${sep}`)) throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
 }
 
-async function runWorkflowTool(name: string, args: Record<string, unknown>, repo: string, version: string): Promise<unknown> {
+const MAX_COMMAND_FILE = 4 * 1024 * 1024;
+
+/** A command may come from a file inside the repository: large commands are written once instead of being retyped (and cut) in every call. */
+function withCommandFile(args: Record<string, unknown>, repo: string): Record<string, unknown> {
+  if (args.commandFile === undefined) return args;
+  if (args.command !== undefined) throw new Error("INVALID_INPUT: give command or commandFile, not both");
+  if (typeof args.commandFile !== "string") throw new Error("INVALID_INPUT: commandFile must be a path inside the repository");
+  const file = containedPath(repo, args.commandFile);
+  if (!statSync(file).isFile() || statSync(file).size > MAX_COMMAND_FILE) throw new Error("INVALID_INPUT: commandFile must be a regular file of at most 4 MB");
+  const { commandFile: _file, ...rest } = args;
+  return { ...rest, command: readFileSync(file, "utf8") };
+}
+
+/** The default preview answer is small: the briefing of the whole work item (80-140 KB) goes out only on request. */
+function compactPreview<T>(preview: T, verbose: boolean): T {
+  if (verbose || !preview || typeof preview !== "object") return preview;
+  const { resume: _resume, ...rest } = preview as Record<string, unknown>;
+  return rest as T;
+}
+
+async function runWorkflowTool(name: string, rawArgs: Record<string, unknown>, repo: string, version: string): Promise<unknown> {
+  const args = withCommandFile(rawArgs, repo);
   const workItemId = str(args.workItemId);
   if (name === "praxis_workflow_inspect") {
     return inspectWorkflow(repo, { view: str(args.view), workItemId, id: str(args.id) });
@@ -549,6 +570,8 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
     const resolved = allowed.includes(role as WorkflowRole) ? (role as WorkflowRole) : "user";
     return capabilityRoute({ request: str(args.request) ?? "", role: resolved });
   }
+  if (str(args.command) === undefined) throw new Error("INVALID_INPUT: give command (JSON text) or commandFile (a file inside the repository)");
+  const verbose = args.verbose === true;
   const parsed = hydrateWorkflowCommand(repo, JSON.parse(str(args.command) ?? "")) as Record<string, unknown>;
   if (parsed.action === "record-implementation") assertImplementationPath(repo, parsed, workItemId);
   if (parsed.action === "record-repository-inspection") {
@@ -571,7 +594,7 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
     const source: EvidenceSource = { kind: "executed", runner: "praxis-runtime:verify-stories", runId, startedAt, finishedAt: new Date().toISOString(), artifacts: [] };
     if (isPreview) {
       const preview = previewWorkflow(repo, command, workItemId, source, evidenceSources);
-      return { ...preview, result: { ...(preview.result as object), ...meta } };
+      return compactPreview({ ...preview, result: { ...(preview.result as object), ...meta } }, verbose);
     }
     const applied = applyWorkflow(repo, command, str(args.previewFingerprint) ?? "", workItemId, undefined, source, evidenceSources);
     return { ...applied, result: { ...(applied.result as object), ...meta } };
@@ -586,11 +609,11 @@ async function runWorkflowTool(name: string, args: Record<string, unknown>, repo
     );
     // the patch travels with the Runtime's own plan; the workflow command is only the change record
     const asCommand = ({ proposal: _proposal, ...command }: typeof planned) => command;
-    if (name === "praxis_workflow_preview") return previewWorkflow(repo, asCommand(planned), workItemId);
+    if (name === "praxis_workflow_preview") return compactPreview(previewWorkflow(repo, asCommand(planned), workItemId), verbose);
     const committed = await commitServiceFix(repo, planned, workItemId, str(args.confirmation));
     return applyResolved(repo, str(args.previewFingerprint) ?? "", asCommand(planned), asCommand(committed), workItemId);
   }
-  if (name === "praxis_workflow_preview") return previewWorkflow(repo, parsed, workItemId);
+  if (name === "praxis_workflow_preview") return compactPreview(previewWorkflow(repo, parsed, workItemId), verbose);
   return applyWorkflowApproved(repo, parsed, str(args.previewFingerprint) ?? "", workItemId, str(args.confirmation));
 }
 
