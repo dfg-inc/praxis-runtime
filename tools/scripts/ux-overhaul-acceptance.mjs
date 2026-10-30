@@ -595,7 +595,7 @@ await scenario("S15", "No external writes happen without approval", async () => 
 
 await scenario("S16", "Upgrade from alpha.48: existing work items are read without loss and keep working", async () => {
   const oldBundle = join(mkdtempSync(join(tmpdir(), "praxis-ux-old-")), "praxis-mcp.cjs");
-  const baseline = process.env.PRAXIS_ALPHA48_REF ?? "d55ed5b";
+  const baseline = process.env.PRAXIS_ALPHA48_REF ?? "5b4785f";
   const old = spawnSync("git", ["show", `${baseline}:plugins/runtime/server/praxis-mcp.cjs`], { cwd: root, maxBuffer: 64 * 1024 * 1024 });
   check(old.status === 0 && old.stdout.length > 100000, `the alpha.48 bundle is available at ${baseline}`);
   writeFileSync(oldBundle, old.stdout);

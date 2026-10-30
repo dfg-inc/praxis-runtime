@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Tool registration and compatibility with alpha.48. Starts the alpha.48 Runtime bundle (git ref, default d55ed5b) and the
+ * Tool registration and compatibility with alpha.48. Starts the alpha.48 Runtime bundle (git ref, default 5b4785f) and the
  * current packaged Runtime over stdio with the official MCP client and compares what they register:
  *  - every alpha.48 tool is still registered, with the same name, description-independent input schema (new optional
  *    properties are allowed, removed or newly required ones are not) and the same annotations kind;
@@ -26,7 +26,7 @@ const { extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
 const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationLegacy } = await import("./official-mcp-client.mjs");
 const dist = await packClaudeExtension(version);
 const now = extractMcpbRuntime(dist.mcpbPath ?? join(root, "dist", "claude-extensions", version, "praxis-runtime.mcpb"), mkdtempSync(join(tmpdir(), "praxis-tc-")));
-const ref = process.env.PRAXIS_ALPHA48_REF ?? "d55ed5b";
+const ref = process.env.PRAXIS_ALPHA48_REF ?? "5b4785f";
 const old = spawnSync("git", ["show", `${ref}:plugins/runtime/server/praxis-mcp.cjs`], { cwd: root, maxBuffer: 64 * 1024 * 1024 });
 if (old.status !== 0) {
   console.error(`FAIL tool-compat: cannot read the alpha.48 bundle at ${ref}`);
