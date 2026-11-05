@@ -16,6 +16,9 @@ Repository: [github.com/dfg-inc/praxis-runtime](https://github.com/dfg-inc/praxi
 4. Optionally configure Jira, GitHub or GitLab in Runtime settings (every setting is optional; local no-Jira workflows work without them). Leave **Approval mode** empty unless you want [Trusted Client](https://github.com/dfg-inc/praxis-core/blob/master/docs/user-approval.md).
 5. Role skills: use the marketplace, or upload the role ZIPs from their repositories' Releases.
 
+**Codex / local stdio clients:** see [Codex setup and SDK bridge](docs/codex-stdio.md).
+Role skills, project configuration and native approval support require separate validation.
+
 ## Clone / develop
 
 ```bash
