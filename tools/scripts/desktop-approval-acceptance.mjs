@@ -5,7 +5,8 @@
  *
  *   Code tab  client claude-code, protocol 2026-07-28, declares elicitation, answers the dialog `decline` at once with
  *             nothing on screen (anthropics/claude-code#89858)
- *   Chat      client claude-ai, no elicitation
+ *   Chat      Desktop's extension host: client local-agent-mode-<server> 1.0.0, no elicitation (live doctor and the installed
+ *             app bundle, Desktop 4.4212.0)
  *
  * Production defaults are kept (approval page on, PRAXIS_APPROVAL_MIN_ANSWER_MS 1000). The page is opened through
  * PRAXIS_APPROVAL_BROWSER, set to a small script that hands the page to this test, which opens it in Chrome and clicks.
@@ -77,7 +78,7 @@ async function scenario(id, title, fn) {
 }
 
 const state = join(work, "state");
-async function open({ clientName, elicit, env = {} }) {
+async function open({ clientName, clientVersion, elicit, env = {} }) {
   return connectOfficialMcp({
     command: process.execPath,
     args: extracted.args,
@@ -97,7 +98,7 @@ async function open({ clientName, elicit, env = {} }) {
     elicit,
     timeoutMs: 20_000,
     clientName,
-    clientVersion: clientName === "claude-code" ? "2.1.309" : "0.1.0",
+    clientVersion: clientVersion ?? (clientName === "claude-code" ? "2.1.309" : "1.0.0"),
   });
 }
 const call = async (session, name, args) => parseDoctorEnvelope(await session.client.callTool({ name, arguments: args }, undefined, { timeout: 120_000 }));
@@ -185,7 +186,7 @@ try {
   });
 
   await scenario("D03", "Chat: APPROVAL_PENDING without the link; the person approves in the page; the same apply runs it", async () => {
-    const session = await open({ clientName: "claude-ai", env: { PRAXIS_APPROVAL_PAGE_WAIT_MS: "1500" } });
+    const session = await open({ clientName: "local-agent-mode-Praxis Runtime", clientVersion: "1.0.0", env: { PRAXIS_APPROVAL_PAGE_WAIT_MS: "1500" } });
     try {
       const doctor = await call(session, "praxis_doctor", { repo: work });
       check(doctor.data.approval.mode === "approval-page", `doctor mode ${doctor.data.approval.mode}`);
@@ -206,14 +207,21 @@ try {
       await tab.reload();
       await tab.waitForSelector("#approve", { timeout: 5_000 });
       check(!(await tab.isDisabled("#approve")), "after a reload the opened tab can still decide");
-      const stranger = await context.newPage();
+      // another browser (no cookie from the first load): the address without its secret opens nothing, and the link
+      // itself, used a second time, opens nothing either and warns
+      const elsewhere = await browser.newContext();
+      const stranger = await elsewhere.newPage();
       const bare = new URL(secret);
       bare.search = "";
       await stranger.goto(bare.toString());
-      check(/does not open here/.test(await stranger.textContent("body")), "the address without its secret opens nothing in another tab");
+      check(/does not open here/.test(await stranger.textContent("body")), "the address without its secret opens nothing in another browser");
+      await stranger.goto(secret);
+      check(/already opened somewhere else/.test(await stranger.textContent("body")), "the single-use link, used again in another browser, opens nothing and warns");
+      await elsewhere.close();
       await tab.close();
-      await stranger.close();
-      await decide(secret, "approve", { shot: "chat-approval-page" });
+      const bareAgain = new URL(secret);
+      bareAgain.search = "";
+      await decide(bareAgain.toString(), "approve", { shot: "chat-approval-page" });
       const applied = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
       check(applied.ok, `apply after Approve: ${applied.code} ${JSON.stringify(applied.errors)}`);
       check(existsSync(join(repo, ".project")), ".project was written");

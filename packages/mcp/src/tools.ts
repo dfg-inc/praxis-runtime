@@ -216,6 +216,12 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
       },
       minAnswerMs: minAnswerMs(),
     };
+    if (client.dialog && !observed && process.env.CLAUDE_CODE_ENTRYPOINT?.trim() === "claude-desktop") {
+      target.approval = {
+        ...target.approval,
+        hint: "This is the Claude Desktop Code tab. It declares an approval dialog but, as of Claude Code 2.1.309, answers it by itself without showing it (anthropics/claude-code#89858). Praxis tries the dialog; when it is answered faster than a person could read it, Praxis asks in the approval page instead, and after two such answers uses the page directly.",
+      };
+    }
     if (pageOn && (!client.dialog || observed) && (target.approval as { mode?: string }).mode === "no-dialog") {
       target.approval = { ...target.approval, mode: "approval-page" };
     }
@@ -238,12 +244,22 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
 
 export const isProtectedTool = (name: string): boolean => PROTECTED_TOOLS.has(name);
 
+/**
+ * How a result names an approval: the channel that gave it and, for the user's own channels, that no person was verified
+ * (Praxis knows the dialog or the page answered, never who or what operated it).
+ */
+const USER_CHANNEL_KINDS = new Set(["client-elicitation", "approval-page", "terminal-prompt"]);
+function approvalView(item: { action: string; channel: string; assurance: string; decidedAt: string }) {
+  const decidedBy = item.channel === "client-elicitation" ? "client-dialog" : item.channel === "host-permission" ? "host-prompt" : item.channel;
+  return { action: item.action, channel: item.channel, assurance: item.assurance, decidedBy, ...(USER_CHANNEL_KINDS.has(item.channel) ? { personVerified: false } : {}), decidedAt: item.decidedAt };
+}
+
 /** Says in the result how the user's approval was obtained: always in the client's own dialog (the agent cannot write that answer). */
 function withApprovalNote(name: string, data: unknown): { data: unknown } {
   if (!PROTECTED_TOOLS.has(name)) return { data };
   const given = approvalsGivenInThisCall();
   if (given.length === 0) return { data };
-  const approval = given.map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
+  const approval = given.map(approvalView);
   return { data: data && typeof data === "object" && !Array.isArray(data) ? { ...(data as object), approval } : { result: data, approval } };
 }
 
@@ -364,7 +380,7 @@ async function callToolInner(
           return mcpEnvelope({ ok: false, operation: name, version: opts.version, code: "CONFIRMATION_REQUIRED", errors: ["amend=true requires confirmation=YES after the user has seen the corrections (call with amend=false first)"] });
         }
         const amended = await amendJournal(ctx.repo, ctx.confirmation, opts.version);
-        const approval = approvalsGivenInThisCall().map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
+        const approval = approvalsGivenInThisCall().map(approvalView);
         return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: { ...amended, approval } });
       }
       const audit = journalAudit(ctx.repo);

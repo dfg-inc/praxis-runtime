@@ -39,6 +39,10 @@ const MAX_TEXT = 200_000;
 type PageRequest = {
   id: string;
   loadToken: string;
+  /** The link is single-use: its first load binds the page to that browser with this HttpOnly cookie (reloads use it). */
+  loadedWith?: string;
+  /** Someone used the link again after it was first loaded: a copy (browser history, the hand-over file) or a second opener. */
+  reusedAt?: number;
   saveTokens: Set<string>;
   key: string;
   repo?: string;
@@ -114,11 +118,22 @@ h1{font-size:1.35em;margin:.2em 0 .6em}pre{white-space:pre-wrap;word-break:break
 #approve{background:#0a7d32;color:#fff;border-color:#0a7d32}#reject{background:#b3261e;color:#fff;border-color:#b3261e}button:disabled{opacity:.5;cursor:default}
 input{font:inherit;width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #999}#result{font-weight:600;margin-top:1em}`;
 
-function notOpenable(res: ServerResponse, id: string): void {
+function notOpenable(res: ServerResponse, reused: boolean): void {
   const nonce = randomBytes(12).toString("base64");
   res.writeHead(403, pageHeaders(nonce));
-  // a reload of the tab Praxis opened has dropped the secret from the address; that tab kept it, so it can open the page again
-  res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Praxis approval</title><style>${STYLE}</style><body><h1>This approval link does not open here</h1><p>An approval page opens only in the browser tab Praxis opened for you, for ten minutes. If you closed that tab or the time ran out, ask Claude to apply the action again: Praxis opens a new page. Nothing was approved or rejected.</p><script nonce="${nonce}">try{var t=sessionStorage.getItem("praxis-approval-${id}");if(t&&!location.search)location.replace(location.pathname+"?t="+encodeURIComponent(t))}catch(e){}</script></body>`);
+  const why = reused
+    ? `<h1>This approval page was already opened somewhere else</h1><p><strong>Its link works once, and it has been used.</strong> If you did not open it yourself a moment ago, something else on this computer did: do not approve anything for this request, and tell Claude to stop. Otherwise, use the tab where it opened.</p>`
+    : `<h1>This approval link does not open here</h1><p>An approval page opens only in the browser tab Praxis opened for you, for ten minutes. If you closed that tab or the time ran out, ask Claude to apply the action again: Praxis opens a new page. Nothing was approved or rejected.</p>`;
+  res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Praxis approval</title><style>${STYLE}</style><body>${why}</body>`);
+}
+
+const cookieName = (id: string): string => `praxis_approval_${id}`;
+function cookieOf(req: IncomingMessage, id: string): string | undefined {
+  for (const part of String(req.headers.cookie ?? "").split(";")) {
+    const [name, ...value] = part.trim().split("=");
+    if (name === cookieName(id)) return value.join("=");
+  }
+  return undefined;
 }
 
 function renderPage(request: PageRequest, saveToken: string): { html: string; nonce: string } {
@@ -136,7 +151,7 @@ function renderPage(request: PageRequest, saveToken: string): { html: string; no
 <p id="result" role="status">${decided ? `Already decided: ${escapeHtml(request.status)}. You can close this tab.` : ""}</p>
 <script nonce="${nonce}">(function(){
 var id=${JSON.stringify(request.id)},token=${JSON.stringify(saveToken)},until=${request.expiresAt},decided=${decided};
-try{var q=new URLSearchParams(location.search).get("t");if(q)sessionStorage.setItem("praxis-approval-"+id,q);history.replaceState(null,"",location.pathname)}catch(e){}
+try{history.replaceState(null,"",location.pathname)}catch(e){}
 document.getElementById("until").textContent=new Date(until).toLocaleTimeString();
 var a=document.getElementById("approve"),r=document.getElementById("reject"),out=document.getElementById("result");
 function done(text){a.disabled=r.disabled=true;out.textContent=text}
@@ -195,12 +210,25 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return;
   }
   if (req.method === "GET" && !match[2]) {
-    if (!safeEqual(url.searchParams.get("t") ?? "", request.loadToken)) return notOpenable(res, request.id);
+    // The link is single-use. Its first load binds the page to that browser (an HttpOnly cookie for this request only); a
+    // reload there uses the cookie. The link used again (a copy from the browser's history or the hand-over file, or a
+    // second opener that raced the browser) opens nothing, and the page warns whoever is refused.
+    const presentedLink = url.searchParams.get("t");
+    const cookie = cookieOf(req, request.id);
+    const bound = request.loadedWith !== undefined && cookie !== undefined && safeEqual(cookie, request.loadedWith);
+    if (!bound) {
+      if (!presentedLink || !safeEqual(presentedLink, request.loadToken)) return notOpenable(res, false);
+      if (request.loadedWith !== undefined) {
+        request.reusedAt = Date.now();
+        return notOpenable(res, true);
+      }
+      request.loadedWith = randomBytes(24).toString("hex");
+    }
     const saveToken = randomBytes(24).toString("hex");
     request.saveTokens.add(saveToken);
     if (request.saveTokens.size > 10) request.saveTokens.delete(request.saveTokens.values().next().value as string);
     const { html, nonce } = renderPage(request, saveToken);
-    res.writeHead(200, pageHeaders(nonce));
+    res.writeHead(200, { ...pageHeaders(nonce), "set-cookie": `${cookieName(request.id)}=${request.loadedWith}; HttpOnly; SameSite=Strict; Path=/a/${request.id}; Max-Age=${Math.ceil(REQUEST_TTL_MS / 1000)}` });
     res.end(html);
     return;
   }
@@ -236,7 +264,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       decidedBy: "approval-page",
       personVerified: false,
       channel: "approval-page",
-      evidence: { requestId: request.id, via: "approval-page click", latencyMs: request.decidedAt - (request.openedAt ?? request.createdAt), ...(request.client ? { client: request.client } : {}) },
+      evidence: { requestId: request.id, via: viaOf(request), latencyMs: request.decidedAt - (request.openedAt ?? request.createdAt), ...(request.client ? { client: request.client } : {}) },
       ...(reason ? { reason } : {}),
     });
     settle(request);
@@ -329,9 +357,9 @@ export function setApprovalPageOpenerForTest(opener: PageOpener | undefined): vo
 }
 
 /** What a result may say about a page request: never its link or tokens. */
-export function pageRequestView(id: string): { requestId: string; status: string; expiresAt: string; openedInBrowser: boolean } | undefined {
+export function pageRequestView(id: string): { requestId: string; status: string; expiresAt: string; openedInBrowser: boolean; linkUsedAgain?: true } | undefined {
   const request = requests.get(id);
-  return request ? { requestId: request.id, status: request.status, expiresAt: new Date(request.expiresAt).toISOString(), openedInBrowser: request.openedAt !== undefined } : undefined;
+  return request ? { requestId: request.id, status: request.status, expiresAt: new Date(request.expiresAt).toISOString(), openedInBrowser: request.openedAt !== undefined, ...(request.reusedAt ? { linkUsedAgain: true as const } : {}) } : undefined;
 }
 
 function waitForDecision(request: PageRequest, ms: number, signal?: AbortSignal): Promise<void> {
@@ -349,13 +377,16 @@ function waitForDecision(request: PageRequest, ms: number, signal?: AbortSignal)
   });
 }
 
+/** How the decision was given; says so when the page's single-use link was used again by something else. */
+const viaOf = (request: PageRequest): string => (request.reusedAt ? "approval-page click; the page link was used again elsewhere before the decision" : "approval-page click");
+
 /** Takes the decision, once: the first caller gets it; anyone else waiting on the same click gets nothing (null). */
 function takeDecision(request: PageRequest): AskAnswer | null {
   if (request.consumed || request.status === "pending") return null;
   request.consumed = true;
   const evidence = {
     requestId: request.id,
-    via: "approval-page click",
+    via: viaOf(request),
     latencyMs: (request.decidedAt ?? 0) - (request.openedAt ?? request.createdAt),
     decidedAt: new Date(request.decidedAt ?? Date.now()).toISOString(),
     ...(request.client ? { client: request.client } : {}),

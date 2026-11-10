@@ -153,7 +153,7 @@ describe("the Code tab's instant decline is the client's answer, never the user'
     const result = await pending;
     expect(result.ok, JSON.stringify(result.errors)).toBe(true);
     expect(existsSync(join(repo, ".project"))).toBe(true);
-    expect((result.data as { approval: unknown[] }).approval).toEqual([expect.objectContaining({ channel: "approval-page", assurance: "approval-page" })]);
+    expect((result.data as { approval: unknown[] }).approval).toEqual([expect.objectContaining({ channel: "approval-page", assurance: "approval-page", decidedBy: "approval-page", personVerified: false })]);
     expect(journal().map((r) => [r.decision, r.decidedBy, r.channel])).toEqual([
       ["auto-answered", "client", "client-elicitation"],
       ["pending", "nobody", "approval-page"],
@@ -363,6 +363,27 @@ describe("the page itself", () => {
     expect(page.headers["referrer-policy"]).toBe("no-referrer");
   });
 
+  it("its link is single-use: a second use (a copy from history, a racing opener) opens nothing and is recorded; the first browser keeps working", async () => {
+    process.env.PRAXIS_APPROVAL_PAGE_WAIT_MS = "0";
+    await init(CHAT);
+    const first = await http(opened[0]!);
+    expect(first.status).toBe(200);
+    expect(String(first.headers["set-cookie"])).toMatch(/HttpOnly; SameSite=Strict; Path=\/a\//);
+    const copy = await http(opened[0]!);
+    expect(copy.status).toBe(403);
+    expect(copy.body).toMatch(/already opened somewhere else/);
+    // the browser that opened it reloads with its cookie and no secret in the address
+    const cookie = String(first.headers["set-cookie"]).split(";")[0]!;
+    const reload = await http(opened[0]!.split("?")[0]!, { headers: { cookie } });
+    expect(reload.status).toBe(200);
+    // the pending result tells the agent the link was used again, and the decision's evidence says so
+    expect((await init(CHAT)).data).toMatchObject({ approvalPage: { linkUsedAgain: true } });
+    const token = JSON.parse(/token=("[0-9a-f]+")/.exec(reload.body)![1]!) as string;
+    const { origin, pathname } = new URL(opened[0]!);
+    await http(`${origin}${pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin, "x-praxis-approval-token": token }, body: JSON.stringify({ decision: "reject" }) });
+    expect(journal().at(-1)).toMatchObject({ decision: "rejected", evidence: { via: expect.stringMatching(/used again elsewhere/) } });
+  });
+
   it("opens nothing without the secret, and records nothing without the page's token and origin", async () => {
     const { secret, origin, path } = await openOne();
     expect((await http(`${origin}${path}`)).status).toBe(403);
@@ -407,7 +428,9 @@ describe("one click, one execution, of exactly what was shown (independent revie
     await init(CHAT);
     const page = await http(opened[0]!);
     const token = JSON.parse(/token=("[0-9a-f]+")/.exec(page.body)![1]!) as string;
-    const second = await http(opened[0]!);
+    // a second tab of the same browser: it carries the cookie the first load set
+    const cookie = String(page.headers["set-cookie"]).split(";")[0]!;
+    const second = await http(opened[0]!.split("?")[0]!, { headers: { cookie } });
     const token2 = JSON.parse(/token=("[0-9a-f]+")/.exec(second.body)![1]!) as string;
     const { origin, pathname } = new URL(opened[0]!);
     const post = (t: string, decision: string) => http(`${origin}${pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin, "x-praxis-approval-token": t }, body: JSON.stringify({ decision }) });
