@@ -47,7 +47,8 @@ function readOne(buffer) {
 export function spawnMcpServer({ command, args, cwd, env, timeoutMs = 20000 }) {
   const child = spawn(command, args, {
     cwd,
-    env,
+    // a scripted client never opens a tab in the developer's browser unless the caller asks for the approval page
+    env: { PRAXIS_APPROVAL_PAGE: "off", PRAXIS_APPROVAL_MIN_ANSWER_MS: "0", ...(env ?? process.env) },
     stdio: ["pipe", "pipe", "pipe"],
   });
   let buf = Buffer.alloc(0);

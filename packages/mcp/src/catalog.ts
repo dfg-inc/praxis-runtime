@@ -28,7 +28,7 @@ const confirmProp = {
   type: "string",
   enum: ["YES", "NO"],
   description:
-    "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user in the client's own approval dialog, and runs the action only if they approve. A client without a dialog gets the preview and a refusal (APPROVAL_CLIENT_UI_REQUIRED, nothing executed). NO means the user rejected it: it is recorded and nothing runs.",
+    "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user itself (in the client's own approval dialog, or, when the client cannot show one, in the Praxis approval page it opens in the user's browser) and runs the action only if they approve. APPROVAL_PENDING means the page is open and nobody decided yet: call again with the same arguments after the user decided. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection.",
 };
 const fingerprintProp = {
   type: "string",
@@ -992,6 +992,22 @@ export const TOOLS: ToolDef[] = [
     kind: "read",
   },
   {
+    name: "praxis_approval_journal",
+    description:
+      "Audits the Praxis decision journal for this repository (kept in the user's Praxis home, not the repository): what was approved, rejected, withdrawn or could not be asked, and which entries attribute a decision to the user without evidence (the agent's confirmation=NO recorded as a rejection, or a client that answered the approval dialog by itself in milliseconds). amend=false (default) only reads. amend=true with confirmation=YES appends one traceable correction per such entry after the user approves exactly that list; existing lines are never changed or removed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        amend: { type: "boolean", description: "Append the corrections the audit lists (needs confirmation=YES and the user's approval). Default false: read only." },
+        confirmation: confirmProp,
+      },
+      additionalProperties: false,
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read",
+  },
+  {
     name: "praxis_approval_plan",
     description:
       "READ-ONLY: the exact plan the user would be asked to approve for a protected apply tool, computed by Praxis from the live state. Runs nothing. Use it to show the user what will happen; in host-permission mode (a client with no approval dialog and PRAXIS_APPROVAL_MODE=host-permission) pass its planText to the apply tool.",
@@ -1021,7 +1037,7 @@ for (const tool of TOOLS) {
     description: "Only for PRAXIS_APPROVAL_MODE=host-permission: the exact planText returned by praxis_approval_plan for these arguments. Ignored otherwise.",
   };
   tool.description +=
-    " The user approves this exact action in the client's own approval dialog before it runs; without a dialog it is not executed, and a rejection runs nothing.";
+    " The user approves this exact action before it runs, in the client's own approval dialog or the Praxis approval page; nothing else counts as approval, and a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the user said no), APPROVAL_DISMISSED (closed without deciding), APPROVAL_PENDING (page open, undecided), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask: not a rejection).";
 }
 
 export function toolsForRole(role: PraxisRole): ToolDef[] {

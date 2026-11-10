@@ -4,7 +4,7 @@ import { containedPath } from "./path-guard.js";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ApprovalError, effectiveServices, type EvidenceSource, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, type UserApproval } from "@praxis/contracts";
+import { ApprovalError, effectiveServices, type EvidenceSource, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, subjectDigest, type UserApproval } from "@praxis/contracts";
 import { tmpdir } from "node:os";
 import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
 import { inspectionPlan, runProjectChecks, type BrowserEvidence, type Finding, type Scenario } from "./generic-verification.js";
@@ -377,6 +377,36 @@ function applyProposal(root: string, proposal: Proposal): void {
 }
 
 /**
+ * What the person approves for a Quality fix commit. The approval binds the patch itself, not only its file names: the
+ * proposal is a file the agent can rewrite, so a different patch with the same paths is a different subject and is asked
+ * again. The person is shown the whole patch.
+ */
+export function serviceFixCommitRequest(planned: { change: { serviceId: string; findingId: string; branch: string; baseSha: string; files: string[]; remote?: string }; proposal: Proposal }, repository: string, workItemId: string) {
+  const change = planned.change;
+  const patch = planned.proposal.files.map((file) => ({ path: file.path, ...(file.diff !== undefined ? { diff: file.diff } : {}), ...(file.after !== undefined ? { after: file.after } : {}) }));
+  const patchDigest = subjectDigest(JSON.stringify(patch));
+  const shownPatch = patch.flatMap((file) => [`--- ${file.path} (${file.diff !== undefined ? "diff" : "new content"})`, file.diff ?? file.after ?? ""]);
+  return {
+    patchDigest,
+    request: {
+      action: "praxis_quality_service_fix",
+      kind: "git_operation" as const,
+      summary: `Commit a Quality fix for ${change.findingId} on branch ${change.branch}`,
+      description: [
+        `Repository: ${repository}`,
+        `Work item: ${workItemId}`,
+        `Branch: ${change.branch} (from ${change.baseSha})`,
+        `Files: ${change.files.join(", ")}`,
+        change.remote ? `The branch is pushed to ${change.remote} afterwards, with its own approval.` : "No push.",
+        `Patch ${patchDigest}:`,
+        ...shownPatch,
+      ].join("\n"),
+      subject: JSON.stringify({ serviceId: change.serviceId, findingId: change.findingId, branch: change.branch, baseSha: change.baseSha, files: change.files, patch: patchDigest, remote: change.remote ?? null }),
+    },
+  };
+}
+
+/**
  * Applies a Quality fix patch on its own branch and, when the service has a remote, pushes that branch. The user
  * approves the commit and, separately, the push (a commit approval is not a push approval); the first Reject stops
  * everything after it. Throws APPROVAL_REJECTED / APPROVAL_REQUIRED before anything is changed.
@@ -395,21 +425,9 @@ export async function commitServiceFix(
   if (!root) throw new Error("REPOSITORY_LOCATION_MISSING");
   const repository = resolve(root);
   const workItemId = change.storyIds[0] ?? change.serviceId;
-  const subject = JSON.stringify({ serviceId: change.serviceId, findingId: change.findingId, branch: change.branch, baseSha: change.baseSha, files: change.files, remote: change.remote ?? null });
+  const { patchDigest, request: commitRequest } = serviceFixCommitRequest(planned, repository, workItemId);
   const commitApproval = await obtainUserApproval(
-    {
-      action: "praxis_quality_service_fix",
-      kind: "git_operation",
-      summary: `Commit a Quality fix for ${change.findingId} on branch ${change.branch}`,
-      description: [
-        `Repository: ${repository}`,
-        `Work item: ${workItemId}`,
-        `Branch: ${change.branch} (from ${change.baseSha})`,
-        `Files: ${change.files.join(", ")}`,
-        change.remote ? `The branch is pushed to ${change.remote} afterwards, with its own approval.` : "No push.",
-      ].join("\n"),
-      subject,
-    },
+    commitRequest,
     { confirmation, repo: workflowRepo },
   );
   // Both approvals are obtained BEFORE anything runs (a round-trip client asks, then re-runs the whole call).
@@ -422,11 +440,13 @@ export async function commitServiceFix(
           kind: "git_operation",
           summary: `Push branch ${change.branch} to ${change.remote}`,
           description: [`Repository: ${repository}`, `Branch: ${change.branch}`, `Remote: ${change.remote}`, "The commit made by the Quality fix above is what is pushed."].join("\n"),
-          subject: JSON.stringify({ branch: change.branch, remote: change.remote, baseSha: change.baseSha, files: change.files, findingId: change.findingId }),
+          subject: JSON.stringify({ branch: change.branch, remote: change.remote, baseSha: change.baseSha, files: change.files, patch: patchDigest, findingId: change.findingId }),
         },
         { confirmation, repo: workflowRepo },
       );
     } catch (error) {
+      // a push still waiting in the approval page is not a refused push: nothing runs yet, and both answers come first
+      if (error instanceof ApprovalError && error.code === "APPROVAL_PENDING") throw error;
       // a refused push leaves the approved commit local: the record says the push did not happen instead of pretending it did
       if (!(error instanceof ApprovalError)) throw error;
     }

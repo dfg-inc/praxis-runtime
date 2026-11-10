@@ -96,10 +96,10 @@ describe("PRAXIS_APPROVAL_MODE=host-permission (opt-in)", () => {
     expect((await call("praxis_project_init_apply", repo, { confirmation: "YES", planText: fresh })).ok).toBe(true);
   });
 
-  it("confirmation=NO still rejects, and a real dialog wins over the mode", async () => {
+  it("confirmation=NO still stops it (as the agent's withdrawal), and a real dialog wins over the mode", async () => {
     const repo = project();
     const { planText } = await planFor(repo);
-    expect((await call("praxis_project_init_apply", repo, { confirmation: "NO", planText })).code).toBe("APPROVAL_REJECTED");
+    expect((await call("praxis_project_init_apply", repo, { confirmation: "NO", planText })).code).toBe("APPROVAL_WITHDRAWN");
     expect(existsSync(join(repo, ".project"))).toBe(false);
     const rejecting: UserApprovalChannel = { kind: "client-elicitation", ask: async () => ({ answer: "reject" }) };
     const viaDialog = await call("praxis_project_init_apply", repo, { confirmation: "YES", planText }, rejecting);

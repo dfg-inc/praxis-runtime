@@ -194,8 +194,8 @@ var init_ZodError = __esm({
       "not_finite"
     ]);
     quotelessJson = (obj) => {
-      const json3 = JSON.stringify(obj, null, 2);
-      return json3.replace(/"([^"]+)":/g, "$1:");
+      const json4 = JSON.stringify(obj, null, 2);
+      return json4.replace(/"([^"]+)":/g, "$1:");
     };
     ZodError = class _ZodError extends Error {
       get errors() {
@@ -445,8 +445,8 @@ var init_parseUtil = __esm({
     init_errors();
     init_en();
     makeIssue = (params) => {
-      const { data, path, errorMaps, issueData } = params;
-      const fullPath = [...path, ...issueData.path || []];
+      const { data, path: path2, errorMaps, issueData } = params;
+      const fullPath = [...path2, ...issueData.path || []];
       const fullIssue = {
         ...issueData,
         path: fullPath
@@ -754,11 +754,11 @@ var init_types = __esm({
     init_parseUtil();
     init_util();
     ParseInputLazyPath = class {
-      constructor(parent, value, path, key) {
+      constructor(parent, value, path2, key) {
         this._cachedPath = [];
         this.parent = parent;
         this.data = value;
-        this._path = path;
+        this._path = path2;
         this._key = key;
       }
       get path() {
@@ -4215,7 +4215,7 @@ function unwrap(schema) {
   }
   return current;
 }
-function walk(schema, value, path, out, tolerate) {
+function walk(schema, value, path2, out, tolerate) {
   const node4 = unwrap(schema);
   if (node4 instanceof external_exports.ZodObject) {
     if (typeof value !== "object" || value === null || Array.isArray(value))
@@ -4224,35 +4224,35 @@ function walk(schema, value, path, out, tolerate) {
     const accepted = Object.keys(shape);
     for (const [key, item] of Object.entries(value)) {
       if (!(key in shape)) {
-        if (item !== void 0 && !(tolerate && ECHOED_STATE_FIELDS[path]?.includes(key)))
-          out.push({ path, key, accepted });
+        if (item !== void 0 && !(tolerate && ECHOED_STATE_FIELDS[path2]?.includes(key)))
+          out.push({ path: path2, key, accepted });
         continue;
       }
-      walk(shape[key], item, path ? `${path}.${key}` : key, out, tolerate);
+      walk(shape[key], item, path2 ? `${path2}.${key}` : key, out, tolerate);
     }
     return;
   }
   if (node4 instanceof external_exports.ZodArray) {
     if (Array.isArray(value))
-      value.forEach((item, index) => walk(node4.element, item, `${path}[${index}]`, out, tolerate));
+      value.forEach((item, index) => walk(node4.element, item, `${path2}[${index}]`, out, tolerate));
     return;
   }
   if (node4 instanceof external_exports.ZodTuple) {
     if (Array.isArray(value))
-      node4.items.forEach((item, index) => walk(item, value[index], `${path}[${index}]`, out, tolerate));
+      node4.items.forEach((item, index) => walk(item, value[index], `${path2}[${index}]`, out, tolerate));
     return;
   }
   if (node4 instanceof external_exports.ZodRecord) {
     if (typeof value === "object" && value !== null && !Array.isArray(value))
       for (const [key, item] of Object.entries(value))
-        walk(node4.valueSchema, item, path ? `${path}.${key}` : key, out, tolerate);
+        walk(node4.valueSchema, item, path2 ? `${path2}.${key}` : key, out, tolerate);
     return;
   }
   if (node4 instanceof external_exports.ZodIntersection) {
     const left = [];
     const right = [];
-    walk(node4._def.left, value, path, left, tolerate);
-    walk(node4._def.right, value, path, right, tolerate);
+    walk(node4._def.left, value, path2, left, tolerate);
+    walk(node4._def.right, value, path2, right, tolerate);
     const rightKeys = new Set(right.map((u) => `${u.path}\0${u.key}`));
     for (const u of left)
       if (rightKeys.has(`${u.path}\0${u.key}`))
@@ -4264,7 +4264,7 @@ function walk(schema, value, path, out, tolerate) {
     let best = null;
     for (const option of matches) {
       const found = [];
-      walk(option, value, path, found, tolerate);
+      walk(option, value, path2, found, tolerate);
       if (best === null || found.length < best.length)
         best = found;
     }
@@ -5167,7 +5167,7 @@ function createUserApproval(input2) {
     subjectDigest: subjectDigest(input2.request.subject),
     decision: "approved",
     channel: input2.channel,
-    assurance: input2.channel === "host-permission" ? "host-prompt" : input2.channel === "trusted-client" ? "trusted-client" : "client-ui",
+    assurance: assuranceOf(input2.channel),
     decidedAt: (input2.now ?? /* @__PURE__ */ new Date()).toISOString(),
     ...input2.reason ? { reason: input2.reason } : {}
   });
@@ -5188,6 +5188,9 @@ function approvalModeReport() {
   if (channel?.kind === "trusted-client") {
     return { mode: "trusted-client", note: "TRUSTED CLIENT (enabled by you in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, without a separate confirmation of each action. This is your standing permission for this client, not proof that you confirmed each action. Every action is still checked against its preview and journaled." };
   }
+  if (channel?.kind === "approval-page") {
+    return { mode: "approval-page", note: "This client cannot show Praxis's approval dialog, so Praxis opens its own approval page in your browser: you approve or reject the exact action there. The agent never gets that page's link. A browser-automation tool in that browser, or a program running as you, could still operate the page; Praxis cannot detect that." };
+  }
   if (channel && channel.kind !== "host-permission") {
     return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
   }
@@ -5206,9 +5209,9 @@ function logDecision(repo, entry) {
   if (!repo)
     return;
   try {
-    const path = decisionLogPath(repo);
-    (0, import_node_fs.mkdirSync)((0, import_node_path.dirname)(path), { recursive: true, mode: 448 });
-    (0, import_node_fs.appendFileSync)(path, `${JSON.stringify({ ...entry, repository: (0, import_node_path.resolve)(repo) })}
+    const path2 = decisionLogPath(repo);
+    (0, import_node_fs.mkdirSync)((0, import_node_path.dirname)(path2), { recursive: true, mode: 448 });
+    (0, import_node_fs.appendFileSync)(path2, `${JSON.stringify({ v: 2, ...entry, repository: (0, import_node_path.resolve)(repo) })}
 `, { mode: 384 });
   } catch {
   }
@@ -5216,8 +5219,8 @@ function logDecision(repo, entry) {
 async function obtainUserApproval(request, options2 = {}) {
   const base = { at: (/* @__PURE__ */ new Date()).toISOString(), action: request.action, summary: request.summary, subjectDigest: subjectDigest(request.subject) };
   if (options2.confirmation === "NO") {
-    logDecision(options2.repo, { ...base, decision: "rejected", channel: "none", reason: "the user declined (reported by the agent)" });
-    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected. Nothing was changed.`, { rejected: true });
+    logDecision(options2.repo, { ...base, decision: "withdrawn", decidedBy: "agent", channel: "none", reason: "the agent withdrew the request (confirmation=NO); no decision of the user is claimed" });
+    throw new ApprovalError("APPROVAL_WITHDRAWN", `${request.summary} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision: Praxis has no evidence of one.`, { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false, dismissed: false });
   }
   const channel = currentApprovalChannel();
   let answer;
@@ -5228,26 +5231,54 @@ async function obtainUserApproval(request, options2 = {}) {
       if (error64 instanceof ApprovalNeedsInput)
         throw error64;
       if (error64 instanceof ApprovalError) {
-        logDecision(options2.repo, { ...base, decision: "refused", channel: channel.kind, reason: error64.message.slice(0, 200) });
+        const known = OUTCOME_OF_CODE[error64.code] ?? { decision: "refused", decidedBy: "praxis" };
+        const raisedBy = error64.details.channel ?? channel.kind;
+        if (error64.details.journaled !== true) {
+          const evidence = error64.details.evidence;
+          logDecision(options2.repo, { ...base, ...known, channel: raisedBy, ...evidence ? { evidence } : {}, reason: error64.message.slice(0, 200) });
+        }
+        error64.details.outcome ??= known.decision;
+        error64.details.decidedBy ??= known.decidedBy;
+        error64.details.executed ??= false;
+        delete error64.details.journaled;
         throw error64;
       }
-      logDecision(options2.repo, { ...base, decision: "refused", channel: channel.kind, reason: error64 instanceof Error ? error64.message : String(error64) });
-      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error64 instanceof Error ? error64.message : String(error64)}. Nothing was changed.`, previewDetails(request));
+      logDecision(options2.repo, { ...base, decision: "refused", decidedBy: "praxis", channel: channel.kind, reason: error64 instanceof Error ? error64.message : String(error64) });
+      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error64 instanceof Error ? error64.message : String(error64)}. Nothing was changed.`, { ...previewDetails(request), outcome: "refused", decidedBy: "praxis" });
     }
   }
   if (channel && answer && answer.answer !== "unavailable") {
+    const answeredBy = answer.channel ?? channel.kind;
+    const decidedBy = decidedByFor(answeredBy);
+    const said = { channel: answeredBy, decidedBy, ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {} };
     if (answer.answer === "approve") {
-      const approval = createUserApproval({ request, channel: channel.kind });
+      const clicked = answer.evidence?.decidedAt ? new Date(answer.evidence.decidedAt) : void 0;
+      const approval = createUserApproval({ request, channel: answeredBy, ...clicked && Number.isFinite(clicked.getTime()) && clicked.getTime() <= Date.now() ? { now: clicked } : {} });
       channelStore.getStore()?.approvals.push(approval);
-      logDecision(options2.repo, { ...base, decision: "approved", channel: channel.kind, ...answer.reason ? { reason: answer.reason } : {} });
+      if (!answer.journaled)
+        logDecision(options2.repo, { ...base, decision: "approved", ...said });
       return approval;
     }
     const dismissed = answer.answer === "dismiss";
-    logDecision(options2.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", channel: channel.kind, ...answer.reason ? { reason: answer.reason } : {} });
-    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was ${dismissed ? "dismissed" : "rejected"} by the user. Nothing was changed.`, { rejected: !dismissed, dismissed });
+    if (!answer.journaled)
+      logDecision(options2.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", ...said });
+    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", decidedBy, channel: answeredBy, ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {}, rejected: !dismissed, dismissed };
+    if (dismissed) {
+      throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: the user closed ${whereAsked(answeredBy)} without deciding. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
+    }
+    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected by the user in ${whereAsked(answeredBy)}. Nothing was changed.`, details);
   }
-  logDecision(options2.repo, { ...base, decision: "refused", channel: "none", reason: "no approval dialog in this client" });
-  throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. It needs the user's approval in the client's own dialog, and this client cannot show one (no MCP elicitation support). Show the user the preview below and tell them it can only be applied from a client that supports approval dialogs; the agent's or the user's text in chat is not accepted as approval. Read-only tools still work.`, previewDetails(request));
+  const automatic = answer?.automatic;
+  const why = automatic ? `the client answered "${automatic}" ${answer?.evidence?.latencyMs ?? "?"} ms after it was asked, faster than a person can read the request${answer?.reason ? ` (${answer.reason})` : ""}; that is the client's answer, not the user's` : answer?.reason ?? "this client cannot show an approval dialog (no MCP elicitation support)";
+  logDecision(options2.repo, {
+    ...base,
+    decision: automatic ? "auto-answered" : "unavailable",
+    decidedBy: automatic ? "client" : "nobody",
+    channel: answer?.channel ?? channel?.kind ?? "none",
+    ...answer?.evidence ? { evidence: answer.evidence } : {},
+    reason: why.slice(0, 300)
+  });
+  throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask the user (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog works, or the Praxis approval page when the Runtime runs on the user's own computer. The agent's or the user's text in chat is not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`, { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", decidedBy: automatic ? "client" : "nobody", ...answer?.evidence ? { evidence: answer.evidence } : {}, ...automatic ? { automatic } : {} });
 }
 function previewDetails(request) {
   return { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, ...request.risks?.length ? { risks: request.risks } : {} } };
@@ -5287,7 +5318,7 @@ function runApprovedMutation(approval, write) {
   }
   return lease.run({ action: approval.action, approval }, write);
 }
-var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, ApprovalError, ApprovalNeedsInput, channelStore, lease;
+var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, assuranceOf, ApprovalError, ApprovalNeedsInput, channelStore, decidedByFor, whereAsked, OUTCOME_OF_CODE, lease;
 var init_user_approval = __esm({
   "node_modules/@praxis/contracts/dist/user-approval.js"() {
     import_node_async_hooks = require("node:async_hooks");
@@ -5300,6 +5331,7 @@ var init_user_approval = __esm({
     USER_APPROVAL_TTL_MS = 10 * 60 * 1e3;
     issued = /* @__PURE__ */ new WeakSet();
     subjectDigest = (subject) => `sha256:${(0, import_node_crypto.createHash)("sha256").update(subject, "utf8").digest("hex")}`;
+    assuranceOf = (channel) => channel === "host-permission" ? "host-prompt" : channel === "trusted-client" ? "trusted-client" : channel === "approval-page" ? "approval-page" : "client-ui";
     ApprovalError = class extends Error {
       code;
       details;
@@ -5319,6 +5351,14 @@ var init_user_approval = __esm({
       }
     };
     channelStore = new import_node_async_hooks.AsyncLocalStorage();
+    decidedByFor = (channel) => channel === "trusted-client" ? "trusted-client" : channel === "host-permission" ? "host-prompt" : "user";
+    whereAsked = (kind) => kind === "approval-page" ? "the Praxis approval page" : kind === "terminal-prompt" ? "the terminal prompt" : "the client's approval dialog";
+    OUTCOME_OF_CODE = {
+      APPROVAL_PENDING: { decision: "pending", decidedBy: "nobody" },
+      APPROVAL_TIMED_OUT: { decision: "timed-out", decidedBy: "nobody" },
+      APPROVAL_EXPIRED: { decision: "expired", decidedBy: "nobody" },
+      APPROVAL_CLIENT_UI_REQUIRED: { decision: "unavailable", decidedBy: "nobody" }
+    };
     lease = new import_node_async_hooks.AsyncLocalStorage();
   }
 });
@@ -6287,14 +6327,14 @@ function validatePlan(state2, entries) {
   const visiting = /* @__PURE__ */ new Set();
   const done = /* @__PURE__ */ new Set();
   const byId = new Map(entries.map((e) => [e.id, e]));
-  const visit2 = (id, path) => {
+  const visit2 = (id, path2) => {
     if (done.has(id))
       return;
     if (visiting.has(id))
-      throw missing("PLAN_INVALID", `dependency cycle: ${[...path, id].join(" -> ")}`);
+      throw missing("PLAN_INVALID", `dependency cycle: ${[...path2, id].join(" -> ")}`);
     visiting.add(id);
     for (const dep of byId.get(id)?.dependsOn ?? [])
-      visit2(dep, [...path, id]);
+      visit2(dep, [...path2, id]);
     visiting.delete(id);
     done.add(id);
   };
@@ -6925,9 +6965,9 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
     case "split-story": {
       const original = storyOf(state2, command.id);
       const taken = /* @__PURE__ */ new Set();
-      const created = [];
+      const created2 = [];
       for (const part of command.into) {
-        if (state2.stories.some((s) => s.id === part.id) || created.some((s) => s.id === part.id))
+        if (state2.stories.some((s) => s.id === part.id) || created2.some((s) => s.id === part.id))
           throw missing("DUPLICATE_STORY", `story ${part.id} already exists`);
         const moved = part.moveAcceptance.map((id2) => {
           const found = original.acceptanceCriteria.find((c) => c.id === id2);
@@ -6943,7 +6983,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
         if (acceptanceCriteria.length === 0)
           throw missing("SPLIT_NEEDS_CRITERIA", `${part.id} needs acceptance criteria (moveAcceptance or acceptanceCriteria)`);
         const { id, moveAcceptance: _m, acceptanceCriteria: _a7, ...patch } = part;
-        created.push(UserStorySchema.parse({
+        created2.push(UserStorySchema.parse({
           ...original,
           ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== void 0)),
           id,
@@ -6958,17 +6998,17 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       const unallocated = original.acceptanceCriteria.filter((c) => !taken.has(c.id)).map((c) => c.id);
       if (unallocated.length > 0)
         throw missing("SPLIT_UNALLOCATED_AC", `acceptance criteria of ${original.id} not allocated to a new story: ${unallocated.join(", ")}`);
-      let next = pushHistory(state2, original, "split", command.reason ?? `split into ${created.map((s) => s.id).join(", ")}`, now);
-      next = { ...next, stories: [...next.stories.map((s) => s === original ? { ...s, status: "superseded", confirmedBehavior: false } : s), ...created] };
+      let next = pushHistory(state2, original, "split", command.reason ?? `split into ${created2.map((s) => s.id).join(", ")}`, now);
+      next = { ...next, stories: [...next.stories.map((s) => s === original ? { ...s, status: "superseded", confirmedBehavior: false } : s), ...created2] };
       if (next.storyPlan) {
         const entry = next.storyPlan.entries.find((e) => e.id === original.id);
         if (entry) {
-          const replacement = created.map((s) => StoryPlanEntrySchema.parse({ ...entry, id: s.id, title: s.title ?? entry.title, implementation: entry.implementation, requirementIds: s.requirementIds, status: "detailed", review: { status: "pending" } }));
+          const replacement = created2.map((s) => StoryPlanEntrySchema.parse({ ...entry, id: s.id, title: s.title ?? entry.title, implementation: entry.implementation, requirementIds: s.requirementIds, status: "detailed", review: { status: "pending" } }));
           next = { ...next, storyPlan: { ...next.storyPlan, revision: next.storyPlan.revision + 1, status: "draft", entries: [...next.storyPlan.entries.filter((e) => e.id !== original.id), ...replacement] } };
         }
       }
-      next = touch(next, now, `story ${original.id} split into ${created.map((s) => s.id).join(", ")}`);
-      return { state: next, duplicate: false, result: { superseded: original.id, created: created.map((s) => s.id) } };
+      next = touch(next, now, `story ${original.id} split into ${created2.map((s) => s.id).join(", ")}`);
+      return { state: next, duplicate: false, result: { superseded: original.id, created: created2.map((s) => s.id) } };
     }
     case "merge-stories": {
       const originals = command.ids.map((id2) => storyOf(state2, id2));
@@ -7398,6 +7438,8 @@ function trustOfApproval(approval) {
     return "test-only";
   if (approval.assurance === "client-ui")
     return "independent-human";
+  if (approval.assurance === "approval-page")
+    return "review-page";
   return "host-attested";
 }
 function describeApproval(approval) {
@@ -7406,6 +7448,8 @@ function describeApproval(approval) {
   switch (trustOfApproval(approval)) {
     case "independent-human":
       return "approved in the client's approval dialog";
+    case "review-page":
+      return "approved in the Praxis approval page (the person's click in the browser page Praxis opened; the client did not vouch for it)";
     case "host-attested":
       return approval.channel === "trusted-client" ? "approved in Trusted Client mode (the host's own permission, no dialog was shown)" : "approved through the host's permission prompt (no Praxis dialog)";
     default:
@@ -7925,7 +7969,7 @@ function returnFinding(state2, finding) {
     ...transition(state2.stage === "review_required" || state2.stage === "approved" || state2.stage === "completed" ? state2 : { ...state2, stage: "review_required" }, "changes_requested", `finding ${finding.id} returned to ${finding.owner}`),
     findings: [...state2.findings.filter((f) => f.id !== finding.id), finding]
   };
-  const created = createHandoff(withFinding, {
+  const created2 = createHandoff(withFinding, {
     sourceRole: "quality",
     targetRole: finding.owner === "quality" ? "developer" : finding.owner,
     serviceIds: finding.serviceIds,
@@ -7941,7 +7985,7 @@ function returnFinding(state2, finding) {
     readiness: "blocked",
     evidenceRefs: finding.evidence
   });
-  return { state: created.state, handoff: created.handoff };
+  return { state: created2.state, handoff: created2.handoff };
 }
 function classifyClarification(input2) {
   if (input2.alreadyKnown)
@@ -8479,7 +8523,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
   }
   if (command.action === "handoff") {
     const carried = carryForwardContext(state2, command);
-    const created = createHandoff(state2, {
+    const created2 = createHandoff(state2, {
       sourceRole: command.sourceRole,
       targetRole: command.targetRole,
       serviceIds: command.serviceIds,
@@ -8505,9 +8549,9 @@ function applyWorkflowCommandCore(state2, raw, options2) {
       evidenceRefs: state2.implementationUnits.filter((unit) => !unit.stale).map((unit) => `${unit.serviceId}:${unit.path}`)
     });
     return {
-      state: created.state,
-      duplicate: created.duplicate,
-      result: { handoffId: created.handoff.handoffId, duplicate: created.duplicate }
+      state: created2.state,
+      duplicate: created2.duplicate,
+      result: { handoffId: created2.handoff.handoffId, duplicate: created2.duplicate }
     };
   }
   if (command.action !== "quality-check") {
@@ -9504,14 +9548,164 @@ var init_human_act_testing = __esm({
   }
 });
 
+// node_modules/@praxis/contracts/dist/decision-journal.js
+function readDecisionJournal(repo) {
+  const path2 = decisionLogPath(repo);
+  if (!(0, import_node_fs2.existsSync)(path2))
+    return [];
+  const raws = (0, import_node_fs2.readFileSync)(path2, "utf8").split("\n");
+  const lines = [];
+  raws.forEach((raw, index) => {
+    if (!raw.trim())
+      return;
+    const base = { line: index + 1, sha256: lineHash(raw) };
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.type === "amendment")
+        lines.push({ ...base, amendment: parsed });
+      else if (typeof parsed.decision === "string" && typeof parsed.action === "string")
+        lines.push({ ...base, entry: parsed });
+      else
+        lines.push({ ...base, unreadable: true });
+    } catch {
+      lines.push({ ...base, unreadable: true });
+    }
+  });
+  return lines;
+}
+function validAmendment(amendment, entry) {
+  const rule = ALLOWED[amendment.rule];
+  return Boolean(rule) && rule.from.includes(entry.decision) && amendment.corrected?.decision === rule.to.decision && amendment.corrected?.decidedBy === rule.to.decidedBy;
+}
+function effectiveDecisions(lines) {
+  const entries = new Map(lines.filter((l) => l.entry).map((l) => [`${l.line}:${l.sha256}`, l.entry]));
+  const amendments = /* @__PURE__ */ new Map();
+  for (const line of lines) {
+    if (!line.amendment)
+      continue;
+    const key = `${line.amendment.amends.line}:${line.amendment.amends.sha256}`;
+    const entry = entries.get(key);
+    if (entry && validAmendment(line.amendment, entry))
+      amendments.set(key, line.amendment);
+  }
+  return lines.filter((line) => Boolean(line.entry)).map((line) => {
+    const amendment = amendments.get(`${line.line}:${line.sha256}`);
+    return {
+      line: line.line,
+      entry: line.entry,
+      decision: amendment?.corrected.decision ?? line.entry.decision,
+      decidedBy: amendment?.corrected.decidedBy ?? line.entry.decidedBy ?? "unknown",
+      ...amendment ? { amendedBy: amendment } : {}
+    };
+  });
+}
+function auditDecisionJournal(lines, options2) {
+  const amended = new Set(lines.filter((l) => l.amendment).map((l) => `${l.amendment.amends.line}:${l.amendment.amends.sha256}`));
+  const findings = [];
+  for (const line of lines) {
+    const entry = line.entry;
+    if (!entry || amended.has(`${line.line}:${line.sha256}`))
+      continue;
+    const claimed = { decision: entry.decision, channel: entry.channel, ...entry.decidedBy ? { decidedBy: entry.decidedBy } : {} };
+    const common = { line: line.line, sha256: line.sha256, at: entry.at, action: entry.action, claimed };
+    if (entry.decision === "rejected" && entry.channel === "none" && /reported by the agent/i.test(entry.reason ?? "")) {
+      findings.push({
+        ...common,
+        kind: "amend",
+        rule: "agent-reported-decline",
+        corrected: { decision: "withdrawn", decidedBy: "agent" },
+        evidence: { reason: entry.reason ?? "", channel: "none" },
+        note: "confirmation=NO from the agent was recorded as the user's rejection; it is the agent withdrawing the request"
+      });
+      continue;
+    }
+    const userClaim = (entry.decision === "rejected" || entry.decision === "dismissed") && entry.channel === "client-elicitation";
+    if (!userClaim)
+      continue;
+    const latency = entry.evidence?.latencyMs;
+    if (typeof latency === "number") {
+      continue;
+    }
+    const written = Date.parse(entry.at);
+    const candidates = (options2.roundTrips ?? []).filter((t) => tripMatches(t, entry.action) && Date.parse(t.answeredAt) <= written && written - Date.parse(t.answeredAt) <= 2e3 && (t.finishedCode === void 0 || t.finishedCode === "APPROVAL_REJECTED"));
+    const trip = candidates.length === 1 ? candidates[0] : void 0;
+    if (trip) {
+      const ms = Date.parse(trip.answeredAt) - Date.parse(trip.askedAt);
+      if (ms < options2.minAnswerMs) {
+        findings.push({
+          ...common,
+          kind: "amend",
+          rule: "client-answered-without-dialog",
+          corrected: { decision: "auto-answered", decidedBy: "client" },
+          evidence: { latencyMs: ms, askedAt: trip.askedAt, answeredAt: trip.answeredAt, tool: trip.tool, ...trip.client ? { client: trip.client } : {}, minAnswerMs: options2.minAnswerMs },
+          note: `the client answered ${ms} ms after the dialog was requested, faster than a person can read it: no dialog reached the user`
+        });
+        continue;
+      }
+    }
+    findings.push({ ...common, kind: "unverified", note: "a decision of the user is claimed, and no timing was recorded for it; it is left as written" });
+  }
+  return findings;
+}
+function appendDecisionAmendments(repo, findings, by, now = /* @__PURE__ */ new Date()) {
+  const path2 = decisionLogPath(repo);
+  const lines = readDecisionJournal(repo);
+  const already = new Set(lines.filter((l) => l.amendment).map((l) => `${l.amendment.amends.line}:${l.amendment.amends.sha256}`));
+  const current = new Map(lines.map((l) => [l.line, l.sha256]));
+  let appended = 0;
+  let skipped = 0;
+  for (const finding of findings) {
+    if (finding.kind !== "amend" || !finding.rule || !finding.corrected)
+      continue;
+    const key = `${finding.line}:${finding.sha256}`;
+    if (already.has(key) || current.get(finding.line) !== finding.sha256) {
+      skipped += 1;
+      continue;
+    }
+    const amendment = {
+      v: 2,
+      type: "amendment",
+      at: now.toISOString(),
+      amends: { line: finding.line, sha256: finding.sha256 },
+      previous: finding.claimed,
+      corrected: finding.corrected,
+      rule: finding.rule,
+      evidence: finding.evidence ?? {},
+      by,
+      repository: (0, import_node_path2.resolve)(repo)
+    };
+    (0, import_node_fs2.appendFileSync)(path2, `${JSON.stringify(amendment)}
+`, { mode: 384 });
+    already.add(key);
+    appended += 1;
+  }
+  return { appended, skipped, path: path2 };
+}
+var import_node_crypto5, import_node_fs2, import_node_path2, lineHash, ALLOWED, ACT_TOOLS, tripMatches;
+var init_decision_journal = __esm({
+  "node_modules/@praxis/contracts/dist/decision-journal.js"() {
+    import_node_crypto5 = require("node:crypto");
+    import_node_fs2 = require("node:fs");
+    import_node_path2 = require("node:path");
+    init_user_approval();
+    lineHash = (raw) => `sha256:${(0, import_node_crypto5.createHash)("sha256").update(raw, "utf8").digest("hex")}`;
+    ALLOWED = {
+      "agent-reported-decline": { from: ["rejected"], to: { decision: "withdrawn", decidedBy: "agent" } },
+      "client-answered-without-dialog": { from: ["rejected", "dismissed"], to: { decision: "auto-answered", decidedBy: "client" } }
+    };
+    ACT_TOOLS = /* @__PURE__ */ new Set(["praxis_workflow_apply", "praxis_review_apply", "praxis_quality_apply"]);
+    tripMatches = (trip, action) => action.startsWith("praxis_") ? trip.tool === action : ACT_TOOLS.has(trip.tool);
+  }
+});
+
 // node_modules/@praxis/contracts/dist/review-submission.js
 function planEntryBase(entry) {
   const text = JSON.stringify([entry.title, entry.implementation, entry.userGets, entry.status, entry.excludedReason ?? "", entry.review.status, entry.review.comment ?? ""]);
-  return (0, import_node_crypto5.createHash)("sha256").update(text).digest("hex").slice(0, 24);
+  return (0, import_node_crypto6.createHash)("sha256").update(text).digest("hex").slice(0, 24);
 }
 function reviewStamp(state2, view) {
   const slice = view === "requirements" ? state2.requirements : view === "story-plan" ? state2.storyPlan : view === "contracts" ? state2.contracts : view === "prototype" ? state2.prototype : state2.stories;
-  return (0, import_node_crypto5.createHash)("sha256").update(canonicalText({ view, mode: state2.mode, slice })).digest("hex").slice(0, 24);
+  return (0, import_node_crypto6.createHash)("sha256").update(canonicalText({ view, mode: state2.mode, slice })).digest("hex").slice(0, 24);
 }
 function workStateStamp(state2) {
   const slice = {
@@ -9530,7 +9724,7 @@ function workStateStamp(state2) {
     verdicts: state2.verdicts.map((x) => [x.id, x.verdict, x.stale]),
     implementation: state2.implementationUnits.map((x) => [x.id, x.stale])
   };
-  return (0, import_node_crypto5.createHash)("sha256").update(canonicalText(slice)).digest("hex").slice(0, 24);
+  return (0, import_node_crypto6.createHash)("sha256").update(canonicalText(slice)).digest("hex").slice(0, 24);
 }
 function needsApprovalWhenHandedOver(command) {
   return isUserDecision(command) || SHOWN_AND_APPROVED.has(command.action);
@@ -9926,10 +10120,10 @@ function submissionToCommands(state2, raw) {
   }
   return { commands, conflicts, stale, summary, details, affectsStories };
 }
-var import_node_crypto5, REVIEW_VIEWS, ReviewViewSchema, Mark, RequirementsPayload, PrototypePayload, PlanPayload, StoriesPayload, ReviewSubmissionSchema, SHOWN_AND_APPROVED;
+var import_node_crypto6, REVIEW_VIEWS, ReviewViewSchema, Mark, RequirementsPayload, PrototypePayload, PlanPayload, StoriesPayload, ReviewSubmissionSchema, SHOWN_AND_APPROVED;
 var init_review_submission = __esm({
   "node_modules/@praxis/contracts/dist/review-submission.js"() {
-    import_node_crypto5 = require("node:crypto");
+    import_node_crypto6 = require("node:crypto");
     init_zod();
     init_command_strict();
     init_human_acts();
@@ -11113,8 +11307,8 @@ function skillPlan(phase, changeRequest = false) {
   }
   return { role: ROLE_FOR_PHASE[phase], phase, skills, reason: `fixed by stage "${phase}"${changeRequest ? " (change request)" : ""}` };
 }
-function isAgentInstructionFile(path) {
-  const normalized = path.replace(/\\/g, "/");
+function isAgentInstructionFile(path2) {
+  const normalized = path2.replace(/\\/g, "/");
   return AGENT_INSTRUCTION_FILES.some((re) => re.test(normalized));
 }
 function scanUntrustedInstructions(text) {
@@ -11333,7 +11527,7 @@ function buildRepositoryBrief(state2, repositoryId) {
     waitsFor,
     order: { position: positions.length ? Math.min(...positions) + 1 : null, of: order.length, sequence: order, cycle },
     impact: state2.impact ? {
-      affected: state2.impact.affected.filter((a) => a.repositoryId === repo.id).map(({ path, area, change, risk }) => ({ path, area, change, risk })),
+      affected: state2.impact.affected.filter((a) => a.repositoryId === repo.id).map(({ path: path2, area, change, risk }) => ({ path: path2, area, change, risk })),
       regressionChecks: state2.impact.regressionChecks.filter((c) => !c.serviceId || ids.has(c.serviceId)).map(({ id, statement }) => ({ id, statement }))
     } : void 0,
     readyToStart: blockers.length === 0,
@@ -11439,6 +11633,7 @@ var init_dist = __esm({
     init_human_acts();
     init_human_act_testing();
     init_user_approval();
+    init_decision_journal();
     init_planning_schemas();
     init_planning();
     init_ids();
@@ -11768,17 +11963,17 @@ var require_visit = __commonJS({
     visit2.BREAK = BREAK;
     visit2.SKIP = SKIP2;
     visit2.REMOVE = REMOVE;
-    function visit_(key, node4, visitor, path) {
-      const ctrl = callVisitor(key, node4, visitor, path);
+    function visit_(key, node4, visitor, path2) {
+      const ctrl = callVisitor(key, node4, visitor, path2);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path, ctrl);
-        return visit_(key, ctrl, visitor, path);
+        replaceNode(key, path2, ctrl);
+        return visit_(key, ctrl, visitor, path2);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node4)) {
-          path = Object.freeze(path.concat(node4));
+          path2 = Object.freeze(path2.concat(node4));
           for (let i = 0; i < node4.items.length; ++i) {
-            const ci = visit_(i, node4.items[i], visitor, path);
+            const ci = visit_(i, node4.items[i], visitor, path2);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -11789,13 +11984,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node4)) {
-          path = Object.freeze(path.concat(node4));
-          const ck = visit_("key", node4.key, visitor, path);
+          path2 = Object.freeze(path2.concat(node4));
+          const ck = visit_("key", node4.key, visitor, path2);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node4.key = null;
-          const cv = visit_("value", node4.value, visitor, path);
+          const cv = visit_("value", node4.value, visitor, path2);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -11816,17 +12011,17 @@ var require_visit = __commonJS({
     visitAsync.BREAK = BREAK;
     visitAsync.SKIP = SKIP2;
     visitAsync.REMOVE = REMOVE;
-    async function visitAsync_(key, node4, visitor, path) {
-      const ctrl = await callVisitor(key, node4, visitor, path);
+    async function visitAsync_(key, node4, visitor, path2) {
+      const ctrl = await callVisitor(key, node4, visitor, path2);
       if (identity.isNode(ctrl) || identity.isPair(ctrl)) {
-        replaceNode(key, path, ctrl);
-        return visitAsync_(key, ctrl, visitor, path);
+        replaceNode(key, path2, ctrl);
+        return visitAsync_(key, ctrl, visitor, path2);
       }
       if (typeof ctrl !== "symbol") {
         if (identity.isCollection(node4)) {
-          path = Object.freeze(path.concat(node4));
+          path2 = Object.freeze(path2.concat(node4));
           for (let i = 0; i < node4.items.length; ++i) {
-            const ci = await visitAsync_(i, node4.items[i], visitor, path);
+            const ci = await visitAsync_(i, node4.items[i], visitor, path2);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -11837,13 +12032,13 @@ var require_visit = __commonJS({
             }
           }
         } else if (identity.isPair(node4)) {
-          path = Object.freeze(path.concat(node4));
-          const ck = await visitAsync_("key", node4.key, visitor, path);
+          path2 = Object.freeze(path2.concat(node4));
+          const ck = await visitAsync_("key", node4.key, visitor, path2);
           if (ck === BREAK)
             return BREAK;
           else if (ck === REMOVE)
             node4.key = null;
-          const cv = await visitAsync_("value", node4.value, visitor, path);
+          const cv = await visitAsync_("value", node4.value, visitor, path2);
           if (cv === BREAK)
             return BREAK;
           else if (cv === REMOVE)
@@ -11870,23 +12065,23 @@ var require_visit = __commonJS({
       }
       return visitor;
     }
-    function callVisitor(key, node4, visitor, path) {
+    function callVisitor(key, node4, visitor, path2) {
       if (typeof visitor === "function")
-        return visitor(key, node4, path);
+        return visitor(key, node4, path2);
       if (identity.isMap(node4))
-        return visitor.Map?.(key, node4, path);
+        return visitor.Map?.(key, node4, path2);
       if (identity.isSeq(node4))
-        return visitor.Seq?.(key, node4, path);
+        return visitor.Seq?.(key, node4, path2);
       if (identity.isPair(node4))
-        return visitor.Pair?.(key, node4, path);
+        return visitor.Pair?.(key, node4, path2);
       if (identity.isScalar(node4))
-        return visitor.Scalar?.(key, node4, path);
+        return visitor.Scalar?.(key, node4, path2);
       if (identity.isAlias(node4))
-        return visitor.Alias?.(key, node4, path);
+        return visitor.Alias?.(key, node4, path2);
       return void 0;
     }
-    function replaceNode(key, path, node4) {
-      const parent = path[path.length - 1];
+    function replaceNode(key, path2, node4) {
+      const parent = path2[path2.length - 1];
       if (identity.isCollection(parent)) {
         parent.items[key] = node4;
       } else if (identity.isPair(parent)) {
@@ -11973,8 +12168,8 @@ var require_directives = __commonJS({
               if (parts.length < 2)
                 return false;
             }
-            const [handle2, prefix2] = parts;
-            this.tags[handle2] = prefix2;
+            const [handle3, prefix2] = parts;
+            this.tags[handle3] = prefix2;
             return true;
           }
           case "%YAML": {
@@ -12021,10 +12216,10 @@ var require_directives = __commonJS({
             onError("Verbatim tags must end with a >");
           return verbatim;
         }
-        const [, handle2, suffix] = source.match(/^(.*!)([^!]*)$/s);
+        const [, handle3, suffix] = source.match(/^(.*!)([^!]*)$/s);
         if (!suffix)
           onError(`The ${source} tag has no suffix`);
-        const prefix2 = this.tags[handle2];
+        const prefix2 = this.tags[handle3];
         if (prefix2) {
           try {
             return prefix2 + decodeURIComponent(suffix);
@@ -12033,7 +12228,7 @@ var require_directives = __commonJS({
             return null;
           }
         }
-        if (handle2 === "!")
+        if (handle3 === "!")
           return source;
         onError(`Could not resolve tag: ${source}`);
         return null;
@@ -12043,9 +12238,9 @@ var require_directives = __commonJS({
        * taking into account current tag prefixes and defaults.
        */
       tagString(tag) {
-        for (const [handle2, prefix2] of Object.entries(this.tags)) {
+        for (const [handle3, prefix2] of Object.entries(this.tags)) {
           if (tag.startsWith(prefix2))
-            return handle2 + escapeTagName(tag.substring(prefix2.length));
+            return handle3 + escapeTagName(tag.substring(prefix2.length));
         }
         return tag[0] === "!" ? tag : `!<${tag}>`;
       }
@@ -12062,11 +12257,11 @@ var require_directives = __commonJS({
           tagNames = Object.keys(tags);
         } else
           tagNames = [];
-        for (const [handle2, prefix2] of tagEntries) {
-          if (handle2 === "!!" && prefix2 === "tag:yaml.org,2002:")
+        for (const [handle3, prefix2] of tagEntries) {
+          if (handle3 === "!!" && prefix2 === "tag:yaml.org,2002:")
             continue;
           if (!doc || tagNames.some((tn) => tn.startsWith(prefix2)))
-            lines.push(`%TAG ${handle2} ${prefix2}`);
+            lines.push(`%TAG ${handle3} ${prefix2}`);
         }
         return lines.join("\n");
       }
@@ -12498,10 +12693,10 @@ var require_Collection = __commonJS({
     var createNode = require_createNode();
     var identity = require_identity();
     var Node = require_Node();
-    function collectionFromPath(schema, path, value) {
+    function collectionFromPath(schema, path2, value) {
       let v = value;
-      for (let i = path.length - 1; i >= 0; --i) {
-        const k = path[i];
+      for (let i = path2.length - 1; i >= 0; --i) {
+        const k = path2[i];
         if (typeof k === "number" && Number.isInteger(k) && k >= 0) {
           const a = [];
           a[k] = v;
@@ -12520,7 +12715,7 @@ var require_Collection = __commonJS({
         sourceObjects: /* @__PURE__ */ new Map()
       });
     }
-    var isEmptyPath = (path) => path == null || typeof path === "object" && !!path[Symbol.iterator]().next().done;
+    var isEmptyPath = (path2) => path2 == null || typeof path2 === "object" && !!path2[Symbol.iterator]().next().done;
     var Collection = class extends Node.NodeBase {
       constructor(type, schema) {
         super(type);
@@ -12550,11 +12745,11 @@ var require_Collection = __commonJS({
        * be a Pair instance or a `{ key, value }` object, which may not have a key
        * that already exists in the map.
        */
-      addIn(path, value) {
-        if (isEmptyPath(path))
+      addIn(path2, value) {
+        if (isEmptyPath(path2))
           this.add(value);
         else {
-          const [key, ...rest] = path;
+          const [key, ...rest] = path2;
           const node4 = this.get(key, true);
           if (identity.isCollection(node4))
             node4.addIn(rest, value);
@@ -12568,8 +12763,8 @@ var require_Collection = __commonJS({
        * Removes a value from the collection.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path) {
-        const [key, ...rest] = path;
+      deleteIn(path2) {
+        const [key, ...rest] = path2;
         if (rest.length === 0)
           return this.delete(key);
         const node4 = this.get(key, true);
@@ -12583,8 +12778,8 @@ var require_Collection = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path, keepScalar) {
-        const [key, ...rest] = path;
+      getIn(path2, keepScalar) {
+        const [key, ...rest] = path2;
         const node4 = this.get(key, true);
         if (rest.length === 0)
           return !keepScalar && identity.isScalar(node4) ? node4.value : node4;
@@ -12602,8 +12797,8 @@ var require_Collection = __commonJS({
       /**
        * Checks if the collection includes a value with the key `key`.
        */
-      hasIn(path) {
-        const [key, ...rest] = path;
+      hasIn(path2) {
+        const [key, ...rest] = path2;
         if (rest.length === 0)
           return this.has(key);
         const node4 = this.get(key, true);
@@ -12613,8 +12808,8 @@ var require_Collection = __commonJS({
        * Sets a value in this collection. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path, value) {
-        const [key, ...rest] = path;
+      setIn(path2, value) {
+        const [key, ...rest] = path2;
         if (rest.length === 0) {
           this.set(key, value);
         } else {
@@ -12818,27 +13013,27 @@ var require_stringifyString = __commonJS({
       return true;
     }
     function doubleQuotedString(value, ctx) {
-      const json3 = JSON.stringify(value);
+      const json4 = JSON.stringify(value);
       if (ctx.options.doubleQuotedAsJSON)
-        return json3;
+        return json4;
       const { implicitKey } = ctx;
       const minMultiLineLength = ctx.options.doubleQuotedMinMultiLineLength;
       const indent = ctx.indent || (containsDocumentMarker(value) ? "  " : "");
       let str4 = "";
       let start = 0;
-      for (let i = 0, ch = json3[i]; ch; ch = json3[++i]) {
-        if (ch === " " && json3[i + 1] === "\\" && json3[i + 2] === "n") {
-          str4 += json3.slice(start, i) + "\\ ";
+      for (let i = 0, ch = json4[i]; ch; ch = json4[++i]) {
+        if (ch === " " && json4[i + 1] === "\\" && json4[i + 2] === "n") {
+          str4 += json4.slice(start, i) + "\\ ";
           i += 1;
           start = i;
           ch = "\\";
         }
         if (ch === "\\")
-          switch (json3[i + 1]) {
+          switch (json4[i + 1]) {
             case "u":
               {
-                str4 += json3.slice(start, i);
-                const code = json3.substr(i + 2, 4);
+                str4 += json4.slice(start, i);
+                const code = json4.substr(i + 2, 4);
                 switch (code) {
                   case "0000":
                     str4 += "\\0";
@@ -12868,23 +13063,23 @@ var require_stringifyString = __commonJS({
                     if (code.substr(0, 2) === "00")
                       str4 += "\\x" + code.substr(2);
                     else
-                      str4 += json3.substr(i, 6);
+                      str4 += json4.substr(i, 6);
                 }
                 i += 5;
                 start = i + 1;
               }
               break;
             case "n":
-              if (implicitKey || json3[i + 2] === '"' || json3.length < minMultiLineLength) {
+              if (implicitKey || json4[i + 2] === '"' || json4.length < minMultiLineLength) {
                 i += 1;
               } else {
-                str4 += json3.slice(start, i) + "\n\n";
-                while (json3[i + 2] === "\\" && json3[i + 3] === "n" && json3[i + 4] !== '"') {
+                str4 += json4.slice(start, i) + "\n\n";
+                while (json4[i + 2] === "\\" && json4[i + 3] === "n" && json4[i + 4] !== '"') {
                   str4 += "\n";
                   i += 2;
                 }
                 str4 += indent;
-                if (json3[i + 2] === " ")
+                if (json4[i + 2] === " ")
                   str4 += "\\";
                 i += 1;
                 start = i + 1;
@@ -12894,7 +13089,7 @@ var require_stringifyString = __commonJS({
               i += 1;
           }
       }
-      str4 = start ? str4 + json3.slice(start) : json3;
+      str4 = start ? str4 + json4.slice(start) : json4;
       return implicitKey ? str4 : foldFlowLines.foldFlowLines(str4, indent, foldFlowLines.FOLD_QUOTED, getFoldOptions(ctx, false));
     }
     function singleQuotedString(value, ctx) {
@@ -15129,9 +15324,9 @@ var require_Document = __commonJS({
           this.contents.add(value);
       }
       /** Adds a value to the document. */
-      addIn(path, value) {
+      addIn(path2, value) {
         if (assertCollection(this.contents))
-          this.contents.addIn(path, value);
+          this.contents.addIn(path2, value);
       }
       /**
        * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
@@ -15206,14 +15401,14 @@ var require_Document = __commonJS({
        * Removes a value from the document.
        * @returns `true` if the item was found and removed.
        */
-      deleteIn(path) {
-        if (Collection.isEmptyPath(path)) {
+      deleteIn(path2) {
+        if (Collection.isEmptyPath(path2)) {
           if (this.contents == null)
             return false;
           this.contents = null;
           return true;
         }
-        return assertCollection(this.contents) ? this.contents.deleteIn(path) : false;
+        return assertCollection(this.contents) ? this.contents.deleteIn(path2) : false;
       }
       /**
        * Returns item at `key`, or `undefined` if not found. By default unwraps
@@ -15228,10 +15423,10 @@ var require_Document = __commonJS({
        * scalar values from their surrounding node; to disable set `keepScalar` to
        * `true` (collections are always returned intact).
        */
-      getIn(path, keepScalar) {
-        if (Collection.isEmptyPath(path))
+      getIn(path2, keepScalar) {
+        if (Collection.isEmptyPath(path2))
           return !keepScalar && identity.isScalar(this.contents) ? this.contents.value : this.contents;
-        return identity.isCollection(this.contents) ? this.contents.getIn(path, keepScalar) : void 0;
+        return identity.isCollection(this.contents) ? this.contents.getIn(path2, keepScalar) : void 0;
       }
       /**
        * Checks if the document includes a value with the key `key`.
@@ -15242,10 +15437,10 @@ var require_Document = __commonJS({
       /**
        * Checks if the document includes a value at `path`.
        */
-      hasIn(path) {
-        if (Collection.isEmptyPath(path))
+      hasIn(path2) {
+        if (Collection.isEmptyPath(path2))
           return this.contents !== void 0;
-        return identity.isCollection(this.contents) ? this.contents.hasIn(path) : false;
+        return identity.isCollection(this.contents) ? this.contents.hasIn(path2) : false;
       }
       /**
        * Sets a value in this document. For `!!set`, `value` needs to be a
@@ -15262,13 +15457,13 @@ var require_Document = __commonJS({
        * Sets a value in this document. For `!!set`, `value` needs to be a
        * boolean to add/remove the item from the set.
        */
-      setIn(path, value) {
-        if (Collection.isEmptyPath(path)) {
+      setIn(path2, value) {
+        if (Collection.isEmptyPath(path2)) {
           this.contents = value;
         } else if (this.contents == null) {
-          this.contents = Collection.collectionFromPath(this.schema, Array.from(path), value);
+          this.contents = Collection.collectionFromPath(this.schema, Array.from(path2), value);
         } else if (assertCollection(this.contents)) {
-          this.contents.setIn(path, value);
+          this.contents.setIn(path2, value);
         }
       }
       /**
@@ -15316,11 +15511,11 @@ var require_Document = __commonJS({
           throw new Error(`With a null YAML version, the { schema: Schema } option is required`);
       }
       // json & jsonArg are only used from toJSON()
-      toJS({ json: json3, jsonArg, mapAsMap, maxAliasCount, onAnchor, reviver } = {}) {
+      toJS({ json: json4, jsonArg, mapAsMap, maxAliasCount, onAnchor, reviver } = {}) {
         const ctx = {
           anchors: /* @__PURE__ */ new Map(),
           doc: this,
-          keep: !json3,
+          keep: !json4,
           mapAsMap: mapAsMap === true,
           mapKeyWarned: false,
           maxAliasCount: typeof maxAliasCount === "number" ? maxAliasCount : 100
@@ -17224,9 +17419,9 @@ var require_cst_visit = __commonJS({
     visit2.BREAK = BREAK;
     visit2.SKIP = SKIP2;
     visit2.REMOVE = REMOVE;
-    visit2.itemAtPath = (cst, path) => {
+    visit2.itemAtPath = (cst, path2) => {
       let item = cst;
-      for (const [field, index] of path) {
+      for (const [field, index] of path2) {
         const tok = item?.[field];
         if (tok && "items" in tok) {
           item = tok.items[index];
@@ -17235,23 +17430,23 @@ var require_cst_visit = __commonJS({
       }
       return item;
     };
-    visit2.parentCollection = (cst, path) => {
-      const parent = visit2.itemAtPath(cst, path.slice(0, -1));
-      const field = path[path.length - 1][0];
+    visit2.parentCollection = (cst, path2) => {
+      const parent = visit2.itemAtPath(cst, path2.slice(0, -1));
+      const field = path2[path2.length - 1][0];
       const coll = parent?.[field];
       if (coll && "items" in coll)
         return coll;
       throw new Error("Parent collection not found");
     };
-    function _visit(path, item, visitor) {
-      let ctrl = visitor(item, path);
+    function _visit(path2, item, visitor) {
+      let ctrl = visitor(item, path2);
       if (typeof ctrl === "symbol")
         return ctrl;
       for (const field of ["key", "value"]) {
         const token = item[field];
         if (token && "items" in token) {
           for (let i = 0; i < token.items.length; ++i) {
-            const ci = _visit(Object.freeze(path.concat([[field, i]])), token.items[i], visitor);
+            const ci = _visit(Object.freeze(path2.concat([[field, i]])), token.items[i], visitor);
             if (typeof ci === "number")
               i = ci - 1;
             else if (ci === BREAK)
@@ -17262,10 +17457,10 @@ var require_cst_visit = __commonJS({
             }
           }
           if (typeof ctrl === "function" && field === "key")
-            ctrl = ctrl(item, path);
+            ctrl = ctrl(item, path2);
         }
       }
-      return typeof ctrl === "function" ? ctrl(item, path) : ctrl;
+      return typeof ctrl === "function" ? ctrl(item, path2) : ctrl;
     }
     exports2.visit = visit2;
   }
@@ -19022,19 +19217,19 @@ function unsetFields(config4) {
 }
 function loadProjectConfig(repoRoot) {
   for (const name of PROJECT_FILE_NAMES) {
-    const path = (0, import_node_path10.join)(repoRoot, name);
-    if (!(0, import_node_fs11.existsSync)(path))
+    const path2 = (0, import_node_path13.join)(repoRoot, name);
+    if (!(0, import_node_fs15.existsSync)(path2))
       continue;
     try {
-      const raw = (0, import_node_fs11.readFileSync)(path, "utf8");
+      const raw = (0, import_node_fs15.readFileSync)(path2, "utf8");
       const data = (0, import_yaml.parse)(raw) ?? {};
       const config4 = ProjectConfigSchema.parse(data);
-      return { status: "loaded", path, config: config4, unset: unsetFields(config4) };
+      return { status: "loaded", path: path2, config: config4, unset: unsetFields(config4) };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
         status: "invalid",
-        path,
+        path: path2,
         errors: [message],
         config: DEFAULTS,
         unset: unsetFields(DEFAULTS)
@@ -19045,14 +19240,14 @@ function loadProjectConfig(repoRoot) {
     status: "missing",
     config: DEFAULTS,
     unset: unsetFields(DEFAULTS),
-    suggestedPath: (0, import_node_path10.join)(repoRoot, ".project")
+    suggestedPath: (0, import_node_path13.join)(repoRoot, ".project")
   };
 }
-function readJson3(path) {
-  if (!(0, import_node_fs11.existsSync)(path))
+function readJson3(path2) {
+  if (!(0, import_node_fs15.existsSync)(path2))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs11.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs15.readFileSync)(path2, "utf8"));
   } catch {
     return void 0;
   }
@@ -19060,7 +19255,7 @@ function readJson3(path) {
 function inferProjectConfig(repoRoot) {
   const existing = loadProjectConfig(repoRoot);
   const notes = [];
-  const pkg = readJson3((0, import_node_path10.join)(repoRoot, "package.json"));
+  const pkg = readJson3((0, import_node_path13.join)(repoRoot, "package.json"));
   const scripts = pkg && typeof pkg.scripts === "object" && pkg.scripts ? pkg.scripts : {};
   const stack = [];
   if (pkg) {
@@ -19087,19 +19282,19 @@ function inferProjectConfig(repoRoot) {
 }
 function writeProjectConfig(repoRoot, yamlOrConfig) {
   requireMutationLease();
-  const path = (0, import_node_path10.join)(repoRoot, ".project");
+  const path2 = (0, import_node_path13.join)(repoRoot, ".project");
   const yaml2 = typeof yamlOrConfig === "string" ? yamlOrConfig.endsWith("\n") ? yamlOrConfig : `${yamlOrConfig}
 ` : `${(0, import_yaml.stringify)(yamlOrConfig).trimEnd()}
 `;
-  (0, import_node_fs11.writeFileSync)(path, yaml2);
-  return path;
+  (0, import_node_fs15.writeFileSync)(path2, yaml2);
+  return path2;
 }
-var import_node_fs11, import_node_path10, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
+var import_node_fs15, import_node_path13, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
 var init_dist2 = __esm({
   "node_modules/@praxis/project-config/dist/index.js"() {
     init_dist();
-    import_node_fs11 = require("node:fs");
-    import_node_path10 = require("node:path");
+    import_node_fs15 = require("node:fs");
+    import_node_path13 = require("node:path");
     import_yaml = __toESM(require_dist2(), 1);
     init_zod();
     ProjectConfigSchema = external_exports.object({
@@ -19269,7 +19464,7 @@ var init_config = __esm({
 
 // node_modules/@praxis/jira/dist/http.js
 function parseJiraSuccessBody(opts) {
-  const { method, path, status, contentType, bodyText } = opts;
+  const { method, path: path2, status, contentType, bodyText } = opts;
   if (status === 204 || status === 205) {
     return { ok: true, value: void 0 };
   }
@@ -19277,8 +19472,8 @@ function parseJiraSuccessBody(opts) {
   if (!trimmed) {
     return { ok: true, value: void 0 };
   }
-  const json3 = contentType.toLowerCase().includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[");
-  if (!json3) {
+  const json4 = contentType.toLowerCase().includes("json") || trimmed.startsWith("{") || trimmed.startsWith("[");
+  if (!json4) {
     return { ok: true, value: trimmed };
   }
   try {
@@ -19286,7 +19481,7 @@ function parseJiraSuccessBody(opts) {
   } catch {
     return {
       ok: false,
-      message: `Jira response JSON parse failed: method=${method} path=${path} status=${status}`
+      message: `Jira response JSON parse failed: method=${method} path=${path2} status=${status}`
     };
   }
 }
@@ -19348,10 +19543,10 @@ function contextualTransportError(err, ctx) {
   const safe = msg.replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
   return new Error(`Jira ${ctx.provider} ${ctx.method} ${ctx.path} failed after ${ctx.attempt} attempt(s)${code ? ` code=${code}` : ""}: ${safe}`);
 }
-async function readJiraResponseJson(res, method, path) {
+async function readJiraResponseJson(res, method, path2) {
   if (!res.ok) {
     const text2 = await res.text().catch(() => "");
-    throw new Error(`Jira ${method} ${path} failed: HTTP ${res.status} ${text2.slice(0, 400)}`);
+    throw new Error(`Jira ${method} ${path2} failed: HTTP ${res.status} ${text2.slice(0, 400)}`);
   }
   if (res.status === 204 || res.status === 205) {
     return void 0;
@@ -19359,7 +19554,7 @@ async function readJiraResponseJson(res, method, path) {
   const text = await res.text();
   const parsed = parseJiraSuccessBody({
     method,
-    path,
+    path: path2,
     status: res.status,
     contentType: res.headers.get("content-type") ?? "",
     bodyText: text
@@ -19865,8 +20060,8 @@ var init_rest_provider = __esm({
           "Content-Type": "application/json"
         };
       }
-      url(path) {
-        return `${this.config.baseUrl}${path}`;
+      url(path2) {
+        return `${this.config.baseUrl}${path2}`;
       }
       lastAuthHeader() {
         return String(this.headers().Authorization);
@@ -19875,14 +20070,14 @@ var init_rest_provider = __esm({
         const timeout = typeof AbortSignal.timeout === "function" ? AbortSignal.timeout(this.timeoutMs) : void 0;
         return mergeAbortSignals([this.abortSignal, timeout]);
       }
-      async requestJson(method, path, body2) {
+      async requestJson(method, path2, body2) {
         const maxAttempts = 3;
         const write = method !== "GET" && method !== "HEAD";
         const retryWrites = method === "PUT";
         let lastErr;
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
           try {
-            const res = await this.fetchImpl(this.url(path), {
+            const res = await this.fetchImpl(this.url(path2), {
               method,
               headers: this.headers(),
               body: body2 === void 0 ? void 0 : JSON.stringify(body2),
@@ -19892,14 +20087,14 @@ var init_rest_provider = __esm({
               await sleepBackoff(attempt, res.headers.get("retry-after"));
               continue;
             }
-            return await readJiraResponseJson(res, method, path);
+            return await readJiraResponseJson(res, method, path2);
           } catch (err) {
             lastErr = err;
             if (isAbortError(err)) {
               throw contextualTransportError(err, {
                 provider: this.flavor,
                 method,
-                path,
+                path: path2,
                 attempt
               });
             }
@@ -19910,7 +20105,7 @@ var init_rest_provider = __esm({
             throw contextualTransportError(err, {
               provider: this.flavor,
               method,
-              path,
+              path: path2,
               attempt
             });
           }
@@ -19918,7 +20113,7 @@ var init_rest_provider = __esm({
         throw contextualTransportError(lastErr, {
           provider: this.flavor,
           method,
-          path,
+          path: path2,
           attempt: maxAttempts
         });
       }
@@ -20289,7 +20484,7 @@ var init_dist3 = __esm({
 
 // node_modules/@praxis/jira/dist/mutation-auth.js
 function jiraMutation(repo, spec) {
-  const root = (0, import_node_path11.resolve)(repo);
+  const root = (0, import_node_path14.resolve)(repo);
   return {
     repo: root,
     operation: spec.operation,
@@ -20306,24 +20501,24 @@ function authorizeJira(request, write) {
     return write();
   throw new ApprovalError("APPROVAL_REQUIRED", `${request.action} changes Jira and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was sent.`);
 }
-var import_node_path11;
+var import_node_path14;
 var init_mutation_auth = __esm({
   "node_modules/@praxis/jira/dist/mutation-auth.js"() {
-    import_node_path11 = require("node:path");
+    import_node_path14 = require("node:path");
     init_dist();
   }
 });
 
 // node_modules/@praxis/jira/dist/role-policy.js
 function assertRole(role, op) {
-  if (!ALLOWED[role].has(op)) {
+  if (!ALLOWED2[role].has(op)) {
     throw new Error(`role-policy deny: ${role} cannot ${op}`);
   }
 }
-var ALLOWED;
+var ALLOWED2;
 var init_role_policy = __esm({
   "node_modules/@praxis/jira/dist/role-policy.js"() {
-    ALLOWED = {
+    ALLOWED2 = {
       ba: /* @__PURE__ */ new Set([
         "read-epic",
         "read-issue",
@@ -20362,21 +20557,21 @@ var init_role_policy = __esm({
 
 // node_modules/@praxis/jira/dist/atomic-json.js
 function writeJsonAtomic(filePath, value) {
-  (0, import_node_fs12.mkdirSync)((0, import_node_path12.dirname)(filePath), { recursive: true });
+  (0, import_node_fs16.mkdirSync)((0, import_node_path15.dirname)(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  (0, import_node_fs12.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs16.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs12.renameSync)(tmp, filePath);
+  (0, import_node_fs16.renameSync)(tmp, filePath);
 }
 function readJsonFile(filePath, artifactType) {
-  if (!(0, import_node_fs12.existsSync)(filePath)) {
+  if (!(0, import_node_fs16.existsSync)(filePath)) {
     return {
       ok: false,
       reason: "missing",
       message: `${artifactType} unavailable (${filePath})`
     };
   }
-  const raw = (0, import_node_fs12.readFileSync)(filePath, "utf8");
+  const raw = (0, import_node_fs16.readFileSync)(filePath, "utf8");
   if (!raw.trim()) {
     return {
       ok: false,
@@ -20394,17 +20589,17 @@ function readJsonFile(filePath, artifactType) {
     };
   }
 }
-var import_node_fs12, import_node_path12;
+var import_node_fs16, import_node_path15;
 var init_atomic_json = __esm({
   "node_modules/@praxis/jira/dist/atomic-json.js"() {
-    import_node_fs12 = require("node:fs");
-    import_node_path12 = require("node:path");
+    import_node_fs16 = require("node:fs");
+    import_node_path15 = require("node:path");
   }
 });
 
 // node_modules/@praxis/jira/dist/write-journal.js
 function writeJournalPath(repo) {
-  return (0, import_node_path13.join)(repo, ".praxis-jira", "write-journal.json");
+  return (0, import_node_path16.join)(repo, ".praxis-jira", "write-journal.json");
 }
 function loadWriteJournal(repo) {
   const parsed = readJsonFile(writeJournalPath(repo), "jira-write-journal");
@@ -20446,10 +20641,10 @@ function advanceWriteOp(repo, operationId, patch) {
   };
   return upsertWriteOp(repo, next);
 }
-var import_node_path13;
+var import_node_path16;
 var init_write_journal = __esm({
   "node_modules/@praxis/jira/dist/write-journal.js"() {
-    import_node_path13 = require("node:path");
+    import_node_path16 = require("node:path");
     init_atomic_json();
   }
 });
@@ -20632,18 +20827,18 @@ var init_managed_scope = __esm({
 
 // node_modules/@praxis/jira/dist/work-package-local.js
 function listDirs(abs) {
-  if (!(0, import_node_fs13.existsSync)(abs))
+  if (!(0, import_node_fs17.existsSync)(abs))
     return [];
-  return (0, import_node_fs13.readdirSync)(abs).map((n) => (0, import_node_path14.join)(abs, n)).filter((p) => {
+  return (0, import_node_fs17.readdirSync)(abs).map((n) => (0, import_node_path17.join)(abs, n)).filter((p) => {
     try {
-      return (0, import_node_fs13.statSync)(p).isDirectory();
+      return (0, import_node_fs17.statSync)(p).isDirectory();
     } catch {
       return false;
     }
   });
 }
-function readIf(path) {
-  return (0, import_node_fs13.existsSync)(path) ? (0, import_node_fs13.readFileSync)(path, "utf8") : void 0;
+function readIf(path2) {
+  return (0, import_node_fs17.existsSync)(path2) ? (0, import_node_fs17.readFileSync)(path2, "utf8") : void 0;
 }
 function extractMermaid(text) {
   const out = [];
@@ -20661,7 +20856,7 @@ function discoverLocalWorkPackages(repo) {
       return;
     const cur = byId.get(id) ?? {
       id,
-      manifestDir: (0, import_node_path14.join)(repo, "work-packages", id),
+      manifestDir: (0, import_node_path17.join)(repo, "work-packages", id),
       mermaid: []
     };
     if (kind === "design")
@@ -20672,24 +20867,24 @@ function discoverLocalWorkPackages(repo) {
       cur.manifestDir = abs;
     byId.set(id, cur);
   };
-  for (const p of listDirs((0, import_node_path14.join)(repo, "design")))
+  for (const p of listDirs((0, import_node_path17.join)(repo, "design")))
     take(p, "design");
-  for (const p of listDirs((0, import_node_path14.join)(repo, "wp")))
+  for (const p of listDirs((0, import_node_path17.join)(repo, "wp")))
     take(p, "canon");
-  for (const p of listDirs((0, import_node_path14.join)(repo, "work-packages")))
+  for (const p of listDirs((0, import_node_path17.join)(repo, "work-packages")))
     take(p, "manifest");
   for (const wp of byId.values()) {
     const root = wp.designDir ?? wp.canonWpDir ?? wp.manifestDir;
-    const spec = (0, import_node_path14.join)(root, "change-spec.json");
-    const handoff4 = (0, import_node_path14.join)(root, "architect-developer.handoff.json");
-    wp.changeSpecPath = (0, import_node_fs13.existsSync)(spec) ? spec : void 0;
-    wp.handoffPath = (0, import_node_fs13.existsSync)(handoff4) ? handoff4 : void 0;
-    wp.indexMd = readIf((0, import_node_path14.join)(root, "index.md"));
+    const spec = (0, import_node_path17.join)(root, "change-spec.json");
+    const handoff4 = (0, import_node_path17.join)(root, "architect-developer.handoff.json");
+    wp.changeSpecPath = (0, import_node_fs17.existsSync)(spec) ? spec : void 0;
+    wp.handoffPath = (0, import_node_fs17.existsSync)(handoff4) ? handoff4 : void 0;
+    wp.indexMd = readIf((0, import_node_path17.join)(root, "index.md"));
     const blob = [
       wp.indexMd ?? "",
-      readIf((0, import_node_path14.join)(root, "decisions.md")) ?? "",
-      readIf((0, import_node_path14.join)(root, "nfr-budgets.md")) ?? "",
-      readIf((0, import_node_path14.join)(root, "contracts.md")) ?? ""
+      readIf((0, import_node_path17.join)(root, "decisions.md")) ?? "",
+      readIf((0, import_node_path17.join)(root, "nfr-budgets.md")) ?? "",
+      readIf((0, import_node_path17.join)(root, "contracts.md")) ?? ""
     ].join("\n");
     wp.mermaid = extractMermaid(blob);
   }
@@ -20709,11 +20904,11 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   if (byId)
     return byId;
   for (const w of all) {
-    const manifestPath = (0, import_node_path14.join)(w.manifestDir, "manifest.json");
-    if (!(0, import_node_fs13.existsSync)(manifestPath))
+    const manifestPath = (0, import_node_path17.join)(w.manifestDir, "manifest.json");
+    if (!(0, import_node_fs17.existsSync)(manifestPath))
       continue;
     try {
-      const m = JSON.parse((0, import_node_fs13.readFileSync)(manifestPath, "utf8"));
+      const m = JSON.parse((0, import_node_fs17.readFileSync)(manifestPath, "utf8"));
       if (m.jiraIssueKey === idOrKey || m.id === idOrKey)
         return w;
     } catch {
@@ -20722,24 +20917,24 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   return void 0;
 }
 function writeWpManifest(repo, wp) {
-  const dir = (0, import_node_path14.join)(repo, "work-packages", wp.id);
-  (0, import_node_fs13.mkdirSync)(dir, { recursive: true });
-  const path = (0, import_node_path14.join)(dir, "manifest.json");
-  (0, import_node_fs13.writeFileSync)(path, `${JSON.stringify(wp, null, 2)}
+  const dir = (0, import_node_path17.join)(repo, "work-packages", wp.id);
+  (0, import_node_fs17.mkdirSync)(dir, { recursive: true });
+  const path2 = (0, import_node_path17.join)(dir, "manifest.json");
+  (0, import_node_fs17.writeFileSync)(path2, `${JSON.stringify(wp, null, 2)}
 `);
-  return path;
+  return path2;
 }
 function readWpManifest(repo, id) {
-  const path = (0, import_node_path14.join)(repo, "work-packages", id, "manifest.json");
-  if (!(0, import_node_fs13.existsSync)(path))
+  const path2 = (0, import_node_path17.join)(repo, "work-packages", id, "manifest.json");
+  if (!(0, import_node_fs17.existsSync)(path2))
     return void 0;
-  return JSON.parse((0, import_node_fs13.readFileSync)(path, "utf8"));
+  return JSON.parse((0, import_node_fs17.readFileSync)(path2, "utf8"));
 }
-var import_node_fs13, import_node_path14, WP_ID_RE;
+var import_node_fs17, import_node_path17, WP_ID_RE;
 var init_work_package_local = __esm({
   "node_modules/@praxis/jira/dist/work-package-local.js"() {
-    import_node_fs13 = require("node:fs");
-    import_node_path14 = require("node:path");
+    import_node_fs17 = require("node:fs");
+    import_node_path17 = require("node:path");
     WP_ID_RE = /^WP-\d{8}-\d+$/;
   }
 });
@@ -20785,13 +20980,13 @@ function firstMarkdownHeading(md) {
   }
   return void 0;
 }
-function readText(path) {
-  if (!path || !(0, import_node_fs14.existsSync)(path))
+function readText(path2) {
+  if (!path2 || !(0, import_node_fs18.existsSync)(path2))
     return void 0;
-  return (0, import_node_fs14.readFileSync)(path, "utf8");
+  return (0, import_node_fs18.readFileSync)(path2, "utf8");
 }
-function readJson4(path) {
-  const raw = readText(path);
+function readJson4(path2) {
+  const raw = readText(path2);
   if (!raw)
     return void 0;
   try {
@@ -20841,10 +21036,10 @@ function jiraWpSummary(id, title) {
   return `[${id}] ${title}`;
 }
 function readNormalizedWorkPackage(repo, local, opts) {
-  const designIndex = local.designDir ? readText((0, import_node_path15.join)(local.designDir, "index.md")) : void 0;
-  const canonIndex = local.canonWpDir ? readText((0, import_node_path15.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path15.join)(repo, "wp", local.id, "index.md"));
-  const manifest = readJson4((0, import_node_path15.join)(local.manifestDir, "manifest.json"));
-  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path15.join)(local.designDir, "change-spec.json") : void 0);
+  const designIndex = local.designDir ? readText((0, import_node_path18.join)(local.designDir, "index.md")) : void 0;
+  const canonIndex = local.canonWpDir ? readText((0, import_node_path18.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path18.join)(repo, "wp", local.id, "index.md"));
+  const manifest = readJson4((0, import_node_path18.join)(local.manifestDir, "manifest.json"));
+  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path18.join)(local.designDir, "change-spec.json") : void 0);
   const spec = readJson4(specPath);
   const fm = {
     ...parseSimpleFrontmatter(splitFrontmatter(designIndex ?? "").frontmatter),
@@ -20922,11 +21117,11 @@ function selectArchitectWorkPackages(opts) {
   }
   return { selected: selected ? [selected] : [], inspected };
 }
-var import_node_fs14, import_node_path15, INVALID_WP_TITLES, WorkPackageScopeError;
+var import_node_fs18, import_node_path18, INVALID_WP_TITLES, WorkPackageScopeError;
 var init_work_package_read = __esm({
   "node_modules/@praxis/jira/dist/work-package-read.js"() {
-    import_node_fs14 = require("node:fs");
-    import_node_path15 = require("node:path");
+    import_node_fs18 = require("node:fs");
+    import_node_path18 = require("node:path");
     init_work_package_local();
     INVALID_WP_TITLES = /* @__PURE__ */ new Set(["", "---", "-", "work package", "untitled"]);
     WorkPackageScopeError = class extends Error {
@@ -21054,9 +21249,9 @@ async function ensureManagedComment(provider, storyKey, body2, dryRun) {
       return { action: "UPDATE", commentId: existingId };
     }
   }
-  const created = await provider.addComment(storyKey, rendered);
-  await provider.setIssueProperty(storyKey, ARCH_COMMENT_PROP, created.id);
-  return { action: "CREATE", commentId: created.id };
+  const created2 = await provider.addComment(storyKey, rendered);
+  await provider.setIssueProperty(storyKey, ARCH_COMMENT_PROP, created2.id);
+  return { action: "CREATE", commentId: created2.id };
 }
 async function architectMaterialize(opts) {
   if (!opts.dryRun && !hasMutationLease()) {
@@ -21198,7 +21393,7 @@ ${usefulMermaid[0]}
     let wpKey = existing;
     if (!existing && !opts.dryRun) {
       assertRole("architect", "create-work-package");
-      const created = await opts.provider.createIssue({
+      const created2 = await opts.provider.createIssue({
         summary: title,
         issueType: opts.provider.config.taskType,
         issueTypeId: wpTypeId || void 0,
@@ -21206,20 +21401,20 @@ ${usefulMermaid[0]}
         labels,
         description: opts.provider.renderDescription(textDocument(designSummary(wpNorm, members4)))
       });
-      wpKey = created.key;
-      await opts.provider.setIssueProperty(created.key, ARTIFACT_PROP, artifactId);
-      await opts.provider.setIssueProperty(created.key, WP_PROP, {
+      wpKey = created2.key;
+      await opts.provider.setIssueProperty(created2.key, ARTIFACT_PROP, artifactId);
+      await opts.provider.setIssueProperty(created2.key, WP_PROP, {
         id: local.id
       });
       for (const storyKey of members4) {
-        await opts.provider.createIssueLink(created.key, storyKey, "Relates");
+        await opts.provider.createIssueLink(created2.key, storyKey, "Relates");
         plan.push({
           action: "LINK",
           kind: "work-package",
           artifactId,
-          jiraIssueKey: created.key,
+          jiraIssueKey: created2.key,
           localWorkPackageId: local.id,
-          summary: `${created.key} <-> ${storyKey}`
+          summary: `${created2.key} <-> ${storyKey}`
         });
       }
     } else if (!existing && opts.dryRun) {
@@ -21270,8 +21465,8 @@ ${usefulMermaid[0]}
       await opts.provider.writePraxisState(wpKey, {
         lifecycle: "ready-for-development"
       });
-      const handoffPath2 = local.handoffPath ?? (0, import_node_path16.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
-      const prev = (0, import_node_fs15.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs15.readFileSync)(handoffPath2, "utf8")) : {};
+      const handoffPath2 = local.handoffPath ?? (0, import_node_path19.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
+      const prev = (0, import_node_fs19.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs19.readFileSync)(handoffPath2, "utf8")) : {};
       writeJsonAtomic(handoffPath2, {
         ...prev,
         contract: prev.contract ?? "architect.developer.handoff",
@@ -21335,11 +21530,11 @@ ${usefulMermaid[0]}
     outOfScopeWorkPackages
   };
 }
-var import_node_fs15, import_node_path16, WP_PROP, ARCH_COMMENT_PROP;
+var import_node_fs19, import_node_path19, WP_PROP, ARCH_COMMENT_PROP;
 var init_architect_apply = __esm({
   "node_modules/@praxis/jira/dist/architect-apply.js"() {
-    import_node_fs15 = require("node:fs");
-    import_node_path16 = require("node:path");
+    import_node_fs19 = require("node:fs");
+    import_node_path19 = require("node:path");
     init_rich_text();
     init_role_policy();
     init_managed_scope();
@@ -21378,7 +21573,7 @@ var init_artifact_id = __esm({
 
 // node_modules/@praxis/jira/dist/ba-write.js
 function contentFingerprint(spec) {
-  return (0, import_node_crypto10.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto12.createHash)("sha256").update(JSON.stringify({
     summary: spec.summary,
     userStory: spec.userStory,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -21607,10 +21802,10 @@ async function planAndApplyBaStories(opts) {
     flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey)
   };
 }
-var import_node_crypto10;
+var import_node_crypto12;
 var init_ba_write = __esm({
   "node_modules/@praxis/jira/dist/ba-write.js"() {
-    import_node_crypto10 = require("node:crypto");
+    import_node_crypto12 = require("node:crypto");
     init_artifact_id();
     init_managed_scope();
     init_write_journal();
@@ -21735,11 +21930,11 @@ var init_legacy_adopt = __esm({
 });
 
 // node_modules/@praxis/jira/dist/developer-complete.js
-function readJson5(path) {
-  if (!(0, import_node_fs16.existsSync)(path))
+function readJson5(path2) {
+  if (!(0, import_node_fs20.existsSync)(path2))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs16.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs20.readFileSync)(path2, "utf8"));
   } catch {
     return void 0;
   }
@@ -21747,10 +21942,10 @@ function readJson5(path) {
 function loadQualityTestCommand(repo) {
   const names = [".project", ".project.yaml", ".project.yml"];
   for (const name of names) {
-    const p = (0, import_node_path17.join)(repo, name);
-    if (!(0, import_node_fs16.existsSync)(p))
+    const p = (0, import_node_path20.join)(repo, name);
+    if (!(0, import_node_fs20.existsSync)(p))
       continue;
-    const raw = (0, import_node_fs16.readFileSync)(p, "utf8");
+    const raw = (0, import_node_fs20.readFileSync)(p, "utf8");
     let inQ = false;
     for (const line of raw.split("\n")) {
       if (/^quality:\s*$/.test(line)) {
@@ -21766,10 +21961,10 @@ function loadQualityTestCommand(repo) {
         return m[1].replace(/^["']|["']$/g, "").trim();
     }
   }
-  const pkgPath = (0, import_node_path17.join)(repo, "package.json");
-  if ((0, import_node_fs16.existsSync)(pkgPath)) {
+  const pkgPath = (0, import_node_path20.join)(repo, "package.json");
+  if ((0, import_node_fs20.existsSync)(pkgPath)) {
     try {
-      const pkg = JSON.parse((0, import_node_fs16.readFileSync)(pkgPath, "utf8"));
+      const pkg = JSON.parse((0, import_node_fs20.readFileSync)(pkgPath, "utf8"));
       if (pkg.scripts?.test)
         return "npm test";
     } catch {
@@ -21802,7 +21997,7 @@ function runProjectVerification(repo) {
   if (!command) {
     throw new DeveloperCompleteError("VERIFICATION_FAILED", "no quality.test command in .project and no npm test script");
   }
-  const r = (0, import_node_child_process5.spawnSync)(command, {
+  const r = (0, import_node_child_process6.spawnSync)(command, {
     cwd: repo,
     shell: true,
     encoding: "utf8",
@@ -21816,14 +22011,14 @@ function runProjectVerification(repo) {
   return { command, exitCode, ok, stdout, timestamp, ...counts };
 }
 function completionPaths(repo, workPackageId) {
-  const design = (0, import_node_path17.join)(repo, "design", workPackageId);
-  const dev = (0, import_node_path17.join)(design, "dev");
+  const design = (0, import_node_path20.join)(repo, "design", workPackageId);
+  const dev = (0, import_node_path20.join)(design, "dev");
   return {
     designDir: design,
-    evidencePath: (0, import_node_path17.join)(dev, "completion-evidence.json"),
-    qualityHandoffPath: (0, import_node_path17.join)(dev, "quality-handoff.json"),
-    changeSpecPath: (0, import_node_path17.join)(design, "change-spec.json"),
-    architectHandoffPath: (0, import_node_path17.join)(design, "architect-developer.handoff.json")
+    evidencePath: (0, import_node_path20.join)(dev, "completion-evidence.json"),
+    qualityHandoffPath: (0, import_node_path20.join)(dev, "quality-handoff.json"),
+    changeSpecPath: (0, import_node_path20.join)(design, "change-spec.json"),
+    architectHandoffPath: (0, import_node_path20.join)(design, "architect-developer.handoff.json")
   };
 }
 function readChangeSpec(repo, id) {
@@ -21868,10 +22063,10 @@ function persistLocalComplete(opts) {
     qualityState: "pending",
     claim: opts.claim ? { ...opts.claim, state: "active", expectedState: "ready-for-qa" } : prev.claim ?? null
   });
-  const claimFile = (0, import_node_path17.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
+  const claimFile = (0, import_node_path20.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
   if (opts.claim) {
-    (0, import_node_fs16.mkdirSync)((0, import_node_path17.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-    (0, import_node_fs16.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
+    (0, import_node_fs20.mkdirSync)((0, import_node_path20.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+    (0, import_node_fs20.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
 `);
   }
   void opts.verification;
@@ -21924,7 +22119,7 @@ async function developerCompleteWp(opts) {
   const arch = readJson5(paths.architectHandoffPath) ?? {};
   const features = Array.isArray(spec.features) ? spec.features : Array.isArray(arch.features) ? arch.features : [];
   const acceptanceChecks = acceptanceFromSpec(spec);
-  (0, import_node_fs16.mkdirSync)((0, import_node_path17.join)(paths.designDir, "dev"), { recursive: true });
+  (0, import_node_fs20.mkdirSync)((0, import_node_path20.join)(paths.designDir, "dev"), { recursive: true });
   let evidence;
   let handoff4;
   try {
@@ -22040,7 +22235,7 @@ ${paths.qualityHandoffPath}`
   };
 }
 function fingerprint(value) {
-  return `sha256:${(0, import_node_crypto11.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 async function previewDeveloperCompleteRecovery(opts) {
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
@@ -22141,13 +22336,13 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto11, import_node_fs16, import_node_path17, import_node_child_process5, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto13, import_node_fs20, import_node_path20, import_node_child_process6, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
-    import_node_crypto11 = require("node:crypto");
-    import_node_fs16 = require("node:fs");
-    import_node_path17 = require("node:path");
-    import_node_child_process5 = require("node:child_process");
+    import_node_crypto13 = require("node:crypto");
+    import_node_fs20 = require("node:fs");
+    import_node_path20 = require("node:path");
+    import_node_child_process6 = require("node:child_process");
     init_dist();
     init_mutation_auth();
     init_role_policy();
@@ -22171,10 +22366,10 @@ var init_developer_complete = __esm({
 
 // node_modules/@praxis/jira/dist/quality-apply.js
 function digest(value) {
-  return (0, import_node_crypto12.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
+  return (0, import_node_crypto14.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sha256Text(text) {
-  return (0, import_node_crypto12.createHash)("sha256").update(text).digest("hex");
+  return (0, import_node_crypto14.createHash)("sha256").update(text).digest("hex");
 }
 function qualityApplyFingerprint(plan) {
   return `sha256:${digest({
@@ -22206,56 +22401,56 @@ function qualityApplyFingerprint(plan) {
   })}`;
 }
 function qualityEvidencePath(repo, workPackageId) {
-  return (0, import_node_path18.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  return (0, import_node_path21.join)(repo, "design", workPackageId, "qa", "quality-review.json");
 }
 function qualityEvidenceSidecarPath(repo, workPackageId) {
-  return (0, import_node_path18.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  return (0, import_node_path21.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
 }
 function qualityApplyPreviewPath(repo, workPackageId) {
-  return (0, import_node_path18.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
+  return (0, import_node_path21.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
 }
 function qualityApplyResultPath(repo, workPackageId) {
-  return (0, import_node_path18.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
+  return (0, import_node_path21.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
 }
 function readQualityEvidence(repo, workPackageId) {
   const p = qualityEvidencePath(repo, workPackageId);
   const alt = qualityEvidenceSidecarPath(repo, workPackageId);
-  const file2 = (0, import_node_fs17.existsSync)(p) ? p : (0, import_node_fs17.existsSync)(alt) ? alt : void 0;
+  const file2 = (0, import_node_fs21.existsSync)(p) ? p : (0, import_node_fs21.existsSync)(alt) ? alt : void 0;
   if (!file2)
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs17.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs21.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeQualityEvidence(repo, evidence) {
   const p = qualityEvidencePath(repo, evidence.workPackageId);
-  (0, import_node_fs17.mkdirSync)((0, import_node_path18.join)(p, ".."), { recursive: true });
-  (0, import_node_fs17.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs21.mkdirSync)((0, import_node_path21.join)(p, ".."), { recursive: true });
+  (0, import_node_fs21.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
 `);
   const side = qualityEvidenceSidecarPath(repo, evidence.workPackageId);
-  (0, import_node_fs17.mkdirSync)((0, import_node_path18.join)(side, ".."), { recursive: true });
-  (0, import_node_fs17.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs21.mkdirSync)((0, import_node_path21.join)(side, ".."), { recursive: true });
+  (0, import_node_fs21.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
 `);
   return p;
 }
 function liveSnapshotDigest(repo, files) {
   const uniq = [...new Set((files ?? []).map((f) => f.path).filter(Boolean))].sort();
   const entries = uniq.map((rel2) => {
-    const abs = (0, import_node_path18.join)(repo, rel2);
-    if (!(0, import_node_fs17.existsSync)(abs))
+    const abs = (0, import_node_path21.join)(repo, rel2);
+    if (!(0, import_node_fs21.existsSync)(abs))
       return { path: rel2, missing: true };
-    return { path: rel2, sha256: sha256Text((0, import_node_fs17.readFileSync)(abs, "utf8")) };
+    return { path: rel2, sha256: sha256Text((0, import_node_fs21.readFileSync)(abs, "utf8")) };
   });
   return sha256Text(JSON.stringify(entries));
 }
 function commentBody(evidence) {
   return `${QUALITY_COMMENT_MARK} ${evidence.verdict} reviewId=${evidence.reviewId}`;
 }
-function writeJson(path, value) {
-  (0, import_node_fs17.mkdirSync)((0, import_node_path18.join)(path, ".."), { recursive: true });
-  (0, import_node_fs17.writeFileSync)(path, `${JSON.stringify(value, null, 2)}
+function writeJson(path2, value) {
+  (0, import_node_fs21.mkdirSync)((0, import_node_path21.join)(path2, ".."), { recursive: true });
+  (0, import_node_fs21.writeFileSync)(path2, `${JSON.stringify(value, null, 2)}
 `);
 }
 function propertyAction(wpKey, propertyKey, intendedValue) {
@@ -22435,10 +22630,10 @@ async function existingBugKey(provider, fingerprint2) {
 }
 function readQualityApplyResult(repo, workPackageId) {
   const p = qualityApplyResultPath(repo, workPackageId);
-  if (!(0, import_node_fs17.existsSync)(p))
+  if (!(0, import_node_fs21.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs17.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs21.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
@@ -22522,10 +22717,10 @@ async function applyQualityReview(opts) {
     throw new QualityApplyError("QUALITY_REVIEW_STALE", "implementation snapshot changed; run a new Quality Review");
   }
   const previewFile = qualityApplyPreviewPath(opts.repo, opts.workPackageId);
-  if (!(0, import_node_fs17.existsSync)(previewFile)) {
+  if (!(0, import_node_fs21.existsSync)(previewFile)) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "no saved apply preview; re-run apply preview");
   }
-  const saved = JSON.parse((0, import_node_fs17.readFileSync)(previewFile, "utf8"));
+  const saved = JSON.parse((0, import_node_fs21.readFileSync)(previewFile, "utf8"));
   if (saved.previewFingerprint !== opts.previewFingerprint) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "previewFingerprint is stale; re-run apply preview");
   }
@@ -22656,8 +22851,8 @@ async function applyQualityReview(opts) {
           mark(action.id);
           continue;
         }
-        const created = await opts.provider.addComment(wpKey, opts.provider.renderDescription(textDocument(commentBody(evidence))));
-        await opts.provider.setIssueProperty(wpKey, QUALITY_COMMENT_PROP, created.id);
+        const created2 = await opts.provider.addComment(wpKey, opts.provider.renderDescription(textDocument(commentBody(evidence))));
+        await opts.provider.setIssueProperty(wpKey, QUALITY_COMMENT_PROP, created2.id);
         advanceWriteOp(opts.repo, opId(evidence, action), { state: "committed", jiraIssueKey: wpKey });
         mark(action.id);
         continue;
@@ -22702,8 +22897,8 @@ async function applyQualityReview(opts) {
       if (action.kind === "manifest") {
         lifecycle = "reconciling";
         const local = resolveLocalWorkPackage(opts.repo, evidence.workPackageId);
-        const manifestFile = local ? (0, import_node_path18.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path18.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
-        if (!local || !(0, import_node_fs17.existsSync)(manifestFile)) {
+        const manifestFile = local ? (0, import_node_path21.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path21.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
+        if (!local || !(0, import_node_fs21.existsSync)(manifestFile)) {
           errors.push(`QUALITY_MANIFEST_MISSING: cannot update ${evidence.workPackageId}`);
           return persistPartial({ code: "QUALITY_MANIFEST_MISSING" });
         }
@@ -22732,7 +22927,7 @@ async function applyQualityReview(opts) {
           continue;
         }
         const meta5 = await opts.provider.discoverMetadata();
-        const created = await opts.provider.createIssue({
+        const created2 = await opts.provider.createIssue({
           summary: action.bugSummary ?? "Quality finding",
           issueType: opts.provider.config.bugType,
           issueTypeId: meta5.bugTypeId,
@@ -22743,16 +22938,16 @@ async function applyQualityReview(opts) {
             { heading: "Finding", body: action.bugSummary ?? "" }
           ]))
         });
-        await opts.provider.setIssueProperty(created.key, ARTIFACT_PROP, `bug:${action.bugFingerprint}`);
-        await opts.provider.setIssueProperty(created.key, "praxis.managed", true);
-        await opts.provider.setIssueProperty(created.key, "praxis.role", "qa");
-        await opts.provider.setIssueProperty(created.key, "praxis.blocking", true);
-        await opts.provider.createIssueLink(wpKey, created.key, "Relates");
+        await opts.provider.setIssueProperty(created2.key, ARTIFACT_PROP, `bug:${action.bugFingerprint}`);
+        await opts.provider.setIssueProperty(created2.key, "praxis.managed", true);
+        await opts.provider.setIssueProperty(created2.key, "praxis.role", "qa");
+        await opts.provider.setIssueProperty(created2.key, "praxis.blocking", true);
+        await opts.provider.createIssueLink(wpKey, created2.key, "Relates");
         const story = evidence.canonicalStoryKeys?.[0];
         if (story)
-          await opts.provider.createIssueLink(story, created.key, "Relates");
-        bugsCreated.push(created.key);
-        advanceWriteOp(opts.repo, opId(evidence, action), { state: "committed", jiraIssueKey: created.key });
+          await opts.provider.createIssueLink(story, created2.key, "Relates");
+        bugsCreated.push(created2.key);
+        advanceWriteOp(opts.repo, opId(evidence, action), { state: "committed", jiraIssueKey: created2.key });
         mark(action.id);
         continue;
       }
@@ -22848,12 +23043,12 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto12, import_node_fs17, import_node_path18, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto14, import_node_fs21, import_node_path21, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
-    import_node_crypto12 = require("node:crypto");
-    import_node_fs17 = require("node:fs");
-    import_node_path18 = require("node:path");
+    import_node_crypto14 = require("node:crypto");
+    import_node_fs21 = require("node:fs");
+    import_node_path21 = require("node:path");
     init_mutation_auth();
     init_managed_scope();
     init_rich_text();
@@ -23058,7 +23253,7 @@ var init_quality_lifecycle_status = __esm({
 
 // node_modules/@praxis/jira/dist/workflows.js
 function loadJournal(repo) {
-  const parsed = readJsonFile((0, import_node_path19.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
+  const parsed = readJsonFile((0, import_node_path22.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
   if (!parsed.ok) {
     if (parsed.reason === "missing")
       return [];
@@ -23067,7 +23262,7 @@ function loadJournal(repo) {
   return parsed.value;
 }
 function saveJournal(repo, journal) {
-  writeJsonAtomic((0, import_node_path19.join)(repo, ".praxis-jira", "journal.json"), journal);
+  writeJsonAtomic((0, import_node_path22.join)(repo, ".praxis-jira", "journal.json"), journal);
 }
 function record4(repo, entry) {
   const journal = loadJournal(repo);
@@ -23078,7 +23273,7 @@ function record4(repo, entry) {
   saveJournal(repo, journal);
 }
 function proposalPath(repo, epicKey) {
-  return (0, import_node_path19.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
+  return (0, import_node_path22.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
 }
 function loadBaProposal(repo, epicKey) {
   const parsed = readJsonFile(proposalPath(repo, epicKey), "jira.ba.proposal");
@@ -23148,9 +23343,9 @@ async function ensureBaHandoffComment(provider, epicKey, canonical) {
   await provider.addComment(epicKey, provider.renderDescription(textDocument(`Praxis BA handoff ready. Stories: ${canonical.join(", ") || "none"}`)));
 }
 async function persistPreview(repo, epicKey, payload, planText) {
-  const dir = (0, import_node_path19.join)(repo, ".praxis-jira", "previews");
-  writeJsonAtomic((0, import_node_path19.join)(dir, `${epicKey}.json`), payload);
-  (0, import_node_fs18.writeFileSync)((0, import_node_path19.join)(dir, `${epicKey}.plan.txt`), `${planText}
+  const dir = (0, import_node_path22.join)(repo, ".praxis-jira", "previews");
+  writeJsonAtomic((0, import_node_path22.join)(dir, `${epicKey}.json`), payload);
+  (0, import_node_fs22.writeFileSync)((0, import_node_path22.join)(dir, `${epicKey}.plan.txt`), `${planText}
 `);
 }
 async function baAnalyzeEpic(opts) {
@@ -23256,7 +23451,7 @@ CREATE:
     flags
   }));
   const canonical = result.applied.filter((a) => a.action !== "SUPERSEDED" && a.jiraIssueKey).map((a) => a.jiraIssueKey).filter((k, i, arr) => arr.indexOf(k) === i);
-  const created = result.applied.filter((a) => a.action === "CREATE" && a.jiraIssueKey).map((a) => a.jiraIssueKey);
+  const created2 = result.applied.filter((a) => a.action === "CREATE" && a.jiraIssueKey).map((a) => a.jiraIssueKey);
   const superseded = [
     ...result.plan.filter((p) => p.action === "SUPERSEDED" && p.jiraIssueKey).map((p) => p.jiraIssueKey),
     ...adoption.status === "adopted" ? adoption.supersededKeys : []
@@ -23273,7 +23468,7 @@ CREATE:
     canonicalStoryKeys: canonical,
     supersededStoryKeys: superseded,
     requirementIds: specs.flatMap((s) => s.requirementIds),
-    baArtifacts: [(0, import_node_path19.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
+    baArtifacts: [(0, import_node_path22.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
     openQuestions: [],
     nfrs: [],
     businessRules: [],
@@ -23292,8 +23487,8 @@ CREATE:
       supersededStoryKeys: superseded,
       plan: result.plan
     }, result.planText);
-    (0, import_node_fs18.mkdirSync)((0, import_node_path19.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
-    (0, import_node_fs18.writeFileSync)((0, import_node_path19.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
+    (0, import_node_fs22.mkdirSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
+    (0, import_node_fs22.writeFileSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
 `);
   }
   if (opts.dryRun) {
@@ -23301,14 +23496,14 @@ CREATE:
       ok: true,
       handoff: handoff4,
       storyKeys: canonical,
-      created,
+      created: created2,
       plan: result.plan,
       planText: result.planText,
       proposalReady,
       migration: adoption.status === "adopted" ? "required" : "none"
     };
   }
-  const handoffPath2 = (0, import_node_path19.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
+  const handoffPath2 = (0, import_node_path22.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
   assertRole("ba", "ba-handoff");
   await opts.provider.setIssueProperty(opts.epicKey, "praxis.baHandoff", handoff4);
   await ensureBaHandoffComment(opts.provider, opts.epicKey, canonical);
@@ -23335,7 +23530,7 @@ CREATE:
     ok: true,
     handoff: handoff4,
     storyKeys: canonical,
-    created,
+    created: created2,
     plan: result.plan,
     planText: result.planText,
     proposalReady,
@@ -23377,7 +23572,7 @@ async function claimWorkPackage(opts) {
       workItemId: opts.wpKey
     }), () => claimWorkPackage(opts));
   }
-  const token = (0, import_node_crypto13.randomUUID)();
+  const token = (0, import_node_crypto15.randomUUID)();
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
     ...manifest?.storyKeys ?? [],
@@ -23447,8 +23642,8 @@ async function claimWorkPackage(opts) {
       claim: claim4
     });
   }
-  (0, import_node_fs18.mkdirSync)((0, import_node_path19.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-  (0, import_node_fs18.writeFileSync)((0, import_node_path19.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
+  (0, import_node_fs22.mkdirSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+  (0, import_node_fs22.writeFileSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
 `);
   await opts.provider.addComment(wpKey, opts.provider.renderDescription(textDocument(`Work Package claimed by ${opts.actor}`)));
   await opts.provider.writePraxisState(wpKey, { lifecycle: "claimed" });
@@ -23520,12 +23715,12 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto13, import_node_fs18, import_node_path19, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto15, import_node_fs22, import_node_path22, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
-    import_node_crypto13 = require("node:crypto");
-    import_node_fs18 = require("node:fs");
-    import_node_path19 = require("node:path");
+    import_node_crypto15 = require("node:crypto");
+    import_node_fs22 = require("node:fs");
+    import_node_path22 = require("node:path");
     init_dist();
     init_mutation_auth();
     init_role_policy();
@@ -23566,16 +23761,16 @@ var init_workflows = __esm({
 
 // node_modules/@praxis/cli/dist/identity.js
 function workItemIds(repo) {
-  const dir = (0, import_node_path20.join)(repo, ".praxis", "workflow");
+  const dir = (0, import_node_path23.join)(repo, ".praxis", "workflow");
   const ids = /* @__PURE__ */ new Set();
   try {
-    for (const name of (0, import_node_fs19.readdirSync)((0, import_node_path20.join)(dir, "items")))
+    for (const name of (0, import_node_fs23.readdirSync)((0, import_node_path23.join)(dir, "items")))
       if (name.endsWith(".json"))
         ids.add(name.slice(0, -5));
   } catch {
   }
   try {
-    const legacy = JSON.parse((0, import_node_fs19.readFileSync)((0, import_node_path20.join)(dir, "state.json"), "utf8"));
+    const legacy = JSON.parse((0, import_node_fs23.readFileSync)((0, import_node_path23.join)(dir, "state.json"), "utf8"));
     if (typeof legacy.workItem?.id === "string")
       ids.add(legacy.workItem.id);
   } catch {
@@ -23583,7 +23778,7 @@ function workItemIds(repo) {
   return [...ids];
 }
 function isWorkItemId(repo, value) {
-  return (0, import_node_fs19.existsSync)((0, import_node_path20.join)(repo, ".praxis", "workflow")) && workItemIds(repo).includes(value);
+  return (0, import_node_fs23.existsSync)((0, import_node_path23.join)(repo, ".praxis", "workflow")) && workItemIds(repo).includes(value);
 }
 function resolveWorkPackageRef(repo, value) {
   const local = resolveLocalWorkPackage(repo, value);
@@ -23604,17 +23799,17 @@ function resolveWorkPackageRef(repo, value) {
 }
 function readManifestKey(manifestDir) {
   try {
-    const manifest = JSON.parse((0, import_node_fs19.readFileSync)((0, import_node_path20.join)(manifestDir, "manifest.json"), "utf8"));
+    const manifest = JSON.parse((0, import_node_fs23.readFileSync)((0, import_node_path23.join)(manifestDir, "manifest.json"), "utf8"));
     return typeof manifest.jiraIssueKey === "string" && manifest.jiraIssueKey.length > 0 ? manifest.jiraIssueKey : null;
   } catch {
     return null;
   }
 }
-var import_node_fs19, import_node_path20, JIRA_KEY_RE;
+var import_node_fs23, import_node_path23, JIRA_KEY_RE;
 var init_identity = __esm({
   "node_modules/@praxis/cli/dist/identity.js"() {
-    import_node_fs19 = require("node:fs");
-    import_node_path20 = require("node:path");
+    import_node_fs23 = require("node:fs");
+    import_node_path23 = require("node:path");
     init_workflows();
     JIRA_KEY_RE = /^[A-Z][A-Z0-9]+-\d+$/;
   }
@@ -23735,6 +23930,9 @@ function doctorNextSteps(input2) {
     if (report.state === "partial") {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
+  }
+  if (input2.approval.mode === "approval-page") {
+    steps.push("This MCP client cannot show Praxis's approval dialog (or answers it without showing it, as the Claude Desktop Code tab does). Protected actions open the Praxis approval page in your browser instead: read the exact action there and choose Approve or Reject. The agent never receives that page's link. Anything that can operate your browser or run programs as you (a browser-automation extension, a shell) could still operate the page; set the browser for approval pages to one no agent controls (PRAXIS_APPROVAL_BROWSER).");
   }
   if (input2.approval.mode === "no-dialog") {
     steps.push("This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them. Some hosts (Claude Desktop) have their own tool-permission prompt instead of a dialog: praxis_doctor approval.client shows what yours declared, and the optional host-permission setting (docs/user-approval.md) uses that prompt with the exact plan in the tool arguments; it is weaker, because Praxis cannot see whether the prompt was shown.");
@@ -23943,7 +24141,7 @@ function gitEnv(extra) {
   };
 }
 function runGit(repo, args, opts) {
-  const r = (0, import_node_child_process6.spawnSync)("git", args, {
+  const r = (0, import_node_child_process7.spawnSync)("git", args, {
     cwd: repo,
     encoding: "utf8",
     timeout: opts?.timeoutMs ?? 3e4,
@@ -24060,16 +24258,16 @@ function splitNames(stdout) {
   return stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 function fileSha256(repo, rel2) {
-  const abs = (0, import_node_path21.join)(repo, rel2);
-  if (!(0, import_node_fs20.existsSync)(abs) || !(0, import_node_fs20.statSync)(abs).isFile())
+  const abs = (0, import_node_path24.join)(repo, rel2);
+  if (!(0, import_node_fs24.existsSync)(abs) || !(0, import_node_fs24.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto14.createHash)("sha256").update((0, import_node_fs20.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto16.createHash)("sha256").update((0, import_node_fs24.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel2) {
   const r = runGit(repo, ["show", `${rev}:${rel2}`]);
   if (r.status !== 0)
     return null;
-  return (0, import_node_crypto14.createHash)("sha256").update(r.stdout).digest("hex");
+  return (0, import_node_crypto16.createHash)("sha256").update(r.stdout).digest("hex");
 }
 function listCommitFiles(repo, rev) {
   const r = runGit(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]);
@@ -24078,16 +24276,16 @@ function listCommitFiles(repo, rev) {
   return splitNames(r.stdout);
 }
 function listHooks(repo) {
-  const dir = (0, import_node_path21.join)(repo, ".git", "hooks");
-  if (!(0, import_node_fs20.existsSync)(dir))
+  const dir = (0, import_node_path24.join)(repo, ".git", "hooks");
+  if (!(0, import_node_fs24.existsSync)(dir))
     return [];
   const out = [];
-  for (const name of (0, import_node_fs20.readdirSync)(dir)) {
+  for (const name of (0, import_node_fs24.readdirSync)(dir)) {
     if (name.endsWith(".sample"))
       continue;
-    const p = (0, import_node_path21.join)(dir, name);
+    const p = (0, import_node_path24.join)(dir, name);
     try {
-      const st = (0, import_node_fs20.statSync)(p);
+      const st = (0, import_node_fs24.statSync)(p);
       if (!st.isFile())
         continue;
       const executable = (st.mode & 73) !== 0;
@@ -24230,13 +24428,13 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto14, import_node_fs20, import_node_path21, import_node_child_process6;
+var import_node_crypto16, import_node_fs24, import_node_path24, import_node_child_process7;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
-    import_node_crypto14 = require("node:crypto");
-    import_node_fs20 = require("node:fs");
-    import_node_path21 = require("node:path");
-    import_node_child_process6 = require("node:child_process");
+    import_node_crypto16 = require("node:crypto");
+    import_node_fs24 = require("node:fs");
+    import_node_path24 = require("node:path");
+    import_node_child_process7 = require("node:child_process");
     init_redact();
     init_git_url();
     init_dist();
@@ -24261,8 +24459,8 @@ function planStaging(opts) {
   const allow = new Set(opts.allowlist.map((p) => p.replace(/^\.\//, "")));
   const selected = [];
   const rejected = [];
-  for (const path of opts.allowlist) {
-    const n = path.replace(/^\.\//, "");
+  for (const path2 of opts.allowlist) {
+    const n = path2.replace(/^\.\//, "");
     const kind = classifyPath(n);
     if (kind === "sensitive") {
       rejected.push({ path: n, allowed: false, reason: "sensitive" });
@@ -24271,8 +24469,8 @@ function planStaging(opts) {
     selected.push(n);
   }
   const foreignStaged = opts.staged.filter((p) => !allow.has(p.replace(/^\.\//, "")));
-  for (const path of [...opts.unstaged, ...opts.untracked]) {
-    const n = path.replace(/^\.\//, "");
+  for (const path2 of [...opts.unstaged, ...opts.untracked]) {
+    const n = path2.replace(/^\.\//, "");
     if (allow.has(n))
       continue;
     const kind = classifyPath(n);
@@ -24309,9 +24507,9 @@ var init_staging_policy = __esm({
 
 // node_modules/@praxis/vcs/dist/gitignore-policy.js
 function previewGitignore(repo) {
-  const path = (0, import_node_path22.join)(repo, ".gitignore");
-  const exists = (0, import_node_fs21.existsSync)(path);
-  const current = exists ? (0, import_node_fs21.readFileSync)(path, "utf8") : "";
+  const path2 = (0, import_node_path25.join)(repo, ".gitignore");
+  const exists = (0, import_node_fs25.existsSync)(path2);
+  const current = exists ? (0, import_node_fs25.readFileSync)(path2, "utf8") : "";
   const lines = current.split(/\r?\n/);
   const missingLines = RECOMMENDED_GITIGNORE.filter((rule) => !lines.some((l) => l.trim() === rule));
   let proposed = null;
@@ -24324,11 +24522,11 @@ ${extra}
   }
   return { path: ".gitignore", exists, current, missingLines, proposed, writes: false };
 }
-var import_node_fs21, import_node_path22, RECOMMENDED_GITIGNORE;
+var import_node_fs25, import_node_path25, RECOMMENDED_GITIGNORE;
 var init_gitignore_policy = __esm({
   "node_modules/@praxis/vcs/dist/gitignore-policy.js"() {
-    import_node_fs21 = require("node:fs");
-    import_node_path22 = require("node:path");
+    import_node_fs25 = require("node:fs");
+    import_node_path25 = require("node:path");
     RECOMMENDED_GITIGNORE = [
       ".praxis-jira/",
       ".praxis-quality/",
@@ -24341,20 +24539,20 @@ var init_gitignore_policy = __esm({
 });
 
 // node_modules/@praxis/vcs/dist/quality-snapshot.js
-function readJson6(path) {
-  if (!(0, import_node_fs22.existsSync)(path))
+function readJson6(path2) {
+  if (!(0, import_node_fs26.existsSync)(path2))
     return null;
   try {
-    return JSON.parse((0, import_node_fs22.readFileSync)(path, "utf8"));
+    return JSON.parse((0, import_node_fs26.readFileSync)(path2, "utf8"));
   } catch {
     return null;
   }
 }
 function readQualitySnapshot(repo, workPackageId) {
-  const primary = (0, import_node_path23.join)(repo, "design", workPackageId, "qa", "quality-review.json");
-  const sidecar = (0, import_node_path23.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  const primary = (0, import_node_path26.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  const sidecar = (0, import_node_path26.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
   const raw = readJson6(primary) ?? readJson6(sidecar);
-  const source = raw ? (0, import_node_fs22.existsSync)(primary) ? primary : sidecar : null;
+  const source = raw ? (0, import_node_fs26.existsSync)(primary) ? primary : sidecar : null;
   const snapshot2 = raw?.snapshot && typeof raw.snapshot === "object" ? raw.snapshot : {};
   const files = Array.isArray(snapshot2.files) ? snapshot2.files : [];
   return {
@@ -24371,9 +24569,9 @@ function liveFileHash(repo, rel2) {
   return fileSha256(repo, rel2);
 }
 function compareToQualitySnapshot(repo, selected, snapshot2) {
-  const rows = selected.map((path) => {
-    const liveSha256 = liveFileHash(repo, path);
-    const snap = snapshot2.files.find((f) => f.path === path);
+  const rows = selected.map((path2) => {
+    const liveSha256 = liveFileHash(repo, path2);
+    const snap = snapshot2.files.find((f) => f.path === path2);
     const snapshotSha256 = snap?.sha256 ?? null;
     let consistency = "match";
     if (!liveSha256)
@@ -24382,11 +24580,11 @@ function compareToQualitySnapshot(repo, selected, snapshot2) {
       consistency = "missing-snapshot";
     else if (liveSha256 !== snapshotSha256)
       consistency = "mismatch";
-    return { path, liveSha256, snapshotSha256, consistency };
+    return { path: path2, liveSha256, snapshotSha256, consistency };
   });
-  const liveDigest = (0, import_node_crypto15.createHash)("sha256").update(JSON.stringify(selected.map((path) => {
-    const live = liveFileHash(repo, path);
-    return live ? { path, sha256: live } : { path, missing: true };
+  const liveDigest = (0, import_node_crypto17.createHash)("sha256").update(JSON.stringify(selected.map((path2) => {
+    const live = liveFileHash(repo, path2);
+    return live ? { path: path2, sha256: live } : { path: path2, missing: true };
   }))).digest("hex");
   return {
     match: rows.every((r) => r.consistency === "match") && rows.length > 0,
@@ -24394,12 +24592,12 @@ function compareToQualitySnapshot(repo, selected, snapshot2) {
     liveDigest
   };
 }
-var import_node_fs22, import_node_path23, import_node_crypto15;
+var import_node_fs26, import_node_path26, import_node_crypto17;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
-    import_node_fs22 = require("node:fs");
-    import_node_path23 = require("node:path");
-    import_node_crypto15 = require("node:crypto");
+    import_node_fs26 = require("node:fs");
+    import_node_path26 = require("node:path");
+    import_node_crypto17 = require("node:crypto");
     init_git_local();
   }
 });
@@ -24435,8 +24633,8 @@ function validateGithubApiUrl(raw) {
       };
     }
     const host = u.hostname.toLowerCase();
-    const path = u.pathname.replace(/\/+$/, "") || "";
-    if (/\.git$/i.test(path) || host === "github.com" && /^\/[^/]+\/[^/]+$/.test(path)) {
+    const path2 = u.pathname.replace(/\/+$/, "") || "";
+    if (/\.git$/i.test(path2) || host === "github.com" && /^\/[^/]+\/[^/]+$/.test(path2)) {
       return {
         ok: false,
         normalized: DEFAULT_GITHUB_API,
@@ -24444,8 +24642,8 @@ function validateGithubApiUrl(raw) {
         message: "GITHUB_API_URL_INVALID: that value is a GitHub git remote, not the API. Use https://api.github.com."
       };
     }
-    const isDotComApi = host === "api.github.com" && (path === "" || path === "/");
-    const isEnterprise = path === "/api/v3" || path.endsWith("/api/v3");
+    const isDotComApi = host === "api.github.com" && (path2 === "" || path2 === "/");
+    const isEnterprise = path2 === "/api/v3" || path2.endsWith("/api/v3");
     if (!isDotComApi && !isEnterprise) {
       return {
         ok: false,
@@ -24454,7 +24652,7 @@ function validateGithubApiUrl(raw) {
         message: "GITHUB_API_URL_INVALID: GitHub API URL must be https://api.github.com (or https://HOST/api/v3 for GitHub Enterprise)."
       };
     }
-    return { ok: true, normalized: `${u.protocol}//${u.host}${path}`.replace(/\/$/, "") || DEFAULT_GITHUB_API };
+    return { ok: true, normalized: `${u.protocol}//${u.host}${path2}`.replace(/\/$/, "") || DEFAULT_GITHUB_API };
   } catch {
     return {
       ok: false,
@@ -24494,8 +24692,8 @@ function createGithubProvider(opts) {
     apiUrl: validateGithubApiUrl(opts.env?.PRAXIS_GITHUB_API_URL).normalized
   } : loadGithubConfig(opts?.env));
   const fetchImpl = opts?.fetchImpl ?? fetch;
-  async function api(method, path, body2) {
-    const res = await fetchImpl(`${config4.apiUrl}${path}`, {
+  async function api(method, path2, body2) {
+    const res = await fetchImpl(`${config4.apiUrl}${path2}`, {
       method,
       headers: {
         Accept: "application/vnd.github+json",
@@ -24506,15 +24704,15 @@ function createGithubProvider(opts) {
       body: body2 === void 0 ? void 0 : JSON.stringify(body2)
     });
     const text = await res.text();
-    let json3;
+    let json4;
     if (text.trim()) {
       try {
-        json3 = JSON.parse(text);
+        json4 = JSON.parse(text);
       } catch {
-        json3 = void 0;
+        json4 = void 0;
       }
     }
-    return { status: res.status, json: json3, text };
+    return { status: res.status, json: json4, text };
   }
   function repoPath(identity) {
     const owner = identity.owner ?? identity.projectPath?.split("/")[0];
@@ -24527,45 +24725,45 @@ function createGithubProvider(opts) {
   return {
     kind: "github",
     async inspectRepository(identity) {
-      const path = repoPath(identity);
-      const repoRes = await api("GET", path);
+      const path2 = repoPath(identity);
+      const repoRes = await api("GET", path2);
       if (repoRes.status === 404) {
         throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, "GitHub repository not found or token lacks access");
       }
       if (repoRes.status >= 400) {
         throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, `GitHub API ${repoRes.status}`);
       }
-      const json3 = repoRes.json ?? {};
-      const commits = await api("GET", `${path}/commits?per_page=1`);
-      const empty = commits.status === 409 || commits.status === 404 || json3.size === 0;
-      const readme = await api("GET", `${path}/readme`);
+      const json4 = repoRes.json ?? {};
+      const commits = await api("GET", `${path2}/commits?per_page=1`);
+      const empty = commits.status === 409 || commits.status === 404 || json4.size === 0;
+      const readme = await api("GET", `${path2}/readme`);
       const info = {
         provider: "github",
         identity: `${identity.owner ?? ""}/${identity.repo ?? ""}`.replace(/^\//, ""),
         owner: identity.owner,
         repo: identity.repo,
-        defaultBranch: typeof json3.default_branch === "string" ? json3.default_branch : "main",
+        defaultBranch: typeof json4.default_branch === "string" ? json4.default_branch : "main",
         empty,
         hasReadme: readme.status === 200,
-        htmlUrl: typeof json3.html_url === "string" ? json3.html_url : void 0,
-        apiUrl: `${config4.apiUrl}${path}`
+        htmlUrl: typeof json4.html_url === "string" ? json4.html_url : void 0,
+        apiUrl: `${config4.apiUrl}${path2}`
       };
       return info;
     },
     async listOpenMergeRequests(opts2) {
-      const path = repoPath(opts2);
+      const path2 = repoPath(opts2);
       const head = `${opts2.owner}:${opts2.sourceBranch}`;
-      const res = await api("GET", `${path}/pulls?state=open&head=${encodeURIComponent(head)}`);
+      const res = await api("GET", `${path2}/pulls?state=open&head=${encodeURIComponent(head)}`);
       const items = Array.isArray(res.json) ? res.json : [];
       return items.map((p) => mapPr(p));
     },
     async createMergeRequest(opts2) {
       requireMutationLease();
-      const path = repoPath(opts2);
+      const path2 = repoPath(opts2);
       const existing = await this.listOpenMergeRequests(opts2);
       if (existing[0])
         return existing[0];
-      const res = await api("POST", `${path}/pulls`, {
+      const res = await api("POST", `${path2}/pulls`, {
         title: opts2.title,
         head: opts2.sourceBranch,
         base: opts2.targetBranch,
@@ -24582,8 +24780,8 @@ function createGithubProvider(opts) {
       return mapPr(res.json);
     },
     async pipelineStatus(opts2) {
-      const path = repoPath(opts2);
-      const res = await api("GET", `${path}/actions/runs?branch=${encodeURIComponent(opts2.branch)}&per_page=1`);
+      const path2 = repoPath(opts2);
+      const res = await api("GET", `${path2}/actions/runs?branch=${encodeURIComponent(opts2.branch)}&per_page=1`);
       const run = res.json?.workflow_runs?.[0];
       if (!run)
         return { ciStatus: "not_started" };
@@ -24653,8 +24851,8 @@ function createGitlabProvider(opts) {
   } : loadGitlabConfig(opts?.env));
   const fetchImpl = opts?.fetchImpl ?? fetch;
   const apiRoot = `${config4.baseUrl}/api/v4`;
-  async function api(method, path, body2) {
-    const res = await fetchImpl(`${apiRoot}${path}`, {
+  async function api(method, path2, body2) {
+    const res = await fetchImpl(`${apiRoot}${path2}`, {
       method,
       headers: {
         Accept: "application/json",
@@ -24664,21 +24862,21 @@ function createGitlabProvider(opts) {
       body: body2 === void 0 ? void 0 : JSON.stringify(body2)
     });
     const text = await res.text();
-    let json3;
+    let json4;
     if (text.trim()) {
       try {
-        json3 = JSON.parse(text);
+        json4 = JSON.parse(text);
       } catch {
-        json3 = void 0;
+        json4 = void 0;
       }
     }
-    return { status: res.status, json: json3 };
+    return { status: res.status, json: json4 };
   }
   function projectId(identity) {
-    const path = identity.projectPath || [identity.owner, identity.repo].filter(Boolean).join("/");
-    if (!path)
+    const path2 = identity.projectPath || [identity.owner, identity.repo].filter(Boolean).join("/");
+    if (!path2)
       throw new VcsError(VCS_CODES.GIT_PROVIDER_UNKNOWN, "GitLab project path is required");
-    return encodeURIComponent(path);
+    return encodeURIComponent(path2);
   }
   return {
     kind: "gitlab",
@@ -24688,17 +24886,17 @@ function createGitlabProvider(opts) {
       if (res.status >= 400 || !res.json) {
         throw new VcsError(VCS_CODES.GIT_TRANSPORT_FAILED, `GitLab project lookup failed HTTP ${res.status}`);
       }
-      const json3 = res.json;
-      const empty = json3.empty_repo === true;
+      const json4 = res.json;
+      const empty = json4.empty_repo === true;
       const info = {
         provider: "gitlab",
-        identity: String(json3.path_with_namespace ?? identity.projectPath ?? ""),
+        identity: String(json4.path_with_namespace ?? identity.projectPath ?? ""),
         owner: identity.owner,
         repo: identity.repo,
-        defaultBranch: typeof json3.default_branch === "string" ? json3.default_branch : null,
+        defaultBranch: typeof json4.default_branch === "string" ? json4.default_branch : null,
         empty,
-        hasReadme: Boolean(json3.readme_url),
-        htmlUrl: typeof json3.web_url === "string" ? json3.web_url : void 0
+        hasReadme: Boolean(json4.readme_url),
+        htmlUrl: typeof json4.web_url === "string" ? json4.web_url : void 0
       };
       return info;
     },
@@ -24770,17 +24968,17 @@ var init_gitlab_provider = __esm({
 
 // node_modules/@praxis/vcs/dist/journal.js
 function journalPath(repo, workPackageId) {
-  return (0, import_node_path24.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
+  return (0, import_node_path27.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
 }
 function handoffPath(repo, workPackageId) {
-  return (0, import_node_path24.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
+  return (0, import_node_path27.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
 }
 function readJournal(repo, workPackageId) {
   const p = journalPath(repo, workPackageId);
-  if (!(0, import_node_fs23.existsSync)(p))
+  if (!(0, import_node_fs27.existsSync)(p))
     return null;
   try {
-    const v = JSON.parse((0, import_node_fs23.readFileSync)(p, "utf8"));
+    const v = JSON.parse((0, import_node_fs27.readFileSync)(p, "utf8"));
     return { ...v, forcePush: false, merged: false };
   } catch {
     return null;
@@ -24795,31 +24993,31 @@ function writeJournal(repo, entry) {
     merged: false
   };
   const p = journalPath(repo, entry.workPackageId);
-  (0, import_node_fs23.mkdirSync)((0, import_node_path24.join)(p, ".."), { recursive: true });
-  (0, import_node_fs23.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs27.mkdirSync)((0, import_node_path27.join)(p, ".."), { recursive: true });
+  (0, import_node_fs27.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
 `);
   const handoff4 = handoffPath(repo, entry.workPackageId);
-  (0, import_node_fs23.mkdirSync)((0, import_node_path24.join)(handoff4, ".."), { recursive: true });
-  (0, import_node_fs23.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs27.mkdirSync)((0, import_node_path27.join)(handoff4, ".."), { recursive: true });
+  (0, import_node_fs27.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
 `);
 }
-var import_node_path24, import_node_fs23;
+var import_node_path27, import_node_fs27;
 var init_journal = __esm({
   "node_modules/@praxis/vcs/dist/journal.js"() {
     init_dist();
-    import_node_path24 = require("node:path");
-    import_node_fs23 = require("node:fs");
+    import_node_path27 = require("node:path");
+    import_node_fs27 = require("node:fs");
   }
 });
 
 // node_modules/@praxis/vcs/dist/fingerprint.js
 function deliveryFingerprint(value) {
-  return `sha256:${(0, import_node_crypto16.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto18.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
 }
-var import_node_crypto16;
+var import_node_crypto18;
 var init_fingerprint = __esm({
   "node_modules/@praxis/vcs/dist/fingerprint.js"() {
-    import_node_crypto16 = require("node:crypto");
+    import_node_crypto18 = require("node:crypto");
   }
 });
 
@@ -24838,8 +25036,8 @@ function scanRevisionForSecrets(repo, rev) {
       const trimmed = line.trim();
       if (!trimmed)
         continue;
-      const path = trimmed.includes(":") ? trimmed.slice(trimmed.indexOf(":") + 1) : trimmed;
-      hits.push({ path });
+      const path2 = trimmed.includes(":") ? trimmed.slice(trimmed.indexOf(":") + 1) : trimmed;
+      hits.push({ path: path2 });
     }
   }
   const log = runGit(repo, ["log", "--format=%H %s", rev]);
@@ -24866,7 +25064,7 @@ var init_secret_scan = __esm({
 
 // node_modules/@praxis/vcs/dist/mutation-auth.js
 function localMutation(repo, spec) {
-  const root = (0, import_node_path25.resolve)(repo);
+  const root = (0, import_node_path28.resolve)(repo);
   return {
     repo: root,
     operation: spec.operation,
@@ -24882,10 +25080,10 @@ function authorizeLocal(request, write) {
     return write();
   throw new ApprovalError("APPROVAL_REQUIRED", `${request.action} changes the repository and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was changed.`);
 }
-var import_node_path25;
+var import_node_path28;
 var init_mutation_auth2 = __esm({
   "node_modules/@praxis/vcs/dist/mutation-auth.js"() {
-    import_node_path25 = require("node:path");
+    import_node_path28 = require("node:path");
     init_dist();
   }
 });
@@ -25368,9 +25566,9 @@ async function applyCommit(opts) {
   const commitSha = commitStaged(repo, preview.commitMessage);
   const committed = listCommitFiles(repo, commitSha);
   const extra = committed.filter((p) => !preview.selectedFiles.includes(p));
-  const hashes = preview.selectedFiles.map((path) => ({
-    path,
-    sha256: committedFileSha256(repo, commitSha, path)
+  const hashes = preview.selectedFiles.map((path2) => ({
+    path: path2,
+    sha256: committedFileSha256(repo, commitSha, path2)
   }));
   for (const row of hashes) {
     const expected = preview.fileHashes.find((f) => f.path === row.path)?.sha256;
@@ -25799,7 +25997,7 @@ async function applyMergeRequest(opts) {
     sourceBranch,
     targetBranch
   });
-  const created = !existing[0];
+  const created2 = !existing[0];
   let mr;
   if (existing[0])
     mr = existing[0];
@@ -25848,7 +26046,7 @@ async function applyMergeRequest(opts) {
   return {
     ...saved,
     ok: verified && Boolean(mr.url),
-    writeSucceeded: created || Boolean(mr.url),
+    writeSucceeded: created2 || Boolean(mr.url),
     verificationStatus: verified ? "ok" : "failed",
     partial: !verified,
     completed: verified,
@@ -26050,18 +26248,18 @@ function safeErrorMessage(raw) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(0, 240);
 }
 function safeLogTail(logFile) {
-  if (!(0, import_node_fs24.existsSync)(logFile))
+  if (!(0, import_node_fs28.existsSync)(logFile))
     return "";
-  return (0, import_node_fs24.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
+  return (0, import_node_fs28.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
 }
 function looksLikeElectronBinary(execPath, electronVersion) {
   if (electronVersion)
     return true;
-  const base = (0, import_node_path26.basename)(execPath).toLowerCase();
+  const base = (0, import_node_path29.basename)(execPath).toLowerCase();
   return base.includes("electron") || base.includes("claude") || /claude\.app\/contents\/macos\//i.test(execPath);
 }
 function isNodeCliExecutable(execPath) {
-  const base = (0, import_node_path26.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
+  const base = (0, import_node_path29.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
   return base === "node" || base === "nodejs";
 }
 function isElectronHelperExecutable(execPath) {
@@ -26103,7 +26301,7 @@ function classifySpawnFailure(err) {
   return QUALITY_CODES.QUALITY_SPAWN_FAILED;
 }
 function waitForChildStart(child, timeoutMs = 1500) {
-  return new Promise((resolve18) => {
+  return new Promise((resolve19) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -26113,7 +26311,7 @@ function waitForChildStart(child, timeoutMs = 1500) {
       child.off("spawn", onSpawn);
       child.off("error", onError);
       child.off("exit", onExit);
-      resolve18(result);
+      resolve19(result);
     };
     const onSpawn = () => finish({ spawned: true, pid: child.pid });
     const onError = (err) => finish({ spawned: false, pid: child.pid, error: err });
@@ -26146,27 +26344,27 @@ function waitForChildStart(child, timeoutMs = 1500) {
   });
 }
 function repoKey(repo) {
-  const abs = (0, import_node_path26.resolve)(repo);
+  const abs = (0, import_node_path29.resolve)(repo);
   try {
-    return (0, import_node_fs24.realpathSync)(abs);
+    return (0, import_node_fs28.realpathSync)(abs);
   } catch {
     return abs;
   }
 }
 function qualityDir(repo) {
-  return (0, import_node_path26.join)(repoKey(repo), ".praxis-quality");
+  return (0, import_node_path29.join)(repoKey(repo), ".praxis-quality");
 }
 function qualityStatePath(repo) {
-  return (0, import_node_path26.join)(qualityDir(repo), "quality.json");
+  return (0, import_node_path29.join)(qualityDir(repo), "quality.json");
 }
 function qualityPidPath(repo) {
-  return (0, import_node_path26.join)(qualityDir(repo), "quality.pid");
+  return (0, import_node_path29.join)(qualityDir(repo), "quality.pid");
 }
 function qualityDbPath(repo) {
-  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path26.join)(qualityDir(repo), "quality.sqlite");
+  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path29.join)(qualityDir(repo), "quality.sqlite");
 }
 function qualityLogPath(repo) {
-  return (0, import_node_path26.join)(qualityDir(repo), "quality.log");
+  return (0, import_node_path29.join)(qualityDir(repo), "quality.log");
 }
 function startupTimeoutMs() {
   const raw = Number(process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS);
@@ -26190,27 +26388,27 @@ function configuredPort() {
   }
   return DEFAULT_QUALITY_PORT;
 }
-function urlForPort(port2) {
+function urlForPort(port3) {
   if (process.env.PRAXIS_QUALITY_URL)
     return process.env.PRAXIS_QUALITY_URL;
-  return `http://127.0.0.1:${port2}/health`;
+  return `http://127.0.0.1:${port3}/health`;
 }
 function readState(repo) {
   const p = qualityStatePath(repo);
-  if (!(0, import_node_fs24.existsSync)(p))
+  if (!(0, import_node_fs28.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs24.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs28.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeState(repo, state2) {
-  (0, import_node_fs24.mkdirSync)(qualityDir(repo), { recursive: true });
-  (0, import_node_fs24.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
+  (0, import_node_fs28.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs28.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
 `);
   if (state2.pid)
-    (0, import_node_fs24.writeFileSync)(qualityPidPath(repo), `${state2.pid}
+    (0, import_node_fs28.writeFileSync)(qualityPidPath(repo), `${state2.pid}
 `);
 }
 function patchState(repo, patch) {
@@ -26220,8 +26418,8 @@ function patchState(repo, patch) {
 function appendSupervisorLog(repo, line) {
   try {
     const p = qualityLogPath(repo);
-    (0, import_node_fs24.mkdirSync)((0, import_node_path26.dirname)(p), { recursive: true });
-    (0, import_node_fs24.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+    (0, import_node_fs28.mkdirSync)((0, import_node_path29.dirname)(p), { recursive: true });
+    (0, import_node_fs28.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `, { flag: "a" });
   } catch {
   }
@@ -26272,8 +26470,8 @@ function stopQuality(repo) {
   const state2 = readState(repo);
   const worker = workers.get(key);
   if (worker || state2?.runtimeMode === "worker") {
-    const port2 = state2?.port ?? configuredPort();
-    const url4 = `http://127.0.0.1:${port2}/shutdown`;
+    const port3 = state2?.port ?? configuredPort();
+    const url4 = `http://127.0.0.1:${port3}/shutdown`;
     void fetch(url4, { method: "POST", signal: AbortSignal.timeout(400) }).catch(() => void 0);
     const started2 = Date.now();
     while (Date.now() - started2 < 250) {
@@ -26329,32 +26527,32 @@ function rootsMatch(a, b) {
 function resolveQualityExecutable() {
   const override = process.env.PRAXIS_QUALITY_ENTRY;
   if (override)
-    return (0, import_node_path26.isAbsolute)(override) ? override : (0, import_node_path26.resolve)(override);
-  const argvDir = process.argv[1] ? (0, import_node_path26.dirname)((0, import_node_path26.resolve)(process.argv[1])) : void 0;
+    return (0, import_node_path29.isAbsolute)(override) ? override : (0, import_node_path29.resolve)(override);
+  const argvDir = process.argv[1] ? (0, import_node_path29.dirname)((0, import_node_path29.resolve)(process.argv[1])) : void 0;
   if (argvDir) {
-    const sibling = (0, import_node_path26.join)(argvDir, "praxis-quality.cjs");
-    if ((0, import_node_fs24.existsSync)(sibling))
+    const sibling = (0, import_node_path29.join)(argvDir, "praxis-quality.cjs");
+    if ((0, import_node_fs28.existsSync)(sibling))
       return sibling;
   }
   try {
-    const here = (0, import_node_path26.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
-    const bundled = (0, import_node_path26.join)(here, "praxis-quality.cjs");
-    if ((0, import_node_fs24.existsSync)(bundled))
+    const here = (0, import_node_path29.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
+    const bundled = (0, import_node_path29.join)(here, "praxis-quality.cjs");
+    if ((0, import_node_fs28.existsSync)(bundled))
       return bundled;
   } catch {
   }
   try {
     const req = (0, import_node_module.createRequire)(import_meta.url);
     const pkg = req.resolve("@praxis/quality-service/package.json");
-    const entry = (0, import_node_path26.join)((0, import_node_path26.dirname)(pkg), "dist", "main.js");
-    if ((0, import_node_fs24.existsSync)(entry))
+    const entry = (0, import_node_path29.join)((0, import_node_path29.dirname)(pkg), "dist", "main.js");
+    if ((0, import_node_fs28.existsSync)(entry))
       return entry;
   } catch {
   }
   try {
-    const here = (0, import_node_path26.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
-    const monorepo = (0, import_node_path26.resolve)(here, "../../../apps/quality-service/dist/main.js");
-    if ((0, import_node_fs24.existsSync)(monorepo))
+    const here = (0, import_node_path29.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
+    const monorepo = (0, import_node_path29.resolve)(here, "../../../apps/quality-service/dist/main.js");
+    if ((0, import_node_fs28.existsSync)(monorepo))
       return monorepo;
   } catch {
   }
@@ -26400,7 +26598,7 @@ function probeSqliteInProcess() {
   };
 }
 function probeSqliteWithExecutable(execPath, extraEnv = {}, extraArgs = []) {
-  const r = (0, import_node_child_process7.spawnSync)(execPath, [...extraArgs, "-e", SQLITE_PROBE_SOURCE], {
+  const r = (0, import_node_child_process8.spawnSync)(execPath, [...extraArgs, "-e", SQLITE_PROBE_SOURCE], {
     encoding: "utf8",
     timeout: 5e3,
     env: { ...process.env, ...extraEnv }
@@ -26451,7 +26649,7 @@ function resolveQualityChildRuntime() {
     return { mode: "process", execPath: override, extraArgs, extraEnv, parent, child: child2 };
   }
   if (isElectronHelperExecutable(observedParent)) {
-    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path26.basename)(observedParent)}`);
+    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path29.basename)(observedParent)}`);
     return {
       mode: "worker",
       execPath: process.execPath,
@@ -26477,9 +26675,9 @@ function resolveQualityChildRuntime() {
     child
   };
 }
-function portListening(port2) {
+function portListening(port3) {
   return new Promise((resolvePromise) => {
-    const socket = import_node_net.default.connect({ host: "127.0.0.1", port: port2 }, () => {
+    const socket = import_node_net.default.connect({ host: "127.0.0.1", port: port3 }, () => {
       socket.end();
       resolvePromise(true);
     });
@@ -26491,7 +26689,7 @@ function portListening(port2) {
   });
 }
 function waitForWorkerStart(worker, timeoutMs = 1500) {
-  return new Promise((resolve18) => {
+  return new Promise((resolve19) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -26501,7 +26699,7 @@ function waitForWorkerStart(worker, timeoutMs = 1500) {
       worker.off("online", onOnline);
       worker.off("error", onError);
       worker.off("exit", onExit);
-      resolve18(result);
+      resolve19(result);
     };
     const onOnline = () => finish({ spawned: true, pid: process.pid });
     const onError = (err) => finish({ spawned: false, pid: process.pid, error: err });
@@ -26525,8 +26723,8 @@ function startQualityWorker(opts) {
     }
     workers.delete(key);
   }
-  (0, import_node_fs24.mkdirSync)((0, import_node_path26.dirname)(opts.logPath), { recursive: true });
-  const log = (0, import_node_fs24.createWriteStream)(opts.logPath, { flags: "a" });
+  (0, import_node_fs28.mkdirSync)((0, import_node_path29.dirname)(opts.logPath), { recursive: true });
+  const log = (0, import_node_fs28.createWriteStream)(opts.logPath, { flags: "a" });
   const env = {};
   for (const [key2, val] of Object.entries(opts.env)) {
     if (val !== void 0)
@@ -26582,11 +26780,11 @@ function fail(code, message, stage, t0, details) {
 }
 async function probeQuality(opts) {
   const repo = repoKey(opts.repo);
-  const state2 = (0, import_node_fs24.existsSync)(opts.repo) ? readState(repo) : void 0;
-  const port2 = state2?.port ?? configuredPort();
-  const url4 = state2?.url ?? urlForPort(port2);
-  const db = state2?.db ?? ((0, import_node_fs24.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
-  const logPath = (0, import_node_fs24.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
+  const state2 = (0, import_node_fs28.existsSync)(opts.repo) ? readState(repo) : void 0;
+  const port3 = state2?.port ?? configuredPort();
+  const url4 = state2?.url ?? urlForPort(port3);
+  const db = state2?.db ?? ((0, import_node_fs28.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
+  const logPath = (0, import_node_fs28.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
   const extras = {
     lastKnownPid: state2?.lastKnownPid ?? state2?.pid,
     lastHealthyAt: state2?.lastHealthyAt,
@@ -26594,7 +26792,7 @@ async function probeQuality(opts) {
     lastExitSignal: state2?.lastExitSignal,
     lastExitAt: state2?.lastExitAt,
     logPath,
-    port: port2,
+    port: port3,
     runtimeMode: state2?.runtimeMode
   };
   const health = await fetchHealth(url4);
@@ -26656,7 +26854,7 @@ async function probeQuality(opts) {
     };
   }
   if (!state2 && !health) {
-    return { status: "not_started", url: url4, db, reused: false, logPath, port: port2 };
+    return { status: "not_started", url: url4, db, reused: false, logPath, port: port3 };
   }
   return {
     status: "unavailable",
@@ -26691,7 +26889,7 @@ async function ensureQualityOnce(opts) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, "Quality service executable is not packaged with Praxis Runtime", "quality.entry.resolve", t0, { healthUrl: probe.url, logPath });
   }
   qlog(`quality.entry.resolve path=${executable}`);
-  if (!(0, import_node_fs24.existsSync)(executable)) {
+  if (!(0, import_node_fs28.existsSync)(executable)) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, `Quality service executable missing: ${executable}`, "quality.entry.resolve", t0, { executable, healthUrl: probe.url, logPath });
   }
   const runtime = resolveQualityChildRuntime();
@@ -26715,14 +26913,14 @@ async function ensureQualityOnce(opts) {
     spawned: false,
     qualityHealthStatus: probe.status
   };
-  const port2 = configuredPort();
-  const url4 = urlForPort(port2);
-  if (await portListening(port2)) {
+  const port3 = configuredPort();
+  const url4 = urlForPort(port3);
+  if (await portListening(port3)) {
     const occupant = await fetchHealth(url4);
     if (occupant && rootsMatch(occupant.allowedRoot, repo)) {
       writeState(repo, {
         pid: occupant.pid,
-        port: port2,
+        port: port3,
         url: url4,
         db,
         allowedRoot: repo,
@@ -26740,14 +26938,14 @@ async function ensureQualityOnce(opts) {
         logPath,
         executable,
         cwd: repo,
-        port: port2,
+        port: port3,
         runtimeMode: runtime.mode,
         sqliteBackend: occupant.sqliteEngine ?? void 0
       };
     }
-    fail(QUALITY_CODES.QUALITY_PORT_UNAVAILABLE, `Quality port ${port2} is already in use by another process`, "port", t0, { ...diagnosticDetails, healthUrl: url4, port: port2 });
+    fail(QUALITY_CODES.QUALITY_PORT_UNAVAILABLE, `Quality port ${port3} is already in use by another process`, "port", t0, { ...diagnosticDetails, healthUrl: url4, port: port3 });
   }
-  (0, import_node_fs24.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs28.mkdirSync)(qualityDir(repo), { recursive: true });
   qlog(`cwd resolved path=${repo}`);
   qlog(`db path resolved path=${db}`);
   let pid;
@@ -26758,7 +26956,7 @@ async function ensureQualityOnce(opts) {
     qlog("quality.spawn skipped; starting Quality worker in the MCP runtime");
     const workerEnv = { ...process.env, ...runtime.extraEnv };
     delete workerEnv.PORT;
-    workerEnv.PRAXIS_QUALITY_PORT = String(port2);
+    workerEnv.PRAXIS_QUALITY_PORT = String(port3);
     workerEnv.PRAXIS_QUALITY_DB = db;
     workerEnv.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
     workerEnv.PRAXIS_QUALITY_HOST = "127.0.0.1";
@@ -26802,22 +27000,22 @@ async function ensureQualityOnce(opts) {
   } else {
     const env = { ...process.env, ...runtime.extraEnv };
     delete env.PORT;
-    env.PRAXIS_QUALITY_PORT = String(port2);
+    env.PRAXIS_QUALITY_PORT = String(port3);
     env.PRAXIS_QUALITY_DB = db;
     env.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
     env.PRAXIS_QUALITY_HOST = "127.0.0.1";
-    const logFd = (0, import_node_fs24.openSync)(logPath, "a");
+    const logFd = (0, import_node_fs28.openSync)(logPath, "a");
     qlog("quality.spawn");
     let child;
     try {
-      child = (0, import_node_child_process7.spawn)(runtime.execPath, [...runtime.extraArgs, executable], {
+      child = (0, import_node_child_process8.spawn)(runtime.execPath, [...runtime.extraArgs, executable], {
         cwd: repo,
         env,
         detached: true,
         stdio: ["ignore", logFd, logFd]
       });
     } catch (err) {
-      (0, import_node_fs24.closeSync)(logFd);
+      (0, import_node_fs28.closeSync)(logFd);
       const errno = err;
       fail(classifySpawnFailure(errno), errno instanceof Error ? errno.message : String(err), "quality.spawn", t0, {
         ...diagnosticDetails,
@@ -26828,7 +27026,7 @@ async function ensureQualityOnce(opts) {
       });
     }
     const started = await waitForChildStart(child, 1500);
-    (0, import_node_fs24.closeSync)(logFd);
+    (0, import_node_fs28.closeSync)(logFd);
     pid = started.pid;
     qlog(`quality.child.start spawned=${started.spawned} pid=${pid ?? "none"} exitCode=${started.exitCode ?? "none"} spawnError=${started.error?.code ?? "none"}`);
     if (!started.spawned || started.error || started.exitCode !== void 0 || started.exitSignal) {
@@ -26857,7 +27055,7 @@ async function ensureQualityOnce(opts) {
   }
   writeState(repo, {
     pid,
-    port: port2,
+    port: port3,
     url: url4,
     db,
     allowedRoot: repo,
@@ -26896,7 +27094,7 @@ async function ensureQualityOnce(opts) {
       qlog(`quality.ensure.done durationMs=${Date.now() - t0}`);
       writeState(repo, {
         pid,
-        port: port2,
+        port: port3,
         url: url4,
         db,
         allowedRoot: repo,
@@ -26915,7 +27113,7 @@ async function ensureQualityOnce(opts) {
         logPath,
         executable,
         cwd: repo,
-        port: port2,
+        port: port3,
         runtimeMode,
         sqliteBackend: health.sqliteEngine ?? void 0
       };
@@ -26943,21 +27141,21 @@ function resetQualityEnsureForTests(repo) {
   if (repo) {
     const dir = qualityDir(repo);
     stopQuality(repo);
-    (0, import_node_fs24.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs28.rmSync)(dir, { recursive: true, force: true });
     inFlight.delete(repoKey(repo));
     return;
   }
   inFlight.clear();
 }
-var import_node_child_process7, import_node_worker_threads, import_node_fs24, import_node_net, import_node_module, import_node_path26, import_node_url, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
+var import_node_child_process8, import_node_worker_threads, import_node_fs28, import_node_net, import_node_module, import_node_path29, import_node_url, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
 var init_quality_ensure = __esm({
   "node_modules/@praxis/cli/dist/quality-ensure.js"() {
-    import_node_child_process7 = require("node:child_process");
+    import_node_child_process8 = require("node:child_process");
     import_node_worker_threads = require("node:worker_threads");
-    import_node_fs24 = require("node:fs");
+    import_node_fs28 = require("node:fs");
     import_node_net = __toESM(require("node:net"), 1);
     import_node_module = require("node:module");
-    import_node_path26 = require("node:path");
+    import_node_path29 = require("node:path");
     import_node_url = require("node:url");
     import_meta = {};
     DEFAULT_QUALITY_PORT = 8792;
@@ -27044,13 +27242,13 @@ async function postJson(url4, body2) {
     body: JSON.stringify(body2),
     signal: AbortSignal.timeout(3e4)
   });
-  let json3 = {};
+  let json4 = {};
   try {
-    json3 = await res.json();
+    json4 = await res.json();
   } catch {
-    json3 = { error: "invalid_json", message: `non-JSON response from ${url4}` };
+    json4 = { error: "invalid_json", message: `non-JSON response from ${url4}` };
   }
-  return { status: res.status, json: json3 };
+  return { status: res.status, json: json4 };
 }
 async function runQualityWorkPackageReview(opts) {
   const { ensureQuality: ensureQuality2 } = await Promise.resolve().then(() => (init_quality_ensure(), quality_ensure_exports));
@@ -27071,33 +27269,33 @@ async function runQualityWorkPackageReview(opts) {
     }
     throw err;
   }
-  const { status, json: json3 } = await postJson(`${url4}/reviews/work-package`, {
+  const { status, json: json4 } = await postJson(`${url4}/reviews/work-package`, {
     projectId: opts.workPackageId,
     workPackageId: opts.workPackageId,
-    path: (0, import_node_path27.resolve)(opts.repo),
+    path: (0, import_node_path30.resolve)(opts.repo),
     runtimeVersion: opts.runtimeVersion
   });
   if (status >= 400) {
-    throw new QualityReviewTransportError(String(json3.error ?? "EXTERNAL_SERVICE_ERROR"), String(json3.message ?? "Quality Review failed"), { ...json3, verdict: "BLOCKED", qualityServiceUrl: url4 }, status);
+    throw new QualityReviewTransportError(String(json4.error ?? "EXTERNAL_SERVICE_ERROR"), String(json4.message ?? "Quality Review failed"), { ...json4, verdict: "BLOCKED", qualityServiceUrl: url4 }, status);
   }
-  const reviewId = Number(json3.reviewId);
-  const workPackageId = String(json3.workPackageId ?? opts.workPackageId);
+  const reviewId = Number(json4.reviewId);
+  const workPackageId = String(json4.workPackageId ?? opts.workPackageId);
   const evidence = {
     reviewId,
     workPackageId,
-    jiraWorkPackageKey: String(json3.jiraWorkPackageKey ?? ""),
-    canonicalStoryKeys: Array.isArray(json3.canonicalStoryKeys) ? json3.canonicalStoryKeys : [],
-    requirementIds: Array.isArray(json3.requirementIds) ? json3.requirementIds : [],
-    verdict: String(json3.verdict ?? "BLOCKED"),
-    acceptanceChecks: Array.isArray(json3.acceptanceChecks) ? json3.acceptanceChecks : [],
-    verification: json3.verification ?? null,
-    findings: Array.isArray(json3.findings) ? json3.findings : [],
-    snapshot: json3.snapshot ?? { digest: "", files: [] },
-    identityConflicts: Array.isArray(json3.identityConflicts) ? json3.identityConflicts : [],
-    developerEvidence: json3.developerEvidence && typeof json3.developerEvidence === "object" ? json3.developerEvidence : void 0,
+    jiraWorkPackageKey: String(json4.jiraWorkPackageKey ?? ""),
+    canonicalStoryKeys: Array.isArray(json4.canonicalStoryKeys) ? json4.canonicalStoryKeys : [],
+    requirementIds: Array.isArray(json4.requirementIds) ? json4.requirementIds : [],
+    verdict: String(json4.verdict ?? "BLOCKED"),
+    acceptanceChecks: Array.isArray(json4.acceptanceChecks) ? json4.acceptanceChecks : [],
+    verification: json4.verification ?? null,
+    findings: Array.isArray(json4.findings) ? json4.findings : [],
+    snapshot: json4.snapshot ?? { digest: "", files: [] },
+    identityConflicts: Array.isArray(json4.identityConflicts) ? json4.identityConflicts : [],
+    developerEvidence: json4.developerEvidence && typeof json4.developerEvidence === "object" ? json4.developerEvidence : void 0,
     jiraMutated: false,
     approvalApplied: false,
-    blockedReason: typeof json3.blockedReason === "string" ? json3.blockedReason : void 0,
+    blockedReason: typeof json4.blockedReason === "string" ? json4.blockedReason : void 0,
     qualityServiceUrl: url4,
     runtimeVersion: opts.runtimeVersion ?? null
   };
@@ -27121,27 +27319,27 @@ async function markQualityReviewApplied(opts) {
         reason: `Quality Service is ${probe.status}; Jira/local Apply may already be complete`
       };
     }
-    const { status: status2, json: json4 } = await postJson(`${qualityApiBase(probe.url)}/reviews/${opts.reviewId}/applied`, opts.payload);
+    const { status: status2, json: json5 } = await postJson(`${qualityApiBase(probe.url)}/reviews/${opts.reviewId}/applied`, opts.payload);
     if (status2 >= 400) {
-      return { ok: false, reason: String(json4.message ?? `HTTP ${status2}`) };
+      return { ok: false, reason: String(json5.message ?? `HTTP ${status2}`) };
     }
     return { ok: true };
   }
-  const { status, json: json3 } = await postJson(`${qualityApiBase(override)}/reviews/${opts.reviewId}/applied`, opts.payload);
+  const { status, json: json4 } = await postJson(`${qualityApiBase(override)}/reviews/${opts.reviewId}/applied`, opts.payload);
   if (status >= 400) {
-    return { ok: false, reason: String(json3.message ?? `HTTP ${status}`) };
+    return { ok: false, reason: String(json4.message ?? `HTTP ${status}`) };
   }
   return { ok: true };
 }
 async function getJson(url4) {
   const res = await fetch(url4, { signal: AbortSignal.timeout(15e3) });
-  let json3 = {};
+  let json4 = {};
   try {
-    json3 = await res.json();
+    json4 = await res.json();
   } catch {
-    json3 = { error: "invalid_json", message: `non-JSON response from ${url4}` };
+    json4 = { error: "invalid_json", message: `non-JSON response from ${url4}` };
   }
-  return { status: res.status, json: json3 };
+  return { status: res.status, json: json4 };
 }
 async function fetchQualityReview(opts) {
   const { probeQuality: probeQuality2 } = await Promise.resolve().then(() => (init_quality_ensure(), quality_ensure_exports));
@@ -27160,7 +27358,7 @@ async function fetchQualityReview(opts) {
     };
   }
   const url4 = `${qualityApiBase(probe.url)}/reviews/${opts.reviewId}`;
-  const { status, json: json3 } = await getJson(url4);
+  const { status, json: json4 } = await getJson(url4);
   if (status === 404) {
     return {
       ok: false,
@@ -27172,19 +27370,19 @@ async function fetchQualityReview(opts) {
     };
   }
   if (status >= 400) {
-    throw new QualityReviewTransportError(String(json3.error ?? "EXTERNAL_SERVICE_ERROR"), String(json3.message ?? "Quality Review lookup failed"), { ...json3, qualityServiceUrl: url4 }, status);
+    throw new QualityReviewTransportError(String(json4.error ?? "EXTERNAL_SERVICE_ERROR"), String(json4.message ?? "Quality Review lookup failed"), { ...json4, qualityServiceUrl: url4 }, status);
   }
-  const appliedRaw = json3.applied;
+  const appliedRaw = json4.applied;
   const appliedObj = appliedRaw && typeof appliedRaw === "object" ? appliedRaw : void 0;
   const appliedAt = typeof appliedObj?.at === "string" ? appliedObj.at : void 0;
   return {
     ok: true,
-    workPackageId: json3.workPackageId ?? opts.workPackageId,
-    jiraWorkPackageKey: json3.jiraWorkPackageKey,
-    reviewId: json3.reviewId ?? opts.reviewId,
-    verdict: json3.verdict,
-    acceptanceSummary: json3.acceptanceChecks ?? json3.acceptance,
-    verificationSummary: json3.verification,
+    workPackageId: json4.workPackageId ?? opts.workPackageId,
+    jiraWorkPackageKey: json4.jiraWorkPackageKey,
+    reviewId: json4.reviewId ?? opts.reviewId,
+    verdict: json4.verdict,
+    acceptanceSummary: json4.acceptanceChecks ?? json4.acceptance,
+    verificationSummary: json4.verification,
     applied: Boolean(appliedRaw),
     appliedAt,
     storageBackend: probe.sqliteBackend,
@@ -27206,10 +27404,10 @@ function qualityReviewStatus(repo, workPackageId) {
     approvalApplied: evidence.approvalApplied === true
   };
 }
-var import_node_path27, QualityReviewTransportError;
+var import_node_path30, QualityReviewTransportError;
 var init_quality_lifecycle = __esm({
   "node_modules/@praxis/cli/dist/quality-lifecycle.js"() {
-    import_node_path27 = require("node:path");
+    import_node_path30 = require("node:path");
     init_workflows();
     init_quality_ensure();
     QualityReviewTransportError = class extends Error {
@@ -27288,7 +27486,7 @@ __export(operations_exports, {
   workPackageShowOp: () => workPackageShowOp
 });
 function previewFingerprint(plan) {
-  return `sha256:${(0, import_node_crypto17.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto19.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 function redact(text) {
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
@@ -27350,17 +27548,17 @@ function loadPraxisDotenv(repo) {
   dotenvRefusals = [];
   if (process.env.PRAXIS_SKIP_DOTENV === "1")
     return;
-  const resolved = (0, import_node_path28.resolve)(repo);
-  if (!(0, import_node_fs25.existsSync)(resolved))
+  const resolved = (0, import_node_path31.resolve)(repo);
+  if (!(0, import_node_fs29.existsSync)(resolved))
     return;
   for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
-    const p = (0, import_node_path28.join)(resolved, f);
+    const p = (0, import_node_path31.join)(resolved, f);
     let text;
     try {
-      const st = (0, import_node_fs25.lstatSync)(p);
+      const st = (0, import_node_fs29.lstatSync)(p);
       if (!st.isFile() || st.size > DOTENV_MAX_BYTES)
         continue;
-      text = (0, import_node_fs25.readFileSync)(p, "utf8");
+      text = (0, import_node_fs29.readFileSync)(p, "utf8");
     } catch {
       continue;
     }
@@ -27385,7 +27583,7 @@ function loadPraxisDotenv(repo) {
   }
 }
 function gitRoot(cwd) {
-  const r = (0, import_node_child_process8.spawnSync)("git", ["rev-parse", "--show-toplevel"], {
+  const r = (0, import_node_child_process9.spawnSync)("git", ["rev-parse", "--show-toplevel"], {
     cwd,
     encoding: "utf8",
     timeout: 2e3
@@ -27396,8 +27594,8 @@ function gitRoot(cwd) {
 }
 function requireRepo(repo) {
   loadPraxisDotenv(repo);
-  const resolved = (0, import_node_path28.resolve)(repo);
-  if (!(0, import_node_fs25.existsSync)(resolved)) {
+  const resolved = (0, import_node_path31.resolve)(repo);
+  if (!(0, import_node_fs29.existsSync)(resolved)) {
     throw new PraxisOpError(OP_CODES.REPOSITORY_UNAVAILABLE, `REPOSITORY_UNAVAILABLE: ${resolved}`);
   }
   return resolved;
@@ -27559,7 +27757,7 @@ async function guardWrite(ctx, spec, write) {
     requireConfirm(ctx.confirmation, spec.what);
   if (hasMutationLease())
     return write();
-  const repo = (0, import_node_path28.resolve)(spec.repository);
+  const repo = (0, import_node_path31.resolve)(spec.repository);
   try {
     const described = await (spec.git?.describe ?? spec.describe)?.();
     if (described?.previewFingerprint && ctx.previewFingerprint && described.previewFingerprint !== ctx.previewFingerprint) {
@@ -27620,8 +27818,8 @@ async function tracedFingerprint(trace, plan) {
 }
 async function doctorOp(ctx, version4) {
   loadPraxisDotenv(ctx.repo);
-  const resolved = (0, import_node_path28.resolve)(ctx.repo);
-  const repoExists = (0, import_node_fs25.existsSync)(resolved);
+  const resolved = (0, import_node_path31.resolve)(ctx.repo);
+  const repoExists = (0, import_node_fs29.existsSync)(resolved);
   const git3 = repoExists ? gitRoot(resolved) : void 0;
   const project = repoExists ? loadProjectConfig(git3 ?? resolved) : { status: "missing", suggestedPath: resolved };
   const jiraFlags = jiraConfigFlags();
@@ -27729,14 +27927,14 @@ async function projectInitApplyOp(ctx) {
     requireYes: true,
     // what the user approves is the file this will write, in full
     describe: () => ({
-      summary: inferred.existing.status === "loaded" ? "Project config already exists: nothing will be written" : `Write ${(0, import_node_path28.join)(repo, ".project")}`,
+      summary: inferred.existing.status === "loaded" ? "Project config already exists: nothing will be written" : `Write ${(0, import_node_path31.join)(repo, ".project")}`,
       description: [
-        inferred.existing.status === "loaded" ? `${inferred.existing.path} already exists; applying changes nothing.` : `Creates ${(0, import_node_path28.join)(repo, ".project")} with exactly this content:`,
+        inferred.existing.status === "loaded" ? `${inferred.existing.path} already exists; applying changes nothing.` : `Creates ${(0, import_node_path31.join)(repo, ".project")} with exactly this content:`,
         "",
         inferred.yaml
       ].join("\n"),
       previewFingerprint: previewFingerprint({ yaml: inferred.yaml, existing: inferred.existing.status }),
-      targets: [(0, import_node_path28.join)(repo, ".project")]
+      targets: [(0, import_node_path31.join)(repo, ".project")]
     })
   }, async () => {
     if (inferred.existing.status === "loaded") {
@@ -27746,8 +27944,8 @@ async function projectInitApplyOp(ctx) {
         path: inferred.existing.path
       };
     }
-    const path = writeProjectConfig(repo, inferred.yaml);
-    return { wrote: true, path, config: inferred.proposed };
+    const path2 = writeProjectConfig(repo, inferred.yaml);
+    return { wrote: true, path: path2, config: inferred.proposed };
   });
 }
 async function jiraSmokeOp(ctx) {
@@ -28195,7 +28393,7 @@ async function qualityStatusOp(ctx) {
   const local = resolveLocalWorkPackage(repo, ctx.wp);
   const workPackageId = local?.id ?? ctx.wp;
   const review = qualityReviewStatus2(repo, workPackageId);
-  const load = async (provider) => {
+  const load2 = async (provider) => {
     const lifecycle = await collectQualityLifecycleSnapshot({
       provider,
       repo,
@@ -28215,11 +28413,11 @@ async function qualityStatusOp(ctx) {
     };
   };
   if (!ctx.provider && !jiraConfigured())
-    return load();
+    return load2();
   const jiraIssueKey = resolveRemoteWpKey(repo, workPackageId);
   if (!/^[A-Z][A-Z0-9]+-\d+$/i.test(jiraIssueKey))
-    return load();
-  return withProvider({ ...ctx, repo }, (p) => load(p));
+    return load2();
+  return withProvider({ ...ctx, repo }, (p) => load2(p));
 }
 async function qualityApplyStatusOp(ctx) {
   if (!ctx.wp) {
@@ -28677,13 +28875,13 @@ async function developerGitLinkJiraApplyOp(ctx) {
     };
   }));
 }
-var import_node_crypto17, import_node_child_process8, import_node_fs25, import_node_path28, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto19, import_node_child_process9, import_node_fs29, import_node_path31, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
-    import_node_crypto17 = require("node:crypto");
-    import_node_child_process8 = require("node:child_process");
-    import_node_fs25 = require("node:fs");
-    import_node_path28 = require("node:path");
+    import_node_crypto19 = require("node:crypto");
+    import_node_child_process9 = require("node:child_process");
+    import_node_fs29 = require("node:fs");
+    import_node_path31 = require("node:path");
     init_dist2();
     init_dist3();
     init_workflows();
@@ -28755,6 +28953,9 @@ var init_operations = __esm({
       APPROVAL_EXPIRED: "APPROVAL_EXPIRED",
       APPROVAL_REVOKED: "APPROVAL_REVOKED",
       APPROVAL_REJECTED: "APPROVAL_REJECTED",
+      APPROVAL_DISMISSED: "APPROVAL_DISMISSED",
+      APPROVAL_WITHDRAWN: "APPROVAL_WITHDRAWN",
+      APPROVAL_PENDING: "APPROVAL_PENDING",
       APPROVAL_CLIENT_UI_REQUIRED: "APPROVAL_CLIENT_UI_REQUIRED",
       APPROVAL_TIMED_OUT: "APPROVAL_TIMED_OUT",
       APPROVAL_RECONCILIATION_REQUIRED: "APPROVAL_RECONCILIATION_REQUIRED",
@@ -30439,22 +30640,22 @@ var require_loader = __commonJS({
         }
       },
       TAG: function handleTagDirective(state2, name, args) {
-        var handle2, prefix2;
+        var handle3, prefix2;
         if (args.length !== 2) {
           throwError(state2, "TAG directive accepts exactly two arguments");
         }
-        handle2 = args[0];
+        handle3 = args[0];
         prefix2 = args[1];
-        if (!PATTERN_TAG_HANDLE.test(handle2)) {
+        if (!PATTERN_TAG_HANDLE.test(handle3)) {
           throwError(state2, "ill-formed tag handle (first argument) of the TAG directive");
         }
-        if (_hasOwnProperty.call(state2.tagMap, handle2)) {
-          throwError(state2, 'there is a previously declared suffix for "' + handle2 + '" tag handle');
+        if (_hasOwnProperty.call(state2.tagMap, handle3)) {
+          throwError(state2, 'there is a previously declared suffix for "' + handle3 + '" tag handle');
         }
         if (!PATTERN_TAG_URI.test(prefix2)) {
           throwError(state2, "ill-formed tag prefix (second argument) of the TAG directive");
         }
-        state2.tagMap[handle2] = prefix2;
+        state2.tagMap[handle3] = prefix2;
       }
     };
     function captureSegment(state2, start, end, checkJson) {
@@ -31390,7 +31591,7 @@ var require_loader = __commonJS({
         iterator(documents[index]);
       }
     }
-    function load(input2, options2) {
+    function load2(input2, options2) {
       var documents = loadDocuments(input2, options2);
       if (documents.length === 0) {
         return void 0;
@@ -31407,10 +31608,10 @@ var require_loader = __commonJS({
       return loadAll(input2, iterator, common.extend({ schema: DEFAULT_SAFE_SCHEMA }, options2));
     }
     function safeLoad(input2, options2) {
-      return load(input2, common.extend({ schema: DEFAULT_SAFE_SCHEMA }, options2));
+      return load2(input2, common.extend({ schema: DEFAULT_SAFE_SCHEMA }, options2));
     }
     module2.exports.loadAll = loadAll;
-    module2.exports.load = load;
+    module2.exports.load = load2;
     module2.exports.safeLoadAll = safeLoadAll;
     module2.exports.safeLoad = safeLoad;
   }
@@ -31504,21 +31705,21 @@ var require_dumper = __commonJS({
       return result;
     }
     function encodeHex(character) {
-      var string9, handle2, length;
+      var string9, handle3, length;
       string9 = character.toString(16).toUpperCase();
       if (character <= 255) {
-        handle2 = "x";
+        handle3 = "x";
         length = 2;
       } else if (character <= 65535) {
-        handle2 = "u";
+        handle3 = "u";
         length = 4;
       } else if (character <= 4294967295) {
-        handle2 = "U";
+        handle3 = "U";
         length = 8;
       } else {
         throw new YAMLException("code point within a string may not be greater than 0xFFFFFFFF");
       }
-      return "\\" + handle2 + common.repeat("0", length - string9.length) + string9;
+      return "\\" + handle3 + common.repeat("0", length - string9.length) + string9;
     }
     function State(options2) {
       this.schema = options2["schema"] || DEFAULT_FULL_SCHEMA;
@@ -32692,10 +32893,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path) {
-  if (!path)
+function getElementAtPath(obj, path2) {
+  if (!path2)
     return obj;
-  return path.reduce((acc, key) => acc?.[key], obj);
+  return path2.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -33035,11 +33236,11 @@ function explicitlyAborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path, issues) {
+function prefixIssues(path2, issues) {
   return issues.map((iss) => {
     var _a7;
     (_a7 = iss).path ?? (_a7.path = []);
-    iss.path.unshift(path);
+    iss.path.unshift(path2);
     return iss;
   });
 }
@@ -33488,16 +33689,16 @@ function flattenError(error64, mapper = (issue4) => issue4.message) {
 }
 function formatError(error64, mapper = (issue4) => issue4.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error65, path = []) => {
+  const processError = (error65, path2 = []) => {
     for (const issue4 of error65.issues) {
       if (issue4.code === "invalid_union" && issue4.errors.length) {
-        issue4.errors.map((issues) => processError({ issues }, [...path, ...issue4.path]));
+        issue4.errors.map((issues) => processError({ issues }, [...path2, ...issue4.path]));
       } else if (issue4.code === "invalid_key") {
-        processError({ issues: issue4.issues }, [...path, ...issue4.path]);
+        processError({ issues: issue4.issues }, [...path2, ...issue4.path]);
       } else if (issue4.code === "invalid_element") {
-        processError({ issues: issue4.issues }, [...path, ...issue4.path]);
+        processError({ issues: issue4.issues }, [...path2, ...issue4.path]);
       } else {
-        const fullpath = [...path, ...issue4.path];
+        const fullpath = [...path2, ...issue4.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue4));
         } else {
@@ -35838,7 +36039,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve18) {
+function isRecursive(inst, stack, resolve19) {
   const cached4 = recursive.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN : NONE;
@@ -35848,7 +36049,7 @@ function isRecursive(inst, stack, resolve18) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve18);
+      const answer = isRecursive(child, stack, resolve19);
       if (answer > result)
         result = answer;
     }
@@ -35859,7 +36060,7 @@ function isRecursive(inst, stack, resolve18) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve18) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve19) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -35922,7 +36123,7 @@ function isRecursive(inst, stack, resolve18) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve18 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -36852,13 +37053,13 @@ function initializeContext(params) {
     external: params?.external ?? void 0
   };
 }
-function handleUnrepresentable(schema, ctx, json3, params, message) {
+function handleUnrepresentable(schema, ctx, json4, params, message) {
   const result = typeof ctx.unrepresentable === "function" ? ctx.unrepresentable({ zodSchema: schema, path: params.path, message }) : ctx.unrepresentable;
   if (result === "any")
     return false;
   if (result === void 0 || result === "throw")
     throw new Error(message);
-  Object.assign(json3, result);
+  Object.assign(json4, result);
   return true;
 }
 function processSchema(schema, ctx, _params = { path: [], schemaPath: [] }) {
@@ -37094,12 +37295,12 @@ function foldObjects(members4) {
   }
   return folded;
 }
-function foldIntersection(json3) {
-  const allOf = json3.allOf;
+function foldIntersection(json4) {
+  const allOf = json4.allOf;
   if (!Array.isArray(allOf) || allOf.length < 2)
     return;
   for (const key of FOLDABLE_KEYS)
-    if (key in json3)
+    if (key in json4)
       return;
   const unions = allOf.filter((m) => UNION_KEYS.some((k) => Array.isArray(m[k])));
   let folded = null;
@@ -37118,8 +37319,8 @@ function foldIntersection(json3) {
   }
   if (!folded)
     return;
-  delete json3.allOf;
-  assignProps(json3, folded);
+  delete json4.allOf;
+  assignProps(json4, folded);
 }
 function finalize(ctx, schema) {
   const root = ctx.seen.get(schema);
@@ -37201,20 +37402,20 @@ function finalize(ctx, schema) {
     if (ctx.intersections.length) {
       const carriers = /* @__PURE__ */ new Map();
       for (const seen of ctx.seen.values()) {
-        for (const json3 of [seen.schema, seen.def]) {
-          const allOf = json3?.allOf;
+        for (const json4 of [seen.schema, seen.def]) {
+          const allOf = json4?.allOf;
           if (!Array.isArray(allOf))
             continue;
           const existing = carriers.get(allOf);
           if (existing)
-            existing.push(json3);
+            existing.push(json4);
           else
-            carriers.set(allOf, [json3]);
+            carriers.set(allOf, [json4]);
         }
       }
       for (const allOf of ctx.intersections) {
-        for (const json3 of carriers.get(allOf) ?? [])
-          foldIntersection(json3);
+        for (const json4 of carriers.get(allOf) ?? [])
+          foldIntersection(json4);
       }
     }
   }
@@ -37449,29 +37650,29 @@ var exactPatterns = /* @__PURE__ */ new Map([
 ]);
 var exactPattern = (p) => exactPatterns.get(p) ?? p;
 var stringProcessor = (schema, ctx, _json, _params) => {
-  const json3 = _json;
-  json3.type = "string";
+  const json4 = _json;
+  json4.type = "string";
   const { minimum, maximum, format, patterns, contentEncoding, laxFormat } = aggregateChecks(schema);
   if (typeof minimum === "number")
-    json3.minLength = minimum;
+    json4.minLength = minimum;
   if (typeof maximum === "number")
-    json3.maxLength = maximum;
+    json4.maxLength = maximum;
   if (format) {
-    json3.format = formatMap[format] ?? format;
-    if (json3.format === "")
-      delete json3.format;
+    json4.format = formatMap[format] ?? format;
+    if (json4.format === "")
+      delete json4.format;
     if (format === "time" || laxFormat) {
-      delete json3.format;
+      delete json4.format;
     }
   }
   if (contentEncoding)
-    json3.contentEncoding = contentEncoding;
+    json4.contentEncoding = contentEncoding;
   if (patterns && patterns.size > 0) {
     const patternList = [...patterns].map(exactPattern);
     if (patternList.length === 1)
-      json3.pattern = patternList[0].source;
+      json4.pattern = patternList[0].source;
     else if (patternList.length > 1) {
-      json3.allOf = [
+      json4.allOf = [
         ...patternList.map((regex) => ({
           ...ctx.target === "draft-07" || ctx.target === "draft-04" || ctx.target === "openapi-3.0" ? { type: "string" } : {},
           pattern: regex.source
@@ -37481,31 +37682,31 @@ var stringProcessor = (schema, ctx, _json, _params) => {
   }
 };
 var numberProcessor = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const { minimum, maximum, multipleOf, exclusiveMaximum, exclusiveMinimum, isInt } = aggregateChecks(schema);
-  json3.type = isInt ? "integer" : "number";
+  json4.type = isInt ? "integer" : "number";
   const exMin = typeof exclusiveMinimum === "number" && exclusiveMinimum >= (minimum ?? Number.NEGATIVE_INFINITY);
   const exMax = typeof exclusiveMaximum === "number" && exclusiveMaximum <= (maximum ?? Number.POSITIVE_INFINITY);
   const legacy = ctx.target === "draft-04" || ctx.target === "openapi-3.0";
   if (exMin) {
     if (legacy) {
-      json3.minimum = exclusiveMinimum;
-      json3.exclusiveMinimum = true;
+      json4.minimum = exclusiveMinimum;
+      json4.exclusiveMinimum = true;
     } else {
-      json3.exclusiveMinimum = exclusiveMinimum;
+      json4.exclusiveMinimum = exclusiveMinimum;
     }
   } else if (typeof minimum === "number") {
-    json3.minimum = minimum;
+    json4.minimum = minimum;
   }
   if (exMax) {
     if (legacy) {
-      json3.maximum = exclusiveMaximum;
-      json3.exclusiveMaximum = true;
+      json4.maximum = exclusiveMaximum;
+      json4.exclusiveMaximum = true;
     } else {
-      json3.exclusiveMaximum = exclusiveMaximum;
+      json4.exclusiveMaximum = exclusiveMaximum;
     }
   } else if (typeof maximum === "number") {
-    json3.maximum = maximum;
+    json4.maximum = maximum;
   }
   if (multipleOf) {
     const divisors = /* @__PURE__ */ new Set();
@@ -37513,66 +37714,66 @@ var numberProcessor = (schema, ctx, _json, params) => {
       if (Number.isFinite(divisor) && divisor !== 0)
         divisors.add(Math.abs(divisor));
       else
-        handleUnrepresentable(schema, ctx, json3, params, `A multipleOf divisor of ${divisor} cannot be represented in JSON Schema`);
+        handleUnrepresentable(schema, ctx, json4, params, `A multipleOf divisor of ${divisor} cannot be represented in JSON Schema`);
     }
     const [first, ...rest] = divisors;
     if (first !== void 0)
-      json3.multipleOf = first;
+      json4.multipleOf = first;
     if (rest.length)
-      json3.allOf = [...json3.allOf ?? [], ...rest.map((m) => ({ multipleOf: m }))];
+      json4.allOf = [...json4.allOf ?? [], ...rest.map((m) => ({ multipleOf: m }))];
   }
 };
-var booleanProcessor = (_schema, _ctx, json3, _params) => {
-  json3.type = "boolean";
+var booleanProcessor = (_schema, _ctx, json4, _params) => {
+  json4.type = "boolean";
 };
-var bigintProcessor = (schema, ctx, json3, params) => {
-  handleUnrepresentable(schema, ctx, json3, params, "BigInt cannot be represented in JSON Schema");
+var bigintProcessor = (schema, ctx, json4, params) => {
+  handleUnrepresentable(schema, ctx, json4, params, "BigInt cannot be represented in JSON Schema");
 };
-var nullProcessor = (_schema, ctx, json3, _params) => {
+var nullProcessor = (_schema, ctx, json4, _params) => {
   if (ctx.target === "openapi-3.0") {
-    json3.type = "string";
-    json3.nullable = true;
-    json3.enum = [null];
+    json4.type = "string";
+    json4.nullable = true;
+    json4.enum = [null];
   } else {
-    json3.type = "null";
+    json4.type = "null";
   }
 };
-var neverProcessor = (_schema, _ctx, json3, _params) => {
-  json3.not = {};
+var neverProcessor = (_schema, _ctx, json4, _params) => {
+  json4.not = {};
 };
 var anyProcessor = (_schema, _ctx, _json, _params) => {
 };
 var unknownProcessor = (_schema, _ctx, _json, _params) => {
 };
-var dateProcessor = (schema, ctx, json3, params) => {
-  handleUnrepresentable(schema, ctx, json3, params, "Date cannot be represented in JSON Schema");
+var dateProcessor = (schema, ctx, json4, params) => {
+  handleUnrepresentable(schema, ctx, json4, params, "Date cannot be represented in JSON Schema");
 };
-var enumProcessor = (schema, _ctx, json3, _params) => {
+var enumProcessor = (schema, _ctx, json4, _params) => {
   const def = schema._zod.def;
   const values = getEnumValues(def.entries);
   if (values.length === 0) {
-    json3.not = {};
+    json4.not = {};
     return;
   }
   if (values.every((v) => typeof v === "number"))
-    json3.type = "number";
+    json4.type = "number";
   if (values.every((v) => typeof v === "string"))
-    json3.type = "string";
-  json3.enum = values;
+    json4.type = "string";
+  json4.enum = values;
 };
-var literalProcessor = (schema, ctx, json3, params) => {
+var literalProcessor = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   if (def.values.length === 0) {
-    json3.not = {};
+    json4.not = {};
     return;
   }
   const vals = [];
   for (const val of def.values) {
     if (val === void 0) {
-      if (handleUnrepresentable(schema, ctx, json3, params, "Literal `undefined` cannot be represented in JSON Schema"))
+      if (handleUnrepresentable(schema, ctx, json4, params, "Literal `undefined` cannot be represented in JSON Schema"))
         return;
     } else if (typeof val === "bigint") {
-      if (handleUnrepresentable(schema, ctx, json3, params, "BigInt literals cannot be represented in JSON Schema"))
+      if (handleUnrepresentable(schema, ctx, json4, params, "BigInt literals cannot be represented in JSON Schema"))
         return;
       vals.push(Number(val));
     } else {
@@ -37582,40 +37783,40 @@ var literalProcessor = (schema, ctx, json3, params) => {
   if (vals.length === 0) {
   } else if (vals.length === 1) {
     const val = vals[0];
-    json3.type = val === null ? "null" : typeof val;
+    json4.type = val === null ? "null" : typeof val;
     if (ctx.target === "draft-04" || ctx.target === "openapi-3.0") {
-      json3.enum = [val];
+      json4.enum = [val];
     } else {
-      json3.const = val;
+      json4.const = val;
     }
   } else {
     if (vals.every((v) => typeof v === "number"))
-      json3.type = "number";
+      json4.type = "number";
     if (vals.every((v) => typeof v === "string"))
-      json3.type = "string";
+      json4.type = "string";
     if (vals.every((v) => typeof v === "boolean"))
-      json3.type = "boolean";
+      json4.type = "boolean";
     if (vals.every((v) => v === null))
-      json3.type = "null";
-    json3.enum = vals;
+      json4.type = "null";
+    json4.enum = vals;
   }
 };
-var customProcessor = (schema, ctx, json3, params) => {
-  handleUnrepresentable(schema, ctx, json3, params, "Custom types cannot be represented in JSON Schema");
+var customProcessor = (schema, ctx, json4, params) => {
+  handleUnrepresentable(schema, ctx, json4, params, "Custom types cannot be represented in JSON Schema");
 };
-var transformProcessor = (schema, ctx, json3, params) => {
-  handleUnrepresentable(schema, ctx, json3, params, "Transforms cannot be represented in JSON Schema");
+var transformProcessor = (schema, ctx, json4, params) => {
+  handleUnrepresentable(schema, ctx, json4, params, "Transforms cannot be represented in JSON Schema");
 };
 var arrayProcessor = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
   const { minimum, maximum } = aggregateChecks(schema);
   if (typeof minimum === "number")
-    json3.minItems = minimum;
+    json4.minItems = minimum;
   if (typeof maximum === "number")
-    json3.maxItems = maximum;
-  json3.type = "array";
-  json3.items = processSchema(def.element, ctx, {
+    json4.maxItems = maximum;
+  json4.type = "array";
+  json4.items = processSchema(def.element, ctx, {
     ...params,
     path: [...params.path, "items"]
   });
@@ -37631,17 +37832,17 @@ function inputOptin(schema) {
   return schema._zod.optin;
 }
 var objectProcessor = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
   const shape = def.shape;
   const symbolKeys = Object.getOwnPropertySymbols(shape);
-  if (symbolKeys.length && handleUnrepresentable(schema, ctx, json3, params, "Symbol keys cannot be represented in JSON Schema")) {
+  if (symbolKeys.length && handleUnrepresentable(schema, ctx, json4, params, "Symbol keys cannot be represented in JSON Schema")) {
     return;
   }
-  json3.type = "object";
-  json3.properties = {};
+  json4.type = "object";
+  json4.properties = {};
   for (const key in shape) {
-    assignProp(json3.properties, key, processSchema(shape[key], ctx, {
+    assignProp(json4.properties, key, processSchema(shape[key], ctx, {
       ...params,
       path: [...params.path, "properties", key]
     }));
@@ -37654,21 +37855,21 @@ var objectProcessor = (schema, ctx, _json, params) => {
     }
   }
   if (requiredKeys.length > 0) {
-    json3.required = requiredKeys;
+    json4.required = requiredKeys;
   }
   if (def.catchall?._zod.def.type === "never") {
-    json3.additionalProperties = false;
+    json4.additionalProperties = false;
   } else if (!def.catchall) {
     if (ctx.io === "output")
-      json3.additionalProperties = false;
+      json4.additionalProperties = false;
   } else if (def.catchall) {
-    json3.additionalProperties = processSchema(def.catchall, ctx, {
+    json4.additionalProperties = processSchema(def.catchall, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
   }
 };
-var unionProcessor = (schema, ctx, json3, params) => {
+var unionProcessor = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const isExclusive = def.inclusive === false;
   const options2 = def.options.map((x, i) => processSchema(x, ctx, {
@@ -37676,12 +37877,12 @@ var unionProcessor = (schema, ctx, json3, params) => {
     path: [...params.path, isExclusive ? "oneOf" : "anyOf", i]
   }));
   if (isExclusive) {
-    json3.oneOf = options2;
+    json4.oneOf = options2;
   } else {
-    json3.anyOf = options2;
+    json4.anyOf = options2;
   }
 };
-var intersectionProcessor = (schema, ctx, json3, params) => {
+var intersectionProcessor = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const a = processSchema(def.left, ctx, {
     ...params,
@@ -37696,34 +37897,34 @@ var intersectionProcessor = (schema, ctx, json3, params) => {
     ...isSimpleIntersection(a) ? a.allOf : [a],
     ...isSimpleIntersection(b) ? b.allOf : [b]
   ];
-  json3.allOf = allOf;
+  json4.allOf = allOf;
   ctx.intersections.push(allOf);
 };
-function stringifyKeyNames(bySchema, json3, visited) {
-  if (json3.$ref) {
-    if (visited.has(json3))
-      return json3;
-    visited.add(json3);
-    const def = bySchema.get(json3)?.def;
+function stringifyKeyNames(bySchema, json4, visited) {
+  if (json4.$ref) {
+    if (visited.has(json4))
+      return json4;
+    visited.add(json4);
+    const def = bySchema.get(json4)?.def;
     if (!def)
-      return json3;
+      return json4;
     const inlined = stringifyKeyNames(bySchema, def, visited);
-    return inlined === def ? json3 : inlined;
+    return inlined === def ? json4 : inlined;
   }
   for (const keyword of ["anyOf", "oneOf"]) {
-    const branches = json3[keyword];
+    const branches = json4[keyword];
     if (!Array.isArray(branches))
       continue;
     const mapped = branches.map((branch) => stringifyKeyNames(bySchema, branch, visited));
     if (mapped.some((branch, i) => branch !== branches[i]))
-      json3 = { ...json3, [keyword]: mapped };
+      json4 = { ...json4, [keyword]: mapped };
   }
-  const types = Array.isArray(json3.type) ? json3.type : [json3.type];
+  const types = Array.isArray(json4.type) ? json4.type : [json4.type];
   const numericType = !types.includes("string") && types.some((t) => t === "number" || t === "integer");
-  const values = json3.enum ?? (json3.const !== void 0 ? [json3.const] : void 0);
+  const values = json4.enum ?? (json4.const !== void 0 ? [json4.const] : void 0);
   if (!numericType && !values?.some((v) => typeof v === "number"))
-    return json3;
-  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id, ...rest } = json3;
+    return json4;
+  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id, ...rest } = json4;
   if (rest.enum)
     rest.enum = rest.enum.map((v) => typeof v === "number" ? String(v) : v);
   else if (typeof rest.const === "number")
@@ -37763,9 +37964,9 @@ function rewriteKeyNames(ctx) {
   }
 }
 var recordProcessor = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
-  json3.type = "object";
+  json4.type = "object";
   const keyType = def.keyType;
   const patterns = aggregateChecks(keyType).patterns;
   if (def.mode === "loose" && patterns && patterns.size > 0) {
@@ -37773,13 +37974,13 @@ var recordProcessor = (schema, ctx, _json, params) => {
       ...params,
       path: [...params.path, "patternProperties", "*"]
     });
-    json3.patternProperties = {};
+    json4.patternProperties = {};
     for (const pattern of patterns) {
-      assignProp(json3.patternProperties, exactPattern(pattern).source, valueSchema);
+      assignProp(json4.patternProperties, exactPattern(pattern).source, valueSchema);
     }
   } else {
     if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") {
-      json3.propertyNames = processSchema(def.keyType, ctx, {
+      json4.propertyNames = processSchema(def.keyType, ctx, {
         ...params,
         path: [...params.path, "propertyNames"]
       });
@@ -37791,7 +37992,7 @@ var recordProcessor = (schema, ctx, _json, params) => {
       }
       pending.push(schema);
     }
-    json3.additionalProperties = processSchema(def.valueType, ctx, {
+    json4.additionalProperties = processSchema(def.valueType, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
@@ -37801,19 +38002,19 @@ var recordProcessor = (schema, ctx, _json, params) => {
   if (keyValues && !def.partial && !omittableOnInput) {
     const validKeyValues = [...keyValues].filter((v) => typeof v === "string" || typeof v === "number");
     if (validKeyValues.length > 0) {
-      json3.required = validKeyValues.map(String);
+      json4.required = validKeyValues.map(String);
     }
   }
 };
-var nullableProcessor = (schema, ctx, json3, params) => {
+var nullableProcessor = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const inner = processSchema(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   if (ctx.target === "openapi-3.0") {
     seen.ref = def.innerType;
-    json3.nullable = true;
+    json4.nullable = true;
   } else {
-    json3.anyOf = [inner, { type: "null" }];
+    json4.anyOf = [inner, { type: "null" }];
   }
 };
 var nonoptionalProcessor = (schema, ctx, _json, params) => {
@@ -37823,7 +38024,7 @@ var nonoptionalProcessor = (schema, ctx, _json, params) => {
   seen.ref = def.innerType;
 };
 var UNREPRESENTABLE_DEFAULT = Symbol();
-function serializeDefaultValue(value, schema, ctx, json3, params) {
+function serializeDefaultValue(value, schema, ctx, json4, params) {
   let unrepresentable = false;
   const serialized = JSON.stringify(value, (_, val) => {
     if (typeof val !== "bigint")
@@ -37833,30 +38034,30 @@ function serializeDefaultValue(value, schema, ctx, json3, params) {
   });
   if (!unrepresentable)
     return JSON.parse(serialized);
-  handleUnrepresentable(schema, ctx, json3, params, "BigInt defaults cannot be represented in JSON Schema");
+  handleUnrepresentable(schema, ctx, json4, params, "BigInt defaults cannot be represented in JSON Schema");
   return UNREPRESENTABLE_DEFAULT;
 }
-var defaultProcessor = (schema, ctx, json3, params) => {
+var defaultProcessor = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
-  const value = serializeDefaultValue(def.defaultValue, schema, ctx, json3, params);
+  const value = serializeDefaultValue(def.defaultValue, schema, ctx, json4, params);
   if (value !== UNREPRESENTABLE_DEFAULT)
-    json3.default = value;
+    json4.default = value;
 };
-var prefaultProcessor = (schema, ctx, json3, params) => {
+var prefaultProcessor = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   if (ctx.io !== "input")
     return;
-  const value = serializeDefaultValue(def.defaultValue, schema, ctx, json3, params);
+  const value = serializeDefaultValue(def.defaultValue, schema, ctx, json4, params);
   if (value !== UNREPRESENTABLE_DEFAULT)
-    json3._prefault = value;
+    json4._prefault = value;
 };
-var catchProcessor = (schema, ctx, json3, params) => {
+var catchProcessor = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
@@ -37865,10 +38066,10 @@ var catchProcessor = (schema, ctx, json3, params) => {
   try {
     catchValue = def.catchValue(void 0);
   } catch {
-    handleUnrepresentable(schema, ctx, json3, params, "Dynamic catch values are not supported in JSON Schema");
+    handleUnrepresentable(schema, ctx, json4, params, "Dynamic catch values are not supported in JSON Schema");
     return;
   }
-  json3.default = catchValue;
+  json4.default = catchValue;
 };
 var pipeProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
@@ -37878,12 +38079,12 @@ var pipeProcessor = (schema, ctx, _json, params) => {
   const seen = ctx.seen.get(schema);
   seen.ref = innerType;
 };
-var readonlyProcessor = (schema, ctx, json3, params) => {
+var readonlyProcessor = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
-  json3.readOnly = true;
+  json4.readOnly = true;
 };
 var optionalProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
@@ -38146,7 +38347,7 @@ var _ZodString = /* @__PURE__ */ $constructor(
   (inst, def) => {
     $ZodString.init(inst, def);
     ZodType.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => stringProcessor(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => stringProcessor(inst, ctx, json4, params);
   },
   /* @__PURE__ */ util_exports.derived({
     format: (inst) => aggregateChecks(inst).format ?? null,
@@ -38390,7 +38591,7 @@ var ZodNumber = /* @__PURE__ */ $constructor(
   (inst, def) => {
     $ZodNumber.init(inst, def);
     ZodType.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => numberProcessor(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => numberProcessor(inst, ctx, json4, params);
     inst.isFinite = true;
   },
   /* @__PURE__ */ util_exports.derived({
@@ -38468,7 +38669,7 @@ function int(params) {
 var ZodBoolean = /* @__PURE__ */ $constructor("ZodBoolean", (inst, def) => {
   $ZodBoolean.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => booleanProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => booleanProcessor(inst, ctx, json4, params);
 });
 function boolean2(params) {
   return _boolean(ZodBoolean, params);
@@ -38478,7 +38679,7 @@ var ZodBigInt = /* @__PURE__ */ $constructor(
   (inst, def) => {
     $ZodBigInt.init(inst, def);
     ZodType.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => bigintProcessor(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => bigintProcessor(inst, ctx, json4, params);
   },
   /* @__PURE__ */ util_exports.derived({
     minValue: (inst) => aggregateChecks(inst).minimum ?? null,
@@ -38523,7 +38724,7 @@ var ZodBigInt = /* @__PURE__ */ $constructor(
 var ZodNull = /* @__PURE__ */ $constructor("ZodNull", (inst, def) => {
   $ZodNull.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nullProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nullProcessor(inst, ctx, json4, params);
 });
 function _null3(params) {
   return _null2(ZodNull, params);
@@ -38531,7 +38732,7 @@ function _null3(params) {
 var ZodAny = /* @__PURE__ */ $constructor("ZodAny", (inst, def) => {
   $ZodAny.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => anyProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => anyProcessor(inst, ctx, json4, params);
 });
 function any() {
   return _any(ZodAny);
@@ -38539,7 +38740,7 @@ function any() {
 var ZodUnknown = /* @__PURE__ */ $constructor("ZodUnknown", (inst, def) => {
   $ZodUnknown.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => unknownProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => unknownProcessor(inst, ctx, json4, params);
 });
 function unknown() {
   return _unknown(ZodUnknown);
@@ -38547,7 +38748,7 @@ function unknown() {
 var ZodNever = /* @__PURE__ */ $constructor("ZodNever", (inst, def) => {
   $ZodNever.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => neverProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => neverProcessor(inst, ctx, json4, params);
 });
 function never(params) {
   return _never(ZodNever, params);
@@ -38557,7 +38758,7 @@ var ZodDate = /* @__PURE__ */ $constructor(
   (inst, def) => {
     $ZodDate.init(inst, def);
     ZodType.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => dateProcessor(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => dateProcessor(inst, ctx, json4, params);
     inst.min = (value, params) => inst.check(_gte(value, params));
     inst.max = (value, params) => inst.check(_lte(value, params));
   },
@@ -38576,7 +38777,7 @@ var ZodArray = /* @__PURE__ */ $constructor("ZodArray", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodArray.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => arrayProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => arrayProcessor(inst, ctx, json4, params);
   inst.element = def.element;
 }, {
   min(n, params) {
@@ -38602,7 +38803,7 @@ var ZodObject = /* @__PURE__ */ $constructor("ZodObject", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodObjectJIT.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => objectProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => objectProcessor(inst, ctx, json4, params);
   util_exports.installLazyProp(inst, "shape", (self) => self._zod.def.shape, false);
 }, {
   keyof() {
@@ -38667,7 +38868,7 @@ function looseObject(shape, params) {
 var ZodUnion = /* @__PURE__ */ $constructor("ZodUnion", (inst, def) => {
   $ZodUnion.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => unionProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => unionProcessor(inst, ctx, json4, params);
   inst.options = def.options;
 });
 function union(options2, params) {
@@ -38692,7 +38893,7 @@ function discriminatedUnion(discriminator, options2, params) {
 var ZodIntersection = /* @__PURE__ */ $constructor("ZodIntersection", (inst, def) => {
   $ZodIntersection.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => intersectionProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => intersectionProcessor(inst, ctx, json4, params);
 });
 function intersection(left, right) {
   return new ZodIntersection({
@@ -38705,7 +38906,7 @@ var ZodRecord = /* @__PURE__ */ $constructor("ZodRecord", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodRecord.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => recordProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => recordProcessor(inst, ctx, json4, params);
   inst.keyType = def.keyType;
   inst.valueType = def.valueType;
 });
@@ -38728,7 +38929,7 @@ function record(keyType, valueType, params) {
 var ZodEnum = /* @__PURE__ */ $constructor("ZodEnum", (inst, def) => {
   $ZodEnum.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => enumProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => enumProcessor(inst, ctx, json4, params);
   inst.enum = def.entries;
   inst.options = [...inst._zod.values];
   const keys = new Set(Object.keys(def.entries));
@@ -38774,7 +38975,7 @@ function _enum(values, params) {
 var ZodLiteral = /* @__PURE__ */ $constructor("ZodLiteral", (inst, def) => {
   $ZodLiteral.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => literalProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => literalProcessor(inst, ctx, json4, params);
   inst.values = new Set(def.values);
   Object.defineProperty(inst, "value", {
     get() {
@@ -38796,7 +38997,7 @@ var ZodTransform = /* @__PURE__ */ $constructor("ZodTransform", (inst, def) => {
   _ensureDefaultMemoizer();
   $ZodTransform.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => transformProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => transformProcessor(inst, ctx, json4, params);
   inst._zod.parse = (payload, _ctx) => {
     if (_ctx.direction === "backward") {
       throw new $ZodEncodeError(inst.constructor.name);
@@ -38835,7 +39036,7 @@ function transform(fn) {
 var ZodOptional = /* @__PURE__ */ $constructor("ZodOptional", (inst, def) => {
   $ZodOptional.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => optionalProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => optionalProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function optional(innerType) {
@@ -38847,7 +39048,7 @@ function optional(innerType) {
 var ZodExactOptional = /* @__PURE__ */ $constructor("ZodExactOptional", (inst, def) => {
   $ZodExactOptional.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => optionalProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => optionalProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function exactOptional(innerType) {
@@ -38859,7 +39060,7 @@ function exactOptional(innerType) {
 var ZodNullable = /* @__PURE__ */ $constructor("ZodNullable", (inst, def) => {
   $ZodNullable.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nullableProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nullableProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function nullable(innerType) {
@@ -38871,7 +39072,7 @@ function nullable(innerType) {
 var ZodDefault = /* @__PURE__ */ $constructor("ZodDefault", (inst, def) => {
   $ZodDefault.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => defaultProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => defaultProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeDefault = inst.unwrap;
 });
@@ -38887,7 +39088,7 @@ function _default(innerType, defaultValue) {
 var ZodPrefault = /* @__PURE__ */ $constructor("ZodPrefault", (inst, def) => {
   $ZodPrefault.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => prefaultProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => prefaultProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function prefault(innerType, defaultValue) {
@@ -38902,7 +39103,7 @@ function prefault(innerType, defaultValue) {
 var ZodNonOptional = /* @__PURE__ */ $constructor("ZodNonOptional", (inst, def) => {
   $ZodNonOptional.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nonoptionalProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nonoptionalProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function nonoptional(innerType, params) {
@@ -38915,7 +39116,7 @@ function nonoptional(innerType, params) {
 var ZodCatch = /* @__PURE__ */ $constructor("ZodCatch", (inst, def) => {
   $ZodCatch.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => catchProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => catchProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeCatch = inst.unwrap;
 });
@@ -38929,7 +39130,7 @@ function _catch(innerType, catchValue) {
 var ZodPipe = /* @__PURE__ */ $constructor("ZodPipe", (inst, def) => {
   $ZodPipe.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => pipeProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => pipeProcessor(inst, ctx, json4, params);
   inst.in = def.in;
   inst.out = def.out;
 });
@@ -38948,7 +39149,7 @@ var ZodPreprocess = /* @__PURE__ */ $constructor("ZodPreprocess", (inst, def) =>
 var ZodReadonly = /* @__PURE__ */ $constructor("ZodReadonly", (inst, def) => {
   $ZodReadonly.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => readonlyProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => readonlyProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function readonly(innerType) {
@@ -38960,7 +39161,7 @@ function readonly(innerType) {
 var ZodLazy = /* @__PURE__ */ $constructor("ZodLazy", (inst, def) => {
   $ZodLazy.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => lazyProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => lazyProcessor(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.getter();
 });
 function lazy(getter) {
@@ -38972,7 +39173,7 @@ function lazy(getter) {
 var ZodCustom = /* @__PURE__ */ $constructor("ZodCustom", (inst, def) => {
   $ZodCustom.init(inst, def);
   ZodType.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => customProcessor(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => customProcessor(inst, ctx, json4, params);
 });
 function refine(fn, _params = {}) {
   return _refine(ZodCustom, fn, _params);
@@ -40230,10 +40431,10 @@ function mergeDefs2(...defs) {
 function cloneDef2(schema) {
   return mergeDefs2(schema._zod.def);
 }
-function getElementAtPath2(obj, path) {
-  if (!path)
+function getElementAtPath2(obj, path2) {
+  if (!path2)
     return obj;
-  return path.reduce((acc, key) => acc?.[key], obj);
+  return path2.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject2(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -40573,11 +40774,11 @@ function explicitlyAborted2(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues2(path, issues) {
+function prefixIssues2(path2, issues) {
   return issues.map((iss) => {
     var _a7;
     (_a7 = iss).path ?? (_a7.path = []);
-    iss.path.unshift(path);
+    iss.path.unshift(path2);
     return iss;
   });
 }
@@ -41023,16 +41224,16 @@ function flattenError2(error64, mapper = (issue4) => issue4.message) {
 }
 function formatError2(error64, mapper = (issue4) => issue4.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error65, path = []) => {
+  const processError = (error65, path2 = []) => {
     for (const issue4 of error65.issues) {
       if (issue4.code === "invalid_union" && issue4.errors.length) {
-        issue4.errors.map((issues) => processError({ issues }, [...path, ...issue4.path]));
+        issue4.errors.map((issues) => processError({ issues }, [...path2, ...issue4.path]));
       } else if (issue4.code === "invalid_key") {
-        processError({ issues: issue4.issues }, [...path, ...issue4.path]);
+        processError({ issues: issue4.issues }, [...path2, ...issue4.path]);
       } else if (issue4.code === "invalid_element") {
-        processError({ issues: issue4.issues }, [...path, ...issue4.path]);
+        processError({ issues: issue4.issues }, [...path2, ...issue4.path]);
       } else {
-        const fullpath = [...path, ...issue4.path];
+        const fullpath = [...path2, ...issue4.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue4));
         } else {
@@ -43324,7 +43525,7 @@ var recursive2 = /* @__PURE__ */ new WeakMap();
 var NONE2 = 0;
 var ASSUMED2 = 1;
 var PROVEN2 = 2;
-function isRecursive2(inst, stack, resolve18) {
+function isRecursive2(inst, stack, resolve19) {
   const cached4 = recursive2.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN2 : NONE2;
@@ -43334,7 +43535,7 @@ function isRecursive2(inst, stack, resolve18) {
   let result = NONE2;
   const check2 = (child) => {
     if (result !== PROVEN2 && child?._zod) {
-      const answer = isRecursive2(child, stack, resolve18);
+      const answer = isRecursive2(child, stack, resolve19);
       if (answer > result)
         result = answer;
     }
@@ -43345,7 +43546,7 @@ function isRecursive2(inst, stack, resolve18) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve18) : NONE2;
+      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve19) : NONE2;
       if (child > answer)
         answer = child;
     }
@@ -43408,7 +43609,7 @@ function isRecursive2(inst, stack, resolve18) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve18 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive2(inner, stack, false) : ASSUMED2);
       break;
     }
@@ -44300,13 +44501,13 @@ function initializeContext2(params) {
     external: params?.external ?? void 0
   };
 }
-function handleUnrepresentable2(schema, ctx, json3, params, message) {
+function handleUnrepresentable2(schema, ctx, json4, params, message) {
   const result = typeof ctx.unrepresentable === "function" ? ctx.unrepresentable({ zodSchema: schema, path: params.path, message }) : ctx.unrepresentable;
   if (result === "any")
     return false;
   if (result === void 0 || result === "throw")
     throw new Error(message);
-  Object.assign(json3, result);
+  Object.assign(json4, result);
   return true;
 }
 function processSchema2(schema, ctx, _params = { path: [], schemaPath: [] }) {
@@ -44542,12 +44743,12 @@ function foldObjects2(members4) {
   }
   return folded;
 }
-function foldIntersection2(json3) {
-  const allOf = json3.allOf;
+function foldIntersection2(json4) {
+  const allOf = json4.allOf;
   if (!Array.isArray(allOf) || allOf.length < 2)
     return;
   for (const key of FOLDABLE_KEYS2)
-    if (key in json3)
+    if (key in json4)
       return;
   const unions = allOf.filter((m) => UNION_KEYS2.some((k) => Array.isArray(m[k])));
   let folded = null;
@@ -44566,8 +44767,8 @@ function foldIntersection2(json3) {
   }
   if (!folded)
     return;
-  delete json3.allOf;
-  assignProps2(json3, folded);
+  delete json4.allOf;
+  assignProps2(json4, folded);
 }
 function finalize2(ctx, schema) {
   const root = ctx.seen.get(schema);
@@ -44649,20 +44850,20 @@ function finalize2(ctx, schema) {
     if (ctx.intersections.length) {
       const carriers = /* @__PURE__ */ new Map();
       for (const seen of ctx.seen.values()) {
-        for (const json3 of [seen.schema, seen.def]) {
-          const allOf = json3?.allOf;
+        for (const json4 of [seen.schema, seen.def]) {
+          const allOf = json4?.allOf;
           if (!Array.isArray(allOf))
             continue;
           const existing = carriers.get(allOf);
           if (existing)
-            existing.push(json3);
+            existing.push(json4);
           else
-            carriers.set(allOf, [json3]);
+            carriers.set(allOf, [json4]);
         }
       }
       for (const allOf of ctx.intersections) {
-        for (const json3 of carriers.get(allOf) ?? [])
-          foldIntersection2(json3);
+        for (const json4 of carriers.get(allOf) ?? [])
+          foldIntersection2(json4);
       }
     }
   }
@@ -44897,29 +45098,29 @@ var exactPatterns2 = /* @__PURE__ */ new Map([
 ]);
 var exactPattern2 = (p) => exactPatterns2.get(p) ?? p;
 var stringProcessor2 = (schema, ctx, _json, _params) => {
-  const json3 = _json;
-  json3.type = "string";
+  const json4 = _json;
+  json4.type = "string";
   const { minimum, maximum, format, patterns, contentEncoding, laxFormat } = aggregateChecks2(schema);
   if (typeof minimum === "number")
-    json3.minLength = minimum;
+    json4.minLength = minimum;
   if (typeof maximum === "number")
-    json3.maxLength = maximum;
+    json4.maxLength = maximum;
   if (format) {
-    json3.format = formatMap2[format] ?? format;
-    if (json3.format === "")
-      delete json3.format;
+    json4.format = formatMap2[format] ?? format;
+    if (json4.format === "")
+      delete json4.format;
     if (format === "time" || laxFormat) {
-      delete json3.format;
+      delete json4.format;
     }
   }
   if (contentEncoding)
-    json3.contentEncoding = contentEncoding;
+    json4.contentEncoding = contentEncoding;
   if (patterns && patterns.size > 0) {
     const patternList = [...patterns].map(exactPattern2);
     if (patternList.length === 1)
-      json3.pattern = patternList[0].source;
+      json4.pattern = patternList[0].source;
     else if (patternList.length > 1) {
-      json3.allOf = [
+      json4.allOf = [
         ...patternList.map((regex) => ({
           ...ctx.target === "draft-07" || ctx.target === "draft-04" || ctx.target === "openapi-3.0" ? { type: "string" } : {},
           pattern: regex.source
@@ -44929,31 +45130,31 @@ var stringProcessor2 = (schema, ctx, _json, _params) => {
   }
 };
 var numberProcessor2 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const { minimum, maximum, multipleOf, exclusiveMaximum, exclusiveMinimum, isInt } = aggregateChecks2(schema);
-  json3.type = isInt ? "integer" : "number";
+  json4.type = isInt ? "integer" : "number";
   const exMin = typeof exclusiveMinimum === "number" && exclusiveMinimum >= (minimum ?? Number.NEGATIVE_INFINITY);
   const exMax = typeof exclusiveMaximum === "number" && exclusiveMaximum <= (maximum ?? Number.POSITIVE_INFINITY);
   const legacy = ctx.target === "draft-04" || ctx.target === "openapi-3.0";
   if (exMin) {
     if (legacy) {
-      json3.minimum = exclusiveMinimum;
-      json3.exclusiveMinimum = true;
+      json4.minimum = exclusiveMinimum;
+      json4.exclusiveMinimum = true;
     } else {
-      json3.exclusiveMinimum = exclusiveMinimum;
+      json4.exclusiveMinimum = exclusiveMinimum;
     }
   } else if (typeof minimum === "number") {
-    json3.minimum = minimum;
+    json4.minimum = minimum;
   }
   if (exMax) {
     if (legacy) {
-      json3.maximum = exclusiveMaximum;
-      json3.exclusiveMaximum = true;
+      json4.maximum = exclusiveMaximum;
+      json4.exclusiveMaximum = true;
     } else {
-      json3.exclusiveMaximum = exclusiveMaximum;
+      json4.exclusiveMaximum = exclusiveMaximum;
     }
   } else if (typeof maximum === "number") {
-    json3.maximum = maximum;
+    json4.maximum = maximum;
   }
   if (multipleOf) {
     const divisors = /* @__PURE__ */ new Set();
@@ -44961,75 +45162,75 @@ var numberProcessor2 = (schema, ctx, _json, params) => {
       if (Number.isFinite(divisor) && divisor !== 0)
         divisors.add(Math.abs(divisor));
       else
-        handleUnrepresentable2(schema, ctx, json3, params, `A multipleOf divisor of ${divisor} cannot be represented in JSON Schema`);
+        handleUnrepresentable2(schema, ctx, json4, params, `A multipleOf divisor of ${divisor} cannot be represented in JSON Schema`);
     }
     const [first, ...rest] = divisors;
     if (first !== void 0)
-      json3.multipleOf = first;
+      json4.multipleOf = first;
     if (rest.length)
-      json3.allOf = [...json3.allOf ?? [], ...rest.map((m) => ({ multipleOf: m }))];
+      json4.allOf = [...json4.allOf ?? [], ...rest.map((m) => ({ multipleOf: m }))];
   }
 };
-var booleanProcessor2 = (_schema, _ctx, json3, _params) => {
-  json3.type = "boolean";
+var booleanProcessor2 = (_schema, _ctx, json4, _params) => {
+  json4.type = "boolean";
 };
-var bigintProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "BigInt cannot be represented in JSON Schema");
+var bigintProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "BigInt cannot be represented in JSON Schema");
 };
-var symbolProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Symbols cannot be represented in JSON Schema");
+var symbolProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Symbols cannot be represented in JSON Schema");
 };
-var nullProcessor2 = (_schema, ctx, json3, _params) => {
+var nullProcessor2 = (_schema, ctx, json4, _params) => {
   if (ctx.target === "openapi-3.0") {
-    json3.type = "string";
-    json3.nullable = true;
-    json3.enum = [null];
+    json4.type = "string";
+    json4.nullable = true;
+    json4.enum = [null];
   } else {
-    json3.type = "null";
+    json4.type = "null";
   }
 };
-var undefinedProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Undefined cannot be represented in JSON Schema");
+var undefinedProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Undefined cannot be represented in JSON Schema");
 };
-var voidProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Void cannot be represented in JSON Schema");
+var voidProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Void cannot be represented in JSON Schema");
 };
-var neverProcessor2 = (_schema, _ctx, json3, _params) => {
-  json3.not = {};
+var neverProcessor2 = (_schema, _ctx, json4, _params) => {
+  json4.not = {};
 };
 var anyProcessor2 = (_schema, _ctx, _json, _params) => {
 };
 var unknownProcessor2 = (_schema, _ctx, _json, _params) => {
 };
-var dateProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Date cannot be represented in JSON Schema");
+var dateProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Date cannot be represented in JSON Schema");
 };
-var enumProcessor2 = (schema, _ctx, json3, _params) => {
+var enumProcessor2 = (schema, _ctx, json4, _params) => {
   const def = schema._zod.def;
   const values = getEnumValues2(def.entries);
   if (values.length === 0) {
-    json3.not = {};
+    json4.not = {};
     return;
   }
   if (values.every((v) => typeof v === "number"))
-    json3.type = "number";
+    json4.type = "number";
   if (values.every((v) => typeof v === "string"))
-    json3.type = "string";
-  json3.enum = values;
+    json4.type = "string";
+  json4.enum = values;
 };
-var literalProcessor2 = (schema, ctx, json3, params) => {
+var literalProcessor2 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   if (def.values.length === 0) {
-    json3.not = {};
+    json4.not = {};
     return;
   }
   const vals = [];
   for (const val of def.values) {
     if (val === void 0) {
-      if (handleUnrepresentable2(schema, ctx, json3, params, "Literal `undefined` cannot be represented in JSON Schema"))
+      if (handleUnrepresentable2(schema, ctx, json4, params, "Literal `undefined` cannot be represented in JSON Schema"))
         return;
     } else if (typeof val === "bigint") {
-      if (handleUnrepresentable2(schema, ctx, json3, params, "BigInt literals cannot be represented in JSON Schema"))
+      if (handleUnrepresentable2(schema, ctx, json4, params, "BigInt literals cannot be represented in JSON Schema"))
         return;
       vals.push(Number(val));
     } else {
@@ -45039,37 +45240,37 @@ var literalProcessor2 = (schema, ctx, json3, params) => {
   if (vals.length === 0) {
   } else if (vals.length === 1) {
     const val = vals[0];
-    json3.type = val === null ? "null" : typeof val;
+    json4.type = val === null ? "null" : typeof val;
     if (ctx.target === "draft-04" || ctx.target === "openapi-3.0") {
-      json3.enum = [val];
+      json4.enum = [val];
     } else {
-      json3.const = val;
+      json4.const = val;
     }
   } else {
     if (vals.every((v) => typeof v === "number"))
-      json3.type = "number";
+      json4.type = "number";
     if (vals.every((v) => typeof v === "string"))
-      json3.type = "string";
+      json4.type = "string";
     if (vals.every((v) => typeof v === "boolean"))
-      json3.type = "boolean";
+      json4.type = "boolean";
     if (vals.every((v) => v === null))
-      json3.type = "null";
-    json3.enum = vals;
+      json4.type = "null";
+    json4.enum = vals;
   }
 };
-var nanProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "NaN cannot be represented in JSON Schema");
+var nanProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "NaN cannot be represented in JSON Schema");
 };
-var templateLiteralProcessor2 = (schema, _ctx, json3, _params) => {
-  const _json = json3;
+var templateLiteralProcessor2 = (schema, _ctx, json4, _params) => {
+  const _json = json4;
   const pattern = schema._zod.pattern;
   if (!pattern)
     throw new Error("Pattern not found in template literal");
   _json.type = "string";
   _json.pattern = pattern.source;
 };
-var fileProcessor2 = (schema, _ctx, json3, _params) => {
-  const _json = json3;
+var fileProcessor2 = (schema, _ctx, json4, _params) => {
+  const _json = json4;
   _json.type = "string";
   _json.format = "binary";
   _json.contentEncoding = "binary";
@@ -45087,34 +45288,34 @@ var fileProcessor2 = (schema, _ctx, json3, _params) => {
   else
     _json.anyOf = mime.map((m) => ({ contentMediaType: m }));
 };
-var successProcessor2 = (_schema, _ctx, json3, _params) => {
-  json3.type = "boolean";
+var successProcessor2 = (_schema, _ctx, json4, _params) => {
+  json4.type = "boolean";
 };
-var customProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Custom types cannot be represented in JSON Schema");
+var customProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Custom types cannot be represented in JSON Schema");
 };
-var functionProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Function types cannot be represented in JSON Schema");
+var functionProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Function types cannot be represented in JSON Schema");
 };
-var transformProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Transforms cannot be represented in JSON Schema");
+var transformProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Transforms cannot be represented in JSON Schema");
 };
-var mapProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Map cannot be represented in JSON Schema");
+var mapProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Map cannot be represented in JSON Schema");
 };
-var setProcessor2 = (schema, ctx, json3, params) => {
-  handleUnrepresentable2(schema, ctx, json3, params, "Set cannot be represented in JSON Schema");
+var setProcessor2 = (schema, ctx, json4, params) => {
+  handleUnrepresentable2(schema, ctx, json4, params, "Set cannot be represented in JSON Schema");
 };
 var arrayProcessor2 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
   const { minimum, maximum } = aggregateChecks2(schema);
   if (typeof minimum === "number")
-    json3.minItems = minimum;
+    json4.minItems = minimum;
   if (typeof maximum === "number")
-    json3.maxItems = maximum;
-  json3.type = "array";
-  json3.items = processSchema2(def.element, ctx, {
+    json4.maxItems = maximum;
+  json4.type = "array";
+  json4.items = processSchema2(def.element, ctx, {
     ...params,
     path: [...params.path, "items"]
   });
@@ -45130,17 +45331,17 @@ function inputOptin2(schema) {
   return schema._zod.optin;
 }
 var objectProcessor2 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
   const shape = def.shape;
   const symbolKeys = Object.getOwnPropertySymbols(shape);
-  if (symbolKeys.length && handleUnrepresentable2(schema, ctx, json3, params, "Symbol keys cannot be represented in JSON Schema")) {
+  if (symbolKeys.length && handleUnrepresentable2(schema, ctx, json4, params, "Symbol keys cannot be represented in JSON Schema")) {
     return;
   }
-  json3.type = "object";
-  json3.properties = {};
+  json4.type = "object";
+  json4.properties = {};
   for (const key in shape) {
-    assignProp2(json3.properties, key, processSchema2(shape[key], ctx, {
+    assignProp2(json4.properties, key, processSchema2(shape[key], ctx, {
       ...params,
       path: [...params.path, "properties", key]
     }));
@@ -45153,21 +45354,21 @@ var objectProcessor2 = (schema, ctx, _json, params) => {
     }
   }
   if (requiredKeys.length > 0) {
-    json3.required = requiredKeys;
+    json4.required = requiredKeys;
   }
   if (def.catchall?._zod.def.type === "never") {
-    json3.additionalProperties = false;
+    json4.additionalProperties = false;
   } else if (!def.catchall) {
     if (ctx.io === "output")
-      json3.additionalProperties = false;
+      json4.additionalProperties = false;
   } else if (def.catchall) {
-    json3.additionalProperties = processSchema2(def.catchall, ctx, {
+    json4.additionalProperties = processSchema2(def.catchall, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
   }
 };
-var unionProcessor2 = (schema, ctx, json3, params) => {
+var unionProcessor2 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const isExclusive = def.inclusive === false;
   const options2 = def.options.map((x, i) => processSchema2(x, ctx, {
@@ -45175,12 +45376,12 @@ var unionProcessor2 = (schema, ctx, json3, params) => {
     path: [...params.path, isExclusive ? "oneOf" : "anyOf", i]
   }));
   if (isExclusive) {
-    json3.oneOf = options2;
+    json4.oneOf = options2;
   } else {
-    json3.anyOf = options2;
+    json4.anyOf = options2;
   }
 };
-var intersectionProcessor2 = (schema, ctx, json3, params) => {
+var intersectionProcessor2 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const a = processSchema2(def.left, ctx, {
     ...params,
@@ -45195,13 +45396,13 @@ var intersectionProcessor2 = (schema, ctx, json3, params) => {
     ...isSimpleIntersection(a) ? a.allOf : [a],
     ...isSimpleIntersection(b) ? b.allOf : [b]
   ];
-  json3.allOf = allOf;
+  json4.allOf = allOf;
   ctx.intersections.push(allOf);
 };
 var tupleProcessor2 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
-  json3.type = "array";
+  json4.type = "array";
   const prefixPath = ctx.target === "draft-2020-12" ? "prefixItems" : "items";
   const restPath = ctx.target === "draft-2020-12" ? "items" : ctx.target === "openapi-3.0" ? "items" : "additionalItems";
   const prefixItems = def.items.map((x, i) => processSchema2(x, ctx, {
@@ -45223,70 +45424,70 @@ var tupleProcessor2 = (schema, ctx, _json, params) => {
   const maxItems = def.items.length;
   const isClosed = !def.rest;
   if (ctx.target === "draft-2020-12") {
-    json3.prefixItems = prefixItems;
+    json4.prefixItems = prefixItems;
     if (isClosed) {
-      json3.items = false;
+      json4.items = false;
     } else if (rest) {
-      json3.items = rest;
+      json4.items = rest;
     }
     if (minItems > 0)
-      json3.minItems = minItems;
+      json4.minItems = minItems;
     if (isClosed)
-      json3.maxItems = maxItems;
+      json4.maxItems = maxItems;
   } else if (ctx.target === "openapi-3.0") {
-    json3.items = {
+    json4.items = {
       anyOf: prefixItems
     };
     if (rest) {
-      json3.items.anyOf.push(rest);
+      json4.items.anyOf.push(rest);
     }
     if (minItems > 0)
-      json3.minItems = minItems;
+      json4.minItems = minItems;
     if (isClosed)
-      json3.maxItems = maxItems;
+      json4.maxItems = maxItems;
   } else {
-    json3.items = prefixItems;
+    json4.items = prefixItems;
     if (isClosed) {
-      json3.additionalItems = false;
+      json4.additionalItems = false;
     } else if (rest) {
-      json3.additionalItems = rest;
+      json4.additionalItems = rest;
     }
     if (minItems > 0)
-      json3.minItems = minItems;
+      json4.minItems = minItems;
     if (isClosed)
-      json3.maxItems = maxItems;
+      json4.maxItems = maxItems;
   }
   const { minimum, maximum } = aggregateChecks2(schema);
   if (typeof minimum === "number")
-    json3.minItems = minimum;
+    json4.minItems = minimum;
   if (typeof maximum === "number")
-    json3.maxItems = maximum;
+    json4.maxItems = maximum;
 };
-function stringifyKeyNames2(bySchema, json3, visited) {
-  if (json3.$ref) {
-    if (visited.has(json3))
-      return json3;
-    visited.add(json3);
-    const def = bySchema.get(json3)?.def;
+function stringifyKeyNames2(bySchema, json4, visited) {
+  if (json4.$ref) {
+    if (visited.has(json4))
+      return json4;
+    visited.add(json4);
+    const def = bySchema.get(json4)?.def;
     if (!def)
-      return json3;
+      return json4;
     const inlined = stringifyKeyNames2(bySchema, def, visited);
-    return inlined === def ? json3 : inlined;
+    return inlined === def ? json4 : inlined;
   }
   for (const keyword of ["anyOf", "oneOf"]) {
-    const branches = json3[keyword];
+    const branches = json4[keyword];
     if (!Array.isArray(branches))
       continue;
     const mapped = branches.map((branch) => stringifyKeyNames2(bySchema, branch, visited));
     if (mapped.some((branch, i) => branch !== branches[i]))
-      json3 = { ...json3, [keyword]: mapped };
+      json4 = { ...json4, [keyword]: mapped };
   }
-  const types = Array.isArray(json3.type) ? json3.type : [json3.type];
+  const types = Array.isArray(json4.type) ? json4.type : [json4.type];
   const numericType = !types.includes("string") && types.some((t) => t === "number" || t === "integer");
-  const values = json3.enum ?? (json3.const !== void 0 ? [json3.const] : void 0);
+  const values = json4.enum ?? (json4.const !== void 0 ? [json4.const] : void 0);
   if (!numericType && !values?.some((v) => typeof v === "number"))
-    return json3;
-  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id, ...rest } = json3;
+    return json4;
+  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id, ...rest } = json4;
   if (rest.enum)
     rest.enum = rest.enum.map((v) => typeof v === "number" ? String(v) : v);
   else if (typeof rest.const === "number")
@@ -45326,9 +45527,9 @@ function rewriteKeyNames2(ctx) {
   }
 }
 var recordProcessor2 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
-  json3.type = "object";
+  json4.type = "object";
   const keyType = def.keyType;
   const patterns = aggregateChecks2(keyType).patterns;
   if (def.mode === "loose" && patterns && patterns.size > 0) {
@@ -45336,13 +45537,13 @@ var recordProcessor2 = (schema, ctx, _json, params) => {
       ...params,
       path: [...params.path, "patternProperties", "*"]
     });
-    json3.patternProperties = {};
+    json4.patternProperties = {};
     for (const pattern of patterns) {
-      assignProp2(json3.patternProperties, exactPattern2(pattern).source, valueSchema);
+      assignProp2(json4.patternProperties, exactPattern2(pattern).source, valueSchema);
     }
   } else {
     if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") {
-      json3.propertyNames = processSchema2(def.keyType, ctx, {
+      json4.propertyNames = processSchema2(def.keyType, ctx, {
         ...params,
         path: [...params.path, "propertyNames"]
       });
@@ -45354,7 +45555,7 @@ var recordProcessor2 = (schema, ctx, _json, params) => {
       }
       pending.push(schema);
     }
-    json3.additionalProperties = processSchema2(def.valueType, ctx, {
+    json4.additionalProperties = processSchema2(def.valueType, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
@@ -45364,19 +45565,19 @@ var recordProcessor2 = (schema, ctx, _json, params) => {
   if (keyValues && !def.partial && !omittableOnInput) {
     const validKeyValues = [...keyValues].filter((v) => typeof v === "string" || typeof v === "number");
     if (validKeyValues.length > 0) {
-      json3.required = validKeyValues.map(String);
+      json4.required = validKeyValues.map(String);
     }
   }
 };
-var nullableProcessor2 = (schema, ctx, json3, params) => {
+var nullableProcessor2 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const inner = processSchema2(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   if (ctx.target === "openapi-3.0") {
     seen.ref = def.innerType;
-    json3.nullable = true;
+    json4.nullable = true;
   } else {
-    json3.anyOf = [inner, { type: "null" }];
+    json4.anyOf = [inner, { type: "null" }];
   }
 };
 var nonoptionalProcessor2 = (schema, ctx, _json, params) => {
@@ -45386,7 +45587,7 @@ var nonoptionalProcessor2 = (schema, ctx, _json, params) => {
   seen.ref = def.innerType;
 };
 var UNREPRESENTABLE_DEFAULT2 = Symbol();
-function serializeDefaultValue2(value, schema, ctx, json3, params) {
+function serializeDefaultValue2(value, schema, ctx, json4, params) {
   let unrepresentable = false;
   const serialized = JSON.stringify(value, (_, val) => {
     if (typeof val !== "bigint")
@@ -45396,30 +45597,30 @@ function serializeDefaultValue2(value, schema, ctx, json3, params) {
   });
   if (!unrepresentable)
     return JSON.parse(serialized);
-  handleUnrepresentable2(schema, ctx, json3, params, "BigInt defaults cannot be represented in JSON Schema");
+  handleUnrepresentable2(schema, ctx, json4, params, "BigInt defaults cannot be represented in JSON Schema");
   return UNREPRESENTABLE_DEFAULT2;
 }
-var defaultProcessor2 = (schema, ctx, json3, params) => {
+var defaultProcessor2 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema2(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
-  const value = serializeDefaultValue2(def.defaultValue, schema, ctx, json3, params);
+  const value = serializeDefaultValue2(def.defaultValue, schema, ctx, json4, params);
   if (value !== UNREPRESENTABLE_DEFAULT2)
-    json3.default = value;
+    json4.default = value;
 };
-var prefaultProcessor2 = (schema, ctx, json3, params) => {
+var prefaultProcessor2 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema2(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   if (ctx.io !== "input")
     return;
-  const value = serializeDefaultValue2(def.defaultValue, schema, ctx, json3, params);
+  const value = serializeDefaultValue2(def.defaultValue, schema, ctx, json4, params);
   if (value !== UNREPRESENTABLE_DEFAULT2)
-    json3._prefault = value;
+    json4._prefault = value;
 };
-var catchProcessor2 = (schema, ctx, json3, params) => {
+var catchProcessor2 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema2(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
@@ -45428,10 +45629,10 @@ var catchProcessor2 = (schema, ctx, json3, params) => {
   try {
     catchValue = def.catchValue(void 0);
   } catch {
-    handleUnrepresentable2(schema, ctx, json3, params, "Dynamic catch values are not supported in JSON Schema");
+    handleUnrepresentable2(schema, ctx, json4, params, "Dynamic catch values are not supported in JSON Schema");
     return;
   }
-  json3.default = catchValue;
+  json4.default = catchValue;
 };
 var pipeProcessor2 = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
@@ -45441,12 +45642,12 @@ var pipeProcessor2 = (schema, ctx, _json, params) => {
   const seen = ctx.seen.get(schema);
   seen.ref = innerType;
 };
-var readonlyProcessor2 = (schema, ctx, json3, params) => {
+var readonlyProcessor2 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema2(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
-  json3.readOnly = true;
+  json4.readOnly = true;
 };
 var promiseProcessor2 = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
@@ -45790,7 +45991,7 @@ var _ZodString2 = /* @__PURE__ */ $constructor2(
   (inst, def) => {
     $ZodString2.init(inst, def);
     ZodType2.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => stringProcessor2(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => stringProcessor2(inst, ctx, json4, params);
   },
   /* @__PURE__ */ util_exports2.derived({
     format: (inst) => aggregateChecks2(inst).format ?? null,
@@ -46037,7 +46238,7 @@ var ZodNumber2 = /* @__PURE__ */ $constructor2(
   (inst, def) => {
     $ZodNumber2.init(inst, def);
     ZodType2.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => numberProcessor2(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => numberProcessor2(inst, ctx, json4, params);
     inst.isFinite = true;
   },
   /* @__PURE__ */ util_exports2.derived({
@@ -46115,7 +46316,7 @@ function int2(params) {
 var ZodBoolean2 = /* @__PURE__ */ $constructor2("ZodBoolean", (inst, def) => {
   $ZodBoolean2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => booleanProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => booleanProcessor2(inst, ctx, json4, params);
 });
 function boolean5(params) {
   return _boolean2(ZodBoolean2, params);
@@ -46123,7 +46324,7 @@ function boolean5(params) {
 var ZodNull2 = /* @__PURE__ */ $constructor2("ZodNull", (inst, def) => {
   $ZodNull2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nullProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nullProcessor2(inst, ctx, json4, params);
 });
 function _null6(params) {
   return _null5(ZodNull2, params);
@@ -46131,7 +46332,7 @@ function _null6(params) {
 var ZodUnknown2 = /* @__PURE__ */ $constructor2("ZodUnknown", (inst, def) => {
   $ZodUnknown2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => unknownProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => unknownProcessor2(inst, ctx, json4, params);
 });
 function unknown2() {
   return _unknown2(ZodUnknown2);
@@ -46139,7 +46340,7 @@ function unknown2() {
 var ZodNever2 = /* @__PURE__ */ $constructor2("ZodNever", (inst, def) => {
   $ZodNever2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => neverProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => neverProcessor2(inst, ctx, json4, params);
 });
 function never2(params) {
   return _never2(ZodNever2, params);
@@ -46148,7 +46349,7 @@ var ZodArray2 = /* @__PURE__ */ $constructor2("ZodArray", (inst, def) => {
   _ensureDefaultMemoizer2();
   $ZodArray2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => arrayProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => arrayProcessor2(inst, ctx, json4, params);
   inst.element = def.element;
 }, {
   min(n, params) {
@@ -46174,7 +46375,7 @@ var ZodObject2 = /* @__PURE__ */ $constructor2("ZodObject", (inst, def) => {
   _ensureDefaultMemoizer2();
   $ZodObjectJIT2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => objectProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => objectProcessor2(inst, ctx, json4, params);
   util_exports2.installLazyProp(inst, "shape", (self) => self._zod.def.shape, false);
 }, {
   keyof() {
@@ -46239,7 +46440,7 @@ function looseObject2(shape, params) {
 var ZodUnion2 = /* @__PURE__ */ $constructor2("ZodUnion", (inst, def) => {
   $ZodUnion2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => unionProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => unionProcessor2(inst, ctx, json4, params);
   inst.options = def.options;
 });
 function union2(options2, params) {
@@ -46264,7 +46465,7 @@ function discriminatedUnion2(discriminator, options2, params) {
 var ZodIntersection2 = /* @__PURE__ */ $constructor2("ZodIntersection", (inst, def) => {
   $ZodIntersection2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => intersectionProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => intersectionProcessor2(inst, ctx, json4, params);
 });
 function intersection2(left, right) {
   return new ZodIntersection2({
@@ -46277,7 +46478,7 @@ var ZodRecord2 = /* @__PURE__ */ $constructor2("ZodRecord", (inst, def) => {
   _ensureDefaultMemoizer2();
   $ZodRecord2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => recordProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => recordProcessor2(inst, ctx, json4, params);
   inst.keyType = def.keyType;
   inst.valueType = def.valueType;
 });
@@ -46300,7 +46501,7 @@ function record2(keyType, valueType, params) {
 var ZodEnum2 = /* @__PURE__ */ $constructor2("ZodEnum", (inst, def) => {
   $ZodEnum2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => enumProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => enumProcessor2(inst, ctx, json4, params);
   inst.enum = def.entries;
   inst.options = [...inst._zod.values];
   const keys = new Set(Object.keys(def.entries));
@@ -46346,7 +46547,7 @@ function _enum2(values, params) {
 var ZodLiteral2 = /* @__PURE__ */ $constructor2("ZodLiteral", (inst, def) => {
   $ZodLiteral2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => literalProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => literalProcessor2(inst, ctx, json4, params);
   inst.values = new Set(def.values);
   Object.defineProperty(inst, "value", {
     get() {
@@ -46368,7 +46569,7 @@ var ZodTransform2 = /* @__PURE__ */ $constructor2("ZodTransform", (inst, def) =>
   _ensureDefaultMemoizer2();
   $ZodTransform2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => transformProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => transformProcessor2(inst, ctx, json4, params);
   inst._zod.parse = (payload, _ctx) => {
     if (_ctx.direction === "backward") {
       throw new $ZodEncodeError2(inst.constructor.name);
@@ -46407,7 +46608,7 @@ function transform2(fn) {
 var ZodOptional2 = /* @__PURE__ */ $constructor2("ZodOptional", (inst, def) => {
   $ZodOptional2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => optionalProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => optionalProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function optional2(innerType) {
@@ -46419,7 +46620,7 @@ function optional2(innerType) {
 var ZodExactOptional2 = /* @__PURE__ */ $constructor2("ZodExactOptional", (inst, def) => {
   $ZodExactOptional2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => optionalProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => optionalProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function exactOptional2(innerType) {
@@ -46431,7 +46632,7 @@ function exactOptional2(innerType) {
 var ZodNullable2 = /* @__PURE__ */ $constructor2("ZodNullable", (inst, def) => {
   $ZodNullable2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nullableProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nullableProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function nullable2(innerType) {
@@ -46443,7 +46644,7 @@ function nullable2(innerType) {
 var ZodDefault2 = /* @__PURE__ */ $constructor2("ZodDefault", (inst, def) => {
   $ZodDefault2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => defaultProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => defaultProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeDefault = inst.unwrap;
 });
@@ -46459,7 +46660,7 @@ function _default2(innerType, defaultValue) {
 var ZodPrefault2 = /* @__PURE__ */ $constructor2("ZodPrefault", (inst, def) => {
   $ZodPrefault2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => prefaultProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => prefaultProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function prefault2(innerType, defaultValue) {
@@ -46474,7 +46675,7 @@ function prefault2(innerType, defaultValue) {
 var ZodNonOptional2 = /* @__PURE__ */ $constructor2("ZodNonOptional", (inst, def) => {
   $ZodNonOptional2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nonoptionalProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nonoptionalProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function nonoptional2(innerType, params) {
@@ -46487,7 +46688,7 @@ function nonoptional2(innerType, params) {
 var ZodCatch2 = /* @__PURE__ */ $constructor2("ZodCatch", (inst, def) => {
   $ZodCatch2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => catchProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => catchProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeCatch = inst.unwrap;
 });
@@ -46501,7 +46702,7 @@ function _catch2(innerType, catchValue) {
 var ZodPipe2 = /* @__PURE__ */ $constructor2("ZodPipe", (inst, def) => {
   $ZodPipe2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => pipeProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => pipeProcessor2(inst, ctx, json4, params);
   inst.in = def.in;
   inst.out = def.out;
 });
@@ -46520,7 +46721,7 @@ var ZodPreprocess2 = /* @__PURE__ */ $constructor2("ZodPreprocess", (inst, def) 
 var ZodReadonly2 = /* @__PURE__ */ $constructor2("ZodReadonly", (inst, def) => {
   $ZodReadonly2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => readonlyProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => readonlyProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function readonly2(innerType) {
@@ -46532,7 +46733,7 @@ function readonly2(innerType) {
 var ZodLazy2 = /* @__PURE__ */ $constructor2("ZodLazy", (inst, def) => {
   $ZodLazy2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => lazyProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => lazyProcessor2(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.getter();
 });
 function lazy2(getter) {
@@ -46544,7 +46745,7 @@ function lazy2(getter) {
 var ZodCustom2 = /* @__PURE__ */ $constructor2("ZodCustom", (inst, def) => {
   $ZodCustom2.init(inst, def);
   ZodType2.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => customProcessor2(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => customProcessor2(inst, ctx, json4, params);
 });
 function refine2(fn, _params = {}) {
   return _refine2(ZodCustom2, fn, _params);
@@ -47675,8 +47876,8 @@ var memo$1;
 function buildSchemas2025() {
   return memo$1 ??= build$1();
 }
-function isNonObjectJsonSchemaRoot(json3) {
-  return json3["type"] !== "object";
+function isNonObjectJsonSchemaRoot(json4) {
+  return json4["type"] !== "object";
 }
 var REF_REWRITE_DATA_POSITION_KEYS = /* @__PURE__ */ new Set([
   "const",
@@ -49207,9 +49408,9 @@ var rev2026Codec = {
     });
     const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta5);
     if (!parsed.success) for (const issue4 of parsed.error.issues) {
-      const path = issue4.path.map(String);
-      const key = path.length > 0 ? path.join(".") : "_meta";
-      if (path.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+      const path2 = issue4.path.map(String);
+      const key = path2.length > 0 ? path2.join(".") : "_meta";
+      if (path2.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
       issues.push({
         key,
         problem: issue4.message
@@ -49530,29 +49731,29 @@ var PERMITTED_X_MCP_HEADER_TYPES = /* @__PURE__ */ new Set([
 function scanXMcpHeaderDeclarations(inputSchema) {
   const declarations = [];
   const seenLower = /* @__PURE__ */ new Map();
-  const visit2 = (node4, path, reachable) => {
+  const visit2 = (node4, path2, reachable) => {
     if (node4 === null || typeof node4 !== "object") return void 0;
     const schema = node4;
     if (X_MCP_HEADER_KEY in schema) {
-      if (!reachable || path.length === 0) return `${pathName(path)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
+      if (!reachable || path2.length === 0) return `${pathName(path2)}: x-mcp-header is only permitted on properties statically reachable via a chain of 'properties' keys (not under items, additionalProperties, oneOf/anyOf/allOf/not, if/then/else, or $ref)`;
       const raw = schema[X_MCP_HEADER_KEY];
-      if (typeof raw !== "string" || raw.length === 0) return `${pathName(path)}: x-mcp-header MUST be a non-empty string`;
-      if (!RFC9110_TOKEN.test(raw)) return `${pathName(path)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
+      if (typeof raw !== "string" || raw.length === 0) return `${pathName(path2)}: x-mcp-header MUST be a non-empty string`;
+      if (!RFC9110_TOKEN.test(raw)) return `${pathName(path2)}: x-mcp-header '${raw}' is not a valid RFC 9110 token (no spaces, control characters or HTTP delimiters)`;
       const type = typeof schema.type === "string" ? schema.type : void 0;
-      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) return `${pathName(path)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
+      if (type === void 0 || !PERMITTED_X_MCP_HEADER_TYPES.has(type)) return `${pathName(path2)}: x-mcp-header is only permitted on primitive-typed properties (string, integer, boolean); got ${type ?? "<none>"}`;
       const lower = raw.toLowerCase();
       const prior = seenLower.get(lower);
       if (prior !== void 0) return `x-mcp-header '${raw}' is not case-insensitively unique (also declared as '${prior}')`;
       seenLower.set(lower, raw);
       declarations.push({
-        path,
+        path: path2,
         headerName: raw,
         type
       });
     }
     const properties = schema.properties;
     if (properties !== null && typeof properties === "object") for (const [key, child] of Object.entries(properties)) {
-      const fault$1 = visit2(child, [...path, key], reachable);
+      const fault$1 = visit2(child, [...path2, key], reachable);
       if (fault$1 !== void 0) return fault$1;
     }
     for (const k of NON_REACHABLE_SUBSCHEMA_KEYWORDS) {
@@ -49560,7 +49761,7 @@ function scanXMcpHeaderDeclarations(inputSchema) {
       if (sub === void 0) continue;
       const branches = Array.isArray(sub) ? sub : sub !== null && typeof sub === "object" && OBJECT_VALUED_SUBSCHEMA_KEYWORDS.has(k) ? Object.values(sub) : [sub];
       for (const branch of branches) {
-        const fault$1 = visit2(branch, [...path, `<${k}>`], false);
+        const fault$1 = visit2(branch, [...path2, `<${k}>`], false);
         if (fault$1 !== void 0) return fault$1;
       }
     }
@@ -49600,8 +49801,8 @@ var OBJECT_VALUED_SUBSCHEMA_KEYWORDS = /* @__PURE__ */ new Set([
   "$defs",
   "definitions"
 ]);
-function pathName(path) {
-  return path.length === 0 ? "<root>" : path.join(".");
+function pathName(path2) {
+  return path2.length === 0 ? "<root>" : path2.join(".");
 }
 var HEADER_MISMATCH_ERROR_CODE = -32020;
 var INBOUND_VALIDATION_LADDER = [
@@ -49890,7 +50091,7 @@ var PROPERTY_KEYS_BY_TYPE = {
   array: shapeKeys([UntitledMultiSelectEnumSchemaSchema, TitledMultiSelectEnumSchemaSchema])
 };
 var SUPPORTED_STRING_FORMATS = new Set(StringSchemaSchema.shape.format.unwrap().options);
-function walkProperty(node4, path, vendor, unsupported) {
+function walkProperty(node4, path2, vendor, unsupported) {
   if (!isJsonObject(node4)) return node4;
   const allowedKeys = typeof node4.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node4.type) ? PROPERTY_KEYS_BY_TYPE[node4.type] : void 0;
   if (allowedKeys === void 0) return node4;
@@ -49898,8 +50099,8 @@ function walkProperty(node4, path, vendor, unsupported) {
   for (const [key, value] of Object.entries(node4)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node4.type === "string" && typeof node4.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node4.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node4.format, value, vendor)) unsupported.push(`${path}.${key}`);
-  } else unsupported.push(`${path}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node4.format, value, vendor)) unsupported.push(`${path2}.${key}`);
+  } else unsupported.push(`${path2}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -49916,11 +50117,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node4]) => !parseSchema(PrimitiveSchemaDefinitionSchema, node4).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path2 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path2}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path ? `${path}.${key}` : key;
+    const childPath = path2 ? `${path2}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -50013,14 +50214,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve18, reject) => {
+  return new Promise((resolve19, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve18();
+      resolve19();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -50814,7 +51015,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve18, reject) => {
+    return new Promise((resolve19, reject) => {
       const earlyReject = (error64) => {
         reject(error64);
       };
@@ -50882,7 +51083,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options2?.allowInputRequired === true) return resolve18(manualInputRequiredValue(decoded));
+          if (options2?.allowInputRequired === true) return resolve19(manualInputRequiredValue(decoded));
           const flow = {
             codec: codec2,
             request,
@@ -50894,11 +51095,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve18(this._resolveNonCompleteResult(decoded, flow));
+          return resolve19(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve18(parseResult.data);
+          if (parseResult.success) resolve19(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -53810,7 +54011,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve18.call(this, root, ref);
+    let _sch = resolve19.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a7 = root.localRefs) === null || _a7 === void 0 ? void 0 : _a7[ref];
       const { schemaId } = this.opts;
@@ -53836,7 +54037,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve18(root, ref) {
+  function resolve19(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -54021,8 +54222,8 @@ var require_utils = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     for (let i = 0; i < str4.length; i++) if (str4[i] === token) ind++;
     return ind;
   }
-  function removeDotSegments(path) {
-    let input2 = path;
+  function removeDotSegments(path2) {
+    let input2 = path2;
     const output2 = [];
     let nextSlash = -1;
     let len = 0;
@@ -54175,8 +54376,8 @@ var require_schemes = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
       wsComponent.secure = void 0;
     }
     if (wsComponent.resourceName) {
-      const [path, query] = wsComponent.resourceName.split("?");
-      wsComponent.path = path && path !== "/" ? path : void 0;
+      const [path2, query] = wsComponent.resourceName.split("?");
+      wsComponent.path = path2 && path2 !== "/" ? path2 : void 0;
       wsComponent.query = query;
       wsComponent.resourceName = void 0;
     }
@@ -54286,7 +54487,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     else if (typeof uri === "object") uri = parse6(serialize(uri, options2), options2);
     return uri;
   }
-  function resolve18(baseURI, relativeURI, options2) {
+  function resolve19(baseURI, relativeURI, options2) {
     const schemelessOptions = options2 ? Object.assign({ scheme: "null" }, options2) : { scheme: "null" };
     const resolved = resolveComponent(parse6(baseURI, schemelessOptions), parse6(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
@@ -54460,7 +54661,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
   const fastUri = {
     SCHEMES,
     normalize,
-    resolve: resolve18,
+    resolve: resolve19,
     resolveComponent,
     equal,
     serialize,
@@ -58580,26 +58781,26 @@ var INPUT_REQUIRED_CAPABLE_METHODS = /* @__PURE__ */ new Set([
 var writeClientIdentity;
 var installDiscoverHandler;
 var readServerIdentity;
-function installModernOnlyHandlers(server2, servedModernVersions) {
-  installDiscoverHandler(server2, servedModernVersions);
+function installModernOnlyHandlers(server3, servedModernVersions) {
+  installDiscoverHandler(server3, servedModernVersions);
 }
-function serverIdentityOf(server2) {
-  return readServerIdentity(server2);
+function serverIdentityOf(server3) {
+  return readServerIdentity(server3);
 }
 var Server = class extends Protocol {
   _clientCapabilities;
   _clientVersion;
   static {
-    writeClientIdentity = (server2, identity) => {
-      if (identity.clientCapabilities !== void 0) server2._clientCapabilities = identity.clientCapabilities;
-      if (identity.clientInfo !== void 0) server2._clientVersion = identity.clientInfo;
+    writeClientIdentity = (server3, identity) => {
+      if (identity.clientCapabilities !== void 0) server3._clientCapabilities = identity.clientCapabilities;
+      if (identity.clientInfo !== void 0) server3._clientVersion = identity.clientInfo;
     };
-    installDiscoverHandler = (server2, servedModernVersions) => {
-      const missing2 = servedModernVersions.filter((version4) => !server2._supportedProtocolVersions.includes(version4));
-      if (missing2.length > 0) server2._supportedProtocolVersions = [...server2._supportedProtocolVersions, ...missing2];
-      server2.setRequestHandler("server/discover", () => server2._ondiscover());
+    installDiscoverHandler = (server3, servedModernVersions) => {
+      const missing2 = servedModernVersions.filter((version4) => !server3._supportedProtocolVersions.includes(version4));
+      if (missing2.length > 0) server3._supportedProtocolVersions = [...server3._supportedProtocolVersions, ...missing2];
+      server3.setRequestHandler("server/discover", () => server3._ondiscover());
     };
-    readServerIdentity = (server2) => server2._serverInfo;
+    readServerIdentity = (server3) => server3._serverInfo;
   }
   _capabilities;
   _instructions;
@@ -59227,9 +59428,9 @@ var McpServer = class {
     if (Object.hasOwn(this._toolInputSchemaJson, name)) return this._toolInputSchemaJson[name];
     if (tool.inputSchema === void 0) return EMPTY_OBJECT_JSON_SCHEMA;
     try {
-      const json3 = standardSchemaToJsonSchema(tool.inputSchema, "input");
-      this._toolInputSchemaJson[name] = json3;
-      return json3;
+      const json4 = standardSchemaToJsonSchema(tool.inputSchema, "input");
+      this._toolInputSchemaJson[name] = json4;
+      return json4;
     } catch {
       return;
     }
@@ -59588,9 +59789,9 @@ var McpServer = class {
   _createRegisteredTool(name, title, description, inputSchema, outputSchema, annotations, icons, execution, _meta, handler) {
     validateAndWarnToolName(name);
     if (inputSchema !== void 0) try {
-      const json3 = standardSchemaToJsonSchema(inputSchema, "input");
-      this._toolInputSchemaJson[name] = json3;
-      const scan = scanXMcpHeaderDeclarations(json3);
+      const json4 = standardSchemaToJsonSchema(inputSchema, "input");
+      this._toolInputSchemaJson[name] = json4;
+      const scan = scanXMcpHeaderDeclarations(json4);
       if (!scan.valid) console.warn(`[mcp-sdk] tool '${name}' carries an invalid x-mcp-header declaration and will be excluded by conforming Streamable HTTP clients: ${scan.reason}`);
     } catch {
     }
@@ -59836,8 +60037,8 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve18, reject) => {
-      const json3 = serializeMessage(message);
+    return new Promise((resolve19, reject) => {
+      const json4 = serializeMessage(message);
       let settled = false;
       const onError = (error64) => {
         if (settled) return;
@@ -59851,14 +60052,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve18();
+        resolve19();
       };
       this._stdout.once("error", onError);
-      if (this._stdout.write(json3)) {
+      if (this._stdout.write(json4)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve18();
+        resolve19();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -59912,14 +60113,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve18) => {
+    return await new Promise((resolve19) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve18(true);
+        resolve19(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve18(false);
+        resolve19(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -60073,11 +60274,11 @@ function serveStdio(factory, options2 = {}) {
   };
   const connectInstance = async (era, revision) => {
     const product = await factory({ era });
-    const server2 = product instanceof McpServer ? product.server : product;
+    const server3 = product instanceof McpServer ? product.server : product;
     if (era === "modern") {
-      setNegotiatedProtocolVersion(server2, revision);
-      installModernOnlyHandlers(server2, SUPPORTED_MODERN_PROTOCOL_VERSIONS);
-      listenRouter.setServerCapabilities(server2.getCapabilities(), serverIdentityOf(server2));
+      setNegotiatedProtocolVersion(server3, revision);
+      installModernOnlyHandlers(server3, SUPPORTED_MODERN_PROTOCOL_VERSIONS);
+      listenRouter.setServerCapabilities(server3.getCapabilities(), serverIdentityOf(server3));
     }
     const channel = new StdioConnectionChannel(wire, () => onInstanceClosed(channel), era === "modern" ? modernOutboundIntercept : void 0);
     await product.connect(channel);
@@ -60268,7 +60469,7 @@ var wpProp = {
 var confirmProp = {
   type: "string",
   enum: ["YES", "NO"],
-  description: "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user in the client's own approval dialog, and runs the action only if they approve. A client without a dialog gets the preview and a refusal (APPROVAL_CLIENT_UI_REQUIRED, nothing executed). NO means the user rejected it: it is recorded and nothing runs."
+  description: "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user itself (in the client's own approval dialog, or, when the client cannot show one, in the Praxis approval page it opens in the user's browser) and runs the action only if they approve. APPROVAL_PENDING means the page is open and nobody decided yet: call again with the same arguments after the user decided. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection."
 };
 var fingerprintProp = {
   type: "string",
@@ -61184,6 +61385,21 @@ var TOOLS = [
     kind: "read"
   },
   {
+    name: "praxis_approval_journal",
+    description: "Audits the Praxis decision journal for this repository (kept in the user's Praxis home, not the repository): what was approved, rejected, withdrawn or could not be asked, and which entries attribute a decision to the user without evidence (the agent's confirmation=NO recorded as a rejection, or a client that answered the approval dialog by itself in milliseconds). amend=false (default) only reads. amend=true with confirmation=YES appends one traceable correction per such entry after the user approves exactly that list; existing lines are never changed or removed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        repo: repoProp,
+        amend: { type: "boolean", description: "Append the corrections the audit lists (needs confirmation=YES and the user's approval). Default false: read only." },
+        confirmation: confirmProp
+      },
+      additionalProperties: false
+    },
+    roles: ["ba", "architect", "developer", "quality"],
+    kind: "read"
+  },
+  {
     name: "praxis_approval_plan",
     description: "READ-ONLY: the exact plan the user would be asked to approve for a protected apply tool, computed by Praxis from the live state. Runs nothing. Use it to show the user what will happen; in host-permission mode (a client with no approval dialog and PRAXIS_APPROVAL_MODE=host-permission) pass its planText to the apply tool.",
     inputSchema: {
@@ -61211,7 +61427,7 @@ for (const tool of TOOLS) {
     type: "string",
     description: "Only for PRAXIS_APPROVAL_MODE=host-permission: the exact planText returned by praxis_approval_plan for these arguments. Ignored otherwise."
   };
-  tool.description += " The user approves this exact action in the client's own approval dialog before it runs; without a dialog it is not executed, and a rejection runs nothing.";
+  tool.description += " The user approves this exact action before it runs, in the client's own approval dialog or the Praxis approval page; nothing else counts as approval, and a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the user said no), APPROVAL_DISMISSED (closed without deciding), APPROVAL_PENDING (page open, undecided), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask: not a rejection).";
 }
 function toolsForRole(role) {
   if (role === "runtime")
@@ -61240,6 +61456,51 @@ function parseRoleArgv(argv) {
 
 // packages/mcp/dist/approval-channel.js
 init_dist();
+
+// packages/mcp/dist/dialog-observations.js
+var import_node_fs3 = require("node:fs");
+var import_node_os2 = require("node:os");
+var import_node_path3 = require("node:path");
+var path = () => (0, import_node_path3.join)(process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path3.join)((0, import_node_os2.homedir)(), ".praxis"), "clients", "approval-dialogs.json");
+var cache;
+function load() {
+  if (cache)
+    return cache;
+  try {
+    const parsed = JSON.parse((0, import_node_fs3.readFileSync)(path(), "utf8"));
+    cache = parsed.observations && typeof parsed.observations === "object" ? parsed.observations : {};
+  } catch {
+    cache = {};
+  }
+  return cache;
+}
+function clientKey(client) {
+  if (!client?.name)
+    return void 0;
+  const host = process.env.CLAUDE_CODE_ENTRYPOINT?.trim();
+  return `${client.name}@${client.version ?? "?"}${host ? ` (${host})` : ""}`;
+}
+function knownAutoAnswer(key) {
+  const seen = key ? load()[key] : void 0;
+  return seen && seen.count >= 2 ? seen : void 0;
+}
+function noteAutoAnswer(key, automatic, latencyMs) {
+  if (!key)
+    return;
+  const all = load();
+  const previous = all[key];
+  all[key] = { client: key, automatic, latencyMs, at: (/* @__PURE__ */ new Date()).toISOString(), count: (previous?.count ?? 0) + 1 };
+  try {
+    const file2 = path();
+    (0, import_node_fs3.mkdirSync)((0, import_node_path3.dirname)(file2), { recursive: true, mode: 448 });
+    (0, import_node_fs3.writeFileSync)(`${file2}.tmp`, `${JSON.stringify({ about: "Clients seen answering Praxis's approval dialog without showing it; Praxis uses its approval page for them instead.", observations: all }, null, 2)}
+`, { mode: 384 });
+    (0, import_node_fs3.renameSync)(`${file2}.tmp`, file2);
+  } catch {
+  }
+}
+
+// packages/mcp/dist/approval-channel.js
 var MAX_MESSAGE = 12e3;
 function approvalMessage(request) {
   const lines = [
@@ -61278,23 +61539,43 @@ function elicitParams(request) {
     }
   };
 }
-function answerFrom(result) {
+var minAnswerMs = () => {
+  const raw = Number(process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 1e3;
+};
+function answerFrom(result, latencyMs, client) {
   const reason = typeof result.content?.reason === "string" && result.content.reason.trim() ? result.content.reason.trim() : void 0;
+  const evidence = latencyMs === void 0 ? void 0 : { latencyMs, via: "client-elicitation", ...client ? { client } : {} };
+  if (latencyMs !== void 0 && latencyMs < minAnswerMs()) {
+    return { answer: "unavailable", channel: "client-elicitation", automatic: result.action, evidence, reason: "no dialog reached the user" };
+  }
+  const tagged = { channel: "client-elicitation", ...reason ? { reason } : {}, ...evidence ? { evidence } : {} };
   if (result.action === "cancel")
-    return { answer: "dismiss", ...reason ? { reason } : {} };
+    return { answer: "dismiss", ...tagged };
   if (result.action === "decline")
-    return { answer: "reject", ...reason ? { reason } : {} };
-  return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...reason ? { reason } : {} };
+    return { answer: "reject", ...tagged };
+  return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...tagged };
 }
 var approvalKey = (request) => `approval-${subjectDigest(request.subject).slice(7, 23)}`;
-function roundTripChannel(inputResponses) {
+var CLEARLY_AUTOMATIC_MS = 250;
+var askedAt = /* @__PURE__ */ new Map();
+function noteDialogAsked(key, at = Date.now()) {
+  askedAt.set(key, at);
+  for (const [k, t] of askedAt)
+    if (at - t > 30 * 6e4)
+      askedAt.delete(k);
+}
+function roundTripChannel(inputResponses, client) {
   return {
     kind: "client-elicitation",
     async ask(request) {
-      const view = inputResponse(inputResponses, approvalKey(request));
-      if (view.kind !== "elicit")
+      const key = approvalKey(request);
+      const view = inputResponse(inputResponses, key);
+      const asked = askedAt.get(key);
+      if (view.kind !== "elicit" || asked === void 0)
         throw new ApprovalNeedsInput(request);
-      return answerFrom({ action: view.action, ...view.content ? { content: view.content } : {} });
+      askedAt.delete(key);
+      return answerFrom({ action: view.action, ...view.content ? { content: view.content } : {} }, Date.now() - asked, client);
     }
   };
 }
@@ -61305,6 +61586,7 @@ function elicitationChannel(input2) {
     kind: "client-elicitation",
     async ask(request) {
       let result;
+      const started = Date.now();
       try {
         result = await input2.elicitInput(elicitParams(request), { timeout: input2.timeoutMs ?? 10 * 6e4 });
       } catch (error64) {
@@ -61315,18 +61597,54 @@ function elicitationChannel(input2) {
           return { answer: "unavailable", reason: error64.message };
         throw error64;
       }
-      return answerFrom(result);
+      return answerFrom(result, Date.now() - started, input2.client);
+    }
+  };
+}
+function dialogWithPageFallback(dialog, page, input2) {
+  let used = page && knownAutoAnswer(input2.clientKey) ? page : dialog;
+  return {
+    get kind() {
+      return used.kind;
+    },
+    async ask(request) {
+      if (used === page)
+        return page.ask(request);
+      const answer = await dialog.ask(request);
+      if (answer.answer !== "unavailable" || !answer.automatic)
+        return answer;
+      if (answer.automatic !== "accept" && (answer.evidence?.latencyMs ?? Infinity) < CLEARLY_AUTOMATIC_MS)
+        noteAutoAnswer(input2.clientKey, answer.automatic, answer.evidence?.latencyMs ?? -1);
+      if (!page)
+        return answer;
+      logDecision(input2.repo, {
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        action: request.action,
+        summary: request.summary,
+        subjectDigest: subjectDigest(request.subject),
+        decision: "auto-answered",
+        decidedBy: "client",
+        channel: "client-elicitation",
+        ...answer.evidence ? { evidence: answer.evidence } : {},
+        reason: `the client answered "${answer.automatic}" without showing a dialog; asking in the approval page instead`
+      });
+      used = page;
+      return page.ask(request);
     }
   };
 }
 var hostPermissionMode = () => process.env.PRAXIS_APPROVAL_MODE?.trim() === "host-permission";
 var planTextOf = (request) => approvalMessage(request);
-function hostPermissionChannel(planText) {
+function hostPermissionChannel(planText, personal) {
   return {
     kind: "host-permission",
     async ask(request) {
       if (PERSONAL_ACTS.has(request.action) || request.action === "praxis_quality_service_fix") {
-        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Host-permission mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item): the host's tool-permission prompt can be switched to "always allow", and then the agent would have approved itself. Do it in a client that shows an approval dialog (for example Claude Code).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
+        if (personal) {
+          const answer = await personal.ask(request);
+          return { ...answer, channel: answer.channel ?? personal.kind };
+        }
+        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it. Host-permission mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item): the host's tool-permission prompt can be switched to "always allow", and then the agent would have approved itself. Do it where Praxis can ask you itself: a client that shows an approval dialog (for example Claude Code), or the Praxis approval page (on by default when the Runtime runs on your computer).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
       }
       const expected = planTextOf(request);
       if (planText === void 0) {
@@ -61335,28 +61653,24 @@ function hostPermissionChannel(planText) {
       if (planText !== expected) {
         throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `${request.summary} was NOT executed: planText is not the plan this call would run (the plan changed, or the text was edited). Show the user the current plan below and apply again with it.`, { executed: false, planText: expected });
       }
-      return { answer: "approve", reason: "the host's tool-permission prompt showed this exact plan (not verifiable by Praxis)" };
+      return { answer: "approve", channel: "host-permission", reason: "the host's tool-permission prompt showed this exact plan (not verifiable by Praxis)" };
     }
   };
 }
 var trustedClientMode = () => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
-var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item"]);
+var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item", "amend-decision-journal"]);
 function trustedClientChannelWith(dialog) {
-  let delegated = false;
   return {
-    // the person's own answer is recorded as the dialog's, not as the weaker standing permission
-    get kind() {
-      return delegated && dialog ? dialog.kind : "trusted-client";
-    },
+    kind: "trusted-client",
     async ask(request) {
       if (PERSONAL_ACTS.has(request.action)) {
         if (dialog) {
-          delegated = true;
-          return dialog.ask(request);
+          const answer = await dialog.ask(request);
+          return { ...answer, channel: answer.channel ?? dialog.kind };
         }
-        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
+        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it where Praxis can ask you itself: a client that shows an approval dialog (for example Claude Code), or the Praxis approval page (on by default when the Runtime runs on your computer).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
       }
-      return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
+      return { answer: "approve", channel: "trusted-client", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
     }
   };
 }
@@ -62205,10 +62519,10 @@ function mergeDefs3(...defs) {
 function cloneDef3(schema) {
   return mergeDefs3(schema._zod.def);
 }
-function getElementAtPath3(obj, path) {
-  if (!path)
+function getElementAtPath3(obj, path2) {
+  if (!path2)
     return obj;
-  return path.reduce((acc, key) => acc?.[key], obj);
+  return path2.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject3(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -62548,11 +62862,11 @@ function explicitlyAborted3(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues3(path, issues) {
+function prefixIssues3(path2, issues) {
   return issues.map((iss) => {
     var _a7;
     (_a7 = iss).path ?? (_a7.path = []);
-    iss.path.unshift(path);
+    iss.path.unshift(path2);
     return iss;
   });
 }
@@ -63002,16 +63316,16 @@ function flattenError3(error64, mapper = (issue4) => issue4.message) {
 }
 function formatError3(error64, mapper = (issue4) => issue4.message) {
   const fieldErrors = { _errors: [] };
-  const processError = (error65, path = []) => {
+  const processError = (error65, path2 = []) => {
     for (const issue4 of error65.issues) {
       if (issue4.code === "invalid_union" && issue4.errors.length) {
-        issue4.errors.map((issues) => processError({ issues }, [...path, ...issue4.path]));
+        issue4.errors.map((issues) => processError({ issues }, [...path2, ...issue4.path]));
       } else if (issue4.code === "invalid_key") {
-        processError({ issues: issue4.issues }, [...path, ...issue4.path]);
+        processError({ issues: issue4.issues }, [...path2, ...issue4.path]);
       } else if (issue4.code === "invalid_element") {
-        processError({ issues: issue4.issues }, [...path, ...issue4.path]);
+        processError({ issues: issue4.issues }, [...path2, ...issue4.path]);
       } else {
-        const fullpath = [...path, ...issue4.path];
+        const fullpath = [...path2, ...issue4.path];
         if (fullpath.length === 0) {
           fieldErrors._errors.push(mapper(issue4));
         } else {
@@ -63050,17 +63364,17 @@ function formatError3(error64, mapper = (issue4) => issue4.message) {
 }
 function treeifyError2(error64, mapper = (issue4) => issue4.message) {
   const result = { errors: [] };
-  const processError = (error65, path = []) => {
+  const processError = (error65, path2 = []) => {
     var _a7;
     for (const issue4 of error65.issues) {
       if (issue4.code === "invalid_union" && issue4.errors.length) {
-        issue4.errors.map((issues) => processError({ issues }, [...path, ...issue4.path]));
+        issue4.errors.map((issues) => processError({ issues }, [...path2, ...issue4.path]));
       } else if (issue4.code === "invalid_key") {
-        processError({ issues: issue4.issues }, [...path, ...issue4.path]);
+        processError({ issues: issue4.issues }, [...path2, ...issue4.path]);
       } else if (issue4.code === "invalid_element") {
-        processError({ issues: issue4.issues }, [...path, ...issue4.path]);
+        processError({ issues: issue4.issues }, [...path2, ...issue4.path]);
       } else {
-        const fullpath = [...path, ...issue4.path];
+        const fullpath = [...path2, ...issue4.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue4));
           continue;
@@ -63099,8 +63413,8 @@ function treeifyError2(error64, mapper = (issue4) => issue4.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path) {
+  const path2 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path2) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -66415,7 +66729,7 @@ var recursive3 = /* @__PURE__ */ new WeakMap();
 var NONE3 = 0;
 var ASSUMED3 = 1;
 var PROVEN3 = 2;
-function isRecursive3(inst, stack, resolve18) {
+function isRecursive3(inst, stack, resolve19) {
   const cached4 = recursive3.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN3 : NONE3;
@@ -66425,7 +66739,7 @@ function isRecursive3(inst, stack, resolve18) {
   let result = NONE3;
   const check2 = (child) => {
     if (result !== PROVEN3 && child?._zod) {
-      const answer = isRecursive3(child, stack, resolve18);
+      const answer = isRecursive3(child, stack, resolve19);
       if (answer > result)
         result = answer;
     }
@@ -66436,7 +66750,7 @@ function isRecursive3(inst, stack, resolve18) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve18) : NONE3;
+      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve19) : NONE3;
       if (child > answer)
         answer = child;
     }
@@ -66499,7 +66813,7 @@ function isRecursive3(inst, stack, resolve18) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve18 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive3(inner, stack, false) : ASSUMED3);
       break;
     }
@@ -76978,13 +77292,13 @@ function initializeContext3(params) {
     external: params?.external ?? void 0
   };
 }
-function handleUnrepresentable3(schema, ctx, json3, params, message) {
+function handleUnrepresentable3(schema, ctx, json4, params, message) {
   const result = typeof ctx.unrepresentable === "function" ? ctx.unrepresentable({ zodSchema: schema, path: params.path, message }) : ctx.unrepresentable;
   if (result === "any")
     return false;
   if (result === void 0 || result === "throw")
     throw new Error(message);
-  Object.assign(json3, result);
+  Object.assign(json4, result);
   return true;
 }
 function processSchema3(schema, ctx, _params = { path: [], schemaPath: [] }) {
@@ -77220,12 +77534,12 @@ function foldObjects3(members4) {
   }
   return folded;
 }
-function foldIntersection3(json3) {
-  const allOf = json3.allOf;
+function foldIntersection3(json4) {
+  const allOf = json4.allOf;
   if (!Array.isArray(allOf) || allOf.length < 2)
     return;
   for (const key of FOLDABLE_KEYS3)
-    if (key in json3)
+    if (key in json4)
       return;
   const unions = allOf.filter((m) => UNION_KEYS3.some((k) => Array.isArray(m[k])));
   let folded = null;
@@ -77244,8 +77558,8 @@ function foldIntersection3(json3) {
   }
   if (!folded)
     return;
-  delete json3.allOf;
-  assignProps3(json3, folded);
+  delete json4.allOf;
+  assignProps3(json4, folded);
 }
 function finalize3(ctx, schema) {
   const root = ctx.seen.get(schema);
@@ -77327,20 +77641,20 @@ function finalize3(ctx, schema) {
     if (ctx.intersections.length) {
       const carriers = /* @__PURE__ */ new Map();
       for (const seen of ctx.seen.values()) {
-        for (const json3 of [seen.schema, seen.def]) {
-          const allOf = json3?.allOf;
+        for (const json4 of [seen.schema, seen.def]) {
+          const allOf = json4?.allOf;
           if (!Array.isArray(allOf))
             continue;
           const existing = carriers.get(allOf);
           if (existing)
-            existing.push(json3);
+            existing.push(json4);
           else
-            carriers.set(allOf, [json3]);
+            carriers.set(allOf, [json4]);
         }
       }
       for (const allOf of ctx.intersections) {
-        for (const json3 of carriers.get(allOf) ?? [])
-          foldIntersection3(json3);
+        for (const json4 of carriers.get(allOf) ?? [])
+          foldIntersection3(json4);
       }
     }
   }
@@ -77575,29 +77889,29 @@ var exactPatterns3 = /* @__PURE__ */ new Map([
 ]);
 var exactPattern3 = (p) => exactPatterns3.get(p) ?? p;
 var stringProcessor3 = (schema, ctx, _json, _params) => {
-  const json3 = _json;
-  json3.type = "string";
+  const json4 = _json;
+  json4.type = "string";
   const { minimum, maximum, format, patterns, contentEncoding, laxFormat } = aggregateChecks3(schema);
   if (typeof minimum === "number")
-    json3.minLength = minimum;
+    json4.minLength = minimum;
   if (typeof maximum === "number")
-    json3.maxLength = maximum;
+    json4.maxLength = maximum;
   if (format) {
-    json3.format = formatMap3[format] ?? format;
-    if (json3.format === "")
-      delete json3.format;
+    json4.format = formatMap3[format] ?? format;
+    if (json4.format === "")
+      delete json4.format;
     if (format === "time" || laxFormat) {
-      delete json3.format;
+      delete json4.format;
     }
   }
   if (contentEncoding)
-    json3.contentEncoding = contentEncoding;
+    json4.contentEncoding = contentEncoding;
   if (patterns && patterns.size > 0) {
     const patternList = [...patterns].map(exactPattern3);
     if (patternList.length === 1)
-      json3.pattern = patternList[0].source;
+      json4.pattern = patternList[0].source;
     else if (patternList.length > 1) {
-      json3.allOf = [
+      json4.allOf = [
         ...patternList.map((regex) => ({
           ...ctx.target === "draft-07" || ctx.target === "draft-04" || ctx.target === "openapi-3.0" ? { type: "string" } : {},
           pattern: regex.source
@@ -77607,31 +77921,31 @@ var stringProcessor3 = (schema, ctx, _json, _params) => {
   }
 };
 var numberProcessor3 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const { minimum, maximum, multipleOf, exclusiveMaximum, exclusiveMinimum, isInt } = aggregateChecks3(schema);
-  json3.type = isInt ? "integer" : "number";
+  json4.type = isInt ? "integer" : "number";
   const exMin = typeof exclusiveMinimum === "number" && exclusiveMinimum >= (minimum ?? Number.NEGATIVE_INFINITY);
   const exMax = typeof exclusiveMaximum === "number" && exclusiveMaximum <= (maximum ?? Number.POSITIVE_INFINITY);
   const legacy = ctx.target === "draft-04" || ctx.target === "openapi-3.0";
   if (exMin) {
     if (legacy) {
-      json3.minimum = exclusiveMinimum;
-      json3.exclusiveMinimum = true;
+      json4.minimum = exclusiveMinimum;
+      json4.exclusiveMinimum = true;
     } else {
-      json3.exclusiveMinimum = exclusiveMinimum;
+      json4.exclusiveMinimum = exclusiveMinimum;
     }
   } else if (typeof minimum === "number") {
-    json3.minimum = minimum;
+    json4.minimum = minimum;
   }
   if (exMax) {
     if (legacy) {
-      json3.maximum = exclusiveMaximum;
-      json3.exclusiveMaximum = true;
+      json4.maximum = exclusiveMaximum;
+      json4.exclusiveMaximum = true;
     } else {
-      json3.exclusiveMaximum = exclusiveMaximum;
+      json4.exclusiveMaximum = exclusiveMaximum;
     }
   } else if (typeof maximum === "number") {
-    json3.maximum = maximum;
+    json4.maximum = maximum;
   }
   if (multipleOf) {
     const divisors = /* @__PURE__ */ new Set();
@@ -77639,75 +77953,75 @@ var numberProcessor3 = (schema, ctx, _json, params) => {
       if (Number.isFinite(divisor) && divisor !== 0)
         divisors.add(Math.abs(divisor));
       else
-        handleUnrepresentable3(schema, ctx, json3, params, `A multipleOf divisor of ${divisor} cannot be represented in JSON Schema`);
+        handleUnrepresentable3(schema, ctx, json4, params, `A multipleOf divisor of ${divisor} cannot be represented in JSON Schema`);
     }
     const [first, ...rest] = divisors;
     if (first !== void 0)
-      json3.multipleOf = first;
+      json4.multipleOf = first;
     if (rest.length)
-      json3.allOf = [...json3.allOf ?? [], ...rest.map((m) => ({ multipleOf: m }))];
+      json4.allOf = [...json4.allOf ?? [], ...rest.map((m) => ({ multipleOf: m }))];
   }
 };
-var booleanProcessor3 = (_schema, _ctx, json3, _params) => {
-  json3.type = "boolean";
+var booleanProcessor3 = (_schema, _ctx, json4, _params) => {
+  json4.type = "boolean";
 };
-var bigintProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "BigInt cannot be represented in JSON Schema");
+var bigintProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "BigInt cannot be represented in JSON Schema");
 };
-var symbolProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Symbols cannot be represented in JSON Schema");
+var symbolProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Symbols cannot be represented in JSON Schema");
 };
-var nullProcessor3 = (_schema, ctx, json3, _params) => {
+var nullProcessor3 = (_schema, ctx, json4, _params) => {
   if (ctx.target === "openapi-3.0") {
-    json3.type = "string";
-    json3.nullable = true;
-    json3.enum = [null];
+    json4.type = "string";
+    json4.nullable = true;
+    json4.enum = [null];
   } else {
-    json3.type = "null";
+    json4.type = "null";
   }
 };
-var undefinedProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Undefined cannot be represented in JSON Schema");
+var undefinedProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Undefined cannot be represented in JSON Schema");
 };
-var voidProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Void cannot be represented in JSON Schema");
+var voidProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Void cannot be represented in JSON Schema");
 };
-var neverProcessor3 = (_schema, _ctx, json3, _params) => {
-  json3.not = {};
+var neverProcessor3 = (_schema, _ctx, json4, _params) => {
+  json4.not = {};
 };
 var anyProcessor3 = (_schema, _ctx, _json, _params) => {
 };
 var unknownProcessor3 = (_schema, _ctx, _json, _params) => {
 };
-var dateProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Date cannot be represented in JSON Schema");
+var dateProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Date cannot be represented in JSON Schema");
 };
-var enumProcessor3 = (schema, _ctx, json3, _params) => {
+var enumProcessor3 = (schema, _ctx, json4, _params) => {
   const def = schema._zod.def;
   const values = getEnumValues3(def.entries);
   if (values.length === 0) {
-    json3.not = {};
+    json4.not = {};
     return;
   }
   if (values.every((v) => typeof v === "number"))
-    json3.type = "number";
+    json4.type = "number";
   if (values.every((v) => typeof v === "string"))
-    json3.type = "string";
-  json3.enum = values;
+    json4.type = "string";
+  json4.enum = values;
 };
-var literalProcessor3 = (schema, ctx, json3, params) => {
+var literalProcessor3 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   if (def.values.length === 0) {
-    json3.not = {};
+    json4.not = {};
     return;
   }
   const vals = [];
   for (const val of def.values) {
     if (val === void 0) {
-      if (handleUnrepresentable3(schema, ctx, json3, params, "Literal `undefined` cannot be represented in JSON Schema"))
+      if (handleUnrepresentable3(schema, ctx, json4, params, "Literal `undefined` cannot be represented in JSON Schema"))
         return;
     } else if (typeof val === "bigint") {
-      if (handleUnrepresentable3(schema, ctx, json3, params, "BigInt literals cannot be represented in JSON Schema"))
+      if (handleUnrepresentable3(schema, ctx, json4, params, "BigInt literals cannot be represented in JSON Schema"))
         return;
       vals.push(Number(val));
     } else {
@@ -77717,37 +78031,37 @@ var literalProcessor3 = (schema, ctx, json3, params) => {
   if (vals.length === 0) {
   } else if (vals.length === 1) {
     const val = vals[0];
-    json3.type = val === null ? "null" : typeof val;
+    json4.type = val === null ? "null" : typeof val;
     if (ctx.target === "draft-04" || ctx.target === "openapi-3.0") {
-      json3.enum = [val];
+      json4.enum = [val];
     } else {
-      json3.const = val;
+      json4.const = val;
     }
   } else {
     if (vals.every((v) => typeof v === "number"))
-      json3.type = "number";
+      json4.type = "number";
     if (vals.every((v) => typeof v === "string"))
-      json3.type = "string";
+      json4.type = "string";
     if (vals.every((v) => typeof v === "boolean"))
-      json3.type = "boolean";
+      json4.type = "boolean";
     if (vals.every((v) => v === null))
-      json3.type = "null";
-    json3.enum = vals;
+      json4.type = "null";
+    json4.enum = vals;
   }
 };
-var nanProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "NaN cannot be represented in JSON Schema");
+var nanProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "NaN cannot be represented in JSON Schema");
 };
-var templateLiteralProcessor3 = (schema, _ctx, json3, _params) => {
-  const _json = json3;
+var templateLiteralProcessor3 = (schema, _ctx, json4, _params) => {
+  const _json = json4;
   const pattern = schema._zod.pattern;
   if (!pattern)
     throw new Error("Pattern not found in template literal");
   _json.type = "string";
   _json.pattern = pattern.source;
 };
-var fileProcessor3 = (schema, _ctx, json3, _params) => {
-  const _json = json3;
+var fileProcessor3 = (schema, _ctx, json4, _params) => {
+  const _json = json4;
   _json.type = "string";
   _json.format = "binary";
   _json.contentEncoding = "binary";
@@ -77765,34 +78079,34 @@ var fileProcessor3 = (schema, _ctx, json3, _params) => {
   else
     _json.anyOf = mime.map((m) => ({ contentMediaType: m }));
 };
-var successProcessor3 = (_schema, _ctx, json3, _params) => {
-  json3.type = "boolean";
+var successProcessor3 = (_schema, _ctx, json4, _params) => {
+  json4.type = "boolean";
 };
-var customProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Custom types cannot be represented in JSON Schema");
+var customProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Custom types cannot be represented in JSON Schema");
 };
-var functionProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Function types cannot be represented in JSON Schema");
+var functionProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Function types cannot be represented in JSON Schema");
 };
-var transformProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Transforms cannot be represented in JSON Schema");
+var transformProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Transforms cannot be represented in JSON Schema");
 };
-var mapProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Map cannot be represented in JSON Schema");
+var mapProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Map cannot be represented in JSON Schema");
 };
-var setProcessor3 = (schema, ctx, json3, params) => {
-  handleUnrepresentable3(schema, ctx, json3, params, "Set cannot be represented in JSON Schema");
+var setProcessor3 = (schema, ctx, json4, params) => {
+  handleUnrepresentable3(schema, ctx, json4, params, "Set cannot be represented in JSON Schema");
 };
 var arrayProcessor3 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
   const { minimum, maximum } = aggregateChecks3(schema);
   if (typeof minimum === "number")
-    json3.minItems = minimum;
+    json4.minItems = minimum;
   if (typeof maximum === "number")
-    json3.maxItems = maximum;
-  json3.type = "array";
-  json3.items = processSchema3(def.element, ctx, {
+    json4.maxItems = maximum;
+  json4.type = "array";
+  json4.items = processSchema3(def.element, ctx, {
     ...params,
     path: [...params.path, "items"]
   });
@@ -77808,17 +78122,17 @@ function inputOptin3(schema) {
   return schema._zod.optin;
 }
 var objectProcessor3 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
   const shape = def.shape;
   const symbolKeys = Object.getOwnPropertySymbols(shape);
-  if (symbolKeys.length && handleUnrepresentable3(schema, ctx, json3, params, "Symbol keys cannot be represented in JSON Schema")) {
+  if (symbolKeys.length && handleUnrepresentable3(schema, ctx, json4, params, "Symbol keys cannot be represented in JSON Schema")) {
     return;
   }
-  json3.type = "object";
-  json3.properties = {};
+  json4.type = "object";
+  json4.properties = {};
   for (const key in shape) {
-    assignProp3(json3.properties, key, processSchema3(shape[key], ctx, {
+    assignProp3(json4.properties, key, processSchema3(shape[key], ctx, {
       ...params,
       path: [...params.path, "properties", key]
     }));
@@ -77831,21 +78145,21 @@ var objectProcessor3 = (schema, ctx, _json, params) => {
     }
   }
   if (requiredKeys.length > 0) {
-    json3.required = requiredKeys;
+    json4.required = requiredKeys;
   }
   if (def.catchall?._zod.def.type === "never") {
-    json3.additionalProperties = false;
+    json4.additionalProperties = false;
   } else if (!def.catchall) {
     if (ctx.io === "output")
-      json3.additionalProperties = false;
+      json4.additionalProperties = false;
   } else if (def.catchall) {
-    json3.additionalProperties = processSchema3(def.catchall, ctx, {
+    json4.additionalProperties = processSchema3(def.catchall, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
   }
 };
-var unionProcessor3 = (schema, ctx, json3, params) => {
+var unionProcessor3 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const isExclusive = def.inclusive === false;
   const options2 = def.options.map((x, i) => processSchema3(x, ctx, {
@@ -77853,12 +78167,12 @@ var unionProcessor3 = (schema, ctx, json3, params) => {
     path: [...params.path, isExclusive ? "oneOf" : "anyOf", i]
   }));
   if (isExclusive) {
-    json3.oneOf = options2;
+    json4.oneOf = options2;
   } else {
-    json3.anyOf = options2;
+    json4.anyOf = options2;
   }
 };
-var intersectionProcessor3 = (schema, ctx, json3, params) => {
+var intersectionProcessor3 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const a = processSchema3(def.left, ctx, {
     ...params,
@@ -77873,13 +78187,13 @@ var intersectionProcessor3 = (schema, ctx, json3, params) => {
     ...isSimpleIntersection(a) ? a.allOf : [a],
     ...isSimpleIntersection(b) ? b.allOf : [b]
   ];
-  json3.allOf = allOf;
+  json4.allOf = allOf;
   ctx.intersections.push(allOf);
 };
 var tupleProcessor3 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
-  json3.type = "array";
+  json4.type = "array";
   const prefixPath = ctx.target === "draft-2020-12" ? "prefixItems" : "items";
   const restPath = ctx.target === "draft-2020-12" ? "items" : ctx.target === "openapi-3.0" ? "items" : "additionalItems";
   const prefixItems = def.items.map((x, i) => processSchema3(x, ctx, {
@@ -77901,70 +78215,70 @@ var tupleProcessor3 = (schema, ctx, _json, params) => {
   const maxItems = def.items.length;
   const isClosed = !def.rest;
   if (ctx.target === "draft-2020-12") {
-    json3.prefixItems = prefixItems;
+    json4.prefixItems = prefixItems;
     if (isClosed) {
-      json3.items = false;
+      json4.items = false;
     } else if (rest) {
-      json3.items = rest;
+      json4.items = rest;
     }
     if (minItems > 0)
-      json3.minItems = minItems;
+      json4.minItems = minItems;
     if (isClosed)
-      json3.maxItems = maxItems;
+      json4.maxItems = maxItems;
   } else if (ctx.target === "openapi-3.0") {
-    json3.items = {
+    json4.items = {
       anyOf: prefixItems
     };
     if (rest) {
-      json3.items.anyOf.push(rest);
+      json4.items.anyOf.push(rest);
     }
     if (minItems > 0)
-      json3.minItems = minItems;
+      json4.minItems = minItems;
     if (isClosed)
-      json3.maxItems = maxItems;
+      json4.maxItems = maxItems;
   } else {
-    json3.items = prefixItems;
+    json4.items = prefixItems;
     if (isClosed) {
-      json3.additionalItems = false;
+      json4.additionalItems = false;
     } else if (rest) {
-      json3.additionalItems = rest;
+      json4.additionalItems = rest;
     }
     if (minItems > 0)
-      json3.minItems = minItems;
+      json4.minItems = minItems;
     if (isClosed)
-      json3.maxItems = maxItems;
+      json4.maxItems = maxItems;
   }
   const { minimum, maximum } = aggregateChecks3(schema);
   if (typeof minimum === "number")
-    json3.minItems = minimum;
+    json4.minItems = minimum;
   if (typeof maximum === "number")
-    json3.maxItems = maximum;
+    json4.maxItems = maximum;
 };
-function stringifyKeyNames3(bySchema, json3, visited) {
-  if (json3.$ref) {
-    if (visited.has(json3))
-      return json3;
-    visited.add(json3);
-    const def = bySchema.get(json3)?.def;
+function stringifyKeyNames3(bySchema, json4, visited) {
+  if (json4.$ref) {
+    if (visited.has(json4))
+      return json4;
+    visited.add(json4);
+    const def = bySchema.get(json4)?.def;
     if (!def)
-      return json3;
+      return json4;
     const inlined = stringifyKeyNames3(bySchema, def, visited);
-    return inlined === def ? json3 : inlined;
+    return inlined === def ? json4 : inlined;
   }
   for (const keyword of ["anyOf", "oneOf"]) {
-    const branches = json3[keyword];
+    const branches = json4[keyword];
     if (!Array.isArray(branches))
       continue;
     const mapped = branches.map((branch) => stringifyKeyNames3(bySchema, branch, visited));
     if (mapped.some((branch, i) => branch !== branches[i]))
-      json3 = { ...json3, [keyword]: mapped };
+      json4 = { ...json4, [keyword]: mapped };
   }
-  const types = Array.isArray(json3.type) ? json3.type : [json3.type];
+  const types = Array.isArray(json4.type) ? json4.type : [json4.type];
   const numericType = !types.includes("string") && types.some((t) => t === "number" || t === "integer");
-  const values = json3.enum ?? (json3.const !== void 0 ? [json3.const] : void 0);
+  const values = json4.enum ?? (json4.const !== void 0 ? [json4.const] : void 0);
   if (!numericType && !values?.some((v) => typeof v === "number"))
-    return json3;
-  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id, ...rest } = json3;
+    return json4;
+  const { minimum, maximum, exclusiveMinimum, exclusiveMaximum, multipleOf, format, id, ...rest } = json4;
   if (rest.enum)
     rest.enum = rest.enum.map((v) => typeof v === "number" ? String(v) : v);
   else if (typeof rest.const === "number")
@@ -78004,9 +78318,9 @@ function rewriteKeyNames3(ctx) {
   }
 }
 var recordProcessor3 = (schema, ctx, _json, params) => {
-  const json3 = _json;
+  const json4 = _json;
   const def = schema._zod.def;
-  json3.type = "object";
+  json4.type = "object";
   const keyType = def.keyType;
   const patterns = aggregateChecks3(keyType).patterns;
   if (def.mode === "loose" && patterns && patterns.size > 0) {
@@ -78014,13 +78328,13 @@ var recordProcessor3 = (schema, ctx, _json, params) => {
       ...params,
       path: [...params.path, "patternProperties", "*"]
     });
-    json3.patternProperties = {};
+    json4.patternProperties = {};
     for (const pattern of patterns) {
-      assignProp3(json3.patternProperties, exactPattern3(pattern).source, valueSchema);
+      assignProp3(json4.patternProperties, exactPattern3(pattern).source, valueSchema);
     }
   } else {
     if (ctx.target === "draft-07" || ctx.target === "draft-2020-12") {
-      json3.propertyNames = processSchema3(def.keyType, ctx, {
+      json4.propertyNames = processSchema3(def.keyType, ctx, {
         ...params,
         path: [...params.path, "propertyNames"]
       });
@@ -78032,7 +78346,7 @@ var recordProcessor3 = (schema, ctx, _json, params) => {
       }
       pending.push(schema);
     }
-    json3.additionalProperties = processSchema3(def.valueType, ctx, {
+    json4.additionalProperties = processSchema3(def.valueType, ctx, {
       ...params,
       path: [...params.path, "additionalProperties"]
     });
@@ -78042,19 +78356,19 @@ var recordProcessor3 = (schema, ctx, _json, params) => {
   if (keyValues && !def.partial && !omittableOnInput) {
     const validKeyValues = [...keyValues].filter((v) => typeof v === "string" || typeof v === "number");
     if (validKeyValues.length > 0) {
-      json3.required = validKeyValues.map(String);
+      json4.required = validKeyValues.map(String);
     }
   }
 };
-var nullableProcessor3 = (schema, ctx, json3, params) => {
+var nullableProcessor3 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   const inner = processSchema3(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   if (ctx.target === "openapi-3.0") {
     seen.ref = def.innerType;
-    json3.nullable = true;
+    json4.nullable = true;
   } else {
-    json3.anyOf = [inner, { type: "null" }];
+    json4.anyOf = [inner, { type: "null" }];
   }
 };
 var nonoptionalProcessor3 = (schema, ctx, _json, params) => {
@@ -78064,7 +78378,7 @@ var nonoptionalProcessor3 = (schema, ctx, _json, params) => {
   seen.ref = def.innerType;
 };
 var UNREPRESENTABLE_DEFAULT3 = Symbol();
-function serializeDefaultValue3(value, schema, ctx, json3, params) {
+function serializeDefaultValue3(value, schema, ctx, json4, params) {
   let unrepresentable = false;
   const serialized = JSON.stringify(value, (_, val) => {
     if (typeof val !== "bigint")
@@ -78074,30 +78388,30 @@ function serializeDefaultValue3(value, schema, ctx, json3, params) {
   });
   if (!unrepresentable)
     return JSON.parse(serialized);
-  handleUnrepresentable3(schema, ctx, json3, params, "BigInt defaults cannot be represented in JSON Schema");
+  handleUnrepresentable3(schema, ctx, json4, params, "BigInt defaults cannot be represented in JSON Schema");
   return UNREPRESENTABLE_DEFAULT3;
 }
-var defaultProcessor3 = (schema, ctx, json3, params) => {
+var defaultProcessor3 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema3(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
-  const value = serializeDefaultValue3(def.defaultValue, schema, ctx, json3, params);
+  const value = serializeDefaultValue3(def.defaultValue, schema, ctx, json4, params);
   if (value !== UNREPRESENTABLE_DEFAULT3)
-    json3.default = value;
+    json4.default = value;
 };
-var prefaultProcessor3 = (schema, ctx, json3, params) => {
+var prefaultProcessor3 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema3(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
   if (ctx.io !== "input")
     return;
-  const value = serializeDefaultValue3(def.defaultValue, schema, ctx, json3, params);
+  const value = serializeDefaultValue3(def.defaultValue, schema, ctx, json4, params);
   if (value !== UNREPRESENTABLE_DEFAULT3)
-    json3._prefault = value;
+    json4._prefault = value;
 };
-var catchProcessor3 = (schema, ctx, json3, params) => {
+var catchProcessor3 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema3(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
@@ -78106,10 +78420,10 @@ var catchProcessor3 = (schema, ctx, json3, params) => {
   try {
     catchValue = def.catchValue(void 0);
   } catch {
-    handleUnrepresentable3(schema, ctx, json3, params, "Dynamic catch values are not supported in JSON Schema");
+    handleUnrepresentable3(schema, ctx, json4, params, "Dynamic catch values are not supported in JSON Schema");
     return;
   }
-  json3.default = catchValue;
+  json4.default = catchValue;
 };
 var pipeProcessor3 = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
@@ -78119,12 +78433,12 @@ var pipeProcessor3 = (schema, ctx, _json, params) => {
   const seen = ctx.seen.get(schema);
   seen.ref = innerType;
 };
-var readonlyProcessor3 = (schema, ctx, json3, params) => {
+var readonlyProcessor3 = (schema, ctx, json4, params) => {
   const def = schema._zod.def;
   processSchema3(def.innerType, ctx, params);
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
-  json3.readOnly = true;
+  json4.readOnly = true;
 };
 var promiseProcessor3 = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
@@ -78766,7 +79080,7 @@ var _ZodString3 = /* @__PURE__ */ $constructor3(
   (inst, def) => {
     $ZodString3.init(inst, def);
     ZodType4.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => stringProcessor3(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => stringProcessor3(inst, ctx, json4, params);
   },
   /* @__PURE__ */ util_exports3.derived({
     format: (inst) => aggregateChecks3(inst).format ?? null,
@@ -79125,7 +79439,7 @@ var ZodNumber4 = /* @__PURE__ */ $constructor3(
   (inst, def) => {
     $ZodNumber3.init(inst, def);
     ZodType4.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => numberProcessor3(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => numberProcessor3(inst, ctx, json4, params);
     inst.isFinite = true;
   },
   /* @__PURE__ */ util_exports3.derived({
@@ -79215,7 +79529,7 @@ function uint32(params) {
 var ZodBoolean4 = /* @__PURE__ */ $constructor3("ZodBoolean", (inst, def) => {
   $ZodBoolean3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => booleanProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => booleanProcessor3(inst, ctx, json4, params);
 });
 function boolean7(params) {
   return _boolean3(ZodBoolean4, params);
@@ -79225,7 +79539,7 @@ var ZodBigInt3 = /* @__PURE__ */ $constructor3(
   (inst, def) => {
     $ZodBigInt3.init(inst, def);
     ZodType4.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => bigintProcessor3(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => bigintProcessor3(inst, ctx, json4, params);
   },
   /* @__PURE__ */ util_exports3.derived({
     minValue: (inst) => aggregateChecks3(inst).minimum ?? null,
@@ -79283,7 +79597,7 @@ function uint64(params) {
 var ZodSymbol2 = /* @__PURE__ */ $constructor3("ZodSymbol", (inst, def) => {
   $ZodSymbol3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => symbolProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => symbolProcessor3(inst, ctx, json4, params);
 });
 function symbol(params) {
   return _symbol3(ZodSymbol2, params);
@@ -79291,7 +79605,7 @@ function symbol(params) {
 var ZodUndefined2 = /* @__PURE__ */ $constructor3("ZodUndefined", (inst, def) => {
   $ZodUndefined3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => undefinedProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => undefinedProcessor3(inst, ctx, json4, params);
 });
 function _undefined7(params) {
   return _undefined6(ZodUndefined2, params);
@@ -79299,7 +79613,7 @@ function _undefined7(params) {
 var ZodNull4 = /* @__PURE__ */ $constructor3("ZodNull", (inst, def) => {
   $ZodNull3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nullProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nullProcessor3(inst, ctx, json4, params);
 });
 function _null9(params) {
   return _null8(ZodNull4, params);
@@ -79307,7 +79621,7 @@ function _null9(params) {
 var ZodAny3 = /* @__PURE__ */ $constructor3("ZodAny", (inst, def) => {
   $ZodAny3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => anyProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => anyProcessor3(inst, ctx, json4, params);
 });
 function any2() {
   return _any3(ZodAny3);
@@ -79315,7 +79629,7 @@ function any2() {
 var ZodUnknown4 = /* @__PURE__ */ $constructor3("ZodUnknown", (inst, def) => {
   $ZodUnknown3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => unknownProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => unknownProcessor3(inst, ctx, json4, params);
 });
 function unknown3() {
   return _unknown3(ZodUnknown4);
@@ -79323,7 +79637,7 @@ function unknown3() {
 var ZodNever4 = /* @__PURE__ */ $constructor3("ZodNever", (inst, def) => {
   $ZodNever3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => neverProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => neverProcessor3(inst, ctx, json4, params);
 });
 function never3(params) {
   return _never3(ZodNever4, params);
@@ -79331,7 +79645,7 @@ function never3(params) {
 var ZodVoid2 = /* @__PURE__ */ $constructor3("ZodVoid", (inst, def) => {
   $ZodVoid3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => voidProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => voidProcessor3(inst, ctx, json4, params);
 });
 function _void4(params) {
   return _void3(ZodVoid2, params);
@@ -79341,7 +79655,7 @@ var ZodDate3 = /* @__PURE__ */ $constructor3(
   (inst, def) => {
     $ZodDate3.init(inst, def);
     ZodType4.init(inst, def);
-    inst._zod.processJSONSchema = (ctx, json3, params) => dateProcessor3(inst, ctx, json3, params);
+    inst._zod.processJSONSchema = (ctx, json4, params) => dateProcessor3(inst, ctx, json4, params);
     inst.min = (value, params) => inst.check(_gte3(value, params));
     inst.max = (value, params) => inst.check(_lte3(value, params));
   },
@@ -79363,7 +79677,7 @@ var ZodArray4 = /* @__PURE__ */ $constructor3("ZodArray", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodArray3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => arrayProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => arrayProcessor3(inst, ctx, json4, params);
   inst.element = def.element;
 }, {
   min(n, params) {
@@ -79393,7 +79707,7 @@ var ZodObject4 = /* @__PURE__ */ $constructor3("ZodObject", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodObjectJIT3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => objectProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => objectProcessor3(inst, ctx, json4, params);
   util_exports3.installLazyProp(inst, "shape", (self) => self._zod.def.shape, false);
 }, {
   keyof() {
@@ -79466,7 +79780,7 @@ function looseObject3(shape, params) {
 var ZodUnion4 = /* @__PURE__ */ $constructor3("ZodUnion", (inst, def) => {
   $ZodUnion3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => unionProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => unionProcessor3(inst, ctx, json4, params);
   inst.options = def.options;
 });
 function union3(options2, params) {
@@ -79479,7 +79793,7 @@ function union3(options2, params) {
 var ZodXor = /* @__PURE__ */ $constructor3("ZodXor", (inst, def) => {
   ZodUnion4.init(inst, def);
   $ZodXor3.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => unionProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => unionProcessor3(inst, ctx, json4, params);
   inst.options = def.options;
 });
 function xor(options2, params) {
@@ -79505,7 +79819,7 @@ function discriminatedUnion3(discriminator, options2, params) {
 var ZodIntersection4 = /* @__PURE__ */ $constructor3("ZodIntersection", (inst, def) => {
   $ZodIntersection3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => intersectionProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => intersectionProcessor3(inst, ctx, json4, params);
 });
 function intersection3(left, right) {
   return new ZodIntersection4({
@@ -79518,7 +79832,7 @@ var ZodTuple2 = /* @__PURE__ */ $constructor3("ZodTuple", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodTuple3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => tupleProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => tupleProcessor3(inst, ctx, json4, params);
 }, {
   rest(rest) {
     return this.clone({
@@ -79551,7 +79865,7 @@ var ZodRecord4 = /* @__PURE__ */ $constructor3("ZodRecord", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodRecord3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => recordProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => recordProcessor3(inst, ctx, json4, params);
   inst.keyType = def.keyType;
   inst.valueType = def.valueType;
 });
@@ -79593,7 +79907,7 @@ var ZodMap2 = /* @__PURE__ */ $constructor3("ZodMap", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodMap3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => mapProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => mapProcessor3(inst, ctx, json4, params);
   inst.keyType = def.keyType;
   inst.valueType = def.valueType;
   inst.min = (...args) => inst.check(_minSize3(...args));
@@ -79613,7 +79927,7 @@ var ZodSet2 = /* @__PURE__ */ $constructor3("ZodSet", (inst, def) => {
   _ensureDefaultMemoizer3();
   $ZodSet3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => setProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => setProcessor3(inst, ctx, json4, params);
   inst.min = (...args) => inst.check(_minSize3(...args));
   inst.nonempty = (params) => inst.check(_minSize3(1, params));
   inst.max = (...args) => inst.check(_maxSize3(...args));
@@ -79629,7 +79943,7 @@ function set(valueType, params) {
 var ZodEnum4 = /* @__PURE__ */ $constructor3("ZodEnum", (inst, def) => {
   $ZodEnum3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => enumProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => enumProcessor3(inst, ctx, json4, params);
   inst.enum = def.entries;
   inst.options = [...inst._zod.values];
   const keys = new Set(Object.keys(def.entries));
@@ -79682,7 +79996,7 @@ function nativeEnum(entries, params) {
 var ZodLiteral4 = /* @__PURE__ */ $constructor3("ZodLiteral", (inst, def) => {
   $ZodLiteral3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => literalProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => literalProcessor3(inst, ctx, json4, params);
   inst.values = new Set(def.values);
   Object.defineProperty(inst, "value", {
     get() {
@@ -79703,7 +80017,7 @@ function literal3(value, params) {
 var ZodFile = /* @__PURE__ */ $constructor3("ZodFile", (inst, def) => {
   $ZodFile3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => fileProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => fileProcessor3(inst, ctx, json4, params);
   inst.min = (size, params) => inst.check(_minSize3(size, params));
   inst.max = (size, params) => inst.check(_maxSize3(size, params));
   inst.mime = (types, params) => inst.check(_mime3(Array.isArray(types) ? types : [types], params));
@@ -79715,7 +80029,7 @@ var ZodTransform3 = /* @__PURE__ */ $constructor3("ZodTransform", (inst, def) =>
   _ensureDefaultMemoizer3();
   $ZodTransform3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => transformProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => transformProcessor3(inst, ctx, json4, params);
   inst._zod.parse = (payload, _ctx) => {
     if (_ctx.direction === "backward") {
       throw new $ZodEncodeError3(inst.constructor.name);
@@ -79754,7 +80068,7 @@ function transform3(fn) {
 var ZodOptional4 = /* @__PURE__ */ $constructor3("ZodOptional", (inst, def) => {
   $ZodOptional3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => optionalProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => optionalProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function optional3(innerType) {
@@ -79766,7 +80080,7 @@ function optional3(innerType) {
 var ZodExactOptional3 = /* @__PURE__ */ $constructor3("ZodExactOptional", (inst, def) => {
   $ZodExactOptional3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => optionalProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => optionalProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function exactOptional3(innerType) {
@@ -79778,7 +80092,7 @@ function exactOptional3(innerType) {
 var ZodNullable4 = /* @__PURE__ */ $constructor3("ZodNullable", (inst, def) => {
   $ZodNullable3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nullableProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nullableProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function nullable3(innerType) {
@@ -79793,7 +80107,7 @@ function nullish4(innerType) {
 var ZodDefault4 = /* @__PURE__ */ $constructor3("ZodDefault", (inst, def) => {
   $ZodDefault3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => defaultProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => defaultProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeDefault = inst.unwrap;
 });
@@ -79809,7 +80123,7 @@ function _default4(innerType, defaultValue) {
 var ZodPrefault3 = /* @__PURE__ */ $constructor3("ZodPrefault", (inst, def) => {
   $ZodPrefault3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => prefaultProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => prefaultProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function prefault3(innerType, defaultValue) {
@@ -79824,7 +80138,7 @@ function prefault3(innerType, defaultValue) {
 var ZodNonOptional3 = /* @__PURE__ */ $constructor3("ZodNonOptional", (inst, def) => {
   $ZodNonOptional3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nonoptionalProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nonoptionalProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function nonoptional3(innerType, params) {
@@ -79837,7 +80151,7 @@ function nonoptional3(innerType, params) {
 var ZodSuccess = /* @__PURE__ */ $constructor3("ZodSuccess", (inst, def) => {
   $ZodSuccess3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => successProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => successProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function success(innerType) {
@@ -79849,7 +80163,7 @@ function success(innerType) {
 var ZodCatch4 = /* @__PURE__ */ $constructor3("ZodCatch", (inst, def) => {
   $ZodCatch3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => catchProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => catchProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
   inst.removeCatch = inst.unwrap;
 });
@@ -79863,7 +80177,7 @@ function _catch4(innerType, catchValue) {
 var ZodNaN2 = /* @__PURE__ */ $constructor3("ZodNaN", (inst, def) => {
   $ZodNaN3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => nanProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => nanProcessor3(inst, ctx, json4, params);
 });
 function nan(params) {
   return _nan3(ZodNaN2, params);
@@ -79871,7 +80185,7 @@ function nan(params) {
 var ZodPipe3 = /* @__PURE__ */ $constructor3("ZodPipe", (inst, def) => {
   $ZodPipe3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => pipeProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => pipeProcessor3(inst, ctx, json4, params);
   inst.in = def.in;
   inst.out = def.out;
 });
@@ -79913,7 +80227,7 @@ var ZodPreprocess3 = /* @__PURE__ */ $constructor3("ZodPreprocess", (inst, def) 
 var ZodReadonly4 = /* @__PURE__ */ $constructor3("ZodReadonly", (inst, def) => {
   $ZodReadonly3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => readonlyProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => readonlyProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function readonly3(innerType) {
@@ -79925,7 +80239,7 @@ function readonly3(innerType) {
 var ZodTemplateLiteral = /* @__PURE__ */ $constructor3("ZodTemplateLiteral", (inst, def) => {
   $ZodTemplateLiteral3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => templateLiteralProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => templateLiteralProcessor3(inst, ctx, json4, params);
 });
 function templateLiteral(parts, params) {
   return new ZodTemplateLiteral({
@@ -79937,7 +80251,7 @@ function templateLiteral(parts, params) {
 var ZodLazy4 = /* @__PURE__ */ $constructor3("ZodLazy", (inst, def) => {
   $ZodLazy3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => lazyProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => lazyProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.getter();
 });
 function lazy3(getter) {
@@ -79949,7 +80263,7 @@ function lazy3(getter) {
 var ZodPromise2 = /* @__PURE__ */ $constructor3("ZodPromise", (inst, def) => {
   $ZodPromise3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => promiseProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => promiseProcessor3(inst, ctx, json4, params);
   inst.unwrap = () => inst._zod.def.innerType;
 });
 function promise(innerType) {
@@ -79961,7 +80275,7 @@ function promise(innerType) {
 var ZodFunction2 = /* @__PURE__ */ $constructor3("ZodFunction", (inst, def) => {
   $ZodFunction3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => functionProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => functionProcessor3(inst, ctx, json4, params);
 });
 function _function(params) {
   return new ZodFunction2({
@@ -79973,7 +80287,7 @@ function _function(params) {
 var ZodCustom3 = /* @__PURE__ */ $constructor3("ZodCustom", (inst, def) => {
   $ZodCustom3.init(inst, def);
   ZodType4.init(inst, def);
-  inst._zod.processJSONSchema = (ctx, json3, params) => customProcessor3(inst, ctx, json3, params);
+  inst._zod.processJSONSchema = (ctx, json4, params) => customProcessor3(inst, ctx, json4, params);
 });
 function check(fn) {
   const ch = new $ZodCheck3({
@@ -80193,13 +80507,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path = ref.slice(1).split("/").filter(Boolean);
-  if (path.length === 0) {
+  const path2 = ref.slice(1).split("/").filter(Boolean);
+  if (path2.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path[0] === defsKey) {
-    const key = path[1] === void 0 ? void 0 : decodeJSONPointerSegment(path[1]);
+  if (path2[0] === defsKey) {
+    const key = path2[1] === void 0 ? void 0 : decodeJSONPointerSegment(path2[1]);
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -80833,21 +81147,21 @@ function visit(schema, fnOrHandlers) {
     const h = fnOrHandlers[node4._zod.def.type];
     return h ? h(node4, rewritten) : node4;
   };
-  const cache = /* @__PURE__ */ new Map();
+  const cache2 = /* @__PURE__ */ new Map();
   function run(s) {
-    const cached4 = cache.get(s);
+    const cached4 = cache2.get(s);
     if (cached4 === RESOLVING) {
       return new $ZodLazy3({
         type: "lazy",
-        getter: () => cache.get(s)
+        getter: () => cache2.get(s)
       });
     }
     if (cached4 !== void 0)
       return cached4;
-    cache.set(s, RESOLVING);
+    cache2.set(s, RESOLVING);
     const inner = mapInner(s);
     const mapped = fn(inner, inner !== s);
-    cache.set(s, mapped);
+    cache2.set(s, mapped);
     return mapped;
   }
   function mapInner(s) {
@@ -81076,39 +81390,39 @@ function jsonSchemaToZod(schema) {
 }
 
 // packages/mcp/dist/diagnostics-log.js
-var import_node_fs2 = require("node:fs");
-var import_node_os2 = require("node:os");
-var import_node_path2 = require("node:path");
+var import_node_fs4 = require("node:fs");
+var import_node_os3 = require("node:os");
+var import_node_path4 = require("node:path");
 var MAX_BYTES = 1e6;
-var diagnosticsPath = () => (0, import_node_path2.join)(process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path2.join)((0, import_node_os2.homedir)(), ".praxis"), "diagnostics", "mcp.jsonl");
+var diagnosticsPath = () => (0, import_node_path4.join)(process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path4.join)((0, import_node_os3.homedir)(), ".praxis"), "diagnostics", "mcp.jsonl");
 function recordDiagnostic(entry) {
   try {
     const file2 = diagnosticsPath();
-    (0, import_node_fs2.mkdirSync)((0, import_node_path2.join)(file2, ".."), { recursive: true });
+    (0, import_node_fs4.mkdirSync)((0, import_node_path4.join)(file2, ".."), { recursive: true });
     try {
-      if ((0, import_node_fs2.statSync)(file2).size > MAX_BYTES)
-        (0, import_node_fs2.renameSync)(file2, `${file2}.1`);
+      if ((0, import_node_fs4.statSync)(file2).size > MAX_BYTES)
+        (0, import_node_fs4.renameSync)(file2, `${file2}.1`);
     } catch {
     }
-    (0, import_node_fs2.appendFileSync)(file2, `${JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), pid: process.pid, ...entry })}
+    (0, import_node_fs4.appendFileSync)(file2, `${JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), pid: process.pid, ...entry })}
 `);
   } catch {
   }
 }
 
 // packages/mcp/dist/tools.js
-var import_node_crypto19 = require("node:crypto");
-var import_node_fs33 = require("node:fs");
-var import_node_path38 = require("node:path");
+var import_node_crypto21 = require("node:crypto");
+var import_node_fs37 = require("node:fs");
+var import_node_path41 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/build-info.js
-var import_node_crypto6 = require("node:crypto");
-var import_node_fs3 = require("node:fs");
+var import_node_crypto7 = require("node:crypto");
+var import_node_fs5 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"5d36899155e447b764b9ce1600bf8b48b5b28c047a7ceeeddf0a546e069be196","coreBaseline":"c327b89c06418ae5b68a4c4576081b4762d9e2b9","inputs":35}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"de31f5b7e11433564787e9ea653fdd0ac0bfe479c67be3e58f54ab67d1187ee5","coreBaseline":"7181ecd53e319b426b5c70cf0de1a7ed417186e2","inputs":38}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81119,7 +81433,7 @@ function runtimeBuildInfo(version4) {
   const entry = process.argv[1];
   if (embedded && entry && /\.cjs$/.test(entry)) {
     try {
-      bundleSha256 = (0, import_node_crypto6.createHash)("sha256").update((0, import_node_fs3.readFileSync)(entry)).digest("hex");
+      bundleSha256 = (0, import_node_crypto7.createHash)("sha256").update((0, import_node_fs5.readFileSync)(entry)).digest("hex");
       bundlePath = entry;
     } catch {
       bundleSha256 = null;
@@ -81137,50 +81451,472 @@ function runtimeBuildInfo(version4) {
 }
 function toolOrigin(role) {
   const names = toolsForRole(role).map((tool) => tool.name).sort();
-  return { role, count: names.length, digest: (0, import_node_crypto6.createHash)("sha256").update(names.join("\n")).digest("hex"), names };
+  return { role, count: names.length, digest: (0, import_node_crypto7.createHash)("sha256").update(names.join("\n")).digest("hex"), names };
 }
 
 // packages/mcp/dist/path-guard.js
-var import_node_fs4 = require("node:fs");
-var import_node_path3 = require("node:path");
-var within = (root, path) => path === root || path.startsWith(`${root}${import_node_path3.sep}`);
+var import_node_fs6 = require("node:fs");
+var import_node_path5 = require("node:path");
+var within = (root, path2) => path2 === root || path2.startsWith(`${root}${import_node_path5.sep}`);
 function containedPath(root, relative7) {
-  if (typeof relative7 !== "string" || relative7.length === 0 || relative7.includes("\0") || (0, import_node_path3.isAbsolute)(relative7) || relative7.split(/[/\\]/).includes("..")) {
+  if (typeof relative7 !== "string" || relative7.length === 0 || relative7.includes("\0") || (0, import_node_path5.isAbsolute)(relative7) || relative7.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
   let realRoot;
   try {
-    realRoot = (0, import_node_fs4.realpathSync)((0, import_node_path3.resolve)(root));
+    realRoot = (0, import_node_fs6.realpathSync)((0, import_node_path5.resolve)(root));
   } catch {
     throw new Error("UNSAFE_PATH");
   }
-  const lexical = (0, import_node_path3.resolve)(realRoot, relative7);
+  const lexical = (0, import_node_path5.resolve)(realRoot, relative7);
   if (!within(realRoot, lexical))
     throw new Error("UNSAFE_PATH");
   let existing = lexical;
   const rest = [];
   for (; ; ) {
     try {
-      (0, import_node_fs4.lstatSync)(existing);
+      (0, import_node_fs6.lstatSync)(existing);
       break;
     } catch {
-      const parent = (0, import_node_path3.dirname)(existing);
+      const parent = (0, import_node_path5.dirname)(existing);
       if (parent === existing)
         throw new Error("UNSAFE_PATH");
-      rest.unshift((0, import_node_path3.basename)(existing));
+      rest.unshift((0, import_node_path5.basename)(existing));
       existing = parent;
     }
   }
   let realExisting;
   try {
-    realExisting = (0, import_node_fs4.realpathSync)(existing);
+    realExisting = (0, import_node_fs6.realpathSync)(existing);
   } catch {
     throw new Error("UNSAFE_PATH");
   }
-  const real = (0, import_node_path3.resolve)(realExisting, ...rest);
+  const real = (0, import_node_path5.resolve)(realExisting, ...rest);
   if (!within(realRoot, real))
     throw new Error("UNSAFE_PATH");
   return real;
+}
+
+// packages/mcp/dist/approval-page.js
+var import_node_child_process = require("node:child_process");
+var import_node_crypto8 = require("node:crypto");
+var import_node_fs7 = require("node:fs");
+var import_node_http = require("node:http");
+var import_node_os4 = require("node:os");
+var import_node_path6 = require("node:path");
+init_dist();
+var REQUEST_TTL_MS = 10 * 60 * 1e3;
+var MAX_NEW_PER_MINUTE = 6;
+var MAX_TEXT = 2e5;
+var requests = /* @__PURE__ */ new Map();
+var created = [];
+var server;
+var port = 0;
+var approvalPageEnabled = () => !/^(off|false|0|no)$/i.test(process.env.PRAXIS_APPROVAL_PAGE?.trim() ?? "");
+var approvalPageWaitMs = () => {
+  const raw = Number(process.env.PRAXIS_APPROVAL_PAGE_WAIT_MS);
+  return Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 11e4) : 45e3;
+};
+var keyOf = (request, repo) => `${repo ?? ""}
+${request.action}
+${subjectDigest(request.subject)}
+${subjectDigest(approvalPageText(request))}`;
+function approvalPageText(request) {
+  return [request.summary, "", request.description, ...request.risks?.length ? ["", "Risks:", ...request.risks.map((risk) => `- ${risk}`)] : []].join("\n");
+}
+function safeEqual(a, b) {
+  const x = Buffer.from(a);
+  const y = Buffer.from(b);
+  return x.length === y.length && (0, import_node_crypto8.timingSafeEqual)(x, y);
+}
+var escapeHtml = (text) => text.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function json2(res, status, body2) {
+  res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  res.end(JSON.stringify(body2));
+}
+var pageHeaders = (nonce) => ({
+  "content-type": "text/html; charset=utf-8",
+  "cache-control": "no-store",
+  "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'; connect-src 'self'; img-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+  "x-frame-options": "DENY",
+  "x-content-type-options": "nosniff",
+  "referrer-policy": "no-referrer",
+  "cross-origin-opener-policy": "same-origin",
+  "cross-origin-resource-policy": "same-origin"
+});
+var STYLE = `body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:46em;margin:2em auto;padding:0 16px;color:#1d1d1f;background:#fff}
+@media (prefers-color-scheme:dark){body{color:#f2f2f2;background:#161618}pre{background:#232326!important;border-color:#3a3a3e!important}.meta{color:#aaa!important}}
+h1{font-size:1.35em;margin:.2em 0 .6em}pre{white-space:pre-wrap;word-break:break-word;background:#f5f5f7;border:1px solid #d2d2d7;border-radius:8px;padding:14px;font:14px/1.45 ui-monospace,Menlo,monospace;max-height:60vh;overflow:auto}
+.meta{color:#555;font-size:14px}.row{display:flex;gap:12px;flex-wrap:wrap;margin:1.2em 0}button{font:inherit;padding:10px 18px;border-radius:8px;border:1px solid #888;cursor:pointer}
+#approve{background:#0a7d32;color:#fff;border-color:#0a7d32}#reject{background:#b3261e;color:#fff;border-color:#b3261e}button:disabled{opacity:.5;cursor:default}
+input{font:inherit;width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #999}#result{font-weight:600;margin-top:1em}`;
+function notOpenable(res, id) {
+  const nonce = (0, import_node_crypto8.randomBytes)(12).toString("base64");
+  res.writeHead(403, pageHeaders(nonce));
+  res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Praxis approval</title><style>${STYLE}</style><body><h1>This approval link does not open here</h1><p>An approval page opens only in the browser tab Praxis opened for you, for ten minutes. If you closed that tab or the time ran out, ask Claude to apply the action again: Praxis opens a new page. Nothing was approved or rejected.</p><script nonce="${nonce}">try{var t=sessionStorage.getItem("praxis-approval-${id}");if(t&&!location.search)location.replace(location.pathname+"?t="+encodeURIComponent(t))}catch(e){}</script></body>`);
+}
+function renderPage(request, saveToken) {
+  const nonce = (0, import_node_crypto8.randomBytes)(12).toString("base64");
+  const decided = request.status !== "pending";
+  const body2 = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Praxis approval</title><style>${STYLE}</style>
+<body><p class="meta">Praxis approval request ${escapeHtml(request.id)}${request.client ? ` &middot; asked through ${escapeHtml(request.client)}` : ""}</p>
+<h1>${escapeHtml(request.summary)}</h1>
+<p>Praxis will run exactly the action below only if you approve it here. Nothing has run yet.</p>
+<pre id="text">${escapeHtml(request.text)}</pre>
+<p class="meta">Digest of exactly the text above ${escapeHtml(subjectDigest(request.text))}${request.repo ? `<br>Repository ${escapeHtml(request.repo)}` : ""}<br>This page stops accepting a decision at <span id="until"></span>.</p>
+<p>Only you should press these buttons. If you did not ask Claude for this, choose Reject.</p>
+<label for="reason">Reason (optional)</label><input id="reason" maxlength="300" autocomplete="off">
+<div class="row"><button id="approve" type="button">Approve and run exactly this</button><button id="reject" type="button">Reject</button></div>
+<p id="result" role="status">${decided ? `Already decided: ${escapeHtml(request.status)}. You can close this tab.` : ""}</p>
+<script nonce="${nonce}">(function(){
+var id=${JSON.stringify(request.id)},token=${JSON.stringify(saveToken)},until=${request.expiresAt},decided=${decided};
+try{var q=new URLSearchParams(location.search).get("t");if(q)sessionStorage.setItem("praxis-approval-"+id,q);history.replaceState(null,"",location.pathname)}catch(e){}
+document.getElementById("until").textContent=new Date(until).toLocaleTimeString();
+var a=document.getElementById("approve"),r=document.getElementById("reject"),out=document.getElementById("result");
+function done(text){a.disabled=r.disabled=true;out.textContent=text}
+if(decided||Date.now()>until)done(out.textContent||"This request has expired. Ask Claude to apply the action again.");
+function send(decision){a.disabled=r.disabled=true;out.textContent="Recording...";
+fetch(location.pathname+"/decision",{method:"POST",headers:{"content-type":"application/json","x-praxis-approval-token":token},body:JSON.stringify({decision:decision,reason:document.getElementById("reason").value})})
+.then(function(res){return res.json().then(function(b){return{ok:res.ok,b:b}})})
+.then(function(x){if(x.ok)done(decision==="approve"?"Approved. Praxis runs exactly this action; you can close this tab and return to Claude.":"Rejected. Nothing runs; you can close this tab and return to Claude.");else done("Not recorded: "+(x.b&&x.b.error||"unknown error"))})
+.catch(function(){done("Not recorded: Praxis is no longer running. Ask Claude to apply the action again.")})}
+a.addEventListener("click",function(){send("approve")});r.addEventListener("click",function(){send("reject")});
+})();</script></body></html>`;
+  return { html: body2, nonce };
+}
+function hostOk(req) {
+  return req.headers.host === `127.0.0.1:${port}` || req.headers.host === `localhost:${port}`;
+}
+async function readBody(req) {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 4096)
+      throw new Error("too large");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+function settle4(request) {
+  for (const wake of request.waiters)
+    wake();
+  request.waiters.clear();
+}
+function expire(now = Date.now()) {
+  for (const [id, request] of requests) {
+    const stale = request.status === "pending" ? now > request.expiresAt : request.consumed || now > (request.decidedAt ?? 0) + USER_APPROVAL_TTL_MS;
+    if (!stale)
+      continue;
+    if (request.status === "pending") {
+      logDecision(request.repo, { at: new Date(now).toISOString(), action: request.action, summary: request.summary, subjectDigest: request.digest, decision: "expired", decidedBy: "nobody", channel: "approval-page", evidence: { requestId: id }, reason: "the approval page was not answered in time" });
+    }
+    settle4(request);
+    requests.delete(id);
+  }
+}
+async function handle(req, res) {
+  if (!hostOk(req))
+    return json2(res, 403, { error: "bad host" });
+  expire();
+  const url4 = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+  const match = url4.pathname.match(/^\/a\/([a-f0-9]{24})(\/decision)?$/);
+  const request = match ? requests.get(match[1]) : void 0;
+  if (!match || !request) {
+    res.writeHead(404, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
+    res.end("This approval request is unknown or has expired. Ask Claude to apply the action again.");
+    return;
+  }
+  if (req.method === "GET" && !match[2]) {
+    if (!safeEqual(url4.searchParams.get("t") ?? "", request.loadToken))
+      return notOpenable(res, request.id);
+    const saveToken = (0, import_node_crypto8.randomBytes)(24).toString("hex");
+    request.saveTokens.add(saveToken);
+    if (request.saveTokens.size > 10)
+      request.saveTokens.delete(request.saveTokens.values().next().value);
+    const { html, nonce } = renderPage(request, saveToken);
+    res.writeHead(200, pageHeaders(nonce));
+    res.end(html);
+    return;
+  }
+  if (req.method === "POST" && match[2]) {
+    const presented = String(req.headers["x-praxis-approval-token"] ?? "");
+    if (![...request.saveTokens].some((token) => safeEqual(presented, token)))
+      return json2(res, 403, { error: "bad token" });
+    const origin = req.headers.origin;
+    if (origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`)
+      return json2(res, 403, { error: "bad origin" });
+    if (!String(req.headers["content-type"] ?? "").startsWith("application/json"))
+      return json2(res, 415, { error: "json only" });
+    let parsed;
+    try {
+      parsed = JSON.parse(await readBody(req));
+    } catch {
+      return json2(res, 400, { error: "invalid body" });
+    }
+    if (parsed.decision !== "approve" && parsed.decision !== "reject")
+      return json2(res, 400, { error: "decision must be approve or reject" });
+    if (request.status !== "pending" || !requests.has(request.id))
+      return json2(res, 409, { error: `already ${request.status}` });
+    if (Date.now() > request.expiresAt)
+      return json2(res, 410, { error: "this request has expired; ask Claude to apply the action again" });
+    if (![...request.saveTokens].some((token) => safeEqual(presented, token)))
+      return json2(res, 403, { error: "bad token" });
+    const reason = typeof parsed.reason === "string" && parsed.reason.trim() ? parsed.reason.trim().slice(0, 300) : void 0;
+    request.status = parsed.decision === "approve" ? "approved" : "rejected";
+    request.decidedAt = Date.now();
+    if (reason)
+      request.reason = reason;
+    request.saveTokens.clear();
+    logDecision(request.repo, {
+      at: new Date(request.decidedAt).toISOString(),
+      action: request.action,
+      summary: request.summary,
+      subjectDigest: request.digest,
+      decision: request.status,
+      decidedBy: "user",
+      channel: "approval-page",
+      evidence: { requestId: request.id, via: "approval-page click", latencyMs: request.decidedAt - (request.openedAt ?? request.createdAt), ...request.client ? { client: request.client } : {} },
+      ...reason ? { reason } : {}
+    });
+    settle4(request);
+    return json2(res, 200, { recorded: request.status });
+  }
+  return json2(res, 405, { error: "method not allowed" });
+}
+async function ensureServer() {
+  if (server && port)
+    return port;
+  server = (0, import_node_http.createServer)((req, res) => {
+    handle(req, res).catch(() => json2(res, 500, { error: "internal error" }));
+  });
+  await new Promise((ok, fail2) => {
+    server.once("error", fail2);
+    server.listen(0, "127.0.0.1", () => ok());
+  });
+  const address = server.address();
+  port = typeof address === "object" && address ? address.port : 0;
+  server.unref();
+  return port;
+}
+var openApprovalPage = async (secretUrl) => {
+  const browser = process.env.PRAXIS_APPROVAL_BROWSER?.trim() ?? "";
+  if ((process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1" || process.env.PRAXIS_TEST_APPROVALS === "1") && !browser)
+    return false;
+  const dir = (0, import_node_fs7.mkdtempSync)((0, import_node_path6.join)((0, import_node_os4.tmpdir)(), "praxis-approve-"));
+  (0, import_node_fs7.chmodSync)(dir, 448);
+  const page = (0, import_node_path6.join)(dir, "open-approval.html");
+  const safe = secretUrl.replace(/"/g, "&quot;");
+  (0, import_node_fs7.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Opening Praxis approval</title><meta http-equiv="refresh" content="0;url=${safe}"><p>Opening the approval page... <a href="${safe}">continue</a></p>`, { mode: 384 });
+  setTimeout(() => (0, import_node_fs7.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
+  let command;
+  let args;
+  if (browser && (0, import_node_path6.isAbsolute)(browser)) {
+    if (!(0, import_node_fs7.existsSync)(browser) || !(0, import_node_fs7.statSync)(browser).isFile())
+      return false;
+    [command, args] = [browser, [page]];
+  } else if (process.platform === "darwin") {
+    [command, args] = ["open", browser ? ["-a", browser, page] : [page]];
+  } else if (process.platform === "win32") {
+    [command, args] = ["explorer.exe", [page]];
+  } else {
+    if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY)
+      return false;
+    [command, args] = ["xdg-open", [page]];
+  }
+  return new Promise((done) => {
+    try {
+      const child = (0, import_node_child_process.spawn)(command, args, { detached: true, stdio: "ignore" });
+      const timer = setTimeout(() => {
+        child.unref();
+        done(true);
+      }, 1500);
+      child.on("error", () => {
+        clearTimeout(timer);
+        done(false);
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timer);
+        done(code === 0);
+      });
+    } catch {
+      done(false);
+    }
+  });
+};
+var testOpener;
+function pageRequestView(id) {
+  const request = requests.get(id);
+  return request ? { requestId: request.id, status: request.status, expiresAt: new Date(request.expiresAt).toISOString(), openedInBrowser: request.openedAt !== void 0 } : void 0;
+}
+function waitForDecision(request, ms, signal) {
+  if (request.status !== "pending" || ms <= 0)
+    return Promise.resolve();
+  return new Promise((resolveWait) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener("abort", finish);
+      request.waiters.delete(finish);
+      resolveWait();
+    };
+    const timer = setTimeout(finish, Math.min(ms, Math.max(0, request.expiresAt - Date.now())));
+    request.waiters.add(finish);
+    signal?.addEventListener("abort", finish, { once: true });
+  });
+}
+function takeDecision(request) {
+  if (request.consumed || request.status === "pending")
+    return null;
+  request.consumed = true;
+  const evidence = {
+    requestId: request.id,
+    via: "approval-page click",
+    latencyMs: (request.decidedAt ?? 0) - (request.openedAt ?? request.createdAt),
+    decidedAt: new Date(request.decidedAt ?? Date.now()).toISOString(),
+    ...request.client ? { client: request.client } : {}
+  };
+  return { answer: request.status === "approved" ? "approve" : "reject", channel: "approval-page", evidence, journaled: true, ...request.reason ? { reason: request.reason } : {} };
+}
+function approvalPageChannel(input2) {
+  return {
+    kind: "approval-page",
+    async ask(request) {
+      for (let round = 0; round < 2; round += 1) {
+        expire();
+        const key = keyOf(request, input2.repo);
+        let live = [...requests.values()].find((r) => r.key === key && !r.consumed && !r.failed);
+        if (live && live.status !== "pending") {
+          const taken = takeDecision(live);
+          if (taken)
+            return taken;
+          continue;
+        }
+        if (!live) {
+          const now = Date.now();
+          while (created.length && now - created[0] > 6e4)
+            created.shift();
+          if (created.length >= MAX_NEW_PER_MINUTE) {
+            throw new ApprovalError("APPROVAL_REQUIRED", `${request.summary} was NOT executed: ${MAX_NEW_PER_MINUTE} approval pages were opened in the last minute, which is more than a person asks for. Wait, then apply once; do not retry in a loop.`, { executed: false, channel: "approval-page" });
+          }
+          const text = approvalPageText(request);
+          if (text.length > MAX_TEXT) {
+            throw new ApprovalError("APPROVAL_TOO_LARGE", `${request.summary} was NOT executed: what you would approve is ${text.length} characters, more than one approval page shows in full (${MAX_TEXT}). Split it into smaller steps.`, { executed: false, channel: "approval-page" });
+          }
+          const fresh = {
+            id: (0, import_node_crypto8.randomBytes)(12).toString("hex"),
+            loadToken: (0, import_node_crypto8.randomBytes)(24).toString("hex"),
+            saveTokens: /* @__PURE__ */ new Set(),
+            key,
+            ...input2.repo ? { repo: input2.repo } : {},
+            action: request.action,
+            summary: request.summary,
+            text,
+            digest: subjectDigest(request.subject),
+            ...input2.client ? { client: input2.client } : {},
+            createdAt: now,
+            expiresAt: now + REQUEST_TTL_MS,
+            status: "pending",
+            waiters: /* @__PURE__ */ new Set()
+          };
+          live = fresh;
+          requests.set(fresh.id, fresh);
+          created.push(now);
+          let opened = false;
+          try {
+            const p = await ensureServer();
+            opened = await (testOpener ?? input2.open ?? openApprovalPage)(`http://127.0.0.1:${p}/a/${fresh.id}?t=${fresh.loadToken}`);
+          } catch {
+            opened = false;
+          }
+          if (!opened) {
+            fresh.failed = "the Runtime could not open the approval page in a browser on this computer (no browser, no display, or it runs in a sandbox the user's browser cannot reach)";
+            requests.delete(fresh.id);
+            settle4(fresh);
+            return { answer: "unavailable", channel: "approval-page", reason: fresh.failed };
+          }
+          fresh.openedAt = Date.now();
+          logDecision(input2.repo, { at: new Date(fresh.openedAt).toISOString(), action: request.action, summary: request.summary, subjectDigest: fresh.digest, decision: "pending", decidedBy: "nobody", channel: "approval-page", evidence: { requestId: fresh.id, ...input2.client ? { client: input2.client } : {} }, reason: "the approval page was opened in the user's browser" });
+        }
+        await waitForDecision(live, input2.waitMs ?? approvalPageWaitMs(), input2.signal);
+        if (live.failed)
+          return { answer: "unavailable", channel: "approval-page", reason: live.failed };
+        if (live.status !== "pending") {
+          const taken = takeDecision(live);
+          if (taken)
+            return taken;
+          continue;
+        }
+        throw new ApprovalError("APPROVAL_PENDING", `${request.summary} is waiting for the user's decision in the Praxis approval page (request ${live.id}), which Praxis opened in their browser. Nothing has run and nobody has decided. Tell the user to read the action there and choose Approve or Reject, then call this tool again with the same arguments: it runs the action only if they approved. Do not open, search for or click that page yourself.`, { executed: false, journaled: true, channel: "approval-page", approvalPage: pageRequestView(live.id) });
+      }
+      throw new ApprovalError("APPROVAL_REQUIRED", `${request.summary} was NOT executed: the user's decision in the approval page was used by another call for the same action. Apply once more to get a new page.`, { executed: false, channel: "approval-page" });
+    }
+  };
+}
+
+// packages/mcp/dist/approval-journal.js
+var import_node_fs8 = require("node:fs");
+init_dist();
+function readDiagnostics() {
+  const rows = [];
+  for (const file2 of [`${diagnosticsPath()}.1`, diagnosticsPath()]) {
+    if (!(0, import_node_fs8.existsSync)(file2))
+      continue;
+    for (const line of (0, import_node_fs8.readFileSync)(file2, "utf8").split("\n")) {
+      if (!line.trim())
+        continue;
+      try {
+        rows.push(JSON.parse(line));
+      } catch {
+      }
+    }
+  }
+  return rows.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+function observedRoundTrips(rows = readDiagnostics()) {
+  const trips = [];
+  const enters = rows.filter((r) => r.event === "tool_enter");
+  for (const asked of rows.filter((r) => r.event === "input_required")) {
+    const first = enters.find((r) => r.callId === asked.callId);
+    const retry = enters.find((r) => r.pid === asked.pid && r.tool === asked.tool && r.callId !== asked.callId && Date.parse(r.at) >= Date.parse(asked.at) && Date.parse(r.at) - Date.parse(asked.at) <= 15 * 6e4);
+    if (!retry)
+      continue;
+    trips.push({ askedAt: asked.at, answeredAt: retry.at, tool: asked.tool ?? "", ...first?.client ? { client: first.client } : {} });
+  }
+  return trips;
+}
+function journalAudit(repo) {
+  const lines = readDecisionJournal(repo);
+  const findings = auditDecisionJournal(lines, { roundTrips: observedRoundTrips(), minAnswerMs: minAnswerMs() });
+  const effective = effectiveDecisions(lines);
+  return {
+    path: decisionLogPath(repo),
+    entries: effective.length,
+    amendments: lines.filter((l) => l.amendment).length,
+    unreadable: lines.filter((l) => l.unreadable).length,
+    toAmend: findings.filter((f) => f.kind === "amend"),
+    unverified: findings.filter((f) => f.kind === "unverified"),
+    byDecision: effective.reduce((acc, e) => (acc[`${e.decision}/${e.decidedBy}`] = (acc[`${e.decision}/${e.decidedBy}`] ?? 0) + 1, acc), {})
+  };
+}
+var describeFinding = (f) => `- line ${f.line} (${f.at}, ${f.action}): recorded "${f.claimed.decision}" via ${f.claimed.channel}; corrected to "${f.corrected?.decision}" by ${f.corrected?.decidedBy} (${f.rule}: ${f.note})`;
+async function amendJournal(repo, confirmation, version4) {
+  const audit = journalAudit(repo);
+  if (audit.toAmend.length === 0)
+    return { ...audit, appended: 0, note: "Nothing to amend: no entry claims a decision of the user that the evidence contradicts." };
+  await obtainUserApproval({
+    action: "amend-decision-journal",
+    kind: "development_action",
+    summary: `Append ${audit.toAmend.length} correction(s) to the Praxis decision journal`,
+    description: [
+      `Journal: ${audit.path}`,
+      "Each correction is a new line naming the entry it corrects. No existing line is changed or removed.",
+      "",
+      ...audit.toAmend.map(describeFinding)
+    ].join("\n"),
+    subject: canonicalText(audit.toAmend.map((f) => ({ line: f.line, sha256: f.sha256, rule: f.rule, corrected: f.corrected })))
+  }, { confirmation, repo });
+  const result = appendDecisionAmendments(repo, audit.toAmend, `praxis-runtime ${version4} (approval-journal audit)`);
+  return { ...journalAudit(repo), appended: result.appended, skipped: result.skipped };
 }
 
 // packages/mcp/dist/envelope.js
@@ -81201,18 +81937,18 @@ function mcpEnvelope(opts) {
 }
 
 // packages/mcp/dist/story-engine.js
-var import_node_child_process4 = require("node:child_process");
-var import_node_crypto9 = require("node:crypto");
-var import_node_fs10 = require("node:fs");
-var import_node_path9 = require("node:path");
+var import_node_child_process5 = require("node:child_process");
+var import_node_crypto11 = require("node:crypto");
+var import_node_fs14 = require("node:fs");
+var import_node_path12 = require("node:path");
 init_dist();
-var import_node_os6 = require("node:os");
+var import_node_os8 = require("node:os");
 
 // packages/mcp/dist/project-code-runner.js
-var import_node_child_process = require("node:child_process");
-var import_node_fs5 = require("node:fs");
-var import_node_os3 = require("node:os");
-var import_node_path4 = require("node:path");
+var import_node_child_process2 = require("node:child_process");
+var import_node_fs9 = require("node:fs");
+var import_node_os5 = require("node:os");
+var import_node_path7 = require("node:path");
 var RUNNER = String.raw`
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, resolve, sep } from "node:path";
@@ -81266,10 +82002,10 @@ function scrubbedEnv(home) {
   return { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, TMPDIR: home, LANG: process.env.LANG ?? "C", NODE_ENV: "test", CI: "1" };
 }
 async function runIsolated(input2) {
-  const home = (0, import_node_fs5.mkdtempSync)((0, import_node_path4.join)((0, import_node_os3.tmpdir)(), "praxis-project-code-"));
+  const home = (0, import_node_fs9.mkdtempSync)((0, import_node_path7.join)((0, import_node_os5.tmpdir)(), "praxis-project-code-"));
   try {
     return await new Promise((done, fail2) => {
-      const child = (0, import_node_child_process.spawn)(process.execPath, ["--input-type=module", "-e", RUNNER], { cwd: input2.cwd, env: scrubbedEnv(home), stdio: ["pipe", "pipe", "pipe"] });
+      const child = (0, import_node_child_process2.spawn)(process.execPath, ["--input-type=module", "-e", RUNNER], { cwd: input2.cwd, env: scrubbedEnv(home), stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
       const limit = 20 * 1024 * 1024;
@@ -81306,22 +82042,22 @@ async function runIsolated(input2) {
       child.stdin.end(JSON.stringify({ ...input2, timeoutMs: void 0 }));
     });
   } finally {
-    (0, import_node_fs5.rmSync)(home, { recursive: true, force: true });
+    (0, import_node_fs9.rmSync)(home, { recursive: true, force: true });
   }
 }
 
 // packages/mcp/dist/generic-verification.js
-var import_node_os5 = require("node:os");
-var import_node_child_process3 = require("node:child_process");
-var import_node_fs7 = require("node:fs");
-var import_node_path6 = require("node:path");
+var import_node_os7 = require("node:os");
+var import_node_child_process4 = require("node:child_process");
+var import_node_fs11 = require("node:fs");
+var import_node_path9 = require("node:path");
 
 // packages/mcp/dist/browser-verification.js
-var import_node_child_process2 = require("node:child_process");
-var import_node_crypto7 = require("node:crypto");
-var import_node_fs6 = require("node:fs");
-var import_node_os4 = require("node:os");
-var import_node_path5 = require("node:path");
+var import_node_child_process3 = require("node:child_process");
+var import_node_crypto9 = require("node:crypto");
+var import_node_fs10 = require("node:fs");
+var import_node_os6 = require("node:os");
+var import_node_path8 = require("node:path");
 var ACTIONS = ["goto", "click", "fill", "select", "press", "back", "forward", "reload", "viewport"];
 var ASSERTIONS = ["expectUrl", "expectCount", "expectVisible", "expectHidden", "expectText", "expectValue", "expectFocus"];
 var MAX_STEPS = 60;
@@ -81601,11 +82337,11 @@ function bundleDigest(root) {
     const entries = [];
     let bytes = 0;
     const visit2 = (dir) => {
-      for (const name of (0, import_node_fs6.readdirSync)(dir).sort()) {
+      for (const name of (0, import_node_fs10.readdirSync)(dir).sort()) {
         if (name.startsWith("."))
           continue;
-        const p = (0, import_node_path5.join)(dir, name);
-        const st = (0, import_node_fs6.lstatSync)(p);
+        const p = (0, import_node_path8.join)(dir, name);
+        const st = (0, import_node_fs10.lstatSync)(p);
         if (st.isSymbolicLink())
           continue;
         if (st.isDirectory()) {
@@ -81617,18 +82353,18 @@ function bundleDigest(root) {
         bytes += st.size;
         if (entries.length >= 5e3 || bytes > 200 * 1024 * 1024)
           throw new Error("BUNDLE_TOO_LARGE");
-        entries.push(`${(0, import_node_path5.relative)(root, p).split(import_node_path5.sep).join("/")}\0${(0, import_node_crypto7.createHash)("sha256").update((0, import_node_fs6.readFileSync)(p)).digest("hex")}`);
+        entries.push(`${(0, import_node_path8.relative)(root, p).split(import_node_path8.sep).join("/")}\0${(0, import_node_crypto9.createHash)("sha256").update((0, import_node_fs10.readFileSync)(p)).digest("hex")}`);
       }
     };
     visit2(root);
-    return (0, import_node_crypto7.createHash)("sha256").update(entries.join("\n")).digest("hex");
+    return (0, import_node_crypto9.createHash)("sha256").update(entries.join("\n")).digest("hex");
   } catch {
     return void 0;
   }
 }
 function sweepProcesses(home) {
   try {
-    const listing = (0, import_node_child_process2.spawnSync)("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 }).stdout ?? "";
+    const listing = (0, import_node_child_process3.spawnSync)("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 }).stdout ?? "";
     for (const line of listing.split("\n")) {
       if (!line.includes(home))
         continue;
@@ -81644,15 +82380,15 @@ function sweepProcesses(home) {
   }
 }
 async function runBrowserChecks(input2) {
-  const home = (0, import_node_fs6.mkdtempSync)((0, import_node_path5.join)((0, import_node_os4.tmpdir)(), "praxis-browser-"));
-  const { existsSync: existsSync26 } = await import("node:fs");
-  const executable = process.env.PRAXIS_BROWSER_EXECUTABLE || DEFAULT_EXECUTABLES.find((p) => existsSync26(p));
+  const home = (0, import_node_fs10.mkdtempSync)((0, import_node_path8.join)((0, import_node_os6.tmpdir)(), "praxis-browser-"));
+  const { existsSync: existsSync29 } = await import("node:fs");
+  const executable = process.env.PRAXIS_BROWSER_EXECUTABLE || DEFAULT_EXECUTABLES.find((p) => existsSync29(p));
   const playwrightDirs = process.env.PRAXIS_PLAYWRIGHT_DIR ? [process.env.PRAXIS_PLAYWRIGHT_DIR] : [];
   try {
     return await new Promise((done) => {
       const env = { ...scrubbedEnv(home), ...executable ? {} : {} };
-      const nonce = (0, import_node_crypto7.randomBytes)(16).toString("hex");
-      const child = (0, import_node_child_process2.spawn)(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input2.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
+      const nonce = (0, import_node_crypto9.randomBytes)(16).toString("hex");
+      const child = (0, import_node_child_process3.spawn)(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input2.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
       const killGroup = (signal = "SIGKILL") => {
         try {
           if (child.pid)
@@ -81713,7 +82449,7 @@ async function runBrowserChecks(input2) {
   } finally {
     sweepProcesses(home);
     try {
-      (0, import_node_fs6.rmSync)(home, { recursive: true, force: true, maxRetries: 3 });
+      (0, import_node_fs10.rmSync)(home, { recursive: true, force: true, maxRetries: 3 });
     } catch {
     }
   }
@@ -81737,13 +82473,13 @@ print(json.dumps(result))
 `;
 async function runSteps(root, modulePath, steps) {
   const file2 = safeFile(root, modulePath);
-  if (!(0, import_node_fs7.existsSync)(file2))
+  if (!(0, import_node_fs11.existsSync)(file2))
     throw new Error(`MODULE_MISSING:${modulePath}`);
   if (file2.endsWith(".py")) {
-    const result = (0, import_node_child_process3.spawnSync)("python3", ["-c", PYTHON, file2, JSON.stringify(steps)], {
+    const result = (0, import_node_child_process4.spawnSync)("python3", ["-c", PYTHON, file2, JSON.stringify(steps)], {
       cwd: root,
       encoding: "utf8",
-      env: scrubbedEnv((0, import_node_os5.tmpdir)())
+      env: scrubbedEnv((0, import_node_os7.tmpdir)())
     });
     if ((result.status ?? 1) !== 0) {
       throw new Error((result.stderr || result.stdout || "python check failed").trim());
@@ -81753,11 +82489,11 @@ async function runSteps(root, modulePath, steps) {
   return runIsolated({ file: file2, cwd: root, op: "steps", steps });
 }
 function readChecks(workflowRepo, workItemId) {
-  const scoped = workItemId ? (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
-  const file2 = scoped && (0, import_node_fs7.existsSync)(scoped) ? scoped : (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", "checks.json");
-  if (!(0, import_node_fs7.existsSync)(file2))
+  const scoped = workItemId ? (0, import_node_path9.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
+  const file2 = scoped && (0, import_node_fs11.existsSync)(scoped) ? scoped : (0, import_node_path9.join)(workflowRepo, ".praxis", "quality", "checks.json");
+  if (!(0, import_node_fs11.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs7.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs11.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.checks) || parsed.checks.length === 0)
     throw new Error("CHECKS_INVALID");
   const browser = parsed.browser === void 0 ? void 0 : validateBrowserConfig(parsed.browser);
@@ -81768,9 +82504,9 @@ function readChecks(workflowRepo, workItemId) {
 }
 function browserServeRoot(workflowRepo, workItemId) {
   try {
-    const scoped = workItemId ? (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
-    const file2 = scoped && (0, import_node_fs7.existsSync)(scoped) ? scoped : (0, import_node_path6.join)(workflowRepo, ".praxis", "quality", "checks.json");
-    const root = JSON.parse((0, import_node_fs7.readFileSync)(file2, "utf8")).browser?.serve?.root;
+    const scoped = workItemId ? (0, import_node_path9.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
+    const file2 = scoped && (0, import_node_fs11.existsSync)(scoped) ? scoped : (0, import_node_path9.join)(workflowRepo, ".praxis", "quality", "checks.json");
+    const root = JSON.parse((0, import_node_fs11.readFileSync)(file2, "utf8")).browser?.serve?.root;
     return typeof root === "string" ? root : void 0;
   } catch {
     return void 0;
@@ -82031,25 +82767,25 @@ function inspectionPlan(input2) {
 }
 
 // packages/mcp/dist/project-profile.js
-var import_node_fs8 = require("node:fs");
-var import_node_path7 = require("node:path");
+var import_node_fs12 = require("node:fs");
+var import_node_path10 = require("node:path");
 var SKIP = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", "coverage"]);
 function walk2(root, dir, out, depth) {
   if (depth > 4 || out.length >= 200)
     return;
   let entries = [];
   try {
-    entries = (0, import_node_fs8.readdirSync)(dir);
+    entries = (0, import_node_fs12.readdirSync)(dir);
   } catch {
     return;
   }
   for (const name of entries) {
     if (SKIP.has(name))
       continue;
-    const absolute = (0, import_node_path7.join)(dir, name);
+    const absolute = (0, import_node_path10.join)(dir, name);
     let info;
     try {
-      info = (0, import_node_fs8.statSync)(absolute);
+      info = (0, import_node_fs12.statSync)(absolute);
     } catch {
       continue;
     }
@@ -82061,14 +82797,14 @@ function walk2(root, dir, out, depth) {
 }
 function readJson(file2) {
   try {
-    return JSON.parse((0, import_node_fs8.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs12.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function inspectService(service) {
   const repository = service.repository ?? service.id;
-  if (!service.localPath || !(0, import_node_fs8.existsSync)(service.localPath)) {
+  if (!service.localPath || !(0, import_node_fs12.existsSync)(service.localPath)) {
     return {
       serviceId: service.id,
       repository,
@@ -82088,7 +82824,7 @@ function inspectService(service) {
   const languages = [];
   const frameworks = [];
   const testRunners = [];
-  const packageJson = names.has("package.json") ? readJson((0, import_node_path7.join)(service.localPath, "package.json")) : void 0;
+  const packageJson = names.has("package.json") ? readJson((0, import_node_path10.join)(service.localPath, "package.json")) : void 0;
   const deps = {
     ...packageJson?.dependencies,
     ...packageJson?.devDependencies
@@ -82118,7 +82854,7 @@ function inspectService(service) {
   for (const file2 of pythonTests.slice(0, 20)) {
     let text = "";
     try {
-      text = (0, import_node_fs8.readFileSync)((0, import_node_path7.join)(service.localPath, file2), "utf8");
+      text = (0, import_node_fs12.readFileSync)((0, import_node_path10.join)(service.localPath, file2), "utf8");
     } catch {
       continue;
     }
@@ -82171,9 +82907,9 @@ function inspectService(service) {
 }
 
 // packages/mcp/dist/workflow-store.js
-var import_node_fs9 = require("node:fs");
-var import_node_path8 = require("node:path");
-var import_node_crypto8 = require("node:crypto");
+var import_node_fs13 = require("node:fs");
+var import_node_path11 = require("node:path");
+var import_node_crypto10 = require("node:crypto");
 
 // packages/mcp/dist/human-approval.js
 init_dist();
@@ -82280,10 +83016,10 @@ var WorkItemError = class extends Error {
   }
 };
 function workflowDir(repo) {
-  return (0, import_node_path8.join)(repo, ".praxis", "workflow");
+  return (0, import_node_path11.join)(repo, ".praxis", "workflow");
 }
-var legacyPath = (repo) => (0, import_node_path8.join)(workflowDir(repo), "state.json");
-var indexPath = (repo) => (0, import_node_path8.join)(workflowDir(repo), "index.json");
+var legacyPath = (repo) => (0, import_node_path11.join)(workflowDir(repo), "state.json");
+var indexPath = (repo) => (0, import_node_path11.join)(workflowDir(repo), "index.json");
 function assertWorkItemId(id) {
   if (!WORK_ITEM_ID_RE.test(id) || id.includes("..")) {
     throw new WorkItemError("WORK_ITEM_INVALID", "work item ids use letters, digits, '.', '_' and '-' only");
@@ -82291,10 +83027,10 @@ function assertWorkItemId(id) {
   return id;
 }
 function itemPath(repo, id) {
-  return (0, import_node_path8.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
+  return (0, import_node_path11.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
 }
-function readJson2(path) {
-  return JSON.parse((0, import_node_fs9.readFileSync)(path, "utf8"));
+function readJson2(path2) {
+  return JSON.parse((0, import_node_fs13.readFileSync)(path2, "utf8"));
 }
 function summarize(state2) {
   return {
@@ -82313,25 +83049,25 @@ function summarize(state2) {
   };
 }
 function toPortable(repo, state2) {
-  const root = (0, import_node_path8.resolve)(repo);
+  const root = (0, import_node_path11.resolve)(repo);
   return {
     ...state2,
     services: state2.services.map((service) => {
-      if (!service.localPath || !(0, import_node_path8.isAbsolute)(service.localPath))
+      if (!service.localPath || !(0, import_node_path11.isAbsolute)(service.localPath))
         return service;
-      const rel2 = (0, import_node_path8.relative)(root, service.localPath);
-      const ups = rel2.split(import_node_path8.sep).filter((part) => part === "..").length;
+      const rel2 = (0, import_node_path11.relative)(root, service.localPath);
+      const ups = rel2.split(import_node_path11.sep).filter((part) => part === "..").length;
       if (ups > 2)
         return service;
-      return { ...service, localPath: (rel2 === "" ? "." : rel2).split(import_node_path8.sep).join("/") };
+      return { ...service, localPath: (rel2 === "" ? "." : rel2).split(import_node_path11.sep).join("/") };
     })
   };
 }
 function toAbsolute(repo, state2) {
-  const root = (0, import_node_path8.resolve)(repo);
+  const root = (0, import_node_path11.resolve)(repo);
   return {
     ...state2,
-    services: state2.services.map((service) => service.localPath && !(0, import_node_path8.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path8.resolve)(root, service.localPath) } : service)
+    services: state2.services.map((service) => service.localPath && !(0, import_node_path11.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path11.resolve)(root, service.localPath) } : service)
   };
 }
 function readLegacy(repo) {
@@ -82348,15 +83084,15 @@ function readLegacy(repo) {
   return toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(raw)));
 }
 function itemFiles(repo) {
-  const dir = (0, import_node_path8.join)(workflowDir(repo), "items");
+  const dir = (0, import_node_path11.join)(workflowDir(repo), "items");
   try {
-    return (0, import_node_fs9.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
+    return (0, import_node_fs13.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
   } catch {
     return [];
   }
 }
 function rebuildIndex(repo, files) {
-  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson2((0, import_node_path8.join)(workflowDir(repo), "items", name))))));
+  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson2((0, import_node_path11.join)(workflowDir(repo), "items", name))))));
   return {
     legacy: false,
     index: {
@@ -82388,7 +83124,7 @@ function readLayout(repo) {
     }
     if (files.length > 0)
       return rebuildIndex(repo, files);
-    if ((0, import_node_fs9.existsSync)(legacyPath(repo))) {
+    if ((0, import_node_fs13.existsSync)(legacyPath(repo))) {
       throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but there are no items to rebuild the index from");
     }
     return null;
@@ -82414,7 +83150,7 @@ function fingerprintFor2(repo, command, workItemId) {
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state2 = loadWorkflow(repo, workItemId);
-    token = state2 ? `state:${(0, import_node_crypto8.createHash)("sha256").update(canonicalJson(withoutDrift(state2))).digest("hex")}` : "state:none";
+    token = state2 ? `state:${(0, import_node_crypto10.createHash)("sha256").update(canonicalJson(withoutDrift(state2))).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token });
 }
@@ -82444,7 +83180,7 @@ function markSubjectDrift(repo, state2) {
   const services = effectiveServices(state2);
   for (const entry of recorded) {
     const base = services.find((s) => s.id === entry.serviceId)?.localPath || repo;
-    const root = serve === void 0 ? void 0 : (0, import_node_path8.resolve)(base, serve);
+    const root = serve === void 0 ? void 0 : (0, import_node_path11.resolve)(base, serve);
     let current;
     if (root) {
       current = bundleDigest(root);
@@ -82527,10 +83263,10 @@ function pause(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function lockIsStale(dir) {
-  if (!(0, import_node_fs9.existsSync)(dir))
+  if (!(0, import_node_fs13.existsSync)(dir))
     return false;
   try {
-    const owner = readJson2((0, import_node_path8.join)(dir, "owner"));
+    const owner = readJson2((0, import_node_path11.join)(dir, "owner"));
     if (typeof owner.at === "number" && Date.now() - owner.at > LOCK_STALE_MS)
       return true;
     if (typeof owner.pid === "number") {
@@ -82543,20 +83279,20 @@ function lockIsStale(dir) {
     return false;
   } catch {
     try {
-      return Date.now() - (0, import_node_fs9.statSync)(dir).mtimeMs > LOCK_STALE_MS;
+      return Date.now() - (0, import_node_fs13.statSync)(dir).mtimeMs > LOCK_STALE_MS;
     } catch {
       return false;
     }
   }
 }
 function withWorkflowLock(repo, fn) {
-  (0, import_node_fs9.mkdirSync)(workflowDir(repo), { recursive: true });
-  const dir = (0, import_node_path8.join)(workflowDir(repo), ".lock");
+  (0, import_node_fs13.mkdirSync)(workflowDir(repo), { recursive: true });
+  const dir = (0, import_node_path11.join)(workflowDir(repo), ".lock");
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (; ; ) {
     try {
-      (0, import_node_fs9.mkdirSync)(dir);
-      (0, import_node_fs9.writeFileSync)((0, import_node_path8.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
+      (0, import_node_fs13.mkdirSync)(dir);
+      (0, import_node_fs13.writeFileSync)((0, import_node_path11.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
       break;
     } catch (err) {
       if (err.code !== "EEXIST")
@@ -82564,8 +83300,8 @@ function withWorkflowLock(repo, fn) {
       if (lockIsStale(dir)) {
         const claimed = `${dir}.stale-${process.pid}-${Date.now()}`;
         try {
-          (0, import_node_fs9.renameSync)(dir, claimed);
-          (0, import_node_fs9.rmSync)(claimed, { recursive: true, force: true });
+          (0, import_node_fs13.renameSync)(dir, claimed);
+          (0, import_node_fs13.rmSync)(claimed, { recursive: true, force: true });
         } catch {
         }
         continue;
@@ -82579,35 +83315,35 @@ function withWorkflowLock(repo, fn) {
   try {
     return fn();
   } finally {
-    (0, import_node_fs9.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs13.rmSync)(dir, { recursive: true, force: true });
   }
 }
-function writeAtomic(path, value) {
-  (0, import_node_fs9.mkdirSync)((0, import_node_path8.dirname)(path), { recursive: true });
-  const tmp = `${path}.${process.pid}.tmp`;
-  (0, import_node_fs9.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+function writeAtomic(path2, value) {
+  (0, import_node_fs13.mkdirSync)((0, import_node_path11.dirname)(path2), { recursive: true });
+  const tmp = `${path2}.${process.pid}.tmp`;
+  (0, import_node_fs13.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs9.renameSync)(tmp, path);
+  (0, import_node_fs13.renameSync)(tmp, path2);
 }
 function writeIndex(repo, index) {
   requireMutationLease();
   writeAtomic(indexPath(repo), index);
 }
-function keepPreviousVersion(path) {
+function keepPreviousVersion(path2) {
   try {
-    const previous = readJson2(path);
-    const backup = `${path}.v${previous.version ?? "unknown"}.bak`;
-    if (previous.version && previous.version !== WORKFLOW_STATE_VERSION && !(0, import_node_fs9.existsSync)(backup))
-      (0, import_node_fs9.writeFileSync)(backup, (0, import_node_fs9.readFileSync)(path));
+    const previous = readJson2(path2);
+    const backup = `${path2}.v${previous.version ?? "unknown"}.bak`;
+    if (previous.version && previous.version !== WORKFLOW_STATE_VERSION && !(0, import_node_fs13.existsSync)(backup))
+      (0, import_node_fs13.writeFileSync)(backup, (0, import_node_fs13.readFileSync)(path2));
   } catch {
   }
 }
 function writeItem(repo, state2) {
   requireMutationLease();
-  const path = itemPath(repo, state2.workItem.id);
-  keepPreviousVersion(path);
-  writeAtomic(path, redactState(toPortable(repo, withoutDrift(state2))));
-  return path;
+  const path2 = itemPath(repo, state2.workItem.id);
+  keepPreviousVersion(path2);
+  writeAtomic(path2, redactState(toPortable(repo, withoutDrift(state2))));
+  return path2;
 }
 function ensureMigrated(repo) {
   const layout = readLayout(repo);
@@ -82732,7 +83468,7 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel, e
       };
     }
     const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...userApproval ? { userApproval } : {}, ...channel ? { channel } : {}, ...evidenceSource ? { evidenceSource } : {}, ...evidenceSources ? { evidenceSources } : {} });
-    const path = writeItem(repo, applied.state);
+    const path2 = writeItem(repo, applied.state);
     const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1, current: null, items: [] };
     const entry = summarize(applied.state);
     const exists = index.items.some((item) => item.workItemId === entry.workItemId);
@@ -82741,7 +83477,7 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel, e
     const selectionChanged = !exists || current !== index.current;
     writeIndex(repo, { ...index, current, items, ...selectionChanged ? { epoch: (index.epoch ?? 0) + 1 } : {} });
     return {
-      path,
+      path: path2,
       duplicate: applied.duplicate,
       result: planned.action === "open" && previousCurrent && previousCurrent !== entry.workItemId ? { ...applied.result, previousCurrent } : applied.result,
       workflowId: applied.state.workflowId,
@@ -82809,7 +83545,7 @@ function applyRuntimeCommand(repo, command, workItemId, channel) {
 // packages/mcp/dist/story-engine.js
 var PROTECTED = /* @__PURE__ */ new Set(["main", "master"]);
 function git(repo, args, input2) {
-  const result = (0, import_node_child_process4.spawnSync)("git", args, { cwd: repo, encoding: "utf8", input: input2 });
+  const result = (0, import_node_child_process5.spawnSync)("git", args, { cwd: repo, encoding: "utf8", input: input2 });
   if ((result.status ?? 1) !== 0) {
     throw new Error((result.stderr || result.stdout || "git failed").trim());
   }
@@ -82819,36 +83555,36 @@ function safeFile2(root, relative7) {
   return containedPath(root, relative7);
 }
 function adapterFile(workflowRepo) {
-  const file2 = (0, import_node_path9.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
-  return (0, import_node_fs10.existsSync)(file2) ? file2 : void 0;
+  const file2 = (0, import_node_path12.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
+  return (0, import_node_fs14.existsSync)(file2) ? file2 : void 0;
 }
 function testsAreGreen(services) {
   let saw = false;
   for (const service of services) {
-    if (!service.localPath || !(0, import_node_fs10.existsSync)(service.localPath))
+    if (!service.localPath || !(0, import_node_fs14.existsSync)(service.localPath))
       continue;
-    const src = (0, import_node_path9.join)(service.localPath, "src");
-    if ((0, import_node_fs10.existsSync)(src)) {
-      const tests = (0, import_node_fs10.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
+    const src = (0, import_node_path12.join)(service.localPath, "src");
+    if ((0, import_node_fs14.existsSync)(src)) {
+      const tests = (0, import_node_fs14.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
       if (tests.length) {
         saw = true;
-        const result = (0, import_node_child_process4.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path9.join)("src", name))], {
+        const result = (0, import_node_child_process5.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path12.join)("src", name))], {
           cwd: service.localPath,
           encoding: "utf8",
-          env: scrubbedEnv((0, import_node_os6.tmpdir)())
+          env: scrubbedEnv((0, import_node_os8.tmpdir)())
         });
         if ((result.status ?? 1) !== 0)
           return false;
       }
     }
-    const testsDir = (0, import_node_path9.join)(service.localPath, "tests");
-    const pytests = (0, import_node_fs10.existsSync)(testsDir) ? (0, import_node_fs10.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
+    const testsDir = (0, import_node_path12.join)(service.localPath, "tests");
+    const pytests = (0, import_node_fs14.existsSync)(testsDir) ? (0, import_node_fs14.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
     if (pytests.length) {
       saw = true;
-      const result = (0, import_node_child_process4.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
+      const result = (0, import_node_child_process5.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
         cwd: service.localPath,
         encoding: "utf8",
-        env: scrubbedEnv((0, import_node_os6.tmpdir)())
+        env: scrubbedEnv((0, import_node_os8.tmpdir)())
       });
       if ((result.status ?? 1) !== 0)
         return false;
@@ -82873,13 +83609,13 @@ function readHostProposal(workflowRepo, serviceId) {
     throw new Error("UNSAFE_PATH");
   let file2;
   try {
-    file2 = containedPath(workflowRepo, (0, import_node_path9.join)(".praxis", "quality", "proposals", `${serviceId}.json`));
+    file2 = containedPath(workflowRepo, (0, import_node_path12.join)(".praxis", "quality", "proposals", `${serviceId}.json`));
   } catch {
     return void 0;
   }
-  if (!(0, import_node_fs10.existsSync)(file2))
+  if (!(0, import_node_fs14.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs10.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs14.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.files) || parsed.files.length === 0)
     throw new Error("PROPOSAL_INVALID");
   return parsed;
@@ -82968,7 +83704,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
     meta: meta5,
     // a browser check that could not run (no browser, no serve root) is still browser-level evidence: BLOCKED, not "executed"
     evidenceSources: Object.fromEntries([
-      ...scenarios.filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId))).map((sc) => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${(0, import_node_crypto9.randomUUID)()}`, artifacts: [] }]),
+      ...scenarios.filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId))).map((sc) => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${(0, import_node_crypto11.randomUUID)()}`, artifacts: [] }]),
       ...browser.flatMap((run) => run.scenarioIds.map((id) => {
         const shot = run.artifacts[id];
         return [
@@ -82977,11 +83713,11 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
             kind: "browser",
             runner: `${run.runner}@${run.browserVersion}`,
             // the same id as the artifacts directory, so a result can be matched to the screenshots of its run
-            runId: artifactsDir ? (0, import_node_path9.basename)(artifactsDir) : `run-${(0, import_node_crypto9.randomUUID)()}`,
+            runId: artifactsDir ? (0, import_node_path12.basename)(artifactsDir) : `run-${(0, import_node_crypto11.randomUUID)()}`,
             startedAt: run.startedAt,
             finishedAt: run.finishedAt,
             subjectDigest: run.subjectDigest,
-            artifacts: shot ? [{ path: shot.path && artifactsDir ? (0, import_node_path9.relative)(repo, (0, import_node_path9.join)(artifactsDir, shot.path)).split(import_node_path9.sep).join("/") : `(not stored in a preview) ${id}.png`, sha256: shot.sha256, bytes: shot.bytes }] : []
+            artifacts: shot ? [{ path: shot.path && artifactsDir ? (0, import_node_path12.relative)(repo, (0, import_node_path12.join)(artifactsDir, shot.path)).split(import_node_path12.sep).join("/") : `(not stored in a preview) ${id}.png`, sha256: shot.sha256, bytes: shot.bytes }] : []
           }
         ];
       }))
@@ -83009,7 +83745,7 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
     assertDiffTouchesOnly(service.localPath, file2);
   }
   const findings = state2.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
-  const branchRef = (0, import_node_child_process4.spawnSync)("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
+  const branchRef = (0, import_node_child_process5.spawnSync)("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
   const baseSha = (branchRef.status ?? 1) === 0 ? branchRef.stdout.trim() : git(service.localPath, ["rev-parse", "HEAD"]);
   return {
     action: "record-change",
@@ -83032,7 +83768,7 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
   };
 }
 function diffPaths(diff, root) {
-  const out = (0, import_node_child_process4.spawnSync)("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
+  const out = (0, import_node_child_process5.spawnSync)("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
   if ((out.status ?? 1) !== 0)
     throw new Error(`PROPOSAL_INVALID: git cannot read the diff (${(out.stderr || "").trim().slice(0, 160)})`);
   const tokens = out.stdout.split("\0");
@@ -83056,29 +83792,29 @@ function assertDiffTouchesOnly(root, file2) {
   if (!file2.diff)
     return;
   const allowedReal = containedPath(root, file2.path);
-  const realRoot = (0, import_node_fs10.realpathSync)((0, import_node_path9.resolve)(root));
-  const allowedLexical = (0, import_node_path9.resolve)(realRoot, file2.path);
-  const top = (0, import_node_child_process4.spawnSync)("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
-  const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? (0, import_node_fs10.realpathSync)(top.stdout.trim()) : realRoot;
+  const realRoot = (0, import_node_fs14.realpathSync)((0, import_node_path12.resolve)(root));
+  const allowedLexical = (0, import_node_path12.resolve)(realRoot, file2.path);
+  const top = (0, import_node_child_process5.spawnSync)("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? (0, import_node_fs14.realpathSync)(top.stdout.trim()) : realRoot;
   const touched = diffPaths(file2.diff, root);
   if (touched.length === 0)
     throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes nothing`);
-  for (const path of touched) {
-    const absolute = (0, import_node_path9.resolve)(topLevel, path);
-    const relative7 = (0, import_node_path9.relative)(realRoot, absolute);
-    if (relative7 === "" || relative7.startsWith("..") || (0, import_node_path9.isAbsolute)(relative7))
-      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}, outside the checkout`);
+  for (const path2 of touched) {
+    const absolute = (0, import_node_path12.resolve)(topLevel, path2);
+    const relative7 = (0, import_node_path12.relative)(realRoot, absolute);
+    if (relative7 === "" || relative7.startsWith("..") || (0, import_node_path12.isAbsolute)(relative7))
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path2}, outside the checkout`);
     let real;
     try {
       real = containedPath(root, relative7);
     } catch {
-      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}, outside the checkout`);
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path2}, outside the checkout`);
     }
     if (absolute !== allowedLexical || real !== allowedReal)
-      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path}`);
+      throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path2}`);
     try {
-      if ((0, import_node_fs10.lstatSync)(absolute).isSymbolicLink())
-        throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes ${path}, which is a link`);
+      if ((0, import_node_fs14.lstatSync)(absolute).isSymbolicLink())
+        throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes ${path2}, which is a link`);
     } catch (error64) {
       if (error64 instanceof Error && error64.message.startsWith("PROPOSAL_INVALID"))
         throw error64;
@@ -83095,9 +83831,33 @@ function applyProposal(root, proposal) {
     }
     if (typeof file2.after !== "string")
       throw new Error("PROPOSAL_INVALID");
-    (0, import_node_fs10.mkdirSync)((0, import_node_path9.dirname)(absolute), { recursive: true });
-    (0, import_node_fs10.writeFileSync)(absolute, file2.after);
+    (0, import_node_fs14.mkdirSync)((0, import_node_path12.dirname)(absolute), { recursive: true });
+    (0, import_node_fs14.writeFileSync)(absolute, file2.after);
   }
+}
+function serviceFixCommitRequest(planned, repository, workItemId) {
+  const change = planned.change;
+  const patch = planned.proposal.files.map((file2) => ({ path: file2.path, ...file2.diff !== void 0 ? { diff: file2.diff } : {}, ...file2.after !== void 0 ? { after: file2.after } : {} }));
+  const patchDigest = subjectDigest(JSON.stringify(patch));
+  const shownPatch = patch.flatMap((file2) => [`--- ${file2.path} (${file2.diff !== void 0 ? "diff" : "new content"})`, file2.diff ?? file2.after ?? ""]);
+  return {
+    patchDigest,
+    request: {
+      action: "praxis_quality_service_fix",
+      kind: "git_operation",
+      summary: `Commit a Quality fix for ${change.findingId} on branch ${change.branch}`,
+      description: [
+        `Repository: ${repository}`,
+        `Work item: ${workItemId}`,
+        `Branch: ${change.branch} (from ${change.baseSha})`,
+        `Files: ${change.files.join(", ")}`,
+        change.remote ? `The branch is pushed to ${change.remote} afterwards, with its own approval.` : "No push.",
+        `Patch ${patchDigest}:`,
+        ...shownPatch
+      ].join("\n"),
+      subject: JSON.stringify({ serviceId: change.serviceId, findingId: change.findingId, branch: change.branch, baseSha: change.baseSha, files: change.files, patch: patchDigest, remote: change.remote ?? null })
+    }
+  };
 }
 async function commitServiceFix(workflowRepo, planned, workflowItemId, confirmation) {
   const change = planned.change;
@@ -83108,22 +83868,10 @@ async function commitServiceFix(workflowRepo, planned, workflowItemId, confirmat
   const root = service?.localPath;
   if (!root)
     throw new Error("REPOSITORY_LOCATION_MISSING");
-  const repository = (0, import_node_path9.resolve)(root);
+  const repository = (0, import_node_path12.resolve)(root);
   const workItemId = change.storyIds[0] ?? change.serviceId;
-  const subject = JSON.stringify({ serviceId: change.serviceId, findingId: change.findingId, branch: change.branch, baseSha: change.baseSha, files: change.files, remote: change.remote ?? null });
-  const commitApproval = await obtainUserApproval({
-    action: "praxis_quality_service_fix",
-    kind: "git_operation",
-    summary: `Commit a Quality fix for ${change.findingId} on branch ${change.branch}`,
-    description: [
-      `Repository: ${repository}`,
-      `Work item: ${workItemId}`,
-      `Branch: ${change.branch} (from ${change.baseSha})`,
-      `Files: ${change.files.join(", ")}`,
-      change.remote ? `The branch is pushed to ${change.remote} afterwards, with its own approval.` : "No push."
-    ].join("\n"),
-    subject
-  }, { confirmation, repo: workflowRepo });
+  const { patchDigest, request: commitRequest } = serviceFixCommitRequest(planned, repository, workItemId);
+  const commitApproval = await obtainUserApproval(commitRequest, { confirmation, repo: workflowRepo });
   let pushApproval;
   if (change.remote) {
     try {
@@ -83132,9 +83880,11 @@ async function commitServiceFix(workflowRepo, planned, workflowItemId, confirmat
         kind: "git_operation",
         summary: `Push branch ${change.branch} to ${change.remote}`,
         description: [`Repository: ${repository}`, `Branch: ${change.branch}`, `Remote: ${change.remote}`, "The commit made by the Quality fix above is what is pushed."].join("\n"),
-        subject: JSON.stringify({ branch: change.branch, remote: change.remote, baseSha: change.baseSha, files: change.files, findingId: change.findingId })
+        subject: JSON.stringify({ branch: change.branch, remote: change.remote, baseSha: change.baseSha, files: change.files, patch: patchDigest, findingId: change.findingId })
       }, { confirmation, repo: workflowRepo });
     } catch (error64) {
+      if (error64 instanceof ApprovalError && error64.code === "APPROVAL_PENDING")
+        throw error64;
       if (!(error64 instanceof ApprovalError))
         throw error64;
     }
@@ -83151,7 +83901,7 @@ function commitServiceFixBody(root, planned) {
   applyProposal(root, planned.proposal);
   const current = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (current !== change.branch) {
-    const exists = (0, import_node_child_process4.spawnSync)("git", ["rev-parse", "--verify", change.branch], { cwd: root, encoding: "utf8" });
+    const exists = (0, import_node_child_process5.spawnSync)("git", ["rev-parse", "--verify", change.branch], { cwd: root, encoding: "utf8" });
     if ((exists.status ?? 1) === 0)
       git(root, ["checkout", change.branch]);
     else
@@ -83185,10 +83935,10 @@ function pushServiceFix(root, committed) {
   const change = committed.change;
   let mrStatus = "opened";
   let changeRequest;
-  const remotes = (0, import_node_child_process4.spawnSync)("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
+  const remotes = (0, import_node_child_process5.spawnSync)("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
   if (!remotes.split(/\s+/).includes("origin"))
     git(root, ["remote", "add", "origin", change.remote]);
-  const pushed = (0, import_node_child_process4.spawnSync)("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
+  const pushed = (0, import_node_child_process5.spawnSync)("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
     cwd: root,
     encoding: "utf8"
   });
@@ -83207,7 +83957,7 @@ function pushServiceFix(root, committed) {
 }
 
 // packages/mcp/dist/workflow-inspect.js
-var import_node_path29 = require("node:path");
+var import_node_path32 = require("node:path");
 init_dist();
 var INSPECT_SCHEMA = "praxis.workflow.inspect.v1";
 var INSPECT_VIEWS = [
@@ -83225,7 +83975,7 @@ var INSPECT_VIEWS = [
 ];
 var SECRET_VALUE = /(?:sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)|\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
 function scrub(repo, value) {
-  const root = (0, import_node_path29.resolve)(repo);
+  const root = (0, import_node_path32.resolve)(repo);
   const clean = (input2) => {
     if (typeof input2 === "string") {
       return input2.split(`${root}/`).join("").split(root).join(".").replace(SECRET_VALUE, "[redacted]");
@@ -83439,7 +84189,7 @@ function quality(state2) {
   };
 }
 function isLocalRepository(repo, name) {
-  return name === "." || name === (0, import_node_path29.basename)((0, import_node_path29.resolve)(repo)) || (0, import_node_path29.resolve)(name) === (0, import_node_path29.resolve)(repo);
+  return name === "." || name === (0, import_node_path32.basename)((0, import_node_path32.resolve)(repo)) || (0, import_node_path32.resolve)(name) === (0, import_node_path32.resolve)(repo);
 }
 function links(state2, repo) {
   const { items } = listWorkItems(repo);
@@ -83559,13 +84309,13 @@ function developerWorkItemStatus(repo, workItemId) {
 }
 
 // packages/mcp/dist/session-start.js
-var import_node_path31 = require("node:path");
-var import_node_fs27 = require("node:fs");
-var import_node_path32 = require("node:path");
+var import_node_path34 = require("node:path");
+var import_node_fs31 = require("node:fs");
+var import_node_path35 = require("node:path");
 
 // node_modules/@praxis/knowledge/dist/index.js
-var import_node_fs26 = require("node:fs");
-var import_node_path30 = require("node:path");
+var import_node_fs30 = require("node:fs");
+var import_node_path33 = require("node:path");
 var import_gray_matter = __toESM(require_gray_matter(), 1);
 init_zod();
 var ObsoleteToolBindingSchema = external_exports.object({
@@ -83602,15 +84352,15 @@ var LEVEL_DIRS = [
   { level: "service", dir: "service" }
 ];
 function walkMarkdown(root) {
-  if (!(0, import_node_fs26.existsSync)(root))
+  if (!(0, import_node_fs30.existsSync)(root))
     return [];
   const out = [];
   const stack = [root];
   while (stack.length) {
     const cur = stack.pop();
-    for (const name of (0, import_node_fs26.readdirSync)(cur)) {
-      const p = (0, import_node_path30.join)(cur, name);
-      const st = (0, import_node_fs26.statSync)(p);
+    for (const name of (0, import_node_fs30.readdirSync)(cur)) {
+      const p = (0, import_node_path33.join)(cur, name);
+      const st = (0, import_node_fs30.statSync)(p);
       if (st.isDirectory())
         stack.push(p);
       else if (name.endsWith(".md"))
@@ -83619,17 +84369,17 @@ function walkMarkdown(root) {
   }
   return out;
 }
-function parseRuleFile(path, level) {
-  const raw = (0, import_node_fs26.readFileSync)(path, "utf8");
+function parseRuleFile(path2, level) {
+  const raw = (0, import_node_fs30.readFileSync)(path2, "utf8");
   const parsed = (0, import_gray_matter.default)(raw);
   const fm = RuleFrontmatterSchema.safeParse(parsed.data);
   if (!fm.success) {
     return {
-      path,
+      path: path2,
       error: `missing/invalid frontmatter: ${fm.error.issues.map((i) => i.path.join(".")).join(", ")}`
     };
   }
-  return { level, path, frontmatter: fm.data, body: parsed.content.trim() };
+  return { level, path: path2, frontmatter: fm.data, body: parsed.content.trim() };
 }
 function extractPrecedentSections(raw) {
   const sections = {};
@@ -83659,17 +84409,17 @@ function loadApplicableSlice(opts) {
   const byId = /* @__PURE__ */ new Map();
   const precedentsById = /* @__PURE__ */ new Map();
   for (const { level, dir } of LEVEL_DIRS) {
-    let base = (0, import_node_path30.join)(knowledgeRoot, dir);
+    let base = (0, import_node_path33.join)(knowledgeRoot, dir);
     if (level === "product" && product)
-      base = (0, import_node_path30.join)(base, product);
+      base = (0, import_node_path33.join)(base, product);
     if (level === "service" && service)
-      base = (0, import_node_path30.join)(base, service);
-    if (level !== "company" && !(0, import_node_fs26.existsSync)(base))
+      base = (0, import_node_path33.join)(base, service);
+    if (level !== "company" && !(0, import_node_fs30.existsSync)(base))
       continue;
-    for (const file2 of walkMarkdown((0, import_node_path30.join)(base, "rules"))) {
+    for (const file2 of walkMarkdown((0, import_node_path33.join)(base, "rules"))) {
       const result = parseRuleFile(file2, level);
       if ("error" in result) {
-        errors.push(`${(0, import_node_path30.relative)(knowledgeRoot, file2)}: ${result.error}`);
+        errors.push(`${(0, import_node_path33.relative)(knowledgeRoot, file2)}: ${result.error}`);
         continue;
       }
       const { roles, stages, id } = result.frontmatter;
@@ -83682,10 +84432,10 @@ function loadApplicableSlice(opts) {
       }
       byId.set(id, result);
     }
-    for (const file2 of walkMarkdown((0, import_node_path30.join)(base, "precedents"))) {
+    for (const file2 of walkMarkdown((0, import_node_path33.join)(base, "precedents"))) {
       const result = parseScopedPrecedentFile(file2, level);
       if ("error" in result) {
-        errors.push(`${(0, import_node_path30.relative)(knowledgeRoot, file2)}: ${result.error}`);
+        errors.push(`${(0, import_node_path33.relative)(knowledgeRoot, file2)}: ${result.error}`);
         continue;
       }
       const { roles, stages, id } = result.frontmatter;
@@ -83708,23 +84458,23 @@ function loadApplicableSlice(opts) {
     emptyMessage: rules.length === 0 ? "applicable rules: none" : void 0
   };
 }
-function parseScopedPrecedentFile(path, level) {
-  const raw = (0, import_node_fs26.readFileSync)(path, "utf8");
+function parseScopedPrecedentFile(path2, level) {
+  const raw = (0, import_node_fs30.readFileSync)(path2, "utf8");
   const parsed = (0, import_gray_matter.default)(raw);
   const fm = PrecedentFrontmatterSchema.safeParse(parsed.data);
   if (!fm.success) {
     return {
-      path,
+      path: path2,
       error: `missing/invalid frontmatter: ${fm.error.issues.map((i) => i.path.join(".")).join(", ")}`
     };
   }
   const sections = extractPrecedentSections(parsed.content);
   if ("error" in sections) {
-    return { path, error: sections.error };
+    return { path: path2, error: sections.error };
   }
   return {
     level,
-    path,
+    path: path2,
     frontmatter: fm.data,
     ...sections
   };
@@ -83741,9 +84491,9 @@ var DEFAULT_STAGE = {
   quality: "quality"
 };
 var KNOWLEDGE_ROLE = { ba: "ba", architect: "architect", developer: "developer", quality: "qa" };
-var rel = (root, path) => {
-  const r = (0, import_node_path31.relative)(root, path);
-  return r === "" ? "." : r.split(import_node_path31.sep).join("/");
+var rel = (root, path2) => {
+  const r = (0, import_node_path34.relative)(root, path2);
+  return r === "" ? "." : r.split(import_node_path34.sep).join("/");
 };
 function sessionStart(repo, args, version4) {
   if (!SESSION_ROLES.includes(args.role ?? "")) {
@@ -83751,15 +84501,15 @@ function sessionStart(repo, args, version4) {
   }
   const role = args.role;
   const stage = role === "quality" ? DEFAULT_STAGE.quality : args.stage ?? DEFAULT_STAGE[role];
-  const root = (0, import_node_path31.resolve)(repo);
+  const root = (0, import_node_path34.resolve)(repo);
   const project = loadProjectConfig(root);
   let knowledge;
   if (!project.config.knowledge.path) {
     knowledge = { status: "skipped", message: "knowledge.path unset; rules not applied" };
   } else {
     try {
-      const knowledgeRoot = (0, import_node_path32.isAbsolute)(project.config.knowledge.path) ? project.config.knowledge.path : (0, import_node_path31.resolve)(root, project.config.knowledge.path);
-      if (!(0, import_node_fs27.existsSync)(knowledgeRoot))
+      const knowledgeRoot = (0, import_node_path35.isAbsolute)(project.config.knowledge.path) ? project.config.knowledge.path : (0, import_node_path34.resolve)(root, project.config.knowledge.path);
+      if (!(0, import_node_fs31.existsSync)(knowledgeRoot))
         throw new Error("path does not exist");
       const slice = loadApplicableSlice({
         knowledgeRoot,
@@ -83843,8 +84593,8 @@ function sessionStart(repo, args, version4) {
 }
 
 // packages/mcp/dist/canon-init.js
-var import_node_fs28 = require("node:fs");
-var import_node_path33 = require("node:path");
+var import_node_fs32 = require("node:fs");
+var import_node_path36 = require("node:path");
 var CANON_FOLDERS = ["epics", "br", "cr", "wp", "bugs", "baselines"];
 var CONFIG = `canon_roots:
   - vision.md
@@ -83876,10 +84626,10 @@ frontmatter status is machine-checked.
 var MAX_PRODUCT_LENGTH = 120;
 var MAX_EXISTING_BYTES = 64 * 1024;
 function checkExistingYaml(abs, rel2) {
-  const st = (0, import_node_fs28.lstatSync)(abs);
+  const st = (0, import_node_fs32.lstatSync)(abs);
   if (st.size > MAX_EXISTING_BYTES)
     throw new Error(`INVALID_INPUT: ${rel2} is unexpectedly large; fix or remove it, init does not repair it`);
-  const text = (0, import_node_fs28.readFileSync)(abs, "utf8");
+  const text = (0, import_node_fs32.readFileSync)(abs, "utf8");
   const problem = rel2.endsWith("config.yaml") ? configProblem(text) : countersProblem(text);
   if (problem)
     throw new Error(`INVALID_INPUT: ${rel2} is not a valid canon file (${problem}); fix or remove it, init does not repair it`);
@@ -83916,7 +84666,7 @@ ${heading}${VISION_BODY}`;
 function kindOf(abs, rel2) {
   let st;
   try {
-    st = (0, import_node_fs28.lstatSync)(abs);
+    st = (0, import_node_fs32.lstatSync)(abs);
   } catch (error64) {
     if (error64.code === "ENOENT")
       return "missing";
@@ -83935,15 +84685,15 @@ function planCanonInit(repoInput, options2 = {}) {
     throw new Error("INVALID_INPUT: product must not be empty");
   if (options2.product !== void 0 && options2.product.trim().length > MAX_PRODUCT_LENGTH)
     throw new Error(`INVALID_INPUT: product is longer than ${MAX_PRODUCT_LENGTH} characters`);
-  if (!(0, import_node_fs28.existsSync)(repoInput))
+  if (!(0, import_node_fs32.existsSync)(repoInput))
     throw new Error(`INVALID_INPUT: ${repoInput} does not exist`);
-  const repo = (0, import_node_fs28.realpathSync)((0, import_node_path33.resolve)(repoInput));
-  if (!(0, import_node_fs28.lstatSync)(repo).isDirectory())
+  const repo = (0, import_node_fs32.realpathSync)((0, import_node_path36.resolve)(repoInput));
+  if (!(0, import_node_fs32.lstatSync)(repo).isDirectory())
     throw new Error(`INVALID_INPUT: ${repo} is not a directory`);
   const create = [];
   const skipped = [];
   const dir = (rel2, mustBeDir = true) => {
-    const k = kindOf((0, import_node_path33.join)(repo, rel2), rel2);
+    const k = kindOf((0, import_node_path36.join)(repo, rel2), rel2);
     if (k === "file" && mustBeDir)
       throw new Error(`INVALID_INPUT: ${rel2} exists but is a file, expected a directory`);
     if (k === "dir")
@@ -83953,12 +84703,12 @@ function planCanonInit(repoInput, options2 = {}) {
     return k;
   };
   const file2 = (rel2, content) => {
-    const k = kindOf((0, import_node_path33.join)(repo, rel2), rel2);
+    const k = kindOf((0, import_node_path36.join)(repo, rel2), rel2);
     if (k === "dir")
       throw new Error(`INVALID_INPUT: ${rel2} exists but is a directory, expected a file`);
     if (k === "file") {
       if (rel2.startsWith(".ba/"))
-        checkExistingYaml((0, import_node_path33.join)(repo, rel2), rel2);
+        checkExistingYaml((0, import_node_path36.join)(repo, rel2), rel2);
       skipped.push(rel2);
     } else
       create.push({ path: rel2, kind: "file", content });
@@ -83984,22 +84734,22 @@ function applyCanonInit(plan) {
   const undo = [];
   try {
     for (const item of plan.create) {
-      const abs = (0, import_node_path33.join)(plan.repo, item.path);
+      const abs = (0, import_node_path36.join)(plan.repo, item.path);
       if (item.kind === "dir") {
-        (0, import_node_fs28.mkdirSync)(abs, { recursive: false });
-        undo.push(() => (0, import_node_fs28.rmSync)(abs, { recursive: true, force: true }));
+        (0, import_node_fs32.mkdirSync)(abs, { recursive: false });
+        undo.push(() => (0, import_node_fs32.rmSync)(abs, { recursive: true, force: true }));
       } else {
-        if ((0, import_node_fs28.existsSync)(abs))
+        if ((0, import_node_fs32.existsSync)(abs))
           throw new Error(`INVALID_INPUT: ${item.path} appeared since planning; refusing to overwrite`);
         const tmp = `${abs}.praxis-tmp-${process.pid}`;
-        (0, import_node_fs28.writeFileSync)(tmp, item.content ?? "", { encoding: "utf8", flag: "wx" });
+        (0, import_node_fs32.writeFileSync)(tmp, item.content ?? "", { encoding: "utf8", flag: "wx" });
         try {
-          (0, import_node_fs28.renameSync)(tmp, abs);
+          (0, import_node_fs32.renameSync)(tmp, abs);
         } catch (error64) {
-          (0, import_node_fs28.rmSync)(tmp, { force: true });
+          (0, import_node_fs32.rmSync)(tmp, { force: true });
           throw error64;
         }
-        undo.push(() => (0, import_node_fs28.rmSync)(abs, { force: true }));
+        undo.push(() => (0, import_node_fs32.rmSync)(abs, { force: true }));
       }
       written.push(item.path);
     }
@@ -84016,13 +84766,13 @@ function applyCanonInit(plan) {
 }
 
 // packages/mcp/dist/context-tool.js
-var import_node_fs30 = require("node:fs");
-var import_node_path35 = require("node:path");
+var import_node_fs34 = require("node:fs");
+var import_node_path38 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/frontend-discover.js
-var import_node_fs29 = require("node:fs");
-var import_node_path34 = require("node:path");
+var import_node_fs33 = require("node:fs");
+var import_node_path37 = require("node:path");
 init_dist();
 var SKIP_DIRS = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", ".next", ".nuxt", "out", "coverage", ".turbo", ".cache", "vendor", "Pods", "DerivedData", ".gradle", "target", "__pycache__", ".venv", "venv"]);
 var MAX_FILES = 5e3;
@@ -84058,7 +84808,7 @@ function walk3(root) {
       return;
     let entries;
     try {
-      entries = (0, import_node_fs29.readdirSync)(dir).sort();
+      entries = (0, import_node_fs33.readdirSync)(dir).sort();
     } catch {
       return;
     }
@@ -84067,16 +84817,16 @@ function walk3(root) {
         truncated = true;
         return;
       }
-      const abs = (0, import_node_path34.join)(dir, name);
+      const abs = (0, import_node_path37.join)(dir, name);
       let stat;
       try {
-        stat = (0, import_node_fs29.lstatSync)(abs);
+        stat = (0, import_node_fs33.lstatSync)(abs);
         if (stat.isSymbolicLink())
           continue;
       } catch {
         continue;
       }
-      const rel2 = (0, import_node_path34.relative)(root, abs).split(import_node_path34.sep).join("/");
+      const rel2 = (0, import_node_path37.relative)(root, abs).split(import_node_path37.sep).join("/");
       if (stat.isDirectory()) {
         if (SKIP_DIRS.has(name) || depth >= MAX_DEPTH)
           continue;
@@ -84090,11 +84840,11 @@ function walk3(root) {
   visit2(root, 0);
   return { files: out, truncated };
 }
-function readSmall(path) {
+function readSmall(path2) {
   try {
-    if ((0, import_node_fs29.statSync)(path).size > MAX_FILE_BYTES)
+    if ((0, import_node_fs33.statSync)(path2).size > MAX_FILE_BYTES)
       return void 0;
-    return (0, import_node_fs29.readFileSync)(path, "utf8");
+    return (0, import_node_fs33.readFileSync)(path2, "utf8");
   } catch {
     return void 0;
   }
@@ -84172,8 +84922,8 @@ function tokensFromScript(text, file2, tokens) {
   return found;
 }
 function discoverFrontend(repoPath) {
-  const root = (0, import_node_fs29.existsSync)(repoPath) ? (0, import_node_fs29.realpathSync)((0, import_node_path34.resolve)(repoPath)) : (0, import_node_path34.resolve)(repoPath);
-  if (!(0, import_node_fs29.existsSync)(root) || !(0, import_node_fs29.statSync)(root).isDirectory())
+  const root = (0, import_node_fs33.existsSync)(repoPath) ? (0, import_node_fs33.realpathSync)((0, import_node_path37.resolve)(repoPath)) : (0, import_node_path37.resolve)(repoPath);
+  if (!(0, import_node_fs33.existsSync)(root) || !(0, import_node_fs33.statSync)(root).isDirectory())
     throw new Error(`INSPECT_PATH_INVALID: ${repoPath} is not a directory`);
   const { files, truncated } = walk3(root);
   const names = /* @__PURE__ */ new Set();
@@ -84183,8 +84933,8 @@ function discoverFrontend(repoPath) {
     if (!text)
       continue;
     try {
-      const json3 = JSON.parse(text);
-      for (const dep of Object.keys({ ...json3.dependencies, ...json3.devDependencies }))
+      const json4 = JSON.parse(text);
+      for (const dep of Object.keys({ ...json4.dependencies, ...json4.devDependencies }))
         for (const [label, re] of FRAMEWORKS)
           if (re.test(dep))
             names.add(label);
@@ -84206,14 +84956,14 @@ function discoverFrontend(repoPath) {
   const tokens = { colors: {}, fonts: {}, sources: [] };
   const ranked = [...styleFiles].sort((a, b) => Number(/(^|\/)(global|globals|index|app|main|variables|theme|tokens|root)[\w.-]*\./i.test(b)) - Number(/(^|\/)(global|globals|index|app|main|variables|theme|tokens|root)[\w.-]*\./i.test(a)));
   for (const file2 of ranked.slice(0, 40)) {
-    const text = readSmall((0, import_node_path34.join)(root, file2));
+    const text = readSmall((0, import_node_path37.join)(root, file2));
     if (text)
       tokensFromCss(text, file2, tokens);
     if (Object.keys(tokens.colors).length >= 6 && tokens.fonts.body && tokens.radius)
       break;
   }
   for (const file2 of themeFiles.slice(0, 20)) {
-    const text = readSmall((0, import_node_path34.join)(root, file2));
+    const text = readSmall((0, import_node_path37.join)(root, file2));
     if (text)
       (file2.endsWith(".json") || /\.(c|m)?[jt]s$/.test(file2)) && tokensFromScript(text, file2, tokens);
   }
@@ -84240,15 +84990,15 @@ function discoverFrontend(repoPath) {
 
 // packages/mcp/dist/context-tool.js
 function diagnoseContextTool(repo, input2) {
-  const root = (0, import_node_path35.resolve)(repo);
+  const root = (0, import_node_path38.resolve)(repo);
   const state2 = loadWorkflow(root, input2.workItemId);
   const files = discoverFrontend(root).instructionFiles;
   const scanned = files.slice(0, 20).map((file2) => {
     let findings = [];
     try {
-      const path = (0, import_node_path35.join)(root, file2);
-      if ((0, import_node_fs30.statSync)(path).size < 2e5)
-        findings = scanUntrustedInstructions((0, import_node_fs30.readFileSync)(path, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
+      const path2 = (0, import_node_path38.join)(root, file2);
+      if ((0, import_node_fs34.statSync)(path2).size < 2e5)
+        findings = scanUntrustedInstructions((0, import_node_fs34.readFileSync)(path2, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
     } catch {
     }
     return { file: file2, findings };
@@ -84256,13 +85006,13 @@ function diagnoseContextTool(repo, input2) {
   for (const repository of state2?.repositories ?? []) {
     if (!repository.localPath)
       continue;
-    const base = (0, import_node_path35.resolve)(root, repository.localPath);
+    const base = (0, import_node_path38.resolve)(root, repository.localPath);
     for (const file2 of (repository.inspection?.instructionFiles ?? []).slice(0, 20)) {
       let findings = [];
       try {
-        const path = (0, import_node_path35.join)(base, file2);
-        if ((0, import_node_fs30.statSync)(path).size < 2e5)
-          findings = scanUntrustedInstructions((0, import_node_fs30.readFileSync)(path, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
+        const path2 = (0, import_node_path38.join)(base, file2);
+        if ((0, import_node_fs34.statSync)(path2).size < 2e5)
+          findings = scanUntrustedInstructions((0, import_node_fs34.readFileSync)(path2, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
       } catch {
       }
       scanned.push({ file: `${repository.id}:${file2}`, findings });
@@ -84287,9 +85037,9 @@ function diagnoseContextTool(repo, input2) {
 }
 
 // packages/mcp/dist/repository-tools.js
-var import_node_child_process9 = require("node:child_process");
-var import_node_fs31 = require("node:fs");
-var import_node_path36 = require("node:path");
+var import_node_child_process10 = require("node:child_process");
+var import_node_fs35 = require("node:fs");
+var import_node_path39 = require("node:path");
 init_dist();
 function requireState(repo, workItemId) {
   const state2 = loadWorkflow(repo, workItemId);
@@ -84297,9 +85047,9 @@ function requireState(repo, workItemId) {
     throw new Error("WORKFLOW_MISSING: open a work item first");
   return state2;
 }
-function git2(path, args) {
+function git2(path2, args) {
   try {
-    return (0, import_node_child_process9.execFileSync)("git", ["-C", path, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1e4 }).trim() || void 0;
+    return (0, import_node_child_process10.execFileSync)("git", ["-C", path2, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1e4 }).trim() || void 0;
   } catch {
     return void 0;
   }
@@ -84326,10 +85076,10 @@ function inspectRepository(repo, input2) {
     throw new Error(`INVALID_INPUT: repository ${input2.repositoryId} is not registered; record it first with the register-repository command`);
   if (!entry.localPath)
     throw new Error(`INSPECT_PATH_INVALID: repository ${entry.id} has no localPath; register it with a local checkout to inspect it`);
-  const path = (0, import_node_path36.isAbsolute)(entry.localPath) ? entry.localPath : (0, import_node_path36.resolve)(repo, entry.localPath);
-  if (!(0, import_node_fs31.existsSync)(path) || !(0, import_node_fs31.statSync)(path).isDirectory())
-    throw new Error(`INSPECT_PATH_INVALID: ${path} is not a directory`);
-  const top = (0, import_node_fs31.readdirSync)(path).filter((n) => n !== ".git").sort();
+  const path2 = (0, import_node_path39.isAbsolute)(entry.localPath) ? entry.localPath : (0, import_node_path39.resolve)(repo, entry.localPath);
+  if (!(0, import_node_fs35.existsSync)(path2) || !(0, import_node_fs35.statSync)(path2).isDirectory())
+    throw new Error(`INSPECT_PATH_INVALID: ${path2} is not a directory`);
+  const top = (0, import_node_fs35.readdirSync)(path2).filter((n) => n !== ".git").sort();
   const frameworks = /* @__PURE__ */ new Set();
   const entries = [];
   for (const name of top.slice(0, 60)) {
@@ -84338,19 +85088,19 @@ function inspectRepository(repo, input2) {
       frameworks.add(manifest[1]);
     const isDir = (() => {
       try {
-        return (0, import_node_fs31.statSync)((0, import_node_path36.join)(path, name)).isDirectory();
+        return (0, import_node_fs35.statSync)((0, import_node_path39.join)(path2, name)).isDirectory();
       } catch {
         return false;
       }
     })();
     entries.push({ path: isDir ? `${name}/` : name, ...manifest ? { note: manifest[1] } : {} });
   }
-  const frontend = discoverFrontend(path);
+  const frontend = discoverFrontend(path2);
   for (const f of frontend.frameworks)
     frameworks.add(f);
-  const headSha = git2(path, ["rev-parse", "HEAD"]);
-  const branch = git2(path, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const dirty = git2(path, ["status", "--porcelain"]);
+  const headSha = git2(path2, ["rev-parse", "HEAD"]);
+  const branch = git2(path2, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const dirty = git2(path2, ["status", "--porcelain"]);
   const inspection = {
     at: (/* @__PURE__ */ new Date()).toISOString(),
     ...headSha ? { headSha } : {},
@@ -84362,7 +85112,7 @@ function inspectRepository(repo, input2) {
     ...frontend.isFrontend ? { frontend: { hasStyles: frontend.hasStyles, styleFiles: frontend.styleFiles.slice(0, 20), componentDirs: frontend.componentDirs } } : {}
   };
   const applied = applyRuntimeCommand(repo, { action: "record-repository-inspection", repositoryId: entry.id, inspection }, input2.workItemId);
-  return { repositoryId: entry.id, path, inspection, recorded: applied.result, workItemId: applied.workItemId, dirty: Boolean(dirty) };
+  return { repositoryId: entry.id, path: path2, inspection, recorded: applied.result, workItemId: applied.workItemId, dirty: Boolean(dirty) };
 }
 function repositoryBrief(repo, input2) {
   const state2 = requireState(repo, input2.workItemId);
@@ -84384,22 +85134,22 @@ function repositoryBrief(repo, input2) {
 }
 
 // packages/mcp/dist/review-service.js
-var import_node_child_process10 = require("node:child_process");
-var import_node_http = require("node:http");
-var import_node_crypto18 = require("node:crypto");
-var import_node_fs32 = require("node:fs");
-var import_node_os7 = require("node:os");
-var import_node_path37 = require("node:path");
+var import_node_child_process11 = require("node:child_process");
+var import_node_http2 = require("node:http");
+var import_node_crypto20 = require("node:crypto");
+var import_node_fs36 = require("node:fs");
+var import_node_os9 = require("node:os");
+var import_node_path40 = require("node:path");
 init_dist();
 var IDLE_MS = 4 * 60 * 60 * 1e3;
 var MAX_BODY = 1e6;
 var LOAD_TOKEN_MS = 10 * 60 * 1e3;
 var sessions = /* @__PURE__ */ new Map();
-var server;
-var port = 0;
+var server2;
+var port2 = 0;
 var isReviewView = (value) => typeof value === "string" && REVIEW_VIEWS.includes(value);
 function reviewDir(repo, workItemId) {
-  return (0, import_node_path37.join)(repo, ".praxis", "workflow", "reviews", workItemId);
+  return (0, import_node_path40.join)(repo, ".praxis", "workflow", "reviews", workItemId);
 }
 function requireState2(repo, workItemId) {
   const state2 = loadWorkflow(repo, workItemId);
@@ -84419,10 +85169,10 @@ function progressFor(state2, view) {
       return { ...storyReviewProgress(state2), acceptance: acceptanceStatus(state2, "stories_review") };
   }
 }
-function safeEqual(a, b) {
+function safeEqual2(a, b) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
-  return x.length === y.length && (0, import_node_crypto18.timingSafeEqual)(x, y);
+  return x.length === y.length && (0, import_node_crypto20.timingSafeEqual)(x, y);
 }
 function outcome(repo, workItemId, view, applied, conflicts, stale, summary) {
   const state2 = requireState2(repo, workItemId);
@@ -84489,18 +85239,18 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
   return outcome(repo, id, submission.view, applied, conflicts, plan.stale, plan.summary);
 }
 function readSubmissionFile(repo, file2) {
-  const root = (0, import_node_fs32.realpathSync)((0, import_node_path37.resolve)(repo));
-  const downloads = (0, import_node_path37.join)((0, import_node_os7.homedir)(), "Downloads");
-  const path = (0, import_node_fs32.realpathSync)((0, import_node_path37.resolve)(root, file2));
-  const inside = path === root || path.startsWith(`${root}${import_node_path37.sep}`);
-  const inDownloads = (0, import_node_fs32.existsSync)(downloads) && path.startsWith(`${(0, import_node_fs32.realpathSync)(downloads)}${import_node_path37.sep}`);
+  const root = (0, import_node_fs36.realpathSync)((0, import_node_path40.resolve)(repo));
+  const downloads = (0, import_node_path40.join)((0, import_node_os9.homedir)(), "Downloads");
+  const path2 = (0, import_node_fs36.realpathSync)((0, import_node_path40.resolve)(root, file2));
+  const inside = path2 === root || path2.startsWith(`${root}${import_node_path40.sep}`);
+  const inDownloads = (0, import_node_fs36.existsSync)(downloads) && path2.startsWith(`${(0, import_node_fs36.realpathSync)(downloads)}${import_node_path40.sep}`);
   if (!inside && !inDownloads)
     throw new Error("INVALID_INPUT: the decisions file must be inside the repository or in Downloads");
-  if ((0, import_node_fs32.statSync)(path).size > MAX_BODY)
+  if ((0, import_node_fs36.statSync)(path2).size > MAX_BODY)
     throw new Error("INVALID_INPUT: the decisions file is too large");
-  return JSON.parse((0, import_node_fs32.readFileSync)(path, "utf8"));
+  return JSON.parse((0, import_node_fs36.readFileSync)(path2, "utf8"));
 }
-function json2(res, status, body2) {
+function json3(res, status, body2) {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
   res.end(JSON.stringify(body2));
 }
@@ -84510,8 +85260,8 @@ function prune() {
     if (now - session.lastUsed > IDLE_MS)
       sessions.delete(id);
 }
-function hostOk(req) {
-  return req.headers.host === `127.0.0.1:${port}` || req.headers.host === `localhost:${port}`;
+function hostOk2(req) {
+  return req.headers.host === `127.0.0.1:${port2}` || req.headers.host === `localhost:${port2}`;
 }
 async function body(req) {
   const chunks = [];
@@ -84524,73 +85274,73 @@ async function body(req) {
   }
   return Buffer.concat(chunks).toString("utf8");
 }
-async function handle(req, res) {
+async function handle2(req, res) {
   prune();
-  if (!hostOk(req))
-    return json2(res, 403, { error: "bad host" });
-  const url4 = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+  if (!hostOk2(req))
+    return json3(res, 403, { error: "bad host" });
+  const url4 = new URL(req.url ?? "/", `http://127.0.0.1:${port2}`);
   const match = url4.pathname.match(/^\/r\/([a-f0-9]{16})(\/submit)?$/);
   const session = match ? sessions.get(match[1]) : void 0;
   if (!match || !session)
-    return json2(res, 404, { error: "unknown or expired review" });
+    return json3(res, 404, { error: "unknown or expired review" });
   session.lastUsed = Date.now();
   if (req.method === "GET" && !match[2]) {
-    if (Date.now() > session.loadUntil || !safeEqual(url4.searchParams.get("t") ?? "", session.loadToken)) {
+    if (Date.now() > session.loadUntil || !safeEqual2(url4.searchParams.get("t") ?? "", session.loadToken)) {
       res.writeHead(403, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" });
       res.end(`<!doctype html><meta charset="utf-8"><title>Review link</title><body style="font:16px system-ui;max-width:40em;margin:3em auto;padding:0 1em"><h1>This review link does not open here</h1><p>A review page opens only from the tab Praxis opened for you, and the link works for a few minutes. If you closed that tab or too much time has passed, ask Claude to open the review again (it calls <code>praxis_review_render</code> with <code>reopen: true</code>). Your saved decisions are not affected.</p></body>`);
       return;
     }
     try {
       const state2 = requireState2(session.repo, session.workItemId);
-      const saveToken = (0, import_node_crypto18.randomBytes)(24).toString("hex");
+      const saveToken = (0, import_node_crypto20.randomBytes)(24).toString("hex");
       session.saveTokens.add(saveToken);
       if (session.saveTokens.size > 20)
         session.saveTokens.delete(session.saveTokens.values().next().value);
-      const html = renderReview(state2, session.view, { reviewId: session.id, saveUrl: `http://127.0.0.1:${port}/r/${session.id}/submit`, token: saveToken, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
+      const html = renderReview(state2, session.view, { reviewId: session.id, saveUrl: `http://127.0.0.1:${port2}/r/${session.id}/submit`, token: saveToken, generatedAt: (/* @__PURE__ */ new Date()).toISOString() });
       res.writeHead(200, {
         "content-type": "text/html; charset=utf-8",
         "cache-control": "no-store",
-        "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src http://127.0.0.1:${port}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
+        "content-security-policy": `default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src http://127.0.0.1:${port2}; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`,
         "x-content-type-options": "nosniff"
       });
       res.end(html);
     } catch (error64) {
-      json2(res, 500, { error: error64 instanceof Error ? error64.message : String(error64) });
+      json3(res, 500, { error: error64 instanceof Error ? error64.message : String(error64) });
     }
     return;
   }
   if (req.method === "POST" && match[2]) {
     const presented = String(req.headers["x-praxis-review-token"] ?? "");
-    if (![...session.saveTokens].some((tok) => safeEqual(presented, tok)))
-      return json2(res, 403, { error: "bad token" });
+    if (![...session.saveTokens].some((tok) => safeEqual2(presented, tok)))
+      return json3(res, 403, { error: "bad token" });
     const origin = req.headers.origin;
-    if (origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`)
-      return json2(res, 403, { error: "bad origin" });
+    if (origin !== `http://127.0.0.1:${port2}` && origin !== `http://localhost:${port2}`)
+      return json3(res, 403, { error: "bad origin" });
     if (!String(req.headers["content-type"] ?? "").startsWith("application/json"))
-      return json2(res, 415, { error: "json only" });
+      return json3(res, 415, { error: "json only" });
     try {
       const result = applyFromPage(session.repo, session.workItemId, session.view, JSON.parse(await body(req)));
-      return json2(res, 200, result);
+      return json3(res, 200, result);
     } catch (error64) {
-      return json2(res, 400, { error: error64 instanceof Error ? error64.message.slice(0, 300) : String(error64) });
+      return json3(res, 400, { error: error64 instanceof Error ? error64.message.slice(0, 300) : String(error64) });
     }
   }
-  return json2(res, 405, { error: "method not allowed" });
+  return json3(res, 405, { error: "method not allowed" });
 }
-async function ensureServer() {
-  if (server && port)
-    return port;
-  server = (0, import_node_http.createServer)((req, res) => {
-    handle(req, res).catch((error64) => json2(res, 500, { error: error64 instanceof Error ? error64.message : String(error64) }));
+async function ensureServer2() {
+  if (server2 && port2)
+    return port2;
+  server2 = (0, import_node_http2.createServer)((req, res) => {
+    handle2(req, res).catch((error64) => json3(res, 500, { error: error64 instanceof Error ? error64.message : String(error64) }));
   });
   await new Promise((ok, fail2) => {
-    server.once("error", fail2);
-    server.listen(0, "127.0.0.1", () => ok());
+    server2.once("error", fail2);
+    server2.listen(0, "127.0.0.1", () => ok());
   });
-  const address = server.address();
-  port = typeof address === "object" && address ? address.port : 0;
-  server.unref();
-  return port;
+  const address = server2.address();
+  port2 = typeof address === "object" && address ? address.port : 0;
+  server2.unref();
+  return port2;
 }
 async function openInBrowser(url4) {
   if (process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
@@ -84598,12 +85348,12 @@ async function openInBrowser(url4) {
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
   return new Promise((done) => {
     try {
-      const dir = (0, import_node_fs32.mkdtempSync)((0, import_node_path37.join)((0, import_node_os7.tmpdir)(), "praxis-open-"));
-      (0, import_node_fs32.chmodSync)(dir, 448);
-      const page = (0, import_node_path37.join)(dir, "open-review.html");
-      (0, import_node_fs32.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><title>Opening review</title><meta http-equiv="refresh" content="0;url=${url4.replace(/"/g, "&quot;")}"><p>Opening the review... <a href="${url4.replace(/"/g, "&quot;")}">continue</a></p>`, { mode: 384 });
-      setTimeout(() => (0, import_node_fs32.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
-      const child = (0, import_node_child_process10.spawn)(opener, [page], { detached: true, stdio: "ignore" });
+      const dir = (0, import_node_fs36.mkdtempSync)((0, import_node_path40.join)((0, import_node_os9.tmpdir)(), "praxis-open-"));
+      (0, import_node_fs36.chmodSync)(dir, 448);
+      const page = (0, import_node_path40.join)(dir, "open-review.html");
+      (0, import_node_fs36.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><title>Opening review</title><meta http-equiv="refresh" content="0;url=${url4.replace(/"/g, "&quot;")}"><p>Opening the review... <a href="${url4.replace(/"/g, "&quot;")}">continue</a></p>`, { mode: 384 });
+      setTimeout(() => (0, import_node_fs36.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
+      const child = (0, import_node_child_process11.spawn)(opener, [page], { detached: true, stdio: "ignore" });
       const timer = setTimeout(() => {
         child.unref();
         done(true);
@@ -84627,27 +85377,27 @@ async function renderReviewTool(repo, input2) {
   const view = input2.view;
   const state2 = requireState2(repo, input2.workItemId);
   const dir = reviewDir(repo, state2.workItem.id);
-  (0, import_node_fs32.mkdirSync)(dir, { recursive: true });
-  const file2 = (0, import_node_path37.join)(dir, `${view}.html`);
-  (0, import_node_fs32.writeFileSync)(file2, renderReview(state2, view, { reviewId: `${view}-${state2.workItem.id}`, generatedAt: (/* @__PURE__ */ new Date()).toISOString() }));
+  (0, import_node_fs36.mkdirSync)(dir, { recursive: true });
+  const file2 = (0, import_node_path40.join)(dir, `${view}.html`);
+  (0, import_node_fs36.writeFileSync)(file2, renderReview(state2, view, { reviewId: `${view}-${state2.workItem.id}`, generatedAt: (/* @__PURE__ */ new Date()).toISOString() }));
   let url4;
   let opened = false;
   if (input2.serve !== false) {
-    const p = await ensureServer();
+    const p = await ensureServer2();
     const live = [...sessions.values()].find((s) => s.repo === repo && s.workItemId === state2.workItem.id && s.view === view && s.loadUntil > Date.now() && s.openedAt !== void 0);
     if (live && !input2.reopen) {
       return { view, workItemId: state2.workItem.id, file: file2, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: live.shown?.fingerprint ?? null, baseState: live.shown?.baseState ?? null, progress: progressFor(state2, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened. The url in this result is NOT a working link (the working link is secret and only the tab Praxis opened has it): tell the user to use that tab, or call again with reopen true to open a fresh page, which is needed whenever the content changed or the tab was closed.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
-    const id = (0, import_node_crypto18.randomBytes)(8).toString("hex");
-    const loadToken = (0, import_node_crypto18.randomBytes)(24).toString("hex");
+    const id = (0, import_node_crypto20.randomBytes)(8).toString("hex");
+    const loadToken = (0, import_node_crypto20.randomBytes)(24).toString("hex");
     sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now(), shown: { fingerprint: fingerprintFor(state2, view), baseState: workStateStamp(state2) } });
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
     opened = await openInBrowser(secretUrl);
-    const created = sessions.get(id);
-    if (created && opened)
-      created.openedAt = Date.now();
+    const created2 = sessions.get(id);
+    if (created2 && opened)
+      created2.openedAt = Date.now();
     if (!opened && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
-      (0, import_node_fs32.writeFileSync)((0, import_node_path37.join)(dir, `${view}.url`), secretUrl);
+      (0, import_node_fs36.writeFileSync)((0, import_node_path40.join)(dir, `${view}.url`), secretUrl);
     url4 = `http://127.0.0.1:${p}/r/${id}`;
   }
   return {
@@ -84775,6 +85525,22 @@ function withClientReport(data, client) {
         hostGate: "Some hosts (Claude Desktop) hold an apply call at their own tool-permission prompt BEFORE it reaches Praxis. If you see no result and no prompt, look for that prompt in the host window; diagnosticsLog lists the calls that did reach Praxis (tool_enter). Praxis itself answers a protected call without a dialog immediately with APPROVAL_CLIENT_UI_REQUIRED."
       } : {}
     };
+    const observed = knownAutoAnswer(clientKey(client));
+    const pageOn = approvalPageEnabled();
+    target.approval = {
+      ...target.approval,
+      ...observed ? { observedDialog: { ...observed, note: "This client was seen answering Praxis's approval dialog by itself, without showing it. Praxis no longer asks through it; approvals go to the approval page." } } : {},
+      page: {
+        enabled: pageOn,
+        browser: process.env.PRAXIS_APPROVAL_BROWSER?.trim() || "default browser",
+        waitMs: approvalPageWaitMs(),
+        note: pageOn ? "When the client cannot show Praxis's dialog, Praxis opens its approval page in the browser on this computer. The agent never gets that page's link. A browser-automation tool connected to that browser (for example Claude in Chrome), or a program running as you, could still operate it: set the browser for approval pages to one no agent controls." : "The approval page is switched off (PRAXIS_APPROVAL_PAGE=off): without a working client dialog, protected actions are not executed."
+      },
+      minAnswerMs: minAnswerMs()
+    };
+    if (pageOn && (!client.dialog || observed) && target.approval.mode === "no-dialog") {
+      target.approval = { ...target.approval, mode: "approval-page" };
+    }
     if (trustedClientMode()) {
       target.approval = {
         ...target.approval,
@@ -84807,18 +85573,20 @@ function preflight(name, args, ctx, version4) {
     logDecision(ctx.repo, {
       at: (/* @__PURE__ */ new Date()).toISOString(),
       action: name,
-      summary: `${name} declined`,
+      summary: `${name} withdrawn`,
       subjectDigest: subjectDigest(JSON.stringify({ name, previewFingerprint: str3(args.previewFingerprint) ?? "" })),
-      decision: "rejected",
+      decision: "withdrawn",
+      decidedBy: "agent",
       channel: "none",
-      reason: "the user declined (reported by the agent)"
+      reason: "the agent withdrew the request (confirmation=NO); no decision of the user is claimed"
     });
     return mcpEnvelope({
       ok: false,
       operation: name,
       version: version4,
-      code: "APPROVAL_REJECTED",
-      errors: [`${name} was rejected by the user. Nothing was changed.`]
+      code: "APPROVAL_WITHDRAWN",
+      data: { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false },
+      errors: [`${name} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision.`]
     });
   }
   if (ctx.confirmation !== "YES") {
@@ -84834,7 +85602,19 @@ function preflight(name, args, ctx, version4) {
 }
 async function callTool(name, rawArgs, opts) {
   const args = rawArgs && typeof rawArgs === "object" ? rawArgs : {};
-  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannelWith(opts.approvalChannel) : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str3(args.planText)) : void 0);
+  const repo = str3(args.repo) ?? process.cwd();
+  const label = opts.client?.name ? `${opts.client.name}${opts.client.version ? ` ${opts.client.version}` : ""}` : void 0;
+  const page = approvalPageEnabled() ? approvalPageChannel({ repo, ...label ? { client: label } : {}, ...opts.extra?.signal ? { signal: opts.extra.signal } : {} }) : void 0;
+  const dialog = opts.approvalChannel;
+  const asked = dialog ? dialogWithPageFallback(dialog, page, { ...clientKey(opts.client) ? { clientKey: clientKey(opts.client) } : {}, repo }) : page;
+  let channel;
+  if (trustedClientMode() && PROTECTED_TOOLS.has(name)) {
+    channel = trustedClientChannelWith(asked);
+  } else if (!dialog && hostPermissionMode() && PROTECTED_TOOLS.has(name)) {
+    channel = hostPermissionChannel(str3(args.planText), page);
+  } else {
+    channel = asked;
+  }
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 async function callToolInner(name, rawArgs, opts) {
@@ -84872,6 +85652,26 @@ async function callToolInner(name, rawArgs, opts) {
   try {
     if (name === "praxis_approval_plan") {
       return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await approvalPlan(args, ctx, opts) });
+    }
+    if (name === "praxis_approval_journal") {
+      if (args.amend === true) {
+        if (ctx.confirmation !== "YES") {
+          return mcpEnvelope({ ok: false, operation: name, version: opts.version, code: "CONFIRMATION_REQUIRED", errors: ["amend=true requires confirmation=YES after the user has seen the corrections (call with amend=false first)"] });
+        }
+        const amended = await amendJournal(ctx.repo, ctx.confirmation, opts.version);
+        const approval = approvalsGivenInThisCall().map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
+        return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: { ...amended, approval } });
+      }
+      const audit = journalAudit(ctx.repo);
+      return mcpEnvelope({
+        ok: true,
+        operation: name,
+        version: opts.version,
+        data: {
+          ...audit,
+          note: audit.toAmend.length ? `${audit.toAmend.length} entr${audit.toAmend.length === 1 ? "y attributes" : "ies attribute"} a rejection to the user that the evidence shows was not theirs. Show the user this list; to record the corrections, call again with amend=true and confirmation=YES (the user approves exactly these corrections). Existing lines are never changed.` : "No entry claims a decision of the user that the evidence contradicts."
+        }
+      });
     }
     if (name === "praxis_workflow_status" || name === "praxis_workflow_inspect" || name === "praxis_session_start" || name === "praxis_workflow_preview" || name === "praxis_workflow_apply" || name === "praxis_capabilities") {
       return mcpEnvelope({
@@ -84949,7 +85749,7 @@ function hydrateWorkflowCommand(repo, raw) {
   let real;
   try {
     real = containedPath(repo, relative7);
-    const info = (0, import_node_fs33.statSync)(real);
+    const info = (0, import_node_fs37.statSync)(real);
     if (!info.isFile())
       throw new Error("UNSAFE_PATH");
     if (info.size > MAX_IMPLEMENTATION_BYTES)
@@ -84959,7 +85759,7 @@ function hydrateWorkflowCommand(repo, raw) {
       throw error64;
     throw new Error("INVALID_INPUT: implementation path escapes the repository or is not a regular file inside it");
   }
-  command.implementationSource = (0, import_node_fs33.readFileSync)(real, "utf8");
+  command.implementationSource = (0, import_node_fs37.readFileSync)(real, "utf8");
   delete command.implementationPath;
   return command;
 }
@@ -84984,8 +85784,8 @@ ${plan.create.map((c) => `- ${c.path}`).join("\n")}
 Left untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
         subject: JSON.stringify(plan.create.map((c) => [c.path, c.content ?? ""]))
       }, { confirmation: str3(args.confirmation), repo });
-      const created = applyCanonInit(plan);
-      return { created, alreadyThere: plan.skipped, next: plan.next };
+      const created2 = applyCanonInit(plan);
+      return { created: created2, alreadyThere: plan.skipped, next: plan.next };
     }
     case "praxis_workflow_commands": {
       const only = str3(args.action);
@@ -85015,7 +85815,7 @@ Left untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
         const entry = state2?.repositories.find((r) => r.id === registered);
         if (!entry?.localPath)
           throw new Error(`INVALID_INPUT: repository ${registered} is not registered with a local path`);
-        target = (0, import_node_path38.resolve)(repo, entry.localPath);
+        target = (0, import_node_path41.resolve)(repo, entry.localPath);
       }
       return discoverFrontend(target);
     }
@@ -85035,16 +85835,16 @@ function assertImplementationPath(repo, command, workItemId) {
   if (!service)
     return;
   const registered = state2.repositories.find((r) => r.id === service.repositoryId);
-  const root = (0, import_node_fs33.realpathSync)((0, import_node_path38.resolve)(repo, service.localPath ?? registered?.localPath ?? "."));
+  const root = (0, import_node_fs37.realpathSync)((0, import_node_path41.resolve)(repo, service.localPath ?? registered?.localPath ?? "."));
   let target;
   try {
-    target = (0, import_node_fs33.realpathSync)((0, import_node_path38.resolve)(root, String(command.path ?? "")));
-    if (!(0, import_node_fs33.statSync)(target).isFile())
+    target = (0, import_node_fs37.realpathSync)((0, import_node_path41.resolve)(root, String(command.path ?? "")));
+    if (!(0, import_node_fs37.statSync)(target).isFile())
       throw new Error("not a file");
   } catch {
     throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is not an existing file in ${service.id}'s checkout (${root}); record real work only`);
   }
-  if (target !== root && !target.startsWith(`${root}${import_node_path38.sep}`))
+  if (target !== root && !target.startsWith(`${root}${import_node_path41.sep}`))
     throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
 }
 var MAX_COMMAND_FILE = 4 * 1024 * 1024;
@@ -85056,10 +85856,10 @@ function withCommandFile(args, repo) {
   if (typeof args.commandFile !== "string")
     throw new Error("INVALID_INPUT: commandFile must be a path inside the repository");
   const file2 = containedPath(repo, args.commandFile);
-  if (!(0, import_node_fs33.statSync)(file2).isFile() || (0, import_node_fs33.statSync)(file2).size > MAX_COMMAND_FILE)
+  if (!(0, import_node_fs37.statSync)(file2).isFile() || (0, import_node_fs37.statSync)(file2).size > MAX_COMMAND_FILE)
     throw new Error("INVALID_INPUT: commandFile must be a regular file of at most 4 MB");
   const { commandFile: _file4, ...rest } = args;
-  return { ...rest, command: (0, import_node_fs33.readFileSync)(file2, "utf8") };
+  return { ...rest, command: (0, import_node_fs37.readFileSync)(file2, "utf8") };
 }
 function compactPreview(preview, verbose) {
   if (verbose || !preview || typeof preview !== "object")
@@ -85097,10 +85897,10 @@ async function runWorkflowTool(name, rawArgs, repo, version4) {
   }
   if (parsed.action === "verify-stories") {
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const runId = `run-${(0, import_node_crypto19.randomUUID)()}`;
+    const runId = `run-${(0, import_node_crypto21.randomUUID)()}`;
     const isPreview = name === "praxis_workflow_preview";
     const current = loadWorkflow(repo, workItemId);
-    const artifactsDir = !isPreview && current ? (0, import_node_path38.resolve)(repo, ".praxis", "quality", current.workItem.id, "artifacts", runId) : void 0;
+    const artifactsDir = !isPreview && current ? (0, import_node_path41.resolve)(repo, ".praxis", "quality", current.workItem.id, "artifacts", runId) : void 0;
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId, artifactsDir);
     const { meta: meta5, evidenceSources, ...command } = recorded;
     const source = { kind: "executed", runner: "praxis-runtime:verify-stories", runId, startedAt, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), artifacts: [] };
@@ -85234,7 +86034,7 @@ async function dispatchTool(ops, name, ctx, version4, role) {
 function logStderr(line) {
   console.error(line);
 }
-var STATE_WRITING_READS = /* @__PURE__ */ new Set(["praxis_repository_inspect", "praxis_review_render"]);
+var STATE_WRITING_READS = /* @__PURE__ */ new Set(["praxis_repository_inspect", "praxis_review_render", "praxis_approval_journal"]);
 function annotationsFor(tool) {
   const applies = tool.kind === "apply";
   return {
@@ -85245,12 +86045,12 @@ function annotationsFor(tool) {
     openWorldHint: applies || tool.name.includes("jira") || tool.name.includes("git")
   };
 }
-function describeClient(server2, extra) {
+function describeClient(server3, extra) {
   const ctx = extra?.mcpReq;
-  const negotiated = ctx?.envelope?.[PROTOCOL_VERSION_META_KEY] ?? server2.server.getNegotiatedProtocolVersion?.();
+  const negotiated = ctx?.envelope?.[PROTOCOL_VERSION_META_KEY] ?? server3.server.getNegotiatedProtocolVersion?.();
   const modern = Boolean(negotiated && negotiated >= PRAXIS_MCP_SDK.modernRevision);
-  const info = (modern ? ctx?.envelope?.[CLIENT_INFO_META_KEY] : void 0) ?? server2.server.getClientVersion?.();
-  const caps = (modern ? ctx?.envelope?.[CLIENT_CAPABILITIES_META_KEY] : void 0) ?? server2.server.getClientCapabilities?.();
+  const info = (modern ? ctx?.envelope?.[CLIENT_INFO_META_KEY] : void 0) ?? server3.server.getClientVersion?.();
+  const caps = (modern ? ctx?.envelope?.[CLIENT_CAPABILITIES_META_KEY] : void 0) ?? server3.server.getClientCapabilities?.();
   const declared = caps?.elicitation;
   const form = declared !== void 0 && (Object.keys(declared).length === 0 || "form" in declared);
   const url4 = declared !== void 0 && "url" in declared;
@@ -85270,26 +86070,28 @@ function clientApprovalChannel(extra, client) {
   if (!client.dialog)
     return void 0;
   const ctx = extra?.mcpReq;
+  const label = client.name ? `${client.name}${client.version ? ` ${client.version}` : ""}` : void 0;
   if (client.flow === "input-required-round-trip")
-    return roundTripChannel(ctx?.inputResponses);
+    return roundTripChannel(ctx?.inputResponses, label);
   const elicit = ctx?.elicitInput;
   if (!elicit)
     return void 0;
   return elicitationChannel({
     supported: true,
-    elicitInput: (params, options2) => elicit(params, options2)
+    elicitInput: (params, options2) => elicit(params, options2),
+    ...label ? { client: label } : {}
   });
 }
 function createPraxisMcpServer(opts) {
-  const server2 = new McpServer({ name: "praxis", version: opts.version }, { capabilities: { tools: { listChanged: false } } });
+  const server3 = new McpServer({ name: "praxis", version: opts.version }, { capabilities: { tools: { listChanged: false } } });
   for (const tool of toolsForRole(opts.role)) {
-    server2.registerTool(tool.name, {
+    server3.registerTool(tool.name, {
       description: tool.description,
       inputSchema: jsonSchemaToZod(tool.inputSchema),
       annotations: annotationsFor(tool)
     }, async (args, extra) => {
       const signal = extra && typeof extra === "object" && "signal" in extra ? extra.signal : void 0;
-      const client = describeClient(server2, extra);
+      const client = describeClient(server3, extra);
       const started = Date.now();
       const callId = `${started.toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
       recordDiagnostic({
@@ -85316,7 +86118,9 @@ function createPraxisMcpServer(opts) {
       } catch (error64) {
         if (error64 instanceof ApprovalNeedsInput) {
           recordDiagnostic({ event: "input_required", callId, tool: tool.name, ms: Date.now() - started });
-          return inputRequired({ inputRequests: { [approvalKey(error64.request)]: inputRequired.elicit(elicitParams(error64.request)) } });
+          const key = approvalKey(error64.request);
+          noteDialogAsked(key);
+          return inputRequired({ inputRequests: { [key]: inputRequired.elicit(elicitParams(error64.request)) } });
         }
         recordDiagnostic({ event: "tool_failed", callId, tool: tool.name, ms: Date.now() - started, error: error64 instanceof Error ? error64.name : "unknown" });
         throw error64;
@@ -85336,7 +86140,7 @@ function createPraxisMcpServer(opts) {
       };
     });
   }
-  return server2;
+  return server3;
 }
 function failStart(code, err) {
   const message = err instanceof Error ? err.message : String(err);
@@ -85357,7 +86161,7 @@ function startStdioServer(opts) {
   logStderr("[praxis-mcp] transport=stdio");
   logStderr("[praxis-mcp] protocol=modern+legacy");
   try {
-    const handle2 = serveStdio(() => createPraxisMcpServer({ role, version: version4 }), {
+    const handle3 = serveStdio(() => createPraxisMcpServer({ role, version: version4 }), {
       legacy: PRAXIS_MCP_SDK.legacyMode,
       onerror: (error64) => {
         logStderr(`[praxis-mcp] PRAXIS_MCP_RUNTIME_ERROR ${error64.message}`);
@@ -85366,11 +86170,11 @@ function startStdioServer(opts) {
     logStderr("[praxis-mcp] ready");
     recordDiagnostic({ event: "server_start", version: version4, role });
     const shutdown = () => {
-      void handle2.close().finally(() => process.exit(0));
+      void handle3.close().finally(() => process.exit(0));
     };
     process.once("SIGTERM", shutdown);
     process.once("SIGINT", shutdown);
-    return handle2;
+    return handle3;
   } catch (err) {
     failStart("PRAXIS_MCP_START_FAILED", err);
   }

@@ -22,6 +22,9 @@ import {
 } from "@praxis/jira";
 import { installTestApprovals } from "./test-approval.mjs";
 
+// a scripted acceptance never opens a tab in the developer's browser (desktop-approval-acceptance covers the page)
+process.env.PRAXIS_APPROVAL_PAGE ??= "off";
+
 // Protected writes (including the mock tracker this script seeds) run under real signed authorizations from an
 // scripted user approval (see test-approval.mjs); nothing here proves that a person approved anything.
 const testApprovals = installTestApprovals();
@@ -558,8 +561,9 @@ proven.push("O-P failed review bugs / no Done / dedupe");
     { workPackage: WP, repo: nRepo, confirmation: "NO", previewFingerprint: nPreview.previewFingerprint },
     { role: "runtime", version, extra: { provider: nProvider } },
   );
-  if (declined.ok !== false || declined.code !== "APPROVAL_REJECTED") fail(`N: a declined apply was not rejected ${JSON.stringify(declined)}`);
-  proven.push("N MCP apply refused without a client dialog, and rejected on confirmation=NO; Jira untouched");
+  // the agent's confirmation=NO withdraws the request; it is never recorded as the user's rejection
+  if (declined.ok !== false || declined.code !== "APPROVAL_WITHDRAWN" || declined.data?.decidedBy !== "agent") fail(`N: a withdrawn apply was not refused as the agent's withdrawal ${JSON.stringify(declined)}`);
+  proven.push("N MCP apply refused without a client dialog, and withdrawn (not rejected by the user) on confirmation=NO; Jira untouched");
   // With the user's approval (a scripted dialog) the apply runs; Jira's transition fails (400).
   const nEnv = await callTool(
     "praxis_quality_apply",

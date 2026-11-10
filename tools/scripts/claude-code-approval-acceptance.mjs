@@ -54,8 +54,11 @@ const work = mkdtempSync(join(tmpdir(), "praxis-cc-"));
 const home = join(work, "home");
 mkdirSync(home);
 const hook = join(work, "elicit-hook.sh");
+// The hook answers after 1.5 s, as a person would at the earliest: Praxis's production rule (PRAXIS_APPROVAL_MIN_ANSWER_MS,
+// default 1000) treats a faster answer as the client's own, so this proves the CLI path under that rule, not around it.
 writeFileSync(hook, `#!/bin/sh
 cat > "${work}/last-elicitation.json"
+sleep 1.5
 case "$ANSWER" in
   approve) echo '{"hookSpecificOutput":{"hookEventName":"Elicitation","action":"accept","content":{"decision":"approve"}}}' ;;
   reject) echo '{"hookSpecificOutput":{"hookEventName":"Elicitation","action":"accept","content":{"decision":"reject"}}}' ;;
@@ -65,7 +68,8 @@ esac
 `);
 chmodSync(hook, 0o755);
 writeFileSync(join(work, "settings.json"), JSON.stringify({ hooks: { Elicitation: [{ hooks: [{ type: "command", command: hook }] }] } }));
-writeFileSync(join(work, "mcp.json"), JSON.stringify({ mcpServers: { praxis: { command: process.execPath, args: [bundle, "--role", "runtime"], env: { PRAXIS_STATE_HOME: join(work, "state") } } } }));
+// The approval page stays off here: this proves the client's own dialog; desktop-approval-acceptance.mjs covers the page.
+writeFileSync(join(work, "mcp.json"), JSON.stringify({ mcpServers: { praxis: { command: process.execPath, args: [bundle, "--role", "runtime"], env: { PRAXIS_STATE_HOME: join(work, "state"), PRAXIS_APPROVAL_PAGE: "off" } } } }));
 
 function run(prompt, { answer, tools, cwd, withHook = true }) {
   const args = ["-p", prompt, "--mcp-config", join(work, "mcp.json"), "--strict-mcp-config", "--allowedTools", tools, "--max-turns", "5", "--output-format", "text"];
@@ -111,9 +115,13 @@ try {
   prove("approve: .project written");
   // 4. Headless with no hook: nobody to ask, so nothing runs
   const none = project("nobody");
+  const before = journal().length;
   run(applyPrompt(none), { tools: "mcp__praxis__praxis_project_init_apply", cwd: none, withHook: false });
   if (existsSync(join(none, ".project"))) fail("a headless run with nobody to answer wrote .project");
-  prove("no answer available (headless, no hook): nothing written");
+  // what the client answered with nobody there is the client's answer, never the user's rejection
+  const headless = journal().slice(before);
+  if (headless.some((r) => r.decision === "rejected" || r.decidedBy === "user")) fail(`a headless answer was recorded as the user's: ${JSON.stringify(headless)}`);
+  prove(`no answer available (headless, no hook): nothing written; journaled as ${headless.map((r) => `${r.decision}/${r.decidedBy}`).join(", ") || "nothing"}, not as the user's`);
   // 5. the journal is outside the repositories and records the decisions
   const rows = journal();
   const decisions = rows.map((r) => r.decision);

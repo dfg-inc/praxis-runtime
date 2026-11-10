@@ -14,6 +14,9 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 
+// a scripted acceptance never opens a tab in the developer's browser (desktop-approval-acceptance covers the page)
+process.env.PRAXIS_APPROVAL_PAGE ??= "off";
+
 export const HARNESS_NOTICE = {
   approvals: "a scripted client dialog approves every request it is shown (test harness; no person is involved)",
   proves: "workflow behaviour through MCP tools with the user-approval flow enforced",

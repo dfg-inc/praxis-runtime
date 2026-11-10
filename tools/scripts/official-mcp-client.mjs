@@ -49,6 +49,10 @@ export function hostedCleanEnv(home) {
     TMPDIR: home,
     LANG: "C",
     NODE_ENV: "test",
+    // Acceptance clients script the dialog and answer at once, and must never open a tab in the developer's browser.
+    // desktop-approval-acceptance.mjs overrides both to test the production defaults with a real browser.
+    PRAXIS_APPROVAL_MIN_ANSWER_MS: "0",
+    PRAXIS_APPROVAL_PAGE: "off",
   };
 }
 

@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApprovalNeedsInput, decisionContentFingerprint, decisionLogPath, storyContentFingerprint, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
 import { createFixtureJiraProvider, createMockFetch, createMockJiraState, type JiraConfig } from "@praxis/jira";
-import { approvalKey, elicitationChannel, roundTripChannel } from "./approval-channel.js";
+import { approvalKey, elicitationChannel, noteDialogAsked, roundTripChannel } from "./approval-channel.js";
 import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool } from "./tools.js";
 import { readPersistedState, type McpEnvelope } from "./workflow-test-helpers.js";
@@ -140,34 +140,37 @@ describe("confirming a Story: only the user can do it, and only the Story they w
     expect(applied.warnings).toEqual([]);
   });
 
-  it("Reject and Dismiss confirm nothing and say so", async () => {
-    for (const answer of ["reject", "dismiss"] as const) {
+  it("Reject and Dismiss confirm nothing and say so, each with its own code", async () => {
+    for (const [answer, code] of [["reject", "APPROVAL_REJECTED"], ["dismiss", "APPROVAL_DISMISSED"]] as const) {
       const repo = await setup();
       const { channel } = dialog({ answer });
       const applied = await apply(repo, confirmStory(repo, "US-FLW-001"), { channel });
       expect(applied.ok).toBe(false);
-      expect(applied.code).toBe("APPROVAL_REJECTED");
+      expect(applied.code).toBe(code);
+      expect(applied.data).toMatchObject({ executed: false, decidedBy: "user", outcome: answer === "reject" ? "rejected" : "dismissed" });
       expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
     }
   });
 
-  it("confirmation=NO is the user's refusal reported by the agent: recorded, nothing runs, nobody is asked", async () => {
+  it("confirmation=NO is the agent withdrawing the request: recorded as that, nothing runs, nobody is asked", async () => {
     const repo = await setup();
     const { channel, seen } = dialog({ answer: "approve" });
     const applied = await apply(repo, confirmStory(repo, "US-FLW-001"), { channel, confirmation: "NO" });
     expect(applied.ok).toBe(false);
-    expect(applied.code).toBe("APPROVAL_REJECTED");
+    expect(applied.code).toBe("APPROVAL_WITHDRAWN");
+    expect(applied.errors.join(" ")).not.toMatch(/rejected by the user/);
     expect(seen).toHaveLength(0);
     expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
     const log = readFileSync(decisionLogPath(repo), "utf8");
-    expect(log).toMatch(/"decision":"rejected"/);
+    expect(log).toMatch(/"decision":"withdrawn","decidedBy":"agent"/);
+    expect(log).not.toMatch(/"decision":"rejected"/);
   });
 
   it("confirmation=NO also stops an ordinary record: a refused apply writes nothing", async () => {
     const repo = await setup();
     const command = { action: "add-requirement", id: "REQ-FLW-102", statement: "Not wanted.", acceptanceCriteria: ["x"] };
     const applied = await apply(repo, command, { confirmation: "NO" });
-    expect(applied.code).toBe("APPROVAL_REJECTED");
+    expect(applied.code).toBe("APPROVAL_WITHDRAWN");
     expect(state(repo).requirements.map((r) => r.id)).not.toContain("REQ-FLW-102");
   });
 
@@ -237,7 +240,8 @@ describe("a client that cannot show an approval dialog: nothing protected runs, 
     expect(applied.data).toMatchObject({ executed: false, preview: { action: "confirm-story" } });
     expect((applied.data.preview as { description: string }).description).toContain("story 1 confirmed");
     expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
-    expect(readFileSync(decisionLogPath(repo), "utf8")).toMatch(/"decision":"refused"/);
+    // nobody was asked, so nobody decided: "unavailable", never a rejection
+    expect(readFileSync(decisionLogPath(repo), "utf8")).toMatch(/"decision":"unavailable","decidedBy":"nobody"/);
     expect(existsSync(join(repo, ".praxis", "approvals"))).toBe(false);
   });
 
@@ -310,7 +314,7 @@ describe("the MCP elicitation dialog", () => {
   });
 
   it("maps Accept+approve, Accept+reject, Decline and Cancel; an unavailable dialog is not a yes", async () => {
-    expect((await fake({ action: "accept", content: { decision: "approve", reason: " fine " } }).ask(request))).toEqual({ answer: "approve", reason: "fine" });
+    expect((await fake({ action: "accept", content: { decision: "approve", reason: " fine " } }).ask(request))).toMatchObject({ answer: "approve", reason: "fine", evidence: { via: "client-elicitation" } });
     expect((await fake({ action: "accept", content: { decision: "reject" } }).ask(request)).answer).toBe("reject");
     expect((await fake({ action: "accept", content: {} }).ask(request)).answer).toBe("reject");
     expect((await fake({ action: "decline" }).ask(request)).answer).toBe("reject");
@@ -430,7 +434,7 @@ describe("Jira, Git and the project file: Reject runs nothing, Approve runs only
     const before = jiraState.createIssueCount;
     const { channel, seen } = dialog({ answer: "approve" });
     const applied = await call("praxis_ba_apply", repo, { epic, confirmation: "NO", previewFingerprint: fingerprint }, "ba", channel, extra);
-    expect(applied.code).toBe("APPROVAL_REJECTED");
+    expect(applied.code).toBe("APPROVAL_WITHDRAWN");
     expect(seen).toHaveLength(0);
     expect(jiraState.createIssueCount).toBe(before);
   });
@@ -463,7 +467,10 @@ describe("running under the MCP server", () => {
 
 describe("2026-07-28: the dialog is a round trip (input_required, then the client retries with the answer)", () => {
   async function firstPass(repo: string, command: object) {
-    return apply(repo, command, { channel: roundTripChannel(undefined) }).catch((error) => error);
+    const needs = await apply(repo, command, { channel: roundTripChannel(undefined) }).catch((error) => error);
+    // what server.ts does when it returns input_required: the retry is timed against this moment
+    if (needs instanceof ApprovalNeedsInput) noteDialogAsked(approvalKey(needs.request));
+    return needs;
   }
 
   it("the first pass runs nothing and hands the protocol layer the exact dialog", async () => {
@@ -477,18 +484,18 @@ describe("2026-07-28: the dialog is a round trip (input_required, then the clien
   });
 
   it("the retry with Approve runs exactly that action; Reject and Cancel run nothing", async () => {
-    for (const [response, expectOk] of [
-      [{ action: "accept", content: { decision: "approve" } }, true],
-      [{ action: "accept", content: { decision: "reject" } }, false],
-      [{ action: "decline" }, false],
-      [{ action: "cancel" }, false],
+    for (const [response, expectOk, code] of [
+      [{ action: "accept", content: { decision: "approve" } }, true, undefined],
+      [{ action: "accept", content: { decision: "reject" } }, false, "APPROVAL_REJECTED"],
+      [{ action: "decline" }, false, "APPROVAL_REJECTED"],
+      [{ action: "cancel" }, false, "APPROVAL_DISMISSED"],
     ] as const) {
       const repo = await setup();
       const command = confirmStory(repo, "US-FLW-001");
       const needs = await firstPass(repo, command);
       const retried = await apply(repo, command, { channel: roundTripChannel({ [approvalKey(needs.request)]: response }) });
       expect(retried.ok, JSON.stringify(response)).toBe(expectOk);
-      if (!expectOk) expect(retried.code).toBe("APPROVAL_REJECTED");
+      if (!expectOk) expect(retried.code).toBe(code);
       expect(state(repo).stories.find((s) => s.id === "US-FLW-001")!.confirmedBehavior).toBe(expectOk);
       expect(state(repo).stories.find((s) => s.id === "US-FLW-002")!.confirmedBehavior).toBe(false);
     }

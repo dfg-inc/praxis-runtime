@@ -90,8 +90,9 @@ const repoWithPackageJson = () => {
     // Cancel -> dismissed, nothing runs
     next = answer("cancel");
     const dismissed = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-    expect(dismissed.code === "APPROVAL_REJECTED" && !existsSync(join(repo, ".project")), `cancel: ${JSON.stringify(dismissed)}`);
-    prove("Cancel (dismiss) runs nothing");
+    // closing the dialog is its own outcome, not a rejection
+    expect(dismissed.code === "APPROVAL_DISMISSED" && dismissed.data.decidedBy === "user" && !existsSync(join(repo, ".project")), `cancel: ${JSON.stringify(dismissed)}`);
+    prove("Cancel (dismiss) runs nothing and is APPROVAL_DISMISSED, not a rejection");
 
     // Accept but choose reject
     next = answer("accept", "reject");
@@ -102,8 +103,9 @@ const repoWithPackageJson = () => {
     // confirmation=NO: nobody is asked
     const before = session.elicited.length;
     const no = await call(session, "praxis_project_init_apply", { repo, confirmation: "NO" });
-    expect(no.code === "APPROVAL_REJECTED" && session.elicited.length === before && !existsSync(join(repo, ".project")), `NO: ${JSON.stringify(no)}`);
-    prove("confirmation=NO is a recorded rejection: nothing runs and nobody is asked");
+    // the agent's NO withdraws the request; it is never recorded as the user's rejection
+    expect(no.code === "APPROVAL_WITHDRAWN" && no.data.decidedBy === "agent" && session.elicited.length === before && !existsSync(join(repo, ".project")), `NO: ${JSON.stringify(no)}`);
+    prove("confirmation=NO is the agent withdrawing the request (APPROVAL_WITHDRAWN, decidedBy agent): nothing runs, nobody is asked, no rejection is attributed to the user");
 
     // Forged approval-shaped arguments change nothing
     next = answer("decline");
@@ -200,8 +202,8 @@ const repoWithPackageJson = () => {
     expect(readOnly.ok && status.ok, `read-only tools: ${JSON.stringify([readOnly.code, status.code])}`);
     prove("read-only tools and previews keep working without a dialog");
     const noClientNo = await call(session, "praxis_project_init_apply", { repo, confirmation: "NO" });
-    expect(noClientNo.code === "APPROVAL_REJECTED", `NO: ${JSON.stringify(noClientNo)}`);
-    prove("confirmation=NO is still a recorded rejection");
+    expect(noClientNo.code === "APPROVAL_WITHDRAWN", `NO: ${JSON.stringify(noClientNo)}`);
+    prove("confirmation=NO without a dialog is still a withdrawal, not the user's rejection");
   } finally {
     await session.close();
   }
@@ -222,7 +224,7 @@ const repoWithPackageJson = () => {
     expect(session.elicited.length === 1 && /Creates .*\.project with exactly this content/.test(session.elicited[0].message) && /requirementsFormat/.test(session.elicited[0].message), `the dialog did not show the file: ${session.elicited[0]?.message}`);
     next = answer("cancel");
     const cancelled = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-    expect(cancelled.code === "APPROVAL_REJECTED" && !existsSync(join(repo, ".project")), `modern cancel: ${JSON.stringify(cancelled)}`);
+    expect(cancelled.code === "APPROVAL_DISMISSED" && !existsSync(join(repo, ".project")), `modern cancel: ${JSON.stringify(cancelled)}`);
     next = answer("accept", "approve");
     const approved = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
     expect(approved.ok && existsSync(join(repo, ".project")) && approved.data.approval?.[0]?.channel === "client-elicitation", `modern approve: ${JSON.stringify(approved)}`);

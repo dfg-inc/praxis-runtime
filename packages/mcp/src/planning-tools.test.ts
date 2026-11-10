@@ -456,7 +456,7 @@ describe("quality findings", () => {
     const { buildServer } = await import("./server.js").catch(() => ({ buildServer: undefined as any }));
     expect(buildServer === undefined || typeof buildServer === "function").toBe(true);
     const src = readFileSync(join(__dirname, "server.ts"), "utf8");
-    expect(src).toMatch(/STATE_WRITING_READS = new Set\(\["praxis_repository_inspect", "praxis_review_render"\]\)/);
+    expect(src).toMatch(/STATE_WRITING_READS = new Set\(\["praxis_repository_inspect", "praxis_review_render", "praxis_approval_journal"\]\)/);
   });
 
   it("D17: prose in a stylesheet and symlinks out of the repository do not reach the agent", async () => {

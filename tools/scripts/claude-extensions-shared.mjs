@@ -37,7 +37,22 @@ export const JIRA_USER_CONFIG = {
     type: "string",
     title: "Approval mode (advanced, optional)",
     description:
-      "Leave blank for the default. Praxis asks you to approve protected actions (Git, Jira, confirming a Story) in your client's own approval dialog; if the client cannot show one, those actions are not executed. Set to trusted-client ONLY if you trust this client to run protected actions (writes, Git, Jira, confirming Stories) without asking you about each one, for example Claude Desktop with 'Always allow': Praxis then runs an action when the agent confirms a current preview, labels it trusted-client (not as your confirmation) and journals it. Set to host-permission ONLY if your client has no such dialog and you accept this weaker mode: the apply tool then carries the exact plan in its arguments so your client's own tool-permission prompt shows it. Praxis cannot tell whether that prompt was shown: choosing 'always allow' for the tool removes it, and then the agent approves itself.",
+      "Leave blank for the default. Praxis asks you to approve protected actions (Git, Jira, confirming a Story) in your client's own approval dialog; Claude Desktop cannot show that dialog, so Praxis opens its own approval page in your browser instead (see the next setting). Set to trusted-client ONLY if you trust this client to run protected actions (writes, Git, Jira, confirming Stories) without asking you about each one, for example Claude Desktop with 'Always allow': Praxis then runs an action when the agent confirms a current preview, labels it trusted-client (not as your confirmation) and journals it. Set to host-permission ONLY if your client has no such dialog and you accept this weaker mode: the apply tool then carries the exact plan in its arguments so your client's own tool-permission prompt shows it. Praxis cannot tell whether that prompt was shown: choosing 'always allow' for the tool removes it, and then the agent approves itself.",
+    required: false,
+  },
+  approval_page: {
+    type: "boolean",
+    title: "Approval page in your browser",
+    description:
+      "On (recommended): when Claude Desktop cannot show Praxis's approval dialog, Praxis opens a page in your browser that shows the exact action, and runs it only if you click Approve there. Claude never gets that page's link. Off: such actions are not executed at all in Claude Desktop.",
+    default: true,
+    required: false,
+  },
+  approval_browser: {
+    type: "string",
+    title: "Browser for approval pages (optional)",
+    description:
+      "Leave blank for your default browser. If an AI tool can operate your default browser (for example Claude in Chrome), name another browser app here, for example Safari, so that only you can click Approve.",
     required: false,
   },
   github_token: {
@@ -74,6 +89,8 @@ export const JIRA_ENV_MAP = {
   PRAXIS_JIRA_PROJECT_KEY: "${user_config.jira_project_key}",
   PRAXIS_JIRA_TOKEN: "${user_config.jira_token}",
   PRAXIS_APPROVAL_MODE: "${user_config.approval_mode}",
+  PRAXIS_APPROVAL_PAGE: "${user_config.approval_page}",
+  PRAXIS_APPROVAL_BROWSER: "${user_config.approval_browser}",
   PRAXIS_GITHUB_TOKEN: "${user_config.github_token}",
   PRAXIS_GITHUB_API_URL: "${user_config.github_api_url}",
   PRAXIS_GITLAB_TOKEN: "${user_config.gitlab_token}",
@@ -90,7 +107,7 @@ export function praxisRuntimeManifest(version) {
     description:
       "Shared Praxis MCP runtime for Claude Desktop. Local workflows need no tracker; Jira, GitHub and GitLab are optional. Role plugins use these tools.",
     long_description:
-      "Praxis Runtime is the single local MCP server for Praxis BA, Architect, Developer, and Quality.\n\nEverything in this extension's settings is optional: local, no-Jira workflows work out of the box. Configure Jira only to sync with a Jira project, and optionally a GitHub token (MVP Git Delivery) or GitLab token. Run Praxis Doctor to see which providers are available and how approvals are obtained. Tokens are marked sensitive and stored in OS secure storage. Role plugins contain Skills only and do not launch duplicate MCP servers.\n\nYou approve what Praxis changes: before a commit, push, merge request, Jira write or Story confirmation runs, Praxis shows you the exact action in the client's own approval dialog and runs it only if you approve. If your client cannot show that dialog, the protected action is NOT executed (Praxis shows the preview and says why; read-only tools keep working): what the agent says you said is never accepted as approval. Nothing else needs installing: no service, no system account, no administrator rights.\n\nCLI and CI continue to use `PRAXIS_JIRA_*` / `PRAXIS_GITHUB_*` / `PRAXIS_GITLAB_*`. Desktop injected env wins over repository `.env` files; approval settings are never read from repository files.",
+      "Praxis Runtime is the single local MCP server for Praxis BA, Architect, Developer, and Quality.\n\nEverything in this extension's settings is optional: local, no-Jira workflows work out of the box. Configure Jira only to sync with a Jira project, and optionally a GitHub token (MVP Git Delivery) or GitLab token. Run Praxis Doctor to see which providers are available and how approvals are obtained. Tokens are marked sensitive and stored in OS secure storage. Role plugins contain Skills only and do not launch duplicate MCP servers.\n\nYou approve what Praxis changes: before a commit, push, merge request, Jira write or Story confirmation runs, Praxis shows you the exact action and runs it only if you approve. Claude Desktop cannot show Praxis's approval dialog, so Praxis opens its approval page in your browser instead: you read the action there and click Approve or Reject. Claude never gets that page's link. Without a dialog or the page, the protected action is NOT executed (read-only tools keep working): what the agent says you said is never accepted as approval. Nothing else needs installing: no service, no system account, no administrator rights.\n\nCLI and CI continue to use `PRAXIS_JIRA_*` / `PRAXIS_GITHUB_*` / `PRAXIS_GITLAB_*`. Desktop injected env wins over repository `.env` files; approval settings are never read from repository files.",
     author: { name: "dfuture-co" },
     license: "Apache-2.0",
     keywords: ["praxis", "jira", "mcp", "runtime"],

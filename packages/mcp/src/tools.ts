@@ -21,7 +21,10 @@ import {
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
 import { containedPath } from "./path-guard.js";
-import { PERSONAL_ACTS, hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannelWith, trustedClientMode } from "./approval-channel.js";
+import { PERSONAL_ACTS, dialogWithPageFallback, hostPermissionChannel, hostPermissionMode, minAnswerMs, planOnlyChannel, planTextOf, trustedClientChannelWith, trustedClientMode } from "./approval-channel.js";
+import { approvalPageChannel, approvalPageEnabled, approvalPageWaitMs } from "./approval-page.js";
+import { amendJournal, journalAudit } from "./approval-journal.js";
+import { clientKey, knownAutoAnswer } from "./dialog-observations.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { TOOLS as CATALOG_TOOLS, toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
@@ -92,9 +95,10 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
 
 /**
  * Tools that change something outside the agent's own notes. Each one needs confirmation=YES (the agent's intent to
- * apply what it previewed) and then the user's approval, asked in the client's dialog when the client has one. The
- * approval is obtained where the change is made (core guardWrite, the workflow store, the fix committer), never here.
- * confirmation=NO is the user's refusal reported by the agent: it is recorded and nothing runs.
+ * apply what it previewed) and then the user's approval: in the client's dialog when it works, otherwise in the Praxis
+ * approval page. The approval is obtained where the change is made (core guardWrite, the workflow store, the fix
+ * committer), never here. confirmation=NO is the agent withdrawing the request: it is recorded as withdrawn, never as the
+ * user's rejection, and nothing runs.
  */
 const PROTECTED_TOOLS = new Set([
   "praxis_project_init_apply",
@@ -197,6 +201,24 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
           }
         : {}),
     };
+    const observed = knownAutoAnswer(clientKey(client));
+    const pageOn = approvalPageEnabled();
+    target.approval = {
+      ...target.approval,
+      ...(observed ? { observedDialog: { ...observed, note: "This client was seen answering Praxis's approval dialog by itself, without showing it. Praxis no longer asks through it; approvals go to the approval page." } } : {}),
+      page: {
+        enabled: pageOn,
+        browser: process.env.PRAXIS_APPROVAL_BROWSER?.trim() || "default browser",
+        waitMs: approvalPageWaitMs(),
+        note: pageOn
+          ? "When the client cannot show Praxis's dialog, Praxis opens its approval page in the browser on this computer. The agent never gets that page's link. A browser-automation tool connected to that browser (for example Claude in Chrome), or a program running as you, could still operate it: set the browser for approval pages to one no agent controls."
+          : "The approval page is switched off (PRAXIS_APPROVAL_PAGE=off): without a working client dialog, protected actions are not executed.",
+      },
+      minAnswerMs: minAnswerMs(),
+    };
+    if (pageOn && (!client.dialog || observed) && (target.approval as { mode?: string }).mode === "no-dialog") {
+      target.approval = { ...target.approval, mode: "approval-page" };
+    }
     if (trustedClientMode()) {
       target.approval = {
         ...target.approval,
@@ -228,21 +250,24 @@ function withApprovalNote(name: string, data: unknown): { data: unknown } {
 function preflight(name: string, args: Record<string, unknown>, ctx: OpContext, version: string): McpEnvelope | undefined {
   if (!PROTECTED_TOOLS.has(name)) return undefined;
   if (ctx.confirmation === "NO") {
+    // the agent's own argument: it stops the action, and it is not evidence of what the user decided
     logDecision(ctx.repo, {
       at: new Date().toISOString(),
       action: name,
-      summary: `${name} declined`,
+      summary: `${name} withdrawn`,
       subjectDigest: subjectDigest(JSON.stringify({ name, previewFingerprint: str(args.previewFingerprint) ?? "" })),
-      decision: "rejected",
+      decision: "withdrawn",
+      decidedBy: "agent",
       channel: "none",
-      reason: "the user declined (reported by the agent)",
+      reason: "the agent withdrew the request (confirmation=NO); no decision of the user is claimed",
     });
     return mcpEnvelope({
       ok: false,
       operation: name,
       version,
-      code: "APPROVAL_REJECTED",
-      errors: [`${name} was rejected by the user. Nothing was changed.`],
+      code: "APPROVAL_WITHDRAWN",
+      data: { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false },
+      errors: [`${name} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision.`],
     });
   }
   if (ctx.confirmation !== "YES") {
@@ -273,8 +298,23 @@ export async function callTool(
   // OPT-IN (PRAXIS_APPROVAL_MODE=host-permission): a client with no dialog, the host's own tool-permission prompt, and the
   // exact plan in the arguments (see approval-channel.ts). Never chosen when the client has a dialog.
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
-  // Trusted Client (explicit opt-in) replaces any dialog for protected tools: the owner chose not to be asked per action.
-  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannelWith(opts.approvalChannel) : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
+  const repo = str(args.repo) ?? process.cwd();
+  // Without a working client dialog, the approval page asks the user (unless switched off). It is built per call and opens
+  // nothing until something actually needs an approval.
+  const label = opts.client?.name ? `${opts.client.name}${opts.client.version ? ` ${opts.client.version}` : ""}` : undefined;
+  const page = approvalPageEnabled() ? approvalPageChannel({ repo, ...(label ? { client: label } : {}), ...(opts.extra?.signal ? { signal: opts.extra.signal } : {}) }) : undefined;
+  const dialog = opts.approvalChannel;
+  const asked = dialog ? dialogWithPageFallback(dialog, page, { ...(clientKey(opts.client) ? { clientKey: clientKey(opts.client) } : {}), repo }) : page;
+  let channel: UserApprovalChannel | undefined;
+  if (trustedClientMode() && PROTECTED_TOOLS.has(name)) {
+    // Trusted Client (explicit opt-in) replaces the per-action confirmation; acts only the person may perform are still asked
+    channel = trustedClientChannelWith(asked);
+  } else if (!dialog && hostPermissionMode() && PROTECTED_TOOLS.has(name)) {
+    // host-permission (explicit opt-in) for a client with no dialog; acts only the person may perform go to the page
+    channel = hostPermissionChannel(str(args.planText), page);
+  } else {
+    channel = asked;
+  }
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 
@@ -317,6 +357,28 @@ async function callToolInner(
   try {
     if (name === "praxis_approval_plan") {
       return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await approvalPlan(args, ctx, opts) });
+    }
+    if (name === "praxis_approval_journal") {
+      if (args.amend === true) {
+        if (ctx.confirmation !== "YES") {
+          return mcpEnvelope({ ok: false, operation: name, version: opts.version, code: "CONFIRMATION_REQUIRED", errors: ["amend=true requires confirmation=YES after the user has seen the corrections (call with amend=false first)"] });
+        }
+        const amended = await amendJournal(ctx.repo, ctx.confirmation, opts.version);
+        const approval = approvalsGivenInThisCall().map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
+        return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: { ...amended, approval } });
+      }
+      const audit = journalAudit(ctx.repo);
+      return mcpEnvelope({
+        ok: true,
+        operation: name,
+        version: opts.version,
+        data: {
+          ...audit,
+          note: audit.toAmend.length
+            ? `${audit.toAmend.length} entr${audit.toAmend.length === 1 ? "y attributes" : "ies attribute"} a rejection to the user that the evidence shows was not theirs. Show the user this list; to record the corrections, call again with amend=true and confirmation=YES (the user approves exactly these corrections). Existing lines are never changed.`
+            : "No entry claims a decision of the user that the evidence contradicts.",
+        },
+      });
     }
     if (
       name === "praxis_workflow_status" ||
