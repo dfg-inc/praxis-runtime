@@ -5250,7 +5250,7 @@ async function obtainUserApproval(request, options2 = {}) {
   if (channel && answer && answer.answer !== "unavailable") {
     const answeredBy = answer.channel ?? channel.kind;
     const decidedBy = decidedByFor(answeredBy);
-    const said = { channel: answeredBy, decidedBy, ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {} };
+    const said = { channel: answeredBy, decidedBy, ...USER_CHANNELS.has(decidedBy) ? { personVerified: false } : {}, ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {} };
     if (answer.answer === "approve") {
       const clicked = answer.evidence?.decidedAt ? new Date(answer.evidence.decidedAt) : void 0;
       const approval = createUserApproval({ request, channel: answeredBy, ...clicked && Number.isFinite(clicked.getTime()) && clicked.getTime() <= Date.now() ? { now: clicked } : {} });
@@ -5262,11 +5262,11 @@ async function obtainUserApproval(request, options2 = {}) {
     const dismissed = answer.answer === "dismiss";
     if (!answer.journaled)
       logDecision(options2.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", ...said });
-    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", decidedBy, channel: answeredBy, ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {}, rejected: !dismissed, dismissed };
+    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", decidedBy, personVerified: false, channel: answeredBy, ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {}, rejected: !dismissed, dismissed };
     if (dismissed) {
-      throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: the user closed ${whereAsked(answeredBy)} without deciding. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
+      throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: ${whereAsked(answeredBy)} was closed without a decision. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
     }
-    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected by the user in ${whereAsked(answeredBy)}. Nothing was changed.`, details);
+    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected in ${whereAsked(answeredBy)}, the user's own channel. Nothing was changed.`, details);
   }
   const automatic = answer?.automatic;
   const why = automatic ? `the client answered "${automatic}" ${answer?.evidence?.latencyMs ?? "?"} ms after it was asked, faster than a person can read the request${answer?.reason ? ` (${answer.reason})` : ""}; that is the client's answer, not the user's` : answer?.reason ?? "this client cannot show an approval dialog (no MCP elicitation support)";
@@ -5318,7 +5318,7 @@ function runApprovedMutation(approval, write) {
   }
   return lease.run({ action: approval.action, approval }, write);
 }
-var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, assuranceOf, ApprovalError, ApprovalNeedsInput, channelStore, decidedByFor, whereAsked, OUTCOME_OF_CODE, lease;
+var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, assuranceOf, ApprovalError, ApprovalNeedsInput, channelStore, USER_CHANNELS, decidedByFor, whereAsked, OUTCOME_OF_CODE, lease;
 var init_user_approval = __esm({
   "node_modules/@praxis/contracts/dist/user-approval.js"() {
     import_node_async_hooks = require("node:async_hooks");
@@ -5351,7 +5351,8 @@ var init_user_approval = __esm({
       }
     };
     channelStore = new import_node_async_hooks.AsyncLocalStorage();
-    decidedByFor = (channel) => channel === "trusted-client" ? "trusted-client" : channel === "host-permission" ? "host-prompt" : "user";
+    USER_CHANNELS = /* @__PURE__ */ new Set(["client-dialog", "approval-page", "terminal-prompt"]);
+    decidedByFor = (channel) => channel === "trusted-client" ? "trusted-client" : channel === "host-permission" ? "host-prompt" : channel === "approval-page" ? "approval-page" : channel === "terminal-prompt" ? "terminal-prompt" : "client-dialog";
     whereAsked = (kind) => kind === "approval-page" ? "the Praxis approval page" : kind === "terminal-prompt" ? "the terminal prompt" : "the client's approval dialog";
     OUTCOME_OF_CODE = {
       APPROVAL_PENDING: { decision: "pending", decidedBy: "nobody" },
@@ -81422,7 +81423,7 @@ var import_node_fs5 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"d29fea084eec1adcbf60868a8545bf67b6f5df75c0b9bf88dbc06f00ca146bbf","coreBaseline":"71c4f9d449c1273246c4be48edf1f40b4e71efce","inputs":38}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"9ad415335c372fe0ec813e01ed03eb4fc4dba0a8fbdfdb5156955dfca6cb6a0e","coreBaseline":"3c0f079acd243042e5d23ae0dd204d307924fec6","inputs":38}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81674,7 +81675,8 @@ async function handle(req, res) {
       summary: request.summary,
       subjectDigest: request.digest,
       decision: request.status,
-      decidedBy: "user",
+      decidedBy: "approval-page",
+      personVerified: false,
       channel: "approval-page",
       evidence: { requestId: request.id, via: "approval-page click", latencyMs: request.decidedAt - (request.openedAt ?? request.createdAt), ...request.client ? { client: request.client } : {} },
       ...reason ? { reason } : {}

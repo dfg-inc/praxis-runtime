@@ -158,7 +158,7 @@ try {
       check(/Approved/.test(shown), shown);
       check((await page.textContent("#text")).includes(repo), "the page shows the exact file to be written");
       const mine = journal().filter((r) => r.repository === repo);
-      check(JSON.stringify(mine.map((r) => [r.decision, r.decidedBy])) === JSON.stringify([["auto-answered", "client"], ["pending", "nobody"], ["approved", "user"]]), `journal: ${JSON.stringify(mine.map((r) => [r.decision, r.decidedBy]))}`);
+      check(JSON.stringify(mine.map((r) => [r.decision, r.decidedBy])) === JSON.stringify([["auto-answered", "client"], ["pending", "nobody"], ["approved", "approval-page"]]), `journal: ${JSON.stringify(mine.map((r) => [r.decision, r.decidedBy]))}`);
       check(!mine.some((r) => r.decision === "rejected"), "the client's decline is not a rejection");
       check(!JSON.stringify(result).includes(new URL(secret).searchParams.get("t")), "the secret is not in the tool result");
 
@@ -169,7 +169,7 @@ try {
       const rejected = await second;
       check(elicited === 2, `one fast answer does not change how the client is asked (asked ${elicited} times)`);
       check(rejected.code === "APPROVAL_REJECTED", `reject: ${rejected.code}`);
-      check(rejected.data.decidedBy === "user" && rejected.data.channel === "approval-page" && rejected.data.reason === "wrong project", JSON.stringify(rejected.data));
+      check(rejected.data.decidedBy === "approval-page" && rejected.data.personVerified === false && rejected.data.channel === "approval-page" && rejected.data.reason === "wrong project", JSON.stringify(rejected.data));
       check(!existsSync(join(other, ".project")), "nothing written after Reject");
       const doctor = await call(session, "praxis_doctor", { repo: other });
       check(doctor.data.approval.mode === "approval-page" && doctor.data.approval.observedDialog?.automatic === "decline", `doctor: ${JSON.stringify(doctor.data.approval).slice(0, 300)}`);
@@ -233,7 +233,7 @@ try {
       check(result.data.approval?.[0]?.assurance === "client-ui", JSON.stringify(result.data.approval));
       check(pagesOpened().length === before, "no approval page was opened");
       const mine = journal().filter((r) => r.repository === repo);
-      check(mine.length === 1 && mine[0].decision === "approved" && mine[0].decidedBy === "user" && mine[0].evidence.latencyMs >= 1000, JSON.stringify(mine));
+      check(mine.length === 1 && mine[0].decision === "approved" && mine[0].decidedBy === "client-dialog" && mine[0].evidence.latencyMs >= 1000, JSON.stringify(mine));
     } finally {
       await session.close();
     }

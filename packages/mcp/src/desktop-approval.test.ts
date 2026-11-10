@@ -141,8 +141,8 @@ describe("the Code tab's instant decline is the client's answer, never the user'
     const result = await pending;
     // the person's rejection is recorded from the page, with the page as evidence; the 400 ms decline is the client's
     expect(result.code).toBe("APPROVAL_REJECTED");
-    expect(result.data).toMatchObject({ decidedBy: "user", channel: "approval-page" });
-    expect(journal().map((r) => [r.decision, r.decidedBy])).toEqual([["auto-answered", "client"], ["pending", "nobody"], ["rejected", "user"]]);
+    expect(result.data).toMatchObject({ decidedBy: "approval-page", personVerified: false, channel: "approval-page" });
+    expect(journal().map((r) => [r.decision, r.decidedBy])).toEqual([["auto-answered", "client"], ["pending", "nobody"], ["rejected", "approval-page"]]);
     expect(knownAutoAnswer(clientKey(CODE_TAB))).toBeUndefined();
   });
 
@@ -157,7 +157,7 @@ describe("the Code tab's instant decline is the client's answer, never the user'
     expect(journal().map((r) => [r.decision, r.decidedBy, r.channel])).toEqual([
       ["auto-answered", "client", "client-elicitation"],
       ["pending", "nobody", "approval-page"],
-      ["approved", "user", "approval-page"],
+      ["approved", "approval-page", "approval-page"],
     ]);
   });
 
@@ -189,7 +189,7 @@ describe("the Code tab's instant decline is the client's answer, never the user'
     process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS = "100";
     const result = await codeTabDecline(150);
     expect(result.code).toBe("APPROVAL_REJECTED");
-    expect(result.data).toMatchObject({ decidedBy: "user", outcome: "rejected", evidence: { via: "client-elicitation" } });
+    expect(result.data).toMatchObject({ decidedBy: "client-dialog", personVerified: false, outcome: "rejected", evidence: { via: "client-elicitation" } });
     expect(opened).toHaveLength(0);
   });
 
@@ -243,9 +243,9 @@ describe("Desktop Chat (no dialog): the approval page", () => {
     await decideInPage(await waitForPage(), "reject", "not this one");
     const result = await pending;
     expect(result.code).toBe("APPROVAL_REJECTED");
-    expect(result.data).toMatchObject({ decidedBy: "user", channel: "approval-page", reason: "not this one", evidence: { via: "approval-page click" } });
+    expect(result.data).toMatchObject({ decidedBy: "approval-page", personVerified: false, channel: "approval-page", reason: "not this one", evidence: { via: "approval-page click" } });
     expect(existsSync(join(repo, ".project"))).toBe(false);
-    expect(journal().at(-1)).toMatchObject({ decision: "rejected", decidedBy: "user", channel: "approval-page", reason: "not this one" });
+    expect(journal().at(-1)).toMatchObject({ decision: "rejected", decidedBy: "approval-page", personVerified: false, channel: "approval-page", reason: "not this one" });
   });
 
   it("an approval binds the exact content: a changed plan is asked again and the old Approve runs nothing", async () => {
@@ -380,7 +380,7 @@ describe("the page itself", () => {
     expect((await post({ "content-type": "application/json", origin, "x-praxis-approval-token": token })).status).toBe(200);
     // decided once: a replay changes nothing
     expect((await post({ "content-type": "application/json", origin, "x-praxis-approval-token": token }, JSON.stringify({ decision: "reject" }))).status).toBe(403);
-    expect(journal().filter((r) => r.decidedBy === "user").map((r) => r.decision)).toEqual(["approved"]);
+    expect(journal().filter((r) => r.decidedBy === "approval-page").map((r) => r.decision)).toEqual(["approved"]);
   });
 });
 
@@ -415,7 +415,7 @@ describe("one click, one execution, of exactly what was shown (independent revie
     // one is recorded; the other is refused (409 if it read its body before the first finished, 403 once the tokens are gone)
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
     expect(results.filter((r) => r.status === 403 || r.status === 409)).toHaveLength(1);
-    expect(journal().filter((r) => r.decidedBy === "user")).toHaveLength(1);
+    expect(journal().filter((r) => r.decidedBy === "approval-page")).toHaveLength(1);
   });
 
   it("the same subject with different text shown is another request: an Approve for one text never runs another", async () => {

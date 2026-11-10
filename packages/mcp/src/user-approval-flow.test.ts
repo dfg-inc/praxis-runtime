@@ -147,7 +147,7 @@ describe("confirming a Story: only the user can do it, and only the Story they w
       const applied = await apply(repo, confirmStory(repo, "US-FLW-001"), { channel });
       expect(applied.ok).toBe(false);
       expect(applied.code).toBe(code);
-      expect(applied.data).toMatchObject({ executed: false, decidedBy: "user", outcome: answer === "reject" ? "rejected" : "dismissed" });
+      expect(applied.data).toMatchObject({ executed: false, decidedBy: "client-dialog", personVerified: false, outcome: answer === "reject" ? "rejected" : "dismissed" });
       expect(state(repo).stories.every((s) => s.confirmedBehavior === false)).toBe(true);
     }
   });

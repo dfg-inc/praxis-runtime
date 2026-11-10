@@ -119,7 +119,7 @@ try {
   if (existsSync(join(none, ".project"))) fail("a headless run with nobody to answer wrote .project");
   // what the client answered with nobody there is the client's answer, never the user's rejection
   const headless = journal().filter((r) => r.repository === none);
-  if (headless.some((r) => r.decision === "rejected" || r.decidedBy === "user")) fail(`a headless answer was recorded as the user's: ${JSON.stringify(headless)}`);
+  if (headless.some((r) => r.decision === "rejected" || ["client-dialog", "approval-page", "terminal-prompt"].includes(r.decidedBy))) fail(`a headless answer was recorded as the user's: ${JSON.stringify(headless)}`);
   prove(`no answer available (headless, no hook): nothing written; journaled as ${headless.map((r) => `${r.decision}/${r.decidedBy}`).join(", ") || "nothing"}, not as the user's`);
   // 5. the journal is outside the repositories and records the decisions
   const rows = journal();

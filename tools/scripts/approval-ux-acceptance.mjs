@@ -91,7 +91,7 @@ const repoWithPackageJson = () => {
     next = answer("cancel");
     const dismissed = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
     // closing the dialog is its own outcome, not a rejection
-    expect(dismissed.code === "APPROVAL_DISMISSED" && dismissed.data.decidedBy === "user" && !existsSync(join(repo, ".project")), `cancel: ${JSON.stringify(dismissed)}`);
+    expect(dismissed.code === "APPROVAL_DISMISSED" && dismissed.data.decidedBy === "client-dialog" && !existsSync(join(repo, ".project")), `cancel: ${JSON.stringify(dismissed)}`);
     prove("Cancel (dismiss) runs nothing and is APPROVAL_DISMISSED, not a rejection");
 
     // Accept but choose reject
