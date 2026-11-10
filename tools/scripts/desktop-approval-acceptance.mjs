@@ -162,17 +162,23 @@ try {
       check(!mine.some((r) => r.decision === "rejected"), "the client's decline is not a rejection");
       check(!JSON.stringify(result).includes(new URL(secret).searchParams.get("t")), "the secret is not in the tool result");
 
-      // D02 on the same connection: the client is not asked through its dialog again
+      // D02 on the same connection: a second instant decline, then a Reject by the person in the page
       const other = project("code-reject");
       const second = call(session, "praxis_project_init_apply", { repo: other, confirmation: "YES" });
       await decide(await nextPage(2), "reject", { reason: "wrong project", shot: "code-tab-reject" });
       const rejected = await second;
-      check(elicited === 1, `no second dialog was attempted (asked ${elicited} times)`);
+      check(elicited === 2, `one fast answer does not change how the client is asked (asked ${elicited} times)`);
       check(rejected.code === "APPROVAL_REJECTED", `reject: ${rejected.code}`);
       check(rejected.data.decidedBy === "user" && rejected.data.channel === "approval-page" && rejected.data.reason === "wrong project", JSON.stringify(rejected.data));
       check(!existsSync(join(other, ".project")), "nothing written after Reject");
       const doctor = await call(session, "praxis_doctor", { repo: other });
       check(doctor.data.approval.mode === "approval-page" && doctor.data.approval.observedDialog?.automatic === "decline", `doctor: ${JSON.stringify(doctor.data.approval).slice(0, 300)}`);
+      // seen twice: the third action goes to the page without asking the dialog that is known to fail
+      const third = project("code-third");
+      const thirdCall = call(session, "praxis_project_init_apply", { repo: third, confirmation: "YES" });
+      await decide(await nextPage(3), "approve");
+      const thirdResult = await thirdCall;
+      check(elicited === 2 && thirdResult.ok, `no dialog was attempted for the third action (asked ${elicited} times): ${thirdResult.code}`);
     } finally {
       await session.close();
     }

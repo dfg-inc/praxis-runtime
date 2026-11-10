@@ -115,11 +115,10 @@ try {
   prove("approve: .project written");
   // 4. Headless with no hook: nobody to ask, so nothing runs
   const none = project("nobody");
-  const before = journal().length;
   run(applyPrompt(none), { tools: "mcp__praxis__praxis_project_init_apply", cwd: none, withHook: false });
   if (existsSync(join(none, ".project"))) fail("a headless run with nobody to answer wrote .project");
   // what the client answered with nobody there is the client's answer, never the user's rejection
-  const headless = journal().slice(before);
+  const headless = journal().filter((r) => r.repository === none);
   if (headless.some((r) => r.decision === "rejected" || r.decidedBy === "user")) fail(`a headless answer was recorded as the user's: ${JSON.stringify(headless)}`);
   prove(`no answer available (headless, no hook): nothing written; journaled as ${headless.map((r) => `${r.decision}/${r.decidedBy}`).join(", ") || "nothing"}, not as the user's`);
   // 5. the journal is outside the repositories and records the decisions
