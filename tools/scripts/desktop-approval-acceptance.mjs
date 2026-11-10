@@ -135,7 +135,7 @@ async function decide(secretUrl, decision, { reason, shot } = {}) {
   const address = page.url();
   if (reason) await page.fill("#reason", reason);
   await page.click(decision === "approve" ? "#approve" : "#reject");
-  await page.waitForFunction(() => /Approved\.|Rejected\./.test(document.getElementById("result").textContent));
+  await page.waitForFunction(() => /Approved\.|Rejected\.|Not recorded/.test(document.getElementById("result").textContent));
   const shown = await page.textContent("#result");
   if (shot && evidence) await page.screenshot({ path: join(evidence, `${shot}-decided.png`), fullPage: true });
   return { page, address, shown };
@@ -206,6 +206,9 @@ try {
       await tab.waitForSelector("#approve");
       await tab.reload();
       await tab.waitForSelector("#approve", { timeout: 5_000 });
+      // the buttons stay disabled for the earliest-decision time after the first load (3 s), then the reloaded tab can decide
+      check(await tab.isDisabled("#approve"), "the reloaded tab cannot decide before the earliest-decision time");
+      await tab.waitForFunction(() => !document.getElementById("approve").disabled, null, { timeout: 8_000 });
       check(!(await tab.isDisabled("#approve")), "after a reload the opened tab can still decide");
       // another browser (no cookie from the first load): the address without its secret opens nothing, and the link
       // itself, used a second time, opens nothing either and warns
@@ -221,7 +224,18 @@ try {
       await tab.close();
       const bareAgain = new URL(secret);
       bareAgain.search = "";
-      await decide(bareAgain.toString(), "approve", { shot: "chat-approval-page" });
+      // the link was used twice (by the other browser): Praxis cannot tell which opener is the person, so Approve is refused
+      const refused = await decide(bareAgain.toString(), "approve", { shot: "chat-approval-page-reused" });
+      check(/Not recorded: .*used more than once/.test(refused.shown), `approve after the link was used twice: ${refused.shown}`);
+      const rejected = await decide(bareAgain.toString(), "reject");
+      check(/Rejected/.test(rejected.shown), `reject after the link was used twice: ${rejected.shown}`);
+      check((await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" })).code === "APPROVAL_REJECTED", "that rejection is reported");
+      // applying again opens a fresh page, and its Approve runs the action
+      const pagesBefore = pagesOpened().length;
+      const again2 = call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+      await decide(await nextPage(pagesBefore + 1), "approve", { shot: "chat-approval-page" });
+      // the call that opened the page waited 1.5 s and reported it pending; the next one takes the decision
+      check((await again2).code === "APPROVAL_PENDING", "the call that opened the fresh page reported it pending");
       const applied = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
       check(applied.ok, `apply after Approve: ${applied.code} ${JSON.stringify(applied.errors)}`);
       check(existsSync(join(repo, ".project")), ".project was written");
