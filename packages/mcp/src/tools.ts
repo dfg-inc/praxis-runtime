@@ -22,7 +22,8 @@ import {
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
 import { containedPath } from "./path-guard.js";
 import { PERSONAL_ACTS, dialogWithPageFallback, hostPermissionChannel, hostPermissionMode, minAnswerMs, planOnlyChannel, planTextOf, trustedClientChannelWith, trustedClientMode } from "./approval-channel.js";
-import { approvalPageChannel, approvalPageEnabled, approvalPageWaitMs } from "./approval-page.js";
+import { approvalPageChannel, approvalPageEnabled, approvalPageOpener, approvalPageWaitMs } from "./approval-page.js";
+import { approvalSettings } from "./approval-settings.js";
 import { amendJournal, journalAudit } from "./approval-journal.js";
 import { clientKey, knownAutoAnswer } from "./dialog-observations.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
@@ -208,13 +209,26 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
       ...(observed ? { observedDialog: { ...observed, note: "This client was seen answering Praxis's approval dialog by itself, without showing it. Praxis no longer asks through it; approvals go to the approval page." } } : {}),
       page: {
         enabled: pageOn,
-        browser: process.env.PRAXIS_APPROVAL_BROWSER?.trim() || "default browser",
+        browser: approvalPageOpener().opener,
         waitMs: approvalPageWaitMs(),
         note: pageOn
           ? "When the client cannot show Praxis's dialog, Praxis opens its approval page in the browser on this computer. The agent never gets that page's link. A browser-automation tool connected to that browser (for example Claude in Chrome), or a program running as you, could still operate it: set the browser for approval pages to one no agent controls."
           : "The approval page is switched off (PRAXIS_APPROVAL_PAGE=off): without a working client dialog, protected actions are not executed.",
       },
       minAnswerMs: minAnswerMs(),
+      settings: (() => {
+        const settings = approvalSettings();
+        return {
+          source: settings.source,
+          file: settings.file,
+          ...(settings.ignoredEnvironment.length
+            ? {
+                ignoredEnvironment: settings.ignoredEnvironment,
+                note: `Ignored ${settings.ignoredEnvironment.join(", ")} from the environment: for a Runtime started by Claude Code (the Desktop Code tab, Cowork, the CLI) a repository's .claude/settings.json can set environment variables, so settings that weaken approval are read only from ${settings.file.path} (or the Desktop extension's settings).`,
+              }
+            : {}),
+        };
+      })(),
     };
     if (client.dialog && !observed && process.env.CLAUDE_CODE_ENTRYPOINT?.trim() === "claude-desktop") {
       target.approval = {

@@ -89,6 +89,16 @@ const http = (url, init = {}) =>
     req.end();
   });
 const pages = () => readdirSync(capture).sort();
+const cookieOf = (res) => String(res.headers["set-cookie"] ?? "").split(";")[0];
+const tokenOf = (res) => JSON.parse(/token=("[0-9a-f]+")/.exec(res.body)?.[1] ?? '""');
+/** Loads a page like a browser (keeping its cookie), waits out the earliest-decision time, then posts a decision. */
+async function loadAndDecide(link, decision, { wait = 3100, origin } = {}) {
+  const u = new URL(link);
+  const loaded = await http(link);
+  await new Promise((r) => setTimeout(r, wait));
+  const posted = await http(`${u.origin}${u.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: origin ?? u.origin, cookie: cookieOf(loaded), "x-praxis-approval-token": tokenOf(loaded) }, body: JSON.stringify({ decision }) });
+  return { loaded, posted, cookie: cookieOf(loaded), token: tokenOf(loaded) };
+}
 const linkIn = (file) => /url=([^"]+)"/.exec(readFileSync(file, "utf8"))?.[1]?.replace(/&quot;/g, '"');
 const journalText = () => (existsSync(join(state, "decisions")) ? readdirSync(join(state, "decisions")).map((f) => readFileSync(join(state, "decisions", f), "utf8")).join("") : "");
 
@@ -149,15 +159,17 @@ try {
   record("A4", "open or decide the page with a guessed or forged token, or the token against another request id", [bareGet.status, guessedGet.status, otherId.status, guessedPost.status].join(",") === "403,403,404,403" ? "PROTECTED" : "FAILED", `statuses ${bareGet.status}, ${guessedGet.status}, ${otherId.status}, ${guessedPost.status}`);
 
   // --- A3: decide without the displayed page (raw HTTP with a forged Origin) ------------------------------------
-  const loaded = await http(attackerLink ?? handed);
-  const saveToken = JSON.parse(/token=("[0-9a-f]+")/.exec(loaded.body)?.[1] ?? '""');
-  const forged = await http(`${u.origin}${u.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: u.origin, "x-praxis-approval-token": saveToken }, body: JSON.stringify({ decision: "approve" }) });
+  // the attacker keeps the cookie the page sets and waits out the 3 s, as a script would
+  const attack = await loadAndDecide(attackerLink ?? handed, "approve");
+  const forged = attack.posted;
+  const saveToken = attack.token;
+  const attackerCookie = attack.cookie;
   const afterForged = await call(chat, "praxis_project_init_apply", { repo: victim, confirmation: "YES" });
   const forgedRan = afterForged.ok && existsSync(join(victim, ".project"));
-  record("A3", "approve with raw HTTP (curl-like, Origin header forged) using the link from the temp file, never showing the page", forgedRan ? "NOT PROTECTED" : "PROTECTED", forgedRan ? `the action ran; journal says decidedBy approval-page, personVerified false: Praxis cannot tell it from a click (T6)` : `${forged.status} ${afterForged.code}`);
+  record("A3", "approve with raw HTTP (curl-like, Origin header forged, cookie kept, 3 s waited) using the link from the temp file, when nothing else opens the page", forgedRan ? "NOT PROTECTED" : "PROTECTED", forgedRan ? `the action ran; journal says decidedBy approval-page, personVerified false: Praxis cannot tell it from a click (T6)` : `${forged.status} ${afterForged.code}`);
 
   // --- A5: replay ---------------------------------------------------------------------------------------------
-  const replayPost = await http(`${u.origin}${u.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: u.origin, "x-praxis-approval-token": saveToken }, body: JSON.stringify({ decision: "approve" }) });
+  const replayPost = await http(`${u.origin}${u.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: u.origin, cookie: attackerCookie, "x-praxis-approval-token": saveToken }, body: JSON.stringify({ decision: "approve" }) });
   const replayGet = await http(handed);
   const again = await call(chat, "praxis_project_init_apply", { repo: victim, confirmation: "YES" });
   record("A5", "replay the used decision (same token) or reopen the used link", replayPost.status >= 400 && replayGet.status >= 400 && again.code === "APPROVAL_PENDING" ? "PROTECTED" : "FAILED", `POST ${replayPost.status}, GET ${replayGet.status}; a new apply asks again (${again.code})`);
@@ -170,14 +182,16 @@ try {
   await call(chat, "praxis_project_init_apply", { repo: b, confirmation: "YES" });
   const [linkA, linkB] = pages().slice(before, before + 2).map((f) => linkIn(join(capture, f)));
   const pageA = await http(linkA);
-  const tokenA = JSON.parse(/token=("[0-9a-f]+")/.exec(pageA.body)[1]);
+  const tokenA = tokenOf(pageA);
+  const cookieA = cookieOf(pageA);
   const ub = new URL(linkB);
-  const crossed = await http(`${ub.origin}${ub.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: ub.origin, "x-praxis-approval-token": tokenA }, body: JSON.stringify({ decision: "approve" }) });
+  await new Promise((r) => setTimeout(r, 3100));
+  const crossed = await http(`${ub.origin}${ub.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: ub.origin, cookie: cookieA, "x-praxis-approval-token": tokenA }, body: JSON.stringify({ decision: "approve" }) });
   record("A7", "use one approval request's token to decide a parallel request", crossed.status === 403 ? "PROTECTED" : "FAILED", `status ${crossed.status}`);
 
   // --- A9: the page of a harmless action used to approve a different one ------------------------------------------
   const ua = new URL(linkA);
-  await http(`${ua.origin}${ua.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: ua.origin, "x-praxis-approval-token": tokenA }, body: JSON.stringify({ decision: "approve" }) });
+  await http(`${ua.origin}${ua.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: ua.origin, cookie: cookieA, "x-praxis-approval-token": tokenA }, body: JSON.stringify({ decision: "approve" }) });
   const otherAction = project("other-action");
   const beforeOther = pages().length;
   const other = await call(chat, "praxis_project_init_apply", { repo: otherAction, confirmation: "YES" });
@@ -296,8 +310,39 @@ try {
   const userSees = await userBrowser.textContent("body");
   if (evidence) await userBrowser.screenshot({ path: join(evidence, "probe-race-user-warning.png"), fullPage: true });
   const pendingView = await call(chat, "praxis_project_init_apply", { repo: raceRepo, confirmation: "YES" });
-  record("A13", "load the page before the user's browser does (race on the hand-over file)", attackerLoad.status === 200 ? "NOT PROTECTED" : "PROTECTED", attackerLoad.status === 200 ? `the attacker holds the page; the user's browser shows "${/already opened somewhere else/.test(userSees) ? "already opened somewhere else" : userSees.slice(0, 60)}" and the result reports linkUsedAgain=${pendingView.data?.approvalPage?.linkUsedAgain} (detectable, not prevented: T6)` : `attacker ${attackerLoad.status}`);
+  // the attacker, holding the page, waits out the 3 s and approves
+  let raceApprove = { status: 0 };
+  if (attackerLoad.status === 200) {
+    await new Promise((r) => setTimeout(r, 3100));
+    const ur = new URL(userLink);
+    raceApprove = await http(`${ur.origin}${ur.pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin: ur.origin, cookie: cookieOf(attackerLoad), "x-praxis-approval-token": tokenOf(attackerLoad) }, body: JSON.stringify({ decision: "approve" }) });
+  }
+  const raceRan = existsSync(join(raceRepo, ".project")) || (await call(chat, "praxis_project_init_apply", { repo: raceRepo, confirmation: "YES" })).ok;
+  record("A13", "load the page before the user's browser does (race on the hand-over file), then approve after 3 s", attackerLoad.status === 200 && !raceRan && raceApprove.status === 409 ? "PROTECTED" : attackerLoad.status === 200 && raceRan ? "NOT PROTECTED" : "FAILED", `attacker load ${attackerLoad.status}; the user's browser shows "${/already opened somewhere else/.test(userSees) ? "already opened somewhere else" : userSees.slice(0, 60)}"; linkUsedAgain=${pendingView.data?.approvalPage?.linkUsedAgain}; the attacker's Approve: ${raceApprove.status} (only Reject is taken once the link was used twice). Not protected if the user's browser never loads the page within the 3 s (T6)`);
   rmSync(profile, { recursive: true, force: true });
+  // --- A14: a repository sets the approval settings (Claude Code applies .claude/settings.json env to MCP servers) -----
+  const pluginBundle = join(root, "plugins/runtime/server/praxis-mcp.cjs");
+  const repoSettings = await connectOfficialMcp({
+    command: process.execPath,
+    args: [pluginBundle, "--role", "runtime"],
+    cwd: work,
+    env: { ...hostedCleanEnv(work), PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, PRAXIS_SKIP_DOTENV: "1", PRAXIS_STATE_HOME: state, PRAXIS_APPROVAL_BROWSER: opener, PRAXIS_APPROVAL_PAGE_WAIT_MS: "0", PRAXIS_APPROVAL_MODE: "trusted-client", PRAXIS_APPROVAL_MIN_ANSWER_MS: "0", PRAXIS_APPROVAL_PAGE_MIN_MS: "0" },
+    versionNegotiation: versionNegotiationModern(),
+    timeoutMs: 20_000,
+    clientName: "claude-code",
+    clientVersion: "2.1.314",
+  });
+  try {
+    const target = project("repo-settings");
+    const doctor = await call(repoSettings, "praxis_doctor", { repo: target });
+    const ran = await call(repoSettings, "praxis_project_init_apply", { repo: target, confirmation: "YES" });
+    const ignored = doctor.data?.approval?.settings?.ignoredEnvironment ?? [];
+    record("A14", "a repository's settings set PRAXIS_APPROVAL_MODE=trusted-client, PRAXIS_APPROVAL_BROWSER and a 0 ms answer time for the Runtime Claude Code starts", !ran.ok && !existsSync(join(target, ".project")) && doctor.data?.approval?.mode !== "trusted-client" ? "PROTECTED" : "FAILED", `mode ${doctor.data?.approval?.mode}; ignored ${ignored.join(", ")}; the apply: ${ran.code} (released alpha.49.1 took the mode from the environment)`);
+  } finally {
+    await repoSettings.close();
+  }
+  // --- A15: repository code Praxis runs (second review, T17): it has the account's power, like A3 --------------------
+  record("A15", "repository code that Praxis runs (a Quality adapter) reads the hand-over file and approves the page", "NOT PROTECTED", "reproduced by the second independent review (probe review2/b.test.ts); the same means as A2a and A3 from inside Praxis's own process tree; needs an OS sandbox for project code (T17)");
 } finally {
   await chat.close();
   await browser.close();

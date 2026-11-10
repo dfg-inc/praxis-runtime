@@ -52,7 +52,7 @@ export const JIRA_USER_CONFIG = {
     type: "string",
     title: "Browser for approval pages (optional)",
     description:
-      "Leave blank for your default browser. If an AI tool can operate your default browser (for example Claude in Chrome), name another browser app here, for example Safari, so that only you can click Approve.",
+      "Leave blank for your default browser. If an AI tool can operate your default browser (for example Claude in Chrome), name another browser here so that it cannot click Approve for you: on macOS a browser app name, for example Safari; elsewhere the full path of the browser program (a name that cannot be honoured means the page is not opened at all).",
     required: false,
   },
   github_token: {

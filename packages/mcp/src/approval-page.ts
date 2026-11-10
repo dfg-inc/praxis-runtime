@@ -5,6 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { ApprovalError, logDecision, subjectDigest, USER_APPROVAL_TTL_MS, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
+import { approvalSettings } from "./approval-settings.js";
 
 /**
  * The Praxis approval page: the user's approval for a client that cannot show Praxis's dialog (Claude Desktop Chat, and the
@@ -43,6 +44,8 @@ type PageRequest = {
   loadedWith?: string;
   /** Someone used the link again after it was first loaded: a copy (browser history, the hand-over file) or a second opener. */
   reusedAt?: number;
+  /** When the page was first loaded: no decision is taken before earliestDecisionMs() after it. */
+  loadedAt?: number;
   saveTokens: Set<string>;
   key: string;
   repo?: string;
@@ -68,19 +71,37 @@ const created: number[] = [];
 let server: Server | undefined;
 let port = 0;
 
-export const approvalPageEnabled = (): boolean => !/^(off|false|0|no)$/i.test(process.env.PRAXIS_APPROVAL_PAGE?.trim() ?? "");
+export const approvalPageEnabled = (): boolean => approvalSettings().page;
 
 /** How long an apply waits for the click before it answers APPROVAL_PENDING (kept under common client tool timeouts). */
-export const approvalPageWaitMs = (): number => {
-  const raw = Number(process.env.PRAXIS_APPROVAL_PAGE_WAIT_MS);
-  return Number.isFinite(raw) && raw >= 0 ? Math.min(raw, 110_000) : 45_000;
-};
+export const approvalPageWaitMs = (): number => approvalSettings().waitMs;
+
+/**
+ * How the page is handed to a browser here, as the doctor reports it: what is really used, never just what was asked for.
+ * A browser app name is honoured on macOS only (open -a); elsewhere it cannot be, and the page is then not opened at all
+ * rather than in another browser than the one the person chose.
+ */
+export function approvalPageOpener(): { opener: string; honoured: boolean } {
+  const browser = approvalSettings().browser;
+  if (!browser) return { opener: process.platform === "darwin" ? "default browser (open)" : process.platform === "win32" ? "default browser (explorer)" : "default browser (xdg-open)", honoured: true };
+  if (isAbsolute(browser)) return { opener: `program ${browser}`, honoured: true };
+  if (process.platform === "darwin") return { opener: `browser app ${browser} (open -a)`, honoured: true };
+  return { opener: `not available: a browser name (${browser}) can be honoured on macOS only; give the full path of the browser program`, honoured: false };
+}
 
 /**
  * A decision binds the action, its subject and the exact text the person read: if either the subject or the shown text
  * differs (a changed plan, a changed patch, a different description), it is another request and is asked again.
  */
 const keyOf = (request: ApprovalRequest, repo: string | undefined): string => `${repo ?? ""}\n${request.action}\n${subjectDigest(request.subject)}\n${subjectDigest(approvalPageText(request))}`;
+
+/**
+ * No decision is taken sooner than this after the page's first load (3 s by default). A person cannot read the request
+ * faster, and the person's own browser, handed the page at the same moment, has normally loaded it by then: if something
+ * else loaded the link first, the browser's load shows the link was used twice, and from then on only Reject is accepted.
+ * It narrows that race; it does not prove a person (docs/approval-threat-model.md T6).
+ */
+const earliestDecisionMs = (): number => approvalSettings().pageMinMs;
 
 /** The full text the user approves: the same words a client dialog would show, never shortened. */
 export function approvalPageText(request: ApprovalRequest): string {
@@ -116,13 +137,14 @@ const STYLE = `body{font:16px/1.5 system-ui,-apple-system,sans-serif;max-width:4
 h1{font-size:1.35em;margin:.2em 0 .6em}pre{white-space:pre-wrap;word-break:break-word;background:#f5f5f7;border:1px solid #d2d2d7;border-radius:8px;padding:14px;font:14px/1.45 ui-monospace,Menlo,monospace;max-height:60vh;overflow:auto}
 .meta{color:#555;font-size:14px}.row{display:flex;gap:12px;flex-wrap:wrap;margin:1.2em 0}button{font:inherit;padding:10px 18px;border-radius:8px;border:1px solid #888;cursor:pointer}
 #approve{background:#0a7d32;color:#fff;border-color:#0a7d32}#reject{background:#b3261e;color:#fff;border-color:#b3261e}button:disabled{opacity:.5;cursor:default}
-input{font:inherit;width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #999}#result{font-weight:600;margin-top:1em}`;
+input{font:inherit;width:100%;box-sizing:border-box;padding:8px;border-radius:6px;border:1px solid #999}#result{font-weight:600;margin-top:1em}.warn{border:2px solid #b3261e;border-radius:8px;padding:10px}`;
 
-function notOpenable(res: ServerResponse, reused: boolean): void {
+function notOpenable(res: ServerResponse, reused: boolean, status?: string): void {
   const nonce = randomBytes(12).toString("base64");
   res.writeHead(403, pageHeaders(nonce));
+  const decided = status && status !== "pending" ? ` It has already been <strong>${escapeHtml(status)}</strong> there.` : "";
   const why = reused
-    ? `<h1>This approval page was already opened somewhere else</h1><p><strong>Its link works once, and it has been used.</strong> If you did not open it yourself a moment ago, something else on this computer did: do not approve anything for this request, and tell Claude to stop. Otherwise, use the tab where it opened.</p>`
+    ? `<h1>This approval page was already opened somewhere else</h1><p><strong>Its link works once, and it has been used.</strong>${decided} If you did not open it yourself a moment ago, something else on this computer did: do not approve anything for this request, and tell Claude to stop. Otherwise, use the tab where it opened.</p>`
     : `<h1>This approval link does not open here</h1><p>An approval page opens only in the browser tab Praxis opened for you, for ten minutes. If you closed that tab or the time ran out, ask Claude to apply the action again: Praxis opens a new page. Nothing was approved or rejected.</p>`;
   res.end(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Praxis approval</title><style>${STYLE}</style><body>${why}</body>`);
 }
@@ -148,14 +170,16 @@ function renderPage(request: PageRequest, saveToken: string): { html: string; no
 <p>Only you should press these buttons. If you did not ask Claude for this, choose Reject.</p>
 <label for="reason">Reason (optional)</label><input id="reason" maxlength="300" autocomplete="off">
 <div class="row"><button id="approve" type="button">Approve and run exactly this</button><button id="reject" type="button">Reject</button></div>
-<p id="result" role="status">${decided ? `Already decided: ${escapeHtml(request.status)}. You can close this tab.` : ""}</p>
+${request.reusedAt ? `<p class="warn"><strong>This page's link was used more than once.</strong> Something other than this tab may have opened it. Only Reject is accepted now; if you want this action, reject it here and ask Claude to apply it again.</p>` : ""}
+<p id="result" role="status">${decided ? `Already decided: ${escapeHtml(request.status)}. If that was not you, tell Claude to stop. You can close this tab.` : ""}</p>
 <script nonce="${nonce}">(function(){
-var id=${JSON.stringify(request.id)},token=${JSON.stringify(saveToken)},until=${request.expiresAt},decided=${decided};
+var id=${JSON.stringify(request.id)},token=${JSON.stringify(saveToken)},until=${request.expiresAt},decided=${decided},wait=${Math.max(0, (request.loadedAt ?? Date.now()) + earliestDecisionMs() - Date.now())};
 try{history.replaceState(null,"",location.pathname)}catch(e){}
 document.getElementById("until").textContent=new Date(until).toLocaleTimeString();
 var a=document.getElementById("approve"),r=document.getElementById("reject"),out=document.getElementById("result");
 function done(text){a.disabled=r.disabled=true;out.textContent=text}
 if(decided||Date.now()>until)done(out.textContent||"This request has expired. Ask Claude to apply the action again.");
+else if(wait>0){a.disabled=r.disabled=true;setTimeout(function(){a.disabled=r.disabled=false},wait)}
 function send(decision){a.disabled=r.disabled=true;out.textContent="Recording...";
 fetch(location.pathname+"/decision",{method:"POST",headers:{"content-type":"application/json","x-praxis-approval-token":token},body:JSON.stringify({decision:decision,reason:document.getElementById("reason").value})})
 .then(function(res){return res.json().then(function(b){return{ok:res.ok,b:b}})})
@@ -188,7 +212,9 @@ function settle(request: PageRequest): void {
 
 function expire(now = Date.now()): void {
   for (const [id, request] of requests) {
-    const stale = request.status === "pending" ? now > request.expiresAt : request.consumed || now > (request.decidedAt ?? 0) + USER_APPROVAL_TTL_MS;
+    // a decided request stays until the request's own expiry (consumed or not), so a browser that arrives late sees what
+    // happened to it instead of "unknown"
+    const stale = request.status === "pending" ? now > request.expiresAt : now > Math.max(request.expiresAt, (request.decidedAt ?? 0) + USER_APPROVAL_TTL_MS);
     if (!stale) continue;
     if (request.status === "pending") {
       logDecision(request.repo, { at: new Date(now).toISOString(), action: request.action, summary: request.summary, subjectDigest: request.digest, decision: "expired", decidedBy: "nobody", channel: "approval-page", evidence: { requestId: id }, reason: "the approval page was not answered in time" });
@@ -219,10 +245,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (!bound) {
       if (!presentedLink || !safeEqual(presentedLink, request.loadToken)) return notOpenable(res, false);
       if (request.loadedWith !== undefined) {
-        request.reusedAt = Date.now();
-        return notOpenable(res, true);
+        if (!request.reusedAt) {
+          request.reusedAt = Date.now();
+          logDecision(request.repo, { at: new Date(request.reusedAt).toISOString(), action: request.action, summary: request.summary, subjectDigest: request.digest, decision: request.status === "pending" ? "pending" : request.status, decidedBy: request.status === "pending" ? "nobody" : "approval-page", channel: "approval-page", evidence: { requestId: request.id, via: "the single-use page link was used again" }, reason: request.status === "pending" ? "the page link was used a second time: from now on only Reject is accepted" : `the page link was used a second time after the request was already ${request.status}` });
+        }
+        return notOpenable(res, true, request.status);
       }
       request.loadedWith = randomBytes(24).toString("hex");
+      request.loadedAt = Date.now();
     }
     const saveToken = randomBytes(24).toString("hex");
     request.saveTokens.add(saveToken);
@@ -239,6 +269,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const origin = req.headers.origin;
     if (origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(res, 403, { error: "bad origin" });
     if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "json only" });
+    // only the browser the page was first loaded in decides (its binding cookie), and not before a person could have read it
+    const bindingCookie = cookieOf(req, request.id);
+    if (!request.loadedWith || !bindingCookie || !safeEqual(bindingCookie, request.loadedWith)) return json(res, 403, { error: "not the browser this page was opened in" });
+    if (Date.now() < (request.loadedAt ?? 0) + earliestDecisionMs()) return json(res, 425, { error: "too early: read the request first" });
     let parsed: { decision?: unknown; reason?: unknown };
     try {
       parsed = JSON.parse(await readBody(req)) as typeof parsed;
@@ -250,6 +284,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (request.status !== "pending" || !requests.has(request.id)) return json(res, 409, { error: `already ${request.status}` });
     if (Date.now() > request.expiresAt) return json(res, 410, { error: "this request has expired; ask Claude to apply the action again" });
     if (![...request.saveTokens].some((token) => safeEqual(presented, token))) return json(res, 403, { error: "bad token" });
+    // a link used twice: Praxis cannot tell which opener is the person, so an Approve from either is not taken
+    if (request.reusedAt && parsed.decision === "approve") return json(res, 409, { error: "this page's link was used more than once, so only Reject is accepted; ask Claude to apply the action again for a new page" });
     const reason = typeof parsed.reason === "string" && parsed.reason.trim() ? parsed.reason.trim().slice(0, 300) : undefined;
     request.status = parsed.decision === "approve" ? "approved" : "rejected";
     request.decidedAt = Date.now();
@@ -305,7 +341,8 @@ export function stopApprovalPages(): void {
 export type PageOpener = (secretUrl: string) => Promise<boolean>;
 
 export const openApprovalPage: PageOpener = async (secretUrl) => {
-  const browser = process.env.PRAXIS_APPROVAL_BROWSER?.trim() ?? "";
+  const browser = approvalSettings().browser;
+  if (!approvalPageOpener().honoured) return false;
   // a test run never opens a tab in the developer's own browser; a test that wants the page names its own opener
   if ((process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1" || process.env.PRAXIS_TEST_APPROVALS === "1") && !browser) return false;
   const dir = mkdtempSync(join(tmpdir(), "praxis-approve-"));
@@ -322,6 +359,7 @@ export const openApprovalPage: PageOpener = async (secretUrl) => {
   } else if (process.platform === "darwin") {
     [command, args] = ["open", browser ? ["-a", browser, page] : [page]];
   } else if (process.platform === "win32") {
+    // explorer.exe exits with 1 even when it opened the file: its exit code says nothing either way
     [command, args] = ["explorer.exe", [page]];
   } else {
     if (!process.env.DISPLAY && !process.env.WAYLAND_DISPLAY) return false;
@@ -341,7 +379,7 @@ export const openApprovalPage: PageOpener = async (secretUrl) => {
       });
       child.on("exit", (code) => {
         clearTimeout(timer);
-        done(code === 0);
+        done(code === 0 || command === "explorer.exe");
       });
     } catch {
       done(false);

@@ -32,7 +32,7 @@ const CODE_TAB: ClientReport = {
 };
 const CHAT: ClientReport = { name: "claude-ai", version: "0.1.0", protocolVersion: "2026-07-28", capabilities: ["extensions"], elicitation: { declared: null, form: false, url: false }, dialog: false, flow: "input-required-round-trip", reason: "the client did not declare the elicitation capability (in the request envelope)" };
 
-const ENV = ["PRAXIS_STATE_HOME", "PRAXIS_APPROVAL_PAGE", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_PAGE_WAIT_MS", "PRAXIS_APPROVAL_MODE"] as const;
+const ENV = ["PRAXIS_STATE_HOME", "PRAXIS_APPROVAL_PAGE", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_PAGE_WAIT_MS", "PRAXIS_APPROVAL_MODE", "PRAXIS_APPROVAL_PAGE_MIN_MS"] as const;
 let saved: Record<string, string | undefined>;
 let repo: string;
 let opened: string[];
@@ -43,6 +43,8 @@ beforeEach(() => {
   process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS = "1000"; // the production default: these tests are about it
   process.env.PRAXIS_APPROVAL_PAGE = "on";
   process.env.PRAXIS_APPROVAL_PAGE_WAIT_MS = "4000";
+  // the page's earliest-decision rule has its own test; elsewhere the scripted browser decides at once
+  process.env.PRAXIS_APPROVAL_PAGE_MIN_MS = "0";
   delete process.env.PRAXIS_APPROVAL_MODE;
   resetDialogObservations();
   opened = [];
@@ -82,7 +84,10 @@ function http(url: string, init: { method?: string; headers?: Record<string, str
   });
 }
 
-/** What the person's browser does: load the page Praxis opened, then press a button. */
+/** The cookie the page's first load set, as the browser sends it back. */
+const cookieFrom = (res: { headers: Record<string, string | string[] | undefined> }): string => String(res.headers["set-cookie"]).split(";")[0]!;
+
+/** What a browser does: load the page Praxis opened, then press a button (a scripted test action, not a person). */
 async function decideInPage(secretUrl: string, decision: "approve" | "reject", reason?: string) {
   const page = await http(secretUrl);
   expect(page.status).toBe(200);
@@ -90,7 +95,7 @@ async function decideInPage(secretUrl: string, decision: "approve" | "reject", r
   const { origin, pathname } = new URL(secretUrl);
   return http(`${origin}${pathname}/decision`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin, "x-praxis-approval-token": JSON.parse(token) as string },
+    headers: { "content-type": "application/json", origin, cookie: cookieFrom(page), "x-praxis-approval-token": JSON.parse(token) as string },
     body: JSON.stringify({ decision, ...(reason ? { reason } : {}) }),
   });
 }
@@ -324,7 +329,7 @@ describe("the doctor says how approvals will be asked, with the evidence", () =>
     const doctor = (await callTool("praxis_doctor", { repo }, { role: "developer", version: "t", client: CHAT })) as McpEnvelope;
     const approval = (doctor.data as { approval: Record<string, unknown> }).approval;
     expect(approval.mode).toBe("approval-page");
-    expect(approval.page).toMatchObject({ enabled: true, browser: "default browser" });
+    expect(approval.page).toMatchObject({ enabled: true, browser: expect.stringMatching(/^default browser/) });
     expect(String((approval.page as { note: string }).note)).toMatch(/could still operate it/);
     expect(approval.minAnswerMs).toBe(1000);
   });
@@ -380,8 +385,17 @@ describe("the page itself", () => {
     expect((await init(CHAT)).data).toMatchObject({ approvalPage: { linkUsedAgain: true } });
     const token = JSON.parse(/token=("[0-9a-f]+")/.exec(reload.body)![1]!) as string;
     const { origin, pathname } = new URL(opened[0]!);
-    await http(`${origin}${pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin, "x-praxis-approval-token": token }, body: JSON.stringify({ decision: "reject" }) });
+    const post = (decision: string) => http(`${origin}${pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin, cookie, "x-praxis-approval-token": token }, body: JSON.stringify({ decision }) });
+    // once the link was used twice, Praxis cannot tell which opener is the person: an Approve is refused, a Reject is taken
+    expect((await post("approve")).status).toBe(409);
+    expect(reload.body).toMatch(/used more than once/);
+    expect((await post("reject")).status).toBe(200);
+    expect(journal().some((r) => (r.evidence as { via?: string } | undefined)?.via === "the single-use page link was used again")).toBe(true);
     expect(journal().at(-1)).toMatchObject({ decision: "rejected", evidence: { via: expect.stringMatching(/used again elsewhere/) } });
+    // a browser arriving after the decision sees what happened to the request
+    const late = await http(opened[0]!);
+    expect(late.body).toMatch(/already opened somewhere else/);
+    expect(late.body).toMatch(/already been <strong>rejected<\/strong>/);
   });
 
   it("opens nothing without the secret, and records nothing without the page's token and origin", async () => {
@@ -391,7 +405,8 @@ describe("the page itself", () => {
     expect((await http(secret, { headers: { host: "evil.example" } })).status).toBe(403);
     const page = await http(secret);
     const token = JSON.parse(/token=("[0-9a-f]+")/.exec(page.body)![1]!) as string;
-    const post = (headers: Record<string, string>, body = JSON.stringify({ decision: "approve" })) => http(`${origin}${path}/decision`, { method: "POST", headers, body });
+    const cookie = cookieFrom(page);
+    const post = (headers: Record<string, string>, body = JSON.stringify({ decision: "approve" })) => http(`${origin}${path}/decision`, { method: "POST", headers: { cookie, ...headers }, body });
     expect((await post({ "content-type": "application/json", origin })).status).toBe(403); // no token
     expect((await post({ "content-type": "application/json", "x-praxis-approval-token": token })).status).toBe(403); // no origin
     expect((await post({ "content-type": "application/json", origin: "http://evil.example", "x-praxis-approval-token": token })).status).toBe(403);
@@ -399,6 +414,8 @@ describe("the page itself", () => {
     expect((await post({ "content-type": "application/json", origin, "x-praxis-approval-token": token }, JSON.stringify({ decision: "yes please" }))).status).toBe(400);
     expect(journal().filter((r) => r.decision === "approved")).toHaveLength(0);
     expect((await post({ "content-type": "application/json", origin, "x-praxis-approval-token": token })).status).toBe(200);
+    // the token without the binding cookie (another program that only read the page) is refused
+    expect((await http(`${origin}${path}/decision`, { method: "POST", headers: { "content-type": "application/json", origin, "x-praxis-approval-token": token }, body: JSON.stringify({ decision: "approve" }) })).status).toBe(403);
     // decided once: a replay changes nothing
     expect((await post({ "content-type": "application/json", origin, "x-praxis-approval-token": token }, JSON.stringify({ decision: "reject" }))).status).toBe(403);
     expect(journal().filter((r) => r.decidedBy === "approval-page").map((r) => r.decision)).toEqual(["approved"]);
@@ -433,7 +450,7 @@ describe("one click, one execution, of exactly what was shown (independent revie
     const second = await http(opened[0]!.split("?")[0]!, { headers: { cookie } });
     const token2 = JSON.parse(/token=("[0-9a-f]+")/.exec(second.body)![1]!) as string;
     const { origin, pathname } = new URL(opened[0]!);
-    const post = (t: string, decision: string) => http(`${origin}${pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin, "x-praxis-approval-token": t }, body: JSON.stringify({ decision }) });
+    const post = (t: string, decision: string) => http(`${origin}${pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin, cookie, "x-praxis-approval-token": t }, body: JSON.stringify({ decision }) });
     const results = await Promise.all([post(token, "reject"), post(token2, "approve")]);
     // one is recorded; the other is refused (409 if it read its body before the first finished, 403 once the tokens are gone)
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
@@ -488,6 +505,48 @@ describe("one click, one execution, of exactly what was shown (independent revie
     const diag = existsSync(diagnosticsPath()) ? readFileSync(diagnosticsPath(), "utf8") : "";
     expect(diag).not.toContain(token);
     expect(readFileSync(decisionLogPath(repo), "utf8")).not.toContain(token);
+  });
+});
+
+describe("settings a repository could set are not taken from the environment (second review, verified with Claude Code)", () => {
+  it("outside the Desktop extension, a weakening setting in the environment is ignored and reported; a stricter one is kept", async () => {
+    const { approvalSettings } = await import("./approval-settings.js");
+    const saved = { ...process.env };
+    try {
+      // as a Runtime started by Claude Code whose repository's .claude/settings.json set these
+      delete process.env.PRAXIS_TEST_APPROVALS;
+      process.env.PRAXIS_APPROVAL_MODE = "trusted-client";
+      process.env.PRAXIS_APPROVAL_BROWSER = "/usr/bin/true";
+      process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS = "0";
+      process.env.PRAXIS_APPROVAL_PAGE_MIN_MS = "5000";
+      const settings = approvalSettings();
+      expect(settings.mode).toBe("");
+      expect(settings.browser).toBe("");
+      expect(settings.minAnswerMs).toBe(1000);
+      expect(settings.pageMinMs).toBe(5000);
+      expect(settings.ignoredEnvironment.sort()).toEqual(["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_MODE"]);
+      // turning the page off makes approval stricter and is taken from anywhere
+      process.env.PRAXIS_APPROVAL_PAGE = "off";
+      expect(approvalSettings().page).toBe(false);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+  });
+});
+
+describe("the page takes no decision before a person could have read it (second review, LOW 8)", () => {
+  it("an Approve within the earliest-decision time after the first load is refused; after it, taken", async () => {
+    process.env.PRAXIS_APPROVAL_PAGE_MIN_MS = "400";
+    process.env.PRAXIS_APPROVAL_PAGE_WAIT_MS = "0";
+    await init(CHAT);
+    const page = await http(opened[0]!);
+    const token = JSON.parse(/token=("[0-9a-f]+")/.exec(page.body)![1]!) as string;
+    const { origin, pathname } = new URL(opened[0]!);
+    const post = () => http(`${origin}${pathname}/decision`, { method: "POST", headers: { "content-type": "application/json", origin, cookie: cookieFrom(page), "x-praxis-approval-token": token }, body: JSON.stringify({ decision: "approve" }) });
+    expect((await post()).status).toBe(425);
+    await sleep(450);
+    expect((await post()).status).toBe(200);
   });
 });
 

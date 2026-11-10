@@ -1,6 +1,7 @@
 import { inputResponse } from "@modelcontextprotocol/server";
 import { ApprovalError, ApprovalNeedsInput, logDecision, subjectDigest, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
 import { knownAutoAnswer, noteAutoAnswer } from "./dialog-observations.js";
+import { approvalSettings } from "./approval-settings.js";
 
 /**
  * The user's approval, asked through the MCP client's own elicitation dialog.
@@ -76,13 +77,10 @@ export function elicitParams(request: ApprovalRequest) {
 }
 
 /**
- * The fastest answer accepted as a person's: below it the client answered by itself. An extension or launch setting, never
- * read from a repository; tests that script the dialog set it to 0.
+ * The fastest answer taken as coming from the user's channel: below it the client answered by itself. Lowered only by the
+ * extension settings or ~/.praxis/approval-settings.json, never by a repository (approval-settings.ts).
  */
-export const minAnswerMs = (): number => {
-  const raw = Number(process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 1000;
-};
+export const minAnswerMs = (): number => approvalSettings().minAnswerMs;
 
 /**
  * Maps the client's elicitation result to the user's answer: only Accept with "approve" selected approves. With the time the
@@ -104,7 +102,7 @@ export function answerFrom(result: { action: "accept" | "decline" | "cancel"; co
  * The key under which the client answers for this exact action. It is derived from the content that will run, so an
  * answer given for one plan can never satisfy a different plan: a changed plan has another key and is asked again.
  */
-export const approvalKey = (request: ApprovalRequest): string => `approval-${subjectDigest(request.subject).slice(7, 23)}`;
+export const approvalKey = (request: ApprovalRequest): string => `approval-${subjectDigest(`${request.action}\n${request.subject}\n${approvalMessage(request)}`).slice(7, 39)}`;
 
 /** Faster than any person reacts: the Desktop Code tab answers in 9-34 ms (160 ms over WSL). */
 export const CLEARLY_AUTOMATIC_MS = 250;
@@ -197,7 +195,7 @@ export function dialogWithPageFallback(dialog: UserApprovalChannel, page: UserAp
         decidedBy: "client",
         channel: "client-elicitation",
         ...(answer.evidence ? { evidence: answer.evidence } : {}),
-        reason: `the client answered "${answer.automatic}" without showing a dialog; asking in the approval page instead`,
+        reason: `the client answered "${answer.automatic}" faster than a person could read the dialog; asking in the approval page instead`,
       });
       used = page;
       return page.ask(request);
@@ -217,7 +215,7 @@ export function dialogWithPageFallback(dialog: UserApprovalChannel, page: UserAp
  * What this cannot do: Praxis cannot see whether the prompt was shown. An "always allow" setting for the tool removes it,
  * and then the agent has approved itself. The result is labelled `host-prompt`, never `client-ui`.
  */
-export const hostPermissionMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "host-permission";
+export const hostPermissionMode = (): boolean => approvalSettings().mode === "host-permission";
 
 /** The text the user must see in the host's prompt for this action: the same text the dialog would show. */
 export const planTextOf = (request: ApprovalRequest): string => approvalMessage(request);
@@ -265,7 +263,7 @@ export function hostPermissionChannel(planText: string | undefined, personal?: U
  * It is a standing permission, not an approval of the specific action, and is labelled "trusted-client" in results and
  * the journal. Unchanged: the agent's confirmation=YES, the preview and its fingerprint, argument checks, the journal.
  */
-export const trustedClientMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
+export const trustedClientMode = (): boolean => approvalSettings().mode === "trusted-client";
 
 /**
  * Acts only a person may perform. A standing "always allow", whether Trusted Client mode or the host's own tool-permission
