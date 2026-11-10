@@ -28313,7 +28313,7 @@ async function qualityReviewOp(ctx) {
       const reviewed = await runQualityWorkPackageReview2({
         repo,
         workPackageId,
-        runtimeVersion: "0.1.0-alpha.49"
+        runtimeVersion: "0.1.0-alpha.49.1"
       });
       const qualityInputs = discoverQualityInputs(repo, workPackageId);
       return {
@@ -61386,7 +61386,7 @@ var PRAXIS_MCP_SDK = {
   ]
 };
 function bundleVersion() {
-  return "0.1.0-alpha.49";
+  return "0.1.0-alpha.49.1";
 }
 
 // packages/mcp/node_modules/zod/v4/classic/external.js
@@ -81108,7 +81108,7 @@ var import_node_fs3 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49","sourceDigest":"ca69e95f5a6231cdd971b81693bd79f12b3268b80c3c42d0d6fc431f04b99869","coreBaseline":"c49092a9dd4b4e1401a3dfe91d71dbfcef15f4a9","inputs":35}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"5d36899155e447b764b9ce1600bf8b48b5b28c047a7ceeeddf0a546e069be196","coreBaseline":"c327b89c06418ae5b68a4c4576081b4762d9e2b9","inputs":35}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
