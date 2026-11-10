@@ -81422,7 +81422,7 @@ var import_node_fs5 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"de31f5b7e11433564787e9ea653fdd0ac0bfe479c67be3e58f54ab67d1187ee5","coreBaseline":"7181ecd53e319b426b5c70cf0de1a7ed417186e2","inputs":38}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"d29fea084eec1adcbf60868a8545bf67b6f5df75c0b9bf88dbc06f00ca146bbf","coreBaseline":"71c4f9d449c1273246c4be48edf1f40b4e71efce","inputs":38}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
