@@ -4,7 +4,7 @@
  * is the script clicking and typing. The page is served by this Runtime's own review service on 127.0.0.1 (its content security
  * policy, link token and save token), and Save writes the work item on disk. It says nothing about Claude Desktop or Claude Code.
  *
- * P01-P03, the agronomist journal (tools/fixtures/agronomist-journal.json, an anonymized reproduction of an external report): the
+ * P01-P03 and P08, the agronomist journal (tools/fixtures/agronomist-journal.json, an anonymized reproduction of an external report): the
  * note feed asked for as a chat. Each criterion of the report's acceptance scenario is measured on the rendered page at desktop and
  * phone width, and the reported table is measured the same way, so the check is shown to tell the two apart.
  * P04-P07, a custom part: hostile markup and script in the sandboxed frame must not reach the page, its token, the review server or
@@ -23,7 +23,7 @@ import { chromium } from "playwright-core";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const arg = (name, fallback) => (process.argv.includes(name) ? process.argv[process.argv.indexOf(name) + 1] : fallback);
-const chromePath = arg("--chrome", "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
+const chromePath = arg("--chrome", process.env.PRAXIS_BROWSER_EXECUTABLE || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome");
 const shots = arg("--shots", "");
 if (!existsSync(chromePath)) {
   console.error(`no Chrome at ${chromePath}; pass --chrome <path>`);
@@ -63,15 +63,19 @@ async function scenario(id, title, fn) {
 }
 
 // --- the work item: requirements accepted on the page's channel, then the prototype as the agent writes it ---------------------
-const screenOf = (feed, extra = []) => ({ ...F.screen, elements: [...F.header, feed, ...F.footer, ...extra] });
-function chatPrototype(extra = []) {
-  return { kind: "ui", title: "Журнал агронома: лента в виде чата", startScreen: "journal", styles: F.styles, mock: [F.mock.notes, F.mock.attachments, F.mock.fields], datasets: F.datasets, screens: [screenOf(F.chat.feed, extra)], scenarios: F.chat.scenarios, limitations: ["Голосовые заметки воспроизводятся как имитация: в прототипе нет звука.", "Фото во вложениях показаны заглушками с именем файла."] };
+/** The journal screen: the existing elements in their order, with the note feed (id "feed") replaced by the given element. */
+const screenOf = (feed, extra = []) => ({ ...F.screen, elements: [...F.existing.map((e) => (e.id === "feed" && feed ? feed : e)), ...extra] });
+const common = (mock) => ({ kind: "ui", startScreen: "journal", styles: F.styles, mock, datasets: F.datasets });
+function chatPrototype(extra = [], feed = F.chat.feed) {
+  return { ...common([F.mock.notes, F.mock.attachments]), title: "Журнал агронома: лента в виде чата", screens: [screenOf(feed, extra)], scenarios: F.chat.scenarios, limitations: ["Голосовые заметки воспроизводятся как имитация: в прототипе нет звука.", "Фото во вложениях показаны заглушками с именем файла."] };
 }
+/** The journal as it is today: the same screen with its own note feed. */
+const existingPrototype = () => ({ ...common([F.mock.notes, F.mock.attachments]), title: "Журнал агронома", screens: [screenOf(null)] });
 function reportedPrototype() {
-  const rows = F.mock.notes.rows.map((n) => ({ id: n.id, author: n.author, side: n.author === ME ? "Исходящее" : "Входящее", created: n.createdAt.slice(11), voice: n.voice ? `Да (${n.voice} с)` : "Нет", text: n.text, attachments: F.mock.attachments.rows.filter((a) => a.noteId === n.id).map((a) => a.name).join(", ") || null, date: n.createdAt.slice(0, 10), field: n.field, kind: n.kind }));
+  const rows = F.mock.notes.rows.map((n) => ({ id: n.id, author: n.author, side: n.author === ME ? "Исходящее" : "Входящее", created: n.createdAt.slice(11), voice: n.voice ? `Да (${n.voice} с)` : "Нет", text: n.text, attachments: F.mock.attachments.rows.filter((a) => a.noteId === n.id).map((a) => a.name).join(", ") || null, date: n.createdAt.slice(0, 10), field: n.field, kind: n.kind, status: n.status }));
   const s = screenOf(F.reported.feed);
   s.elements = s.elements.map((e) => (e.id === "card" ? { ...e, detailFields: [{ field: "date" }, { field: "created" }, { field: "author" }, { field: "text" }] } : e));
-  return { kind: "ui", title: "Журнал агронома", startScreen: "journal", styles: F.styles, notes: F.reported.notes, mock: [{ ...F.reported.mock, rows }, F.mock.attachments, F.mock.fields], screens: [s] };
+  return { ...common([{ ...F.reported.mock, rows }, F.mock.attachments]), title: "Журнал агронома", notes: F.reported.notes, screens: [s] };
 }
 function workItem(prototype) {
   const repo = mkdtempSync(join(tmpdir(), "praxis-patterns-"));
@@ -117,7 +121,9 @@ async function acceptance(page, phone) {
       if (!feedEl) return ["the note feed is missing"];
       const box = (n) => n.getBoundingClientRect();
       const visible = (n) => !!n && box(n).width > 0 && box(n).height > 0 && getComputedStyle(n).visibility !== "hidden";
-      if (!visible(document.querySelector('[data-el="journal#tabs"]')) || !visible(document.querySelector('select[data-filter="field"]')) || !visible(document.querySelector('select[data-filter="type"]')) || !visible(document.querySelector("[data-search]")) || document.querySelector("#proto-screen h2")?.textContent !== "Журнал агронома")
+      const kept = ["status", "byField", "byKind", "find", "newNote", "newText", "newField", "newKind", "attach", "record", "addNote"].every((id) => visible(document.querySelector(`[data-el="journal#${id}"]`)));
+      const tabs = [...document.querySelectorAll('[data-el="journal#status"] button[role=tab]')].map((t) => t.textContent).join();
+      if (!kept || tabs !== "Актуальные,Архивные" || document.querySelector("#proto-screen h2")?.textContent !== "Журнал агронома")
         fail.push("existing header and controls remain");
       if (feedEl.querySelector("table,tr,th,[role=table],[role=grid]")) fail.push("the feed is NOT a table");
       const msgs = [...feedEl.querySelectorAll("li.cv-msg")];
@@ -151,8 +157,6 @@ async function acceptance(page, phone) {
       if (feedEl.querySelectorAll(".cv-day").length !== 3) fail.push("date separators");
       if (!(feed.scrollHeight > feed.clientHeight)) fail.push("the feed scrolls");
       if (document.documentElement.scrollWidth > window.innerWidth + 1) fail.push(`no horizontal overflow (${document.documentElement.scrollWidth} > ${window.innerWidth})`);
-      const compose = feedEl.querySelector(".cv-compose");
-      if (!visible(compose) || box(compose).top < box(feed).bottom - 1) fail.push("composer under the feed");
       return fail;
     },
     { ME, phone },
@@ -192,10 +196,10 @@ await scenario("P01", "Journal chat at desktop width: every criterion of the acc
   await page.goBack();
   await page.waitForFunction(() => document.querySelectorAll("li.cv-msg").length === 5);
   check(true, "Back returns to the field filter alone");
-  await page.click('button[data-tab="fields"]');
-  eq(await page.locator('[data-el="journal#feed"]').count(), 0, "the Fields tab hides the feed");
-  eq(await page.locator('[data-el="journal#fieldsTable"] tr[data-row]').count(), 3, "and shows the fields table");
-  await page.click('button[data-tab="journal"]');
+  await page.selectOption('select[data-filter="field"]', "");
+  await page.click('button[data-tab="archived"]');
+  eq(await page.locator("li.cv-msg").evaluateAll((l) => l.map((x) => x.getAttribute("data-row"))), ["N-090", "N-091", "N-092"], "the Архивные tab shows the archived notes as a chat");
+  await page.click('button[data-tab="active"]');
   // the note card
   await page.click('li[data-row="N-107"] .cv-text');
   const card = page.locator('[data-overlay="journal#card"]');
@@ -215,7 +219,7 @@ await scenario("P01", "Journal chat at desktop width: every criterion of the acc
   await ctx.close();
 });
 
-await scenario("P02", "Journal chat at phone width: the acceptance scenario, the composer, Inspect, Review, Save and acceptance", async () => {
+await scenario("P02", "Journal chat at phone width: the acceptance scenario, the note form, Inspect, Review, Save and acceptance", async () => {
   const { url, port } = await link(chat);
   const { ctx, page, errors } = await tab(390, 844, port);
   await page.goto(url);
@@ -226,16 +230,13 @@ await scenario("P02", "Journal chat at phone width: the acceptance scenario, the
   const feedW = await page.locator(".cv-feed").evaluate((f) => f.clientWidth);
   check(Math.max(...widths) > feedW * 0.8, `on a phone a long message takes almost the whole width (${Math.round(Math.max(...widths))} of ${feedW})`);
   if (shots) await page.locator("#proto-frame").screenshot({ path: join(shots, "P02-phone.png"), style: SHOT_STYLE });
-  // composer
-  await page.fill('[data-fk="compose:journal#feed"]', "Проверю краевые ряды через три дня.");
-  await page.keyboard.press("Enter");
-  const last = page.locator("li.cv-msg").last();
-  eq(await last.getAttribute("data-side"), "out", "the new message is outgoing");
-  check((await last.textContent()).includes("Проверю краевые ряды через три дня."), "and carries the text");
-  check(await last.isVisible(), "the feed scrolled to it");
-  const lb = await last.locator(".cv-b").boundingBox(), fb = await page.locator(".cv-feed").boundingBox();
-  check(fb.x + fb.width - (lb.x + lb.width) < 30, "it sits on the right");
-  if (shots) await page.locator("#proto-frame").screenshot({ path: join(shots, "P02-phone-sent.png"), style: SHOT_STYLE });
+  // the journal's own note form stays and works as before: a missing text is refused, a filled one is confirmed
+  await page.click('[data-fk="btn:journal#addNote"]');
+  check((await page.locator('[data-el="journal#newText"] [role="alert"]').count()) === 1, "the note form refuses a note without text");
+  await page.fill('[data-fk="field:journal#newText"]', "Осмотр поля 12");
+  await page.selectOption('[data-fk="field:journal#newField"]', "Поле 12");
+  await page.click('[data-fk="btn:journal#addNote"]');
+  check(await page.locator("text=Saved (mock data only).").isVisible(), "and confirms a filled one");
   // Inspect, Review, Save
   await page.click('#pv-mode button[data-mode="inspect"]');
   // in Inspect and Review a click where a message is lands on the feed element as a whole (its inside does not take clicks)
@@ -256,9 +257,22 @@ await scenario("P02", "Journal chat at phone width: the acceptance scenario, the
   eq(s.prototype.revision, 1, "reviewing does not make a new revision");
   const { feedback: _f, status: _s, ...after } = s.prototype;
   const { feedback: _bf, status: _bs, ...was } = JSON.parse(before);
-  eq(JSON.stringify(after), JSON.stringify(was), "using the prototype (the new message included) did not change it");
+  eq(JSON.stringify(after), JSON.stringify(was), "using the prototype (the note form included) did not change it");
   eq(errors, [], "no script errors");
   await ctx.close();
+  // the conversation's own composer, which this journal does not use (it keeps its note form), still works
+  const withComposer = workItem(chatPrototype([], { ...F.chat.feed, conversation: { ...F.chat.feed.conversation, composer: { placeholder: "Новая запись…", sendLabel: "Отправить", values: { role: "агроном", kind: "Наблюдение", status: "active" } } } }));
+  const c = await link(withComposer);
+  const t2 = await tab(390, 844, c.port);
+  await t2.page.goto(c.url);
+  await t2.page.click('#pv-vp button[data-vp="mobile"]');
+  await t2.page.fill('[data-fk="compose:journal#feed"]', "Проверю краевые ряды через три дня.");
+  await t2.page.keyboard.press("Enter");
+  const last = t2.page.locator("li.cv-msg").last();
+  eq(await last.getAttribute("data-side"), "out", "a message from the conversation's composer is outgoing");
+  check((await last.textContent()).includes("Проверю краевые ряды через три дня.") && (await last.isVisible()), "and is shown at the end");
+  if (shots) await t2.page.locator("#proto-frame").screenshot({ path: join(shots, "P02-phone-composer.png"), style: SHOT_STYLE });
+  await t2.ctx.close();
 });
 
 await scenario("P03", "The same measurement on the reported table fails it: the check tells a table from a chat", async () => {
@@ -303,7 +317,6 @@ const BOARD = {
   label: "Доска по полям",
   collection: "notes",
   filters: [{ param: "field", field: "field" }],
-  showWhen: { param: "tab", equals: "journal" },
   custom: {
     reason: "A board with a column of cards per field: no structured element shows columns of cards.",
     html: '<h3 data-praxis-part="legend">Легенда доски</h3><p id="count">no data yet</p><pre id="report"></pre><input id="trap" aria-label="trap"><img src="https://example.test/inline.png" alt="">',
@@ -349,9 +362,9 @@ await scenario("P04", "Custom part in the served page: hostile script cannot rea
   check(page.url() === hrefBefore, "the page was not navigated");
   check(!seen.some((r) => /example\.test/.test(r.url)), `no request to the outside was even attempted past the policy (${seen.filter((r) => /example/.test(r.url)).map((r) => r.url)})`);
   check(!seen.some((r) => r.url.endsWith("/submit")), "nothing reached the review server's save address");
-  eq(await frame.locator("#count").textContent(), "12 notes; field=all", "the part received the mock rows and the address as data");
+  eq(await frame.locator("#count").textContent(), "15 notes; field=all", "the part received the mock rows and the address as data (all 15 notes: the board filters by field only)");
   await page.selectOption('select[data-filter="field"]', "Поле 7");
-  await frame.locator("#count").filter({ hasText: "5 notes" }).waitFor({ timeout: 4000 });
+  await frame.locator("#count").filter({ hasText: "7 notes" }).waitFor({ timeout: 4000 });
   check(true, "and follows the native filter");
   const s = wi.state();
   eq([s.prototype.feedback.length, s.phaseAcceptance.prototype ?? null], [0, null], "the frame's messages recorded nothing");
@@ -368,7 +381,7 @@ await scenario("P05", "Custom part in Inspect and Review: only a click into the 
   const { ctx, page, errors } = await tab(1440, 1000, port);
   await page.goto(url);
   const frame = page.frameLocator('iframe[data-frame="journal#board"]');
-  await frame.locator("#count").filter({ hasText: "12 notes" }).waitFor();
+  await frame.locator("#count").filter({ hasText: "15 notes" }).waitFor();
   await page.click('#pv-mode button[data-mode="inspect"]');
   await frame.locator('[data-praxis-part="legend"]').click();
   await page.locator("#pv-inspector").filter({ hasText: "Легенда доски" }).waitFor({ timeout: 4000 });
@@ -427,6 +440,51 @@ await scenario("P07", "A part that spins its script for five seconds does not fr
   check(ms < 2000, `the page answered while the part was busy (${ms} ms)`);
   eq(errors, [], "no script errors");
   await ctx.close();
+});
+
+await scenario("P08", "Only the feed changes: the existing journal and the chat version have the same header, tabs, filters, search, note form and card, measured in Chrome", async () => {
+  const before = workItem(existingPrototype());
+  const after = chat;
+  const look = async (wi, name) => {
+    const { url, port } = await link(wi);
+    const { ctx, page, errors } = await tab(1440, 1000, port);
+    await page.goto(url);
+    await page.waitForSelector('[data-el="journal#feed"] [data-row]');
+    if (shots) await page.locator("#proto-frame").screenshot({ path: join(shots, `P08-${name}-desktop.png`), style: SHOT_STYLE });
+    // everything but the feed: its HTML, and where it sits relative to the others
+    const around = () => page.evaluate(() => [...document.querySelectorAll("#proto-screen > h2, #proto-screen > p.lead, #proto-screen > [data-el]")].filter((n) => n.getAttribute("data-el") !== "journal#feed").map((n) => n.outerHTML));
+    const order = () => page.evaluate(() => [...document.querySelectorAll("#proto-screen > [data-el]")].map((n) => n.getAttribute("data-el")));
+    const rows = () => page.evaluate(() => [...document.querySelectorAll('[data-el="journal#feed"] [data-row]')].map((r) => r.getAttribute("data-row")).sort());
+    const feed = await page.evaluate(() => ({ table: !!document.querySelector('[data-el="journal#feed"] table'), rows: document.querySelectorAll('[data-el="journal#feed"] tr[data-row]').length, bubbles: document.querySelectorAll('[data-el="journal#feed"] li.cv-msg').length }));
+    const seen = [["start", await order(), await around(), await rows()]];
+    await page.click('button[data-tab="archived"]');
+    seen.push(["archived", await around(), await rows()]);
+    await page.click('button[data-tab="active"]');
+    await page.selectOption('select[data-filter="field"]', "Поле 7");
+    await page.selectOption('select[data-filter="type"]', "Задача");
+    seen.push(["filters", await around(), await rows()]);
+    await page.selectOption('select[data-filter="field"]', "");
+    await page.selectOption('select[data-filter="type"]', "");
+    await page.fill("[data-search]", "известкование");
+    seen.push(["search", await rows()]);
+    await page.fill("[data-search]", "");
+    await page.click('[data-fk="btn:journal#addNote"]');
+    seen.push(["empty form", await page.locator('[role="alert"]').count()]);
+    await page.fill('[data-fk="field:journal#newText"]', "Осмотр поля 12");
+    await page.click('[data-fk="btn:journal#addNote"]');
+    seen.push(["filled form", await page.locator("text=Saved (mock data only).").count(), await around()]);
+    await page.click('[data-el="journal#feed"] [data-row="N-104"]');
+    seen.push(["card", await page.locator('[data-overlay="journal#card"]').innerText()]);
+    await ctx.close();
+    return { seen, feed, errors };
+  };
+  const a = await look(before, "existing");
+  const b = await look(after, "chat");
+  eq(b.seen[0][1], a.seen[0][1], "the same elements in the same order");
+  for (const [i, step] of a.seen.entries()) eq(JSON.stringify(b.seen[i]), JSON.stringify(step), `the same around the feed after "${step[0]}"`);
+  eq(a.seen[1][2], ["N-090", "N-091", "N-092"], "the Архивные tab narrows both feeds to the archived notes");
+  eq([a.feed, b.feed], [{ table: true, rows: 12, bubbles: 0 }, { table: false, rows: 0, bubbles: 12 }], "the old feed lists 12 notes as rows, the new one shows them as 12 bubbles");
+  eq([a.errors, b.errors], [[], []], "no script errors");
 });
 
 await browser.close();
