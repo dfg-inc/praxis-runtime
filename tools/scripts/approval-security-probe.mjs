@@ -582,6 +582,27 @@ const ATTACKS = [
       }
     },
   },
+  ...[
+    ["T20-bun-options", "the client's environment loads code into it (BUN_OPTIONS --preload; round 4 R4-F1)", { BUN_OPTIONS: "--preload ./pre.js" }],
+    ["T20-cowork", "the client's environment switches it to Cowork's settings and plugins (CLAUDE_CODE_USE_COWORK_PLUGINS; round 4 R4-F2)", { CLAUDE_CODE_USE_COWORK_PLUGINS: "1" }],
+  ].map(([id, title, extra]) => ({
+    id,
+    title,
+    prerequisite: "the person's launch environment (a project's .envrc, a make target) or an agent that starts the client",
+    boundary: "a client whose environment loads code into it or points it at other configuration refuses",
+    blocks: true,
+    async run(b) {
+      let asked = 0;
+      const rt = await runtime(b, { client: "dialog", onAsk: () => (asked += 1), env: extra });
+      try {
+        const repo = victimRepo();
+        const r = await init(rt, repo);
+        return { breached: written(repo), detail: `${r.code ?? "ok"}; dialog asked ${asked}x` };
+      } finally {
+        await rt.close();
+      }
+    },
+  })),
   {
     id: "T20-env-plugin-dirs",
     title: "the client's environment names a plugin folder with the hook (CLAUDE_CODE_PLUGIN_DIRS, the environment form of --plugin-dir; re-review R2-F1)",

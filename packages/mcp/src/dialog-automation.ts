@@ -43,7 +43,8 @@ const MAX_WALK_ENTRIES = 200_000;
 // any flag of the families that bring configuration Praxis does not evaluate, present or future (--plugin-dir,
 // --plugin-dir-no-mcp, --plugin-url, --settings, --setting-sources, --managed-settings ...), --agents, and an SDK host's
 // --await-initialize (it can hand the client plugins and hooks over stdin)
-const LAUNCH_FLAGS = /(^|[\s"'=\x00])--((?:plugin|setting|managed)[a-z0-9-]*|agents|await-initialize)(?=$|[\s"'=\x00])/i;
+// (--setting-sources is the one exception: it only narrows which of the standard scopes load, and all of them are checked)
+const LAUNCH_FLAGS = /(^|[\s"'=\x00])--((?:plugin|managed)[a-z0-9-]*|setting(?!-sources(?=$|[\s"'=\x00]))[a-z0-9-]*|agents|await-initialize)(?=$|[\s"'=\x00])/i;
 /**
  * What a repository's own Claude Code settings may contain: keys that neither run anything nor configure the client or the
  * Runtime. Anything else (hooks, env, a status line command, plugins and marketplaces, helper commands, keys Praxis does not
@@ -60,6 +61,12 @@ const CLIENT_CONFIG_ENV = /PLUGIN|SETTING|MARKETPLACE|HOOK|SKILL|AGENTS|CONFIG/i
 const LOCATION_NAME = /(DIRS?|PATHS?|FILES?|URLS?|SOURCES?|ROOTS?|HOME|JSON|LOCATION)$/i;
 const looksLikeLocation = (value: string): boolean => /^\s*([\\/~.{[]|[a-z]:[\\/]|[a-z]+:\/\/)/i.test(value) || /[\\/]/.test(value);
 const CLIENT_ENV_KNOWN = new Set(["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_CONFIG_DIR"]);
+/**
+ * Environment that loads code into the client process itself (the Claude Code binary is a Bun executable; an npm install
+ * runs on Node), so whatever it loads can answer the client's dialog from inside: the client is no longer the client.
+ */
+const CODE_INTO_CLIENT = /^(BUN_OPTIONS|BUN_INSPECT\w*|BUN_CONFIG_PRELOAD|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|LD_PRELOAD|LD_AUDIT|ELECTRON_RUN_AS_NODE)$/;
+const NODE_LOADS_CODE = /(^|\s)(-r|--require|--import|--loader|--experimental-loader|--inspect[\w-]*|--experimental-vm-modules)(=|\s|$)/;
 
 const fold = (text: string): string => text.normalize("NFKC").toLowerCase();
 const namesElicitation = (key: string): boolean => fold(key).includes("elicitation");
@@ -374,15 +381,19 @@ export function ancestry(): Process[] {
 
 
 function pointsClientAtConfig(name: string, value: string): boolean {
-  if (!/^CLAUDE/i.test(name) || CLIENT_ENV_KNOWN.has(name.toUpperCase()) || !CLIENT_CONFIG_ENV.test(name) || !value.trim()) return false;
+  if (!value.trim()) return false;
+  if (CODE_INTO_CLIENT.test(name) || (name === "NODE_OPTIONS" && NODE_LOADS_CODE.test(value))) return true;
+  // the switch to Cowork's settings and plugins (cowork_settings.json, cowork_plugins/): another configuration set
+  if (/^CLAUDE/i.test(name) && /COWORK/i.test(name) && !/^(0|false|no|off)$/i.test(value.trim())) return true;
+  if (!/^CLAUDE/i.test(name) || CLIENT_ENV_KNOWN.has(name.toUpperCase()) || !CLIENT_CONFIG_ENV.test(name)) return false;
   return LOCATION_NAME.test(name) || looksLikeLocation(value);
 }
 
-/** The client's environment, as the Runtime inherited it: the environment form of the configuration flags. */
+/** The client's environment, as the Runtime inherited it: the environment form of the configuration flags, and code loaded into the client. */
 function checkClientEnvironment(): AutomationFinding[] {
   return Object.keys(process.env)
     .filter((name) => pointsClientAtConfig(name, process.env[name] ?? ""))
-    .map((name) => ({ file: `environment ${name}`, why: "points the client at configuration Praxis cannot check", kind: "launch" as const }));
+    .map((name) => ({ file: `environment ${name}`, why: CODE_INTO_CLIENT.test(name) || name === "NODE_OPTIONS" ? "loads code into the client process, which can answer its dialog from inside" : "points the client at configuration Praxis cannot check", kind: "launch" as const }));
 }
 
 function checkLaunch(read: () => Process[]): AutomationFinding[] {
@@ -446,18 +457,19 @@ export function dialogAutomation(input: { repo?: string; ancestry?: () => Proces
   for (const home of homes) settingsAt(join(home, ".claude.json"), false, MAX_GLOBAL_JSON);
   const pluginBudget = { left: limit, limit } as Budget;
   for (const dir of configDirs) {
-    for (const name of SETTINGS_NAMES) settingsAt(join(dir, name), false);
+    for (const name of [...SETTINGS_NAMES, "cowork_settings.json"]) settingsAt(join(dir, name), false);
     for (const sub of ["agents", "skills", "commands", "output-styles"]) {
       const defs = join(dir, sub);
       if (!existsSync(defs)) continue;
       for (const file of walk(defs, pluginBudget)) if (file.endsWith(".md") && !seen.has(file)) (seen.add(file), findings.push(...checkMarkdown(file, false)));
     }
-    const plugins = join(dir, "plugins");
-    if (!existsSync(plugins)) continue;
-    const { roots, findings: recordFindings } = pluginRoots(plugins);
-    findings.push(...recordFindings);
-    findings.push(...checkPluginTree(plugins, pluginBudget, seen));
-    for (const root of roots) if (!within(resolve(root), plugins) && existsSync(root)) findings.push(...checkPluginTree(resolve(root), pluginBudget, seen));
+    for (const plugins of [join(dir, "plugins"), join(dir, "cowork_plugins")]) {
+      if (!existsSync(plugins)) continue;
+      const { roots, findings: recordFindings } = pluginRoots(plugins);
+      findings.push(...recordFindings);
+      findings.push(...checkPluginTree(plugins, pluginBudget, seen));
+      for (const root of roots) if (!within(resolve(root), plugins) && existsSync(root)) findings.push(...checkPluginTree(resolve(root), pluginBudget, seen));
+    }
   }
   if (pluginBudget.finding) findings.push(pluginBudget.finding);
 

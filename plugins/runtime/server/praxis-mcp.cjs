@@ -61582,12 +61582,14 @@ var MAX_JSON = 16 * 1024 * 1024;
 var MAX_GLOBAL_JSON = 64 * 1024 * 1024;
 var MAX_MARKDOWN = 4 * 1024 * 1024;
 var MAX_WALK_ENTRIES = 2e5;
-var LAUNCH_FLAGS = /(^|[\s"'=\x00])--((?:plugin|setting|managed)[a-z0-9-]*|agents|await-initialize)(?=$|[\s"'=\x00])/i;
+var LAUNCH_FLAGS = /(^|[\s"'=\x00])--((?:plugin|managed)[a-z0-9-]*|setting(?!-sources(?=$|[\s"'=\x00]))[a-z0-9-]*|agents|await-initialize)(?=$|[\s"'=\x00])/i;
 var PROJECT_KEYS = /* @__PURE__ */ new Set(["$schema", "permissions", "model", "outputstyle", "includecoauthoredby", "cleanupperioddays", "disabledmcpjsonservers", "spinnertipsenabled", "alwaysthinkingenabled", "language", "respectgitignore", "sandbox", "disableallhooks"]);
 var CLIENT_CONFIG_ENV = /PLUGIN|SETTING|MARKETPLACE|HOOK|SKILL|AGENTS|CONFIG/i;
 var LOCATION_NAME = /(DIRS?|PATHS?|FILES?|URLS?|SOURCES?|ROOTS?|HOME|JSON|LOCATION)$/i;
 var looksLikeLocation = (value) => /^\s*([\\/~.{[]|[a-z]:[\\/]|[a-z]+:\/\/)/i.test(value) || /[\\/]/.test(value);
 var CLIENT_ENV_KNOWN = /* @__PURE__ */ new Set(["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_CONFIG_DIR"]);
+var CODE_INTO_CLIENT = /^(BUN_OPTIONS|BUN_INSPECT\w*|BUN_CONFIG_PRELOAD|DYLD_INSERT_LIBRARIES|DYLD_LIBRARY_PATH|DYLD_FRAMEWORK_PATH|LD_PRELOAD|LD_AUDIT|ELECTRON_RUN_AS_NODE)$/;
+var NODE_LOADS_CODE = /(^|\s)(-r|--require|--import|--loader|--experimental-loader|--inspect[\w-]*|--experimental-vm-modules)(=|\s|$)/;
 var fold = (text) => text.normalize("NFKC").toLowerCase();
 var namesElicitation = (key) => fold(key).includes("elicitation");
 function readFile(path2, max) {
@@ -61895,12 +61897,18 @@ function ancestry() {
   return chain;
 }
 function pointsClientAtConfig(name, value) {
-  if (!/^CLAUDE/i.test(name) || CLIENT_ENV_KNOWN.has(name.toUpperCase()) || !CLIENT_CONFIG_ENV.test(name) || !value.trim())
+  if (!value.trim())
+    return false;
+  if (CODE_INTO_CLIENT.test(name) || name === "NODE_OPTIONS" && NODE_LOADS_CODE.test(value))
+    return true;
+  if (/^CLAUDE/i.test(name) && /COWORK/i.test(name) && !/^(0|false|no|off)$/i.test(value.trim()))
+    return true;
+  if (!/^CLAUDE/i.test(name) || CLIENT_ENV_KNOWN.has(name.toUpperCase()) || !CLIENT_CONFIG_ENV.test(name))
     return false;
   return LOCATION_NAME.test(name) || looksLikeLocation(value);
 }
 function checkClientEnvironment() {
-  return Object.keys(process.env).filter((name) => pointsClientAtConfig(name, process.env[name] ?? "")).map((name) => ({ file: `environment ${name}`, why: "points the client at configuration Praxis cannot check", kind: "launch" }));
+  return Object.keys(process.env).filter((name) => pointsClientAtConfig(name, process.env[name] ?? "")).map((name) => ({ file: `environment ${name}`, why: CODE_INTO_CLIENT.test(name) || name === "NODE_OPTIONS" ? "loads code into the client process, which can answer its dialog from inside" : "points the client at configuration Praxis cannot check", kind: "launch" }));
 }
 function checkLaunch(read) {
   let chain;
@@ -61970,7 +61978,7 @@ function dialogAutomation(input2 = {}) {
     settingsAt((0, import_node_path4.join)(home, ".claude.json"), false, MAX_GLOBAL_JSON);
   const pluginBudget = { left: limit, limit };
   for (const dir of configDirs) {
-    for (const name of SETTINGS_NAMES)
+    for (const name of [...SETTINGS_NAMES, "cowork_settings.json"])
       settingsAt((0, import_node_path4.join)(dir, name), false);
     for (const sub of ["agents", "skills", "commands", "output-styles"]) {
       const defs = (0, import_node_path4.join)(dir, sub);
@@ -61980,15 +61988,16 @@ function dialogAutomation(input2 = {}) {
         if (file2.endsWith(".md") && !seen.has(file2))
           seen.add(file2), findings.push(...checkMarkdown(file2, false));
     }
-    const plugins = (0, import_node_path4.join)(dir, "plugins");
-    if (!(0, import_node_fs4.existsSync)(plugins))
-      continue;
-    const { roots, findings: recordFindings } = pluginRoots(plugins);
-    findings.push(...recordFindings);
-    findings.push(...checkPluginTree(plugins, pluginBudget, seen));
-    for (const root of roots)
-      if (!within((0, import_node_path4.resolve)(root), plugins) && (0, import_node_fs4.existsSync)(root))
-        findings.push(...checkPluginTree((0, import_node_path4.resolve)(root), pluginBudget, seen));
+    for (const plugins of [(0, import_node_path4.join)(dir, "plugins"), (0, import_node_path4.join)(dir, "cowork_plugins")]) {
+      if (!(0, import_node_fs4.existsSync)(plugins))
+        continue;
+      const { roots, findings: recordFindings } = pluginRoots(plugins);
+      findings.push(...recordFindings);
+      findings.push(...checkPluginTree(plugins, pluginBudget, seen));
+      for (const root of roots)
+        if (!within((0, import_node_path4.resolve)(root), plugins) && (0, import_node_fs4.existsSync)(root))
+          findings.push(...checkPluginTree((0, import_node_path4.resolve)(root), pluginBudget, seen));
+    }
   }
   if (pluginBudget.finding)
     findings.push(pluginBudget.finding);
@@ -81922,7 +81931,7 @@ var import_node_fs6 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"0e3a76fd0ea801ca7cc7eaeed6f4f623986076db750b7065cb89d9df91de33d4","coreBaseline":"99e70434aa3828661f3b5c68f5d8de5bbf6b2153","inputs":40}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"0e86c1aaaac62a699019d80ec2fbb2c25ca0fff7577c153513b266a16433a342","coreBaseline":"0849fb691ee2dfdf4a041e4bcba1ac34ce06d300","inputs":40}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -85880,6 +85889,7 @@ async function ensureServer2() {
   server2 = (0, import_node_http2.createServer)((req, res) => {
     handle2(req, res).catch((error64) => json3(res, 500, { error: error64 instanceof Error ? error64.message : String(error64) }));
   });
+  server2.keepAliveTimeout = 6e4;
   await new Promise((ok, fail2) => {
     server2.once("error", fail2);
     server2.listen(0, "127.0.0.1", () => ok());

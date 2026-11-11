@@ -342,9 +342,11 @@ describe("the re-review's bypasses (round 2): each is found; ordinary configurat
 
 describe("the round-3 review's forms: whole flag families, the user's env block; and no refusal of ordinary setups", () => {
   it("R3-F1/F5: any --plugin*, --setting*, --managed* flag, --agents and --await-initialize refuse", () => {
-    for (const args of ["claude --plugin-dir-no-mcp ./p", "claude --setting-sources=user", "claude --managed-settings ./m.json", "claude --await-initialize", "claude --PLUGIN-DIR=x"]) {
+    for (const args of ["claude --plugin-dir-no-mcp ./p", "claude --settings-file x", "claude --managed-settings ./m.json", "claude --await-initialize", "claude --PLUGIN-DIR=x"]) {
       expect(kinds(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args }] })), args).toEqual(["launch"]);
     }
+    // --setting-sources only narrows the standard scopes (all of which are checked): an IDE or SDK host passing it is not refused
+    expect(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args: "claude --setting-sources=user,project,local" }] })).toEqual([]);
   });
 
   it("R3-F2: the user's settings env pointing the client at plugins refuses; harmless client variables do not", () => {
@@ -389,5 +391,38 @@ describe("the round-3 review's forms: whole flag families, the user's env block;
     expect(dialogAutomation({ repo })).toEqual([]);
     write(join(plugin, "hooks", "hooks.json"), "{ broken");
     expect(kinds(dialogAutomation({ repo }))).toEqual(["unverifiable"]);
+  });
+});
+
+describe("the round-4 review's forms: code loaded into the client, Cowork's configuration set", () => {
+  const withEnv = (vars: Record<string, string>, run: () => void) => {
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, vars);
+      run();
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+  };
+
+  it("R4-F1: environment that loads code into the client refuses; ordinary runtime options do not", () => {
+    for (const vars of [{ BUN_OPTIONS: "--preload ./pre.js" }, { BUN_INSPECT: "ws://x" }, { NODE_OPTIONS: "--require ./pre.js" }, { NODE_OPTIONS: "--import=./x.mjs" }, { DYLD_INSERT_LIBRARIES: "/tmp/x.dylib" }, { LD_PRELOAD: "/tmp/x.so" }]) {
+      withEnv(vars, () => expect(kinds(dialogAutomation({ repo })), JSON.stringify(vars)).toEqual(["launch"]));
+    }
+    withEnv({ NODE_OPTIONS: "--max-old-space-size=8192" }, () => expect(dialogAutomation({ repo })).toEqual([]));
+  });
+
+  it("R4-F2: the switch to Cowork's settings refuses; a hook in Cowork's settings or plugins is found", () => {
+    withEnv({ CLAUDE_CODE_USE_COWORK_PLUGINS: "1" }, () => expect(kinds(dialogAutomation({ repo }))).toEqual(["launch"]));
+    withEnv({ CLAUDE_CODE_USE_COWORK_PLUGINS: "0" }, () => expect(dialogAutomation({ repo })).toEqual([]));
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "cowork_settings.json"), HOOK);
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    rmSync(join(process.env.CLAUDE_CONFIG_DIR!, "cowork_settings.json"));
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "cowork_plugins", "cache", "m", "p", "1.0.0", "hooks", "hooks.json"), HOOK);
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    rmSync(join(process.env.CLAUDE_CONFIG_DIR!, "cowork_plugins"), { recursive: true });
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "settings.json"), { env: { CLAUDE_CODE_USE_COWORK_PLUGINS: "1" } });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["launch"]);
   });
 });

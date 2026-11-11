@@ -263,6 +263,9 @@ async function ensureServer(): Promise<number> {
   server = createServer((req, res) => {
     handle(req, res).catch((error) => json(res, 500, { error: error instanceof Error ? error.message : String(error) }));
   });
+  // a client that reuses a kept-alive socket the moment the server times it out gets ECONNRESET (seen under load): keep
+  // idle sockets far longer than a client's own keep-alive
+  server.keepAliveTimeout = 60_000;
   await new Promise<void>((ok, fail) => {
     server!.once("error", fail);
     server!.listen(0, "127.0.0.1", () => ok());
