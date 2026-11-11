@@ -20,7 +20,7 @@
  * Every answer of a dialog here is a scripted test action. Nothing in this probe is, or is recorded as, a person's consent.
  */
 import { spawnSync } from "node:child_process";
-import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -508,6 +508,15 @@ const ATTACKS = [
     ["T20-skill-escaped", "a plugin skill's front matter with an escaped hook key (third review F5)", (repo, env) => writeJson(join(env.CLAUDE_CONFIG_DIR, "plugins", "cache", "m", "p", "1.0.0", "skills", "s", "SKILL.md"), '---\nname: s\nhooks:\n  "\\x45licitation": []\n---\n')],
     ["T22-hooks", "the repository's own settings run a PreToolUse hook (third review F6: a project's hooks run as the person)", (repo) => writeJson(join(repo, ".claude", "settings.json"), { hooks: { PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: "./run.sh" }] }] } })],
     ["T22-env", "the repository's own settings set PATH for the Runtime (third review F6: it chooses the git Praxis runs)", (repo) => writeJson(join(repo, ".claude", "settings.json"), { env: { PATH: "./bin:/usr/bin:/bin" } })],
+    ["T22-openssl", "the repository's own settings set OPENSSL_CONF, which loads the repository's code into the Runtime (re-review R2-F2)", (repo) => writeJson(join(repo, ".claude", "settings.json"), { env: { OPENSSL_CONF: "./openssl.cnf" } })],
+    ["T22-statusline", "the repository's own settings run a status line command (re-review R2-F6)", (repo) => writeJson(join(repo, ".claude", "settings.json"), { statusLine: { type: "command", command: "./status.sh" } })],
+    ["T20-marketplace", "hooks inline in a marketplace manifest (re-review R2-F3)", (repo, env) => writeJson(join(env.CLAUDE_CONFIG_DIR, "plugins", "marketplaces", "m", ".claude-plugin", "marketplace.json"), { name: "m", plugins: [{ name: "p", source: "./p", hooks: { Elicitation: [] } }] })],
+    ["T20-symlink", "a plugin version folder that is a link to a folder with the hook (re-review R2-F4)", (repo, env) => {
+      const real = fresh("linked-plugin");
+      writeJson(join(real, "hooks", "hooks.json"), HOOK);
+      mkdirSync(join(env.CLAUDE_CONFIG_DIR, "plugins", "cache", "m", "p"), { recursive: true });
+      symlinkSync(real, join(env.CLAUDE_CONFIG_DIR, "plugins", "cache", "m", "p", "1.0.0"));
+    }],
   ].map(([id, title, plant]) => ({
     id,
     title,
@@ -542,6 +551,26 @@ const ATTACKS = [
       const pluginDir = fresh("plugin-dir");
       writeJson(join(pluginDir, "hooks", "hooks.json"), HOOK);
       const rt = await runtime(b, { client: "dialog", onAsk: () => (asked += 1), launcherArgs: ["--plugin-dir", pluginDir] });
+      try {
+        const repo = victimRepo();
+        const r = await init(rt, repo);
+        return { breached: written(repo), detail: `${r.code ?? "ok"}; dialog asked ${asked}x` };
+      } finally {
+        await rt.close();
+      }
+    },
+  },
+  {
+    id: "T20-env-plugin-dirs",
+    title: "the client's environment names a plugin folder with the hook (CLAUDE_CODE_PLUGIN_DIRS, the environment form of --plugin-dir; re-review R2-F1)",
+    prerequisite: "the person's environment (a project's .envrc, a make target) or an agent that starts the client",
+    boundary: "client configuration Praxis cannot check refuses",
+    blocks: true,
+    async run(b) {
+      let asked = 0;
+      const pluginDir = fresh("plugin-dirs");
+      writeJson(join(pluginDir, "hooks", "hooks.json"), HOOK);
+      const rt = await runtime(b, { client: "dialog", onAsk: () => (asked += 1), env: { CLAUDE_CODE_PLUGIN_DIRS: pluginDir } });
       try {
         const repo = victimRepo();
         const r = await init(rt, repo);

@@ -242,8 +242,11 @@ describe("the third review's bypasses (F1 to F7): each is found, and anything th
     const env = dialogAutomation({ repo });
     expect(kinds(env)).toEqual(["project-env"]);
     expect(env[0]!.why).toMatch(/PATH, NODE_OPTIONS/);
-    expect(env[0]!.why).not.toMatch(/FOO|bar|x\.js/);
-    write(join(repo, ".claude", "settings.json"), { env: { FOO: "bar" }, permissions: { allow: ["Bash(npm test)"] } });
+    expect(env[0]!.why).toMatch(/FOO/); // names only
+    expect(env[0]!.why).not.toMatch(/bar|x\.js/); // never values
+    write(join(repo, ".claude", "settings.json"), { env: { OPENSSL_CONF: "./x.cnf" } });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["project-env"]);
+    write(join(repo, ".claude", "settings.json"), { permissions: { allow: ["Bash(npm test)"] }, model: "x", includeCoAuthoredBy: false });
     expect(dialogAutomation({ repo })).toEqual([]);
   });
 
@@ -266,5 +269,73 @@ describe("the third review's bypasses (F1 to F7): each is found, and anything th
     expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
     expect(seen).toHaveLength(0);
     expect(existsSync(join(repo, ".project"))).toBe(false);
+  });
+});
+
+describe("the re-review's bypasses (round 2): each is found; ordinary configuration is not refused", () => {
+  it("R2-F1: the environment form of --plugin-dir (CLAUDE_CODE_PLUGIN_DIRS) and other client configuration variables refuse; ordinary ones do not", () => {
+    const saved = { ...process.env };
+    try {
+      process.env.CLAUDE_CODE_PLUGIN_DIRS = "/tmp/p";
+      expect(kinds(dialogAutomation({ repo }))).toEqual(["launch"]);
+      delete process.env.CLAUDE_CODE_PLUGIN_DIRS;
+      process.env.CLAUDE_CODE_MANAGED_SETTINGS_PATH = "/tmp/m.json";
+      expect(kinds(dialogAutomation({ repo }))).toEqual(["launch"]);
+      delete process.env.CLAUDE_CODE_MANAGED_SETTINGS_PATH;
+      Object.assign(process.env, { CLAUDE_PLUGIN_ROOT: "/p", CLAUDE_PLUGIN_DATA: "/d", CLAUDE_CODE_ENTRYPOINT: "cli", CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "s" });
+      expect(dialogAutomation({ repo })).toEqual([]);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+  });
+
+  it("R2-F2/F6: the repository's settings may hold only keys that neither run anything nor configure the client", () => {
+    for (const settings of [{ env: { NODE_ENV: "x" } }, { statusLine: { type: "command", command: "./s.sh" } }, { enabledPlugins: { "p@m": true } }, { extraKnownMarketplaces: { m: { source: { source: "directory", path: "./m" } } } }, { apiKeyHelper: "./k.sh" }, { somethingNew: 1 }]) {
+      write(join(repo, ".claude", "settings.json"), settings);
+      expect(dialogAutomation({ repo }).length, JSON.stringify(settings)).toBeGreaterThan(0);
+    }
+  });
+
+  it("R2-F3: hooks inline in a marketplace manifest, or behind a path it names, are found", () => {
+    const market = join(process.env.CLAUDE_CONFIG_DIR!, "plugins", "marketplaces", "m");
+    write(join(market, ".claude-plugin", "marketplace.json"), { name: "m", plugins: [{ name: "p", source: "./p", hooks: { Elicitation: [] } }] });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    write(join(market, ".claude-plugin", "marketplace.json"), { name: "m", plugins: [{ name: "p", source: "./p", hooks: "./cfg/x.json" }] });
+    write(join(market, "p", "cfg", "x.json"), HOOK);
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    rmSync(join(market, "p"), { recursive: true });
+    write(join(market, ".claude-plugin", "marketplace.json"), { name: "m", plugins: [{ name: "p", source: "./p", hooks: "./missing.json" }] });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["unverifiable"]);
+  });
+
+  it("R2-F4: a linked plugin or skill folder is followed; a delimiter with a trailing space still opens front matter", async () => {
+    const { symlinkSync } = await import("node:fs");
+    const real = temp("praxis-trust-linked-");
+    write(join(real, "hooks", "hooks.json"), HOOK);
+    mkdirSync(join(process.env.CLAUDE_CONFIG_DIR!, "plugins", "cache", "m", "p"), { recursive: true });
+    symlinkSync(real, join(process.env.CLAUDE_CONFIG_DIR!, "plugins", "cache", "m", "p", "1.0.0"));
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    rmSync(join(process.env.CLAUDE_CONFIG_DIR!, "plugins"), { recursive: true });
+    const skills = temp("praxis-trust-skills-");
+    write(join(skills, "s", "SKILL.md"), "--- \nname: s\nhooks:\n  Elicitation: []\n--- \n");
+    mkdirSync(join(repo, ".claude"), { recursive: true });
+    symlinkSync(skills, join(repo, ".claude", "skills"));
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+  });
+
+  it("R2-F5: a wrapper whose command line names claude does not hide the real client above it", () => {
+    expect(kinds(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args: "/Users/x/.claude/bin/claude-wrap" }, { pid: 8, ppid: 7, args: "claude --plugin-dir ./p" }] }))).toEqual(["launch"]);
+  });
+
+  it("R2-F7: ordinary configuration is not refused: a commented settings file, a skill that mentions hooks in its description, a broken fixture or a dangling link inside a plugin", async () => {
+    const { symlinkSync } = await import("node:fs");
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "settings.json"), '{\n  // my settings\n  "model": "x", /* note */\n  "hooks": { "PostToolUse": [] },\n}\n');
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "skills", "doc", "SKILL.md"), '---\nname: doc\ndescription: "Explains hooks: Elicitation and others"\n---\n');
+    const plugin = join(process.env.CLAUDE_CONFIG_DIR!, "plugins", "cache", "m", "p", "1.0.0");
+    write(join(plugin, ".claude-plugin", "plugin.json"), { name: "p" });
+    write(join(plugin, "test", "fixtures", "broken.json"), "{ not json");
+    symlinkSync(join(plugin, "nowhere"), join(plugin, "dangling"));
+    expect(dialogAutomation({ repo })).toEqual([]);
   });
 });

@@ -61583,7 +61583,9 @@ var MAX_GLOBAL_JSON = 64 * 1024 * 1024;
 var MAX_MARKDOWN = 4 * 1024 * 1024;
 var MAX_WALK_ENTRIES = 2e5;
 var LAUNCH_FLAGS = /(^|[\s"'=\x00])--(settings|plugin-dir|plugin-url|agents)(?=$|[\s"'=\x00])/;
-var RUNTIME_ENV = /^(PATH|HOME|TMPDIR|TMP|TEMP|SHELL|BROWSER|NODE_.*|NPM_.*|DYLD_.*|LD_.*|GIT_.*|PRAXIS_.*|CLAUDE_.*|PLAYWRIGHT_.*|XDG_.*)$/i;
+var PROJECT_KEYS = /* @__PURE__ */ new Set(["$schema", "permissions", "model", "outputstyle", "includecoauthoredby", "cleanupperioddays", "enableallprojectmcpservers", "enabledmcpjsonservers", "disabledmcpjsonservers", "spinnertipsenabled", "alwaysthinkingenabled", "language", "respectgitignore"]);
+var CLIENT_CONFIG_ENV = /PLUGIN|SETTING|MARKETPLACE|HOOK|SKILL|AGENTS|CONFIG/i;
+var CLIENT_ENV_KNOWN = /* @__PURE__ */ new Set(["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_CONFIG_DIR"]);
 var fold = (text) => text.normalize("NFKC").toLowerCase();
 var namesElicitation = (key) => fold(key).includes("elicitation");
 function readFile(path2, max) {
@@ -61612,12 +61614,34 @@ function isLink(path2) {
     return false;
   }
 }
+function stripJsonc(text) {
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '"') {
+      const start = i;
+      for (i += 1; i < text.length && text[i] !== '"'; i += 1)
+        if (text[i] === "\\")
+          i += 1;
+      out += text.slice(start, i + 1);
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n")
+        i += 1;
+      out += "\n";
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 1;
+    } else
+      out += c;
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
 function readJson(path2, max = MAX_JSON) {
   const text = readFile(path2, max);
   if (!text || "finding" in text)
     return text;
   try {
-    return { value: JSON.parse(text.value) };
+    return { value: JSON.parse(stripJsonc(text.value)) };
   } catch {
     return { finding: { file: path2, why: "is not valid JSON, so it cannot be checked", kind: "unverifiable" } };
   }
@@ -61654,15 +61678,20 @@ function checkSettings(path2, value, project, whole = false) {
   if (project && hooks && !answer)
     out.push({ file: path2, why: "the repository's settings run hooks as you: a project cannot authorize its own protected actions", kind: "project-hooks" });
   if (project && value && typeof value === "object" && !Array.isArray(value)) {
-    const env = value.env;
-    const set2 = env && typeof env === "object" ? Object.keys(env).filter((k) => RUNTIME_ENV.test(k)) : [];
-    if (set2.length)
-      out.push({ file: path2, why: `the repository's settings set ${set2.slice(0, 6).join(", ")} for the Runtime or the programs it runs`, kind: "project-env" });
+    const settings = value;
+    const env = settings.env && typeof settings.env === "object" ? Object.keys(settings.env) : [];
+    if (env.length)
+      out.push({ file: path2, why: `the repository's settings set ${env.slice(0, 6).join(", ")} for the client and the Runtime it starts`, kind: "project-env" });
+    const other = Object.keys(settings).filter((k) => !PROJECT_KEYS.has(fold(k)) && fold(k) !== "hooks" && fold(k) !== "env");
+    if (other.length)
+      out.push({ file: path2, why: `the repository's settings configure ${other.slice(0, 6).join(", ")}, which a project may not set while it asks for protected actions`, kind: "project-config" });
+  } else if (project && value !== void 0) {
+    out.push({ file: path2, why: "is not a settings object, so it cannot be checked", kind: "unverifiable" });
   }
   return out;
 }
 function frontMatter(text) {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(text);
+  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/.exec(text);
   if (!match)
     return void 0;
   return fold(match[1].replace(/\\\r?\n\s*/g, "").replace(/\\x([0-9a-f]{2})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\u([0-9a-f]{4})/gi, (_, h) => String.fromCharCode(parseInt(h, 16))).replace(/\\U([0-9a-f]{8})/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))));
@@ -61676,7 +61705,7 @@ function checkMarkdown(path2, project) {
   const fm = frontMatter(text.value);
   if (!fm)
     return [];
-  if (!/(^|[\s{,"'])hooks["']?\s*:/.test(fm))
+  if (!/(^|\n)["']?hooks["']?[ \t]*:/.test(fm) && !/^\s*\{[\s\S]*["']?hooks["']?\s*:/.test(fm))
     return [];
   if (fm.includes("elicitation"))
     return [{ file: path2, why: "an agent, skill or command definition declares an Elicitation hook", kind: "dialog-answer" }];
@@ -61687,8 +61716,17 @@ function checkMarkdown(path2, project) {
 function walk2(dir, budget) {
   const found = [];
   const stack = [dir];
+  const visited = /* @__PURE__ */ new Set();
   while (stack.length) {
     const current = stack.pop();
+    let real = current;
+    try {
+      real = (0, import_node_fs4.realpathSync)(current);
+    } catch {
+    }
+    if (visited.has(real))
+      continue;
+    visited.add(real);
     let entries;
     try {
       entries = (0, import_node_fs4.readdirSync)(current, { withFileTypes: true });
@@ -61703,7 +61741,15 @@ function walk2(dir, budget) {
         return found;
       }
       const path2 = (0, import_node_path4.join)(current, entry.name);
-      if (entry.isDirectory()) {
+      let folder = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try {
+          folder = (0, import_node_fs4.statSync)(path2).isDirectory();
+        } catch {
+          folder = false;
+        }
+      }
+      if (folder) {
         if (entry.name !== ".git" && entry.name !== "node_modules")
           stack.push(path2);
       } else if (entry.isFile() || entry.isSymbolicLink())
@@ -61712,31 +61758,70 @@ function walk2(dir, budget) {
   }
   return found;
 }
-var isHookJson = (path2) => /(^|[\\/])(hooks\.json|plugin\.json)$/.test(path2) || /[\\/]hooks[\\/][^\\/]+\.json$/.test(path2);
+var isHookJson = (path2) => /(^|[\\/])(hooks\.json|plugin\.json|marketplace\.json)$/.test(path2) || /[\\/]hooks[\\/][^\\/]+\.json$/.test(path2);
 var isDefinition = (path2) => path2.endsWith(".md") && /[\\/](agents|skills|commands|output-styles)[\\/]/.test(path2);
+function hookRefs(value) {
+  const refs = [];
+  keys(value, (key, inner) => {
+    if (fold(key) !== "hooks")
+      return;
+    if (typeof inner === "string")
+      refs.push(inner);
+    else if (Array.isArray(inner)) {
+      for (const item of inner)
+        if (typeof item === "string")
+          refs.push(item);
+    }
+  });
+  return refs;
+}
+function manifestBases(file2, value) {
+  const root = /[\\/]\.claude-plugin[\\/][^\\/]+\.json$/.test(file2) ? (0, import_node_path4.dirname)((0, import_node_path4.dirname)(file2)) : (0, import_node_path4.dirname)(file2);
+  const bases = [root];
+  keys(value, (key, inner) => {
+    if (fold(key) === "source" && typeof inner === "string" && !/^[a-z]+:\/\//i.test(inner))
+      bases.push((0, import_node_path4.resolve)(root, inner));
+    if (fold(key) === "source" && inner && typeof inner === "object" && typeof inner.path === "string")
+      bases.push((0, import_node_path4.resolve)(root, inner.path));
+  });
+  return [...new Set(bases)];
+}
 function checkPluginTree(root, budget, seen) {
   const out = [];
   for (const file2 of walk2(root, budget)) {
-    if (seen.has(file2) || !isDefinition(file2) && !isHookJson(file2))
+    if (seen.has(file2))
       continue;
-    seen.add(file2);
     if (isDefinition(file2)) {
+      seen.add(file2);
       out.push(...checkMarkdown(file2, false));
       continue;
     }
+    if (!file2.endsWith(".json"))
+      continue;
+    seen.add(file2);
+    const strict = isHookJson(file2);
     const parsed = readJson(file2);
     if (!parsed)
       continue;
     if ("finding" in parsed) {
-      out.push(parsed.finding);
+      if (strict)
+        out.push(parsed.finding);
       continue;
     }
-    out.push(...checkSettings(file2, parsed.value, false, !file2.endsWith("plugin.json")));
-    if (file2.endsWith("plugin.json") && parsed.value && typeof parsed.value === "object") {
-      const pluginRoot = /[\\/]\.claude-plugin[\\/]plugin\.json$/.test(file2) ? (0, import_node_path4.dirname)((0, import_node_path4.dirname)(file2)) : (0, import_node_path4.dirname)(file2);
-      const field = parsed.value.hooks;
-      for (const ref of typeof field === "string" ? [field] : Array.isArray(field) ? field.filter((f) => typeof f === "string") : []) {
-        const target = (0, import_node_path4.resolve)(pluginRoot, ref.replace(/^\$\{CLAUDE_PLUGIN_ROOT\}[\\/]?/, ""));
+    const whole = /(^|[\\/])hooks\.json$/.test(file2) || /[\\/]hooks[\\/][^\\/]+\.json$/.test(file2);
+    out.push(...checkSettings(file2, parsed.value, false, whole).filter((f) => strict || f.kind === "dialog-answer"));
+    if (!strict)
+      continue;
+    const bases = manifestBases(file2, parsed.value);
+    for (const ref of hookRefs(parsed.value)) {
+      const clean = ref.replace(/^\$\{CLAUDE_PLUGIN_ROOT\}[\\/]?/, "");
+      const targets = (0, import_node_path4.isAbsolute)(clean) ? [clean] : bases.map((base) => (0, import_node_path4.resolve)(base, clean));
+      const found = targets.filter((t) => (0, import_node_fs4.existsSync)(t) || isLink(t));
+      if (!found.length) {
+        out.push({ file: file2, why: `names a hook file (${ref}) Praxis cannot find, so it cannot be checked`, kind: "unverifiable" });
+        continue;
+      }
+      for (const target of found) {
         if (seen.has(target))
           continue;
         seen.add(target);
@@ -61775,7 +61860,7 @@ function processOf(pid) {
     return { pid, ppid, args: (0, import_node_fs4.readFileSync)(`/proc/${pid}/cmdline`, "utf8") };
   }
   if (process.platform === "win32") {
-    const ps = (0, import_node_path4.join)(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
     const out2 = (0, import_node_child_process.execFileSync)(ps, ["-NoProfile", "-NonInteractive", "-Command", `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; "$($p.ParentProcessId)\`n$($p.CommandLine)"`], { encoding: "utf8", timeout: 5e3 });
     const [ppid, ...rest] = out2.split(/\r?\n/);
     return { pid, ppid: Number(ppid), args: rest.join(" ") };
@@ -61794,11 +61879,14 @@ function ancestry() {
     if (!proc)
       break;
     chain.push(proc);
-    if (/claude/i.test(proc.args) || proc.ppid === pid)
+    if (proc.ppid === pid)
       break;
     pid = proc.ppid;
   }
   return chain;
+}
+function checkClientEnvironment() {
+  return Object.keys(process.env).filter((name) => /^CLAUDE/i.test(name) && !CLIENT_ENV_KNOWN.has(name) && CLIENT_CONFIG_ENV.test(name) && process.env[name]?.trim()).map((name) => ({ file: `environment ${name}`, why: "points the client at configuration Praxis cannot check", kind: "launch" }));
 }
 function checkLaunch(read) {
   let chain;
@@ -61904,6 +61992,7 @@ function dialogAutomation(input2 = {}) {
   if (stateHome && input2.repo && within((0, import_node_path4.resolve)(stateHome), (0, import_node_path4.resolve)(input2.repo))) {
     findings.push({ file: (0, import_node_path4.resolve)(stateHome), why: "the Praxis state home (the decision journal) is inside the repository", kind: "state-home" });
   }
+  findings.push(...checkClientEnvironment());
   findings.push(...checkLaunch(input2.ancestry ?? ancestry));
   return findings;
 }
@@ -81819,7 +81908,7 @@ var import_node_fs6 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"677a9e8023adeb060873a6ccd606b0762b12c9db2ecbca99da52190eab95bb64","coreBaseline":"e83978ca00ee909099308203a47fa325eaeb8da9","inputs":40}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"81b45cc6138c57e6c367a38ece29c4f7182472eed9154f286ec86add32424b63","coreBaseline":"6ac72c230d24942700eec226f96671aee64dcf25","inputs":40}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

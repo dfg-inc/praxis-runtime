@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
 import { testSource } from "./approval-settings.js";
@@ -32,7 +32,7 @@ import { testSource } from "./approval-settings.js";
 export type AutomationFinding = {
   file: string;
   why: string;
-  kind: "dialog-answer" | "project-hooks" | "project-env" | "launch" | "unverifiable" | "state-home";
+  kind: "dialog-answer" | "project-hooks" | "project-env" | "project-config" | "launch" | "unverifiable" | "state-home";
 };
 
 const SETTINGS_NAMES = ["settings.json", "settings.local.json"];
@@ -42,8 +42,15 @@ const MAX_MARKDOWN = 4 * 1024 * 1024;
 const MAX_WALK_ENTRIES = 200_000;
 // flags that bring configuration Praxis does not evaluate (--setting-sources only narrows the standard scopes, all checked)
 const LAUNCH_FLAGS = /(^|[\s"'=\x00])--(settings|plugin-dir|plugin-url|agents)(?=$|[\s"'=\x00])/;
-/** Environment a project's settings must not set for the Runtime: it chooses the programs Praxis runs, or where it keeps its record. */
-const RUNTIME_ENV = /^(PATH|HOME|TMPDIR|TMP|TEMP|SHELL|BROWSER|NODE_.*|NPM_.*|DYLD_.*|LD_.*|GIT_.*|PRAXIS_.*|CLAUDE_.*|PLAYWRIGHT_.*|XDG_.*)$/i;
+/**
+ * What a repository's own Claude Code settings may contain: keys that neither run anything nor configure the client or the
+ * Runtime. Anything else (hooks, env, a status line command, plugins and marketplaces, helper commands, keys Praxis does not
+ * know) refuses protected actions: a project does not configure its own approval.
+ */
+const PROJECT_KEYS = new Set(["$schema", "permissions", "model", "outputstyle", "includecoauthoredby", "cleanupperioddays", "enableallprojectmcpservers", "enabledmcpjsonservers", "disabledmcpjsonservers", "spinnertipsenabled", "alwaysthinkingenabled", "language", "respectgitignore"]);
+/** Client environment that points it at configuration Praxis does not read (the environment form of --plugin-dir and the like). */
+const CLIENT_CONFIG_ENV = /PLUGIN|SETTING|MARKETPLACE|HOOK|SKILL|AGENTS|CONFIG/i;
+const CLIENT_ENV_KNOWN = new Set(["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_CONFIG_DIR"]);
 
 const fold = (text: string): string => text.normalize("NFKC").toLowerCase();
 const namesElicitation = (key: string): boolean => fold(key).includes("elicitation");
@@ -77,11 +84,31 @@ function isLink(path: string): boolean {
   }
 }
 
+/** Comments and trailing commas removed (outside strings), as a lenient settings reader would accept them. */
+function stripJsonc(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i]!;
+    if (c === '"') {
+      const start = i;
+      for (i += 1; i < text.length && text[i] !== '"'; i += 1) if (text[i] === "\\") i += 1;
+      out += text.slice(start, i + 1);
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+      out += "\n";
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 1;
+    } else out += c;
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
+
 function readJson(path: string, max = MAX_JSON): Read<unknown> {
   const text = readFile(path, max);
   if (!text || "finding" in text) return text;
   try {
-    return { value: JSON.parse(text.value) };
+    return { value: JSON.parse(stripJsonc(text.value)) };
   } catch {
     return { finding: { file: path, why: "is not valid JSON, so it cannot be checked", kind: "unverifiable" } };
   }
@@ -115,16 +142,20 @@ function checkSettings(path: string, value: unknown, project: boolean, whole = f
   if (answer) out.push({ file: path, why: "an Elicitation hook answers the approval dialog", kind: "dialog-answer" });
   if (project && hooks && !answer) out.push({ file: path, why: "the repository's settings run hooks as you: a project cannot authorize its own protected actions", kind: "project-hooks" });
   if (project && value && typeof value === "object" && !Array.isArray(value)) {
-    const env = (value as Record<string, unknown>).env;
-    const set = env && typeof env === "object" ? Object.keys(env as object).filter((k) => RUNTIME_ENV.test(k)) : [];
-    if (set.length) out.push({ file: path, why: `the repository's settings set ${set.slice(0, 6).join(", ")} for the Runtime or the programs it runs`, kind: "project-env" });
+    const settings = value as Record<string, unknown>;
+    const env = settings.env && typeof settings.env === "object" ? Object.keys(settings.env as object) : [];
+    if (env.length) out.push({ file: path, why: `the repository's settings set ${env.slice(0, 6).join(", ")} for the client and the Runtime it starts`, kind: "project-env" });
+    const other = Object.keys(settings).filter((k) => !PROJECT_KEYS.has(fold(k)) && fold(k) !== "hooks" && fold(k) !== "env");
+    if (other.length) out.push({ file: path, why: `the repository's settings configure ${other.slice(0, 6).join(", ")}, which a project may not set while it asks for protected actions`, kind: "project-config" });
+  } else if (project && value !== undefined) {
+    out.push({ file: path, why: "is not a settings object, so it cannot be checked", kind: "unverifiable" });
   }
   return out;
 }
 
 /** YAML front matter, with the escapes and line joins a double-quoted YAML key may use undone. */
 function frontMatter(text: string): string | undefined {
-  const match = /^---\r?\n([\s\S]*?)\r?\n---(\r?\n|$)/.exec(text);
+  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(\r?\n|$)/.exec(text);
   if (!match) return undefined;
   return fold(
     match[1]!
@@ -141,8 +172,9 @@ function checkMarkdown(path: string, project: boolean): AutomationFinding[] {
   if ("finding" in text) return [text.finding];
   const fm = frontMatter(text.value);
   if (!fm) return [];
-  // a hooks key in any YAML form (plain, quoted, flow mapping), after the escapes are undone
-  if (!/(^|[\s{,"'])hooks["']?\s*:/.test(fm)) return [];
+  // a top-level hooks key (plain or quoted), or a front matter that is one flow mapping holding one, after escapes are undone;
+  // the word inside a description is not a key
+  if (!/(^|\n)["']?hooks["']?[ \t]*:/.test(fm) && !/^\s*\{[\s\S]*["']?hooks["']?\s*:/.test(fm)) return [];
   if (fm.includes("elicitation")) return [{ file: path, why: "an agent, skill or command definition declares an Elicitation hook", kind: "dialog-answer" }];
   if (project) return [{ file: path, why: "a repository agent, skill or command definition declares hooks: a project cannot authorize its own protected actions", kind: "project-hooks" }];
   return [];
@@ -153,8 +185,18 @@ type Budget = { left: number; limit: number; finding?: AutomationFinding };
 function walk(dir: string, budget: Budget): string[] {
   const found: string[] = [];
   const stack = [dir];
+  const visited = new Set<string>();
   while (stack.length) {
     const current = stack.pop()!;
+    // a linked folder is followed (once: a link loop ends there)
+    let real = current;
+    try {
+      real = realpathSync(current);
+    } catch {
+      /* listed below as unreadable */
+    }
+    if (visited.has(real)) continue;
+    visited.add(real);
     let entries: import("node:fs").Dirent[];
     try {
       entries = readdirSync(current, { withFileTypes: true });
@@ -168,7 +210,15 @@ function walk(dir: string, budget: Budget): string[] {
         return found;
       }
       const path = join(current, entry.name);
-      if (entry.isDirectory()) {
+      let folder = entry.isDirectory();
+      if (entry.isSymbolicLink()) {
+        try {
+          folder = statSync(path).isDirectory();
+        } catch {
+          folder = false; // a dangling link: kept as a file, refused only where a hook file is expected
+        }
+      }
+      if (folder) {
         if (entry.name !== ".git" && entry.name !== "node_modules") stack.push(path);
       } else if (entry.isFile() || entry.isSymbolicLink()) found.push(path);
     }
@@ -176,32 +226,68 @@ function walk(dir: string, budget: Budget): string[] {
   return found;
 }
 
-const isHookJson = (path: string): boolean => /(^|[\\/])(hooks\.json|plugin\.json)$/.test(path) || /[\\/]hooks[\\/][^\\/]+\.json$/.test(path);
+/** Files Claude Code reads hooks from by their name: a hook file, a plugin manifest, a marketplace manifest. */
+const isHookJson = (path: string): boolean => /(^|[\\/])(hooks\.json|plugin\.json|marketplace\.json)$/.test(path) || /[\\/]hooks[\\/][^\\/]+\.json$/.test(path);
 const isDefinition = (path: string): boolean => path.endsWith(".md") && /[\\/](agents|skills|commands|output-styles)[\\/]/.test(path);
 
-/** A plugin tree: manifests (and the hook files they name), hook files, and agent, skill and command definitions. */
+/** Every string a `hooks` key holds (a path, or a list of paths), at any depth: hook files a manifest names. */
+function hookRefs(value: unknown): string[] {
+  const refs: string[] = [];
+  keys(value, (key, inner) => {
+    if (fold(key) !== "hooks") return;
+    if (typeof inner === "string") refs.push(inner);
+    else if (Array.isArray(inner)) for (const item of inner) if (typeof item === "string") refs.push(item);
+  });
+  return refs;
+}
+
+/** The folders a manifest's relative paths can be relative to: its own root, and a marketplace entry's `source` folder. */
+function manifestBases(file: string, value: unknown): string[] {
+  const root = /[\\/]\.claude-plugin[\\/][^\\/]+\.json$/.test(file) ? dirname(dirname(file)) : dirname(file);
+  const bases = [root];
+  keys(value, (key, inner) => {
+    if (fold(key) === "source" && typeof inner === "string" && !/^[a-z]+:\/\//i.test(inner)) bases.push(resolve(root, inner));
+    if (fold(key) === "source" && inner && typeof inner === "object" && typeof (inner as Record<string, unknown>).path === "string") bases.push(resolve(root, (inner as Record<string, string>).path));
+  });
+  return [...new Set(bases)];
+}
+
+/**
+ * A plugin tree: hook files, plugin and marketplace manifests (and every hook file they name, under any name), and agent,
+ * skill and command definitions, all of which fail closed; every other JSON file is also read for a hook, best effort (a
+ * broken fixture in a plugin's tests does not refuse anything, because Claude Code does not read it as a hook).
+ */
 function checkPluginTree(root: string, budget: Budget, seen: Set<string>): AutomationFinding[] {
   const out: AutomationFinding[] = [];
   for (const file of walk(root, budget)) {
-    if (seen.has(file) || (!isDefinition(file) && !isHookJson(file))) continue;
-    seen.add(file);
+    if (seen.has(file)) continue;
     if (isDefinition(file)) {
+      seen.add(file);
       out.push(...checkMarkdown(file, false));
       continue;
     }
+    if (!file.endsWith(".json")) continue;
+    seen.add(file);
+    const strict = isHookJson(file);
     const parsed = readJson(file);
     if (!parsed) continue;
     if ("finding" in parsed) {
-      out.push(parsed.finding);
+      if (strict) out.push(parsed.finding);
       continue;
     }
-    out.push(...checkSettings(file, parsed.value, false, !file.endsWith("plugin.json")));
-    // a manifest's `hooks` field may name files under any name: follow them
-    if (file.endsWith("plugin.json") && parsed.value && typeof parsed.value === "object") {
-      const pluginRoot = /[\\/]\.claude-plugin[\\/]plugin\.json$/.test(file) ? dirname(dirname(file)) : dirname(file);
-      const field = (parsed.value as Record<string, unknown>).hooks;
-      for (const ref of typeof field === "string" ? [field] : Array.isArray(field) ? field.filter((f): f is string => typeof f === "string") : []) {
-        const target = resolve(pluginRoot, ref.replace(/^\$\{CLAUDE_PLUGIN_ROOT\}[\\/]?/, ""));
+    const whole = /(^|[\\/])hooks\.json$/.test(file) || /[\\/]hooks[\\/][^\\/]+\.json$/.test(file);
+    out.push(...checkSettings(file, parsed.value, false, whole).filter((f) => strict || f.kind === "dialog-answer"));
+    if (!strict) continue;
+    const bases = manifestBases(file, parsed.value);
+    for (const ref of hookRefs(parsed.value)) {
+      const clean = ref.replace(/^\$\{CLAUDE_PLUGIN_ROOT\}[\\/]?/, "");
+      const targets = isAbsolute(clean) ? [clean] : bases.map((base) => resolve(base, clean));
+      const found = targets.filter((t) => existsSync(t) || isLink(t));
+      if (!found.length) {
+        out.push({ file, why: `names a hook file (${ref}) Praxis cannot find, so it cannot be checked`, kind: "unverifiable" });
+        continue;
+      }
+      for (const target of found) {
         if (seen.has(target)) continue;
         seen.add(target);
         const hooked = readJson(target);
@@ -240,7 +326,8 @@ function processOf(pid: number): Process | undefined {
     return { pid, ppid, args: readFileSync(`/proc/${pid}/cmdline`, "utf8") };
   }
   if (process.platform === "win32") {
-    const ps = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+    // a fixed path: an environment the repository may set must not choose the program that reads the client's command line
+    const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
     const out = execFileSync(ps, ["-NoProfile", "-NonInteractive", "-Command", `$p = Get-CimInstance Win32_Process -Filter "ProcessId=${pid}"; "$($p.ParentProcessId)\`n$($p.CommandLine)"`], { encoding: "utf8", timeout: 5_000 });
     const [ppid, ...rest] = out.split(/\r?\n/);
     return { pid, ppid: Number(ppid), args: rest.join(" ") };
@@ -252,9 +339,8 @@ function processOf(pid: number): Process | undefined {
 }
 
 /**
- * The processes above the Runtime, nearest first, up to and including the nearest one that looks like a Claude Code client
- * (its flags configure its hooks; what started it does not). A client that does not look like one is walked past, so
- * everything above it is checked too.
+ * The processes above the Runtime, nearest first, all the way up: a wrapper with any name can stand between the Runtime and
+ * the client, so no process is taken for the client by its name.
  */
 export function ancestry(): Process[] {
   // the test source only (inert in a shipped bundle): the command lines of the processes above, nearest first
@@ -265,12 +351,19 @@ export function ancestry(): Process[] {
     const proc = processOf(pid);
     if (!proc) break;
     chain.push(proc);
-    if (/claude/i.test(proc.args) || proc.ppid === pid) break;
+    if (proc.ppid === pid) break;
     pid = proc.ppid;
   }
   return chain;
 }
 
+
+/** The client's environment, as the Runtime inherited it: the environment form of the configuration flags. */
+function checkClientEnvironment(): AutomationFinding[] {
+  return Object.keys(process.env)
+    .filter((name) => /^CLAUDE/i.test(name) && !CLIENT_ENV_KNOWN.has(name) && CLIENT_CONFIG_ENV.test(name) && process.env[name]?.trim())
+    .map((name) => ({ file: `environment ${name}`, why: "points the client at configuration Praxis cannot check", kind: "launch" as const }));
+}
 
 function checkLaunch(read: () => Process[]): AutomationFinding[] {
   let chain: Process[];
@@ -363,6 +456,7 @@ export function dialogAutomation(input: { repo?: string; ancestry?: () => Proces
     findings.push({ file: resolve(stateHome), why: "the Praxis state home (the decision journal) is inside the repository", kind: "state-home" });
   }
 
+  findings.push(...checkClientEnvironment());
   findings.push(...checkLaunch(input.ancestry ?? ancestry));
   return findings;
 }
