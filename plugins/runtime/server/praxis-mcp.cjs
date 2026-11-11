@@ -61901,7 +61901,7 @@ function pointsClientAtConfig(name, value) {
     return false;
   if (CODE_INTO_CLIENT.test(name) || name === "NODE_OPTIONS" && NODE_LOADS_CODE.test(value))
     return true;
-  if (/^CLAUDE/i.test(name) && /COWORK/i.test(name) && !/^(0|false|no|off)$/i.test(value.trim()))
+  if (/^CLAUDE/i.test(name) && /COWORK|ZIP/i.test(name) && !/^(0|false|no|off)$/i.test(value.trim()))
     return true;
   if (!/^CLAUDE/i.test(name) || CLIENT_ENV_KNOWN.has(name.toUpperCase()) || !CLIENT_CONFIG_ENV.test(name))
     return false;
@@ -81931,7 +81931,7 @@ var import_node_fs6 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"0e86c1aaaac62a699019d80ec2fbb2c25ca0fff7577c153513b266a16433a342","coreBaseline":"0849fb691ee2dfdf4a041e4bcba1ac34ce06d300","inputs":40}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"7bc475aaf47bda194d87c5f4ca53409e85c315e8d85642eb222652efcdf2bdc4","coreBaseline":"0849fb691ee2dfdf4a041e4bcba1ac34ce06d300","inputs":40}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

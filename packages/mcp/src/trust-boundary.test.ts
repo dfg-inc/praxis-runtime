@@ -416,6 +416,7 @@ describe("the round-4 review's forms: code loaded into the client, Cowork's conf
   it("R4-F2: the switch to Cowork's settings refuses; a hook in Cowork's settings or plugins is found", () => {
     withEnv({ CLAUDE_CODE_USE_COWORK_PLUGINS: "1" }, () => expect(kinds(dialogAutomation({ repo }))).toEqual(["launch"]));
     withEnv({ CLAUDE_CODE_USE_COWORK_PLUGINS: "0" }, () => expect(dialogAutomation({ repo })).toEqual([]));
+    withEnv({ CLAUDE_CODE_PLUGIN_USE_ZIP_CACHE: "1" }, () => expect(kinds(dialogAutomation({ repo }))).toEqual(["launch"]));
     write(join(process.env.CLAUDE_CONFIG_DIR!, "cowork_settings.json"), HOOK);
     expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
     rmSync(join(process.env.CLAUDE_CONFIG_DIR!, "cowork_settings.json"));

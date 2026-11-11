@@ -383,8 +383,9 @@ export function ancestry(): Process[] {
 function pointsClientAtConfig(name: string, value: string): boolean {
   if (!value.trim()) return false;
   if (CODE_INTO_CLIENT.test(name) || (name === "NODE_OPTIONS" && NODE_LOADS_CODE.test(value))) return true;
-  // the switch to Cowork's settings and plugins (cowork_settings.json, cowork_plugins/): another configuration set
-  if (/^CLAUDE/i.test(name) && /COWORK/i.test(name) && !/^(0|false|no|off)$/i.test(value.trim())) return true;
+  // the switch to Cowork's settings and plugins (cowork_settings.json, cowork_plugins/), or to plugins kept as archives:
+  // another configuration set
+  if (/^CLAUDE/i.test(name) && /COWORK|ZIP/i.test(name) && !/^(0|false|no|off)$/i.test(value.trim())) return true;
   if (!/^CLAUDE/i.test(name) || CLIENT_ENV_KNOWN.has(name.toUpperCase()) || !CLIENT_CONFIG_ENV.test(name)) return false;
   return LOCATION_NAME.test(name) || looksLikeLocation(value);
 }
