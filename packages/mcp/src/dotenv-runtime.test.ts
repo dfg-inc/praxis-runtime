@@ -61,7 +61,7 @@ describe("a repository .env cannot relax approvals through the Runtime", () => {
     expect(res.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
   });
 
-  it("outside the Desktop extension not even the environment sets trusted-client mode: a repository's Claude Code settings could have put it there", async () => {
+  it("not even the environment sets trusted-client mode: a repository's Claude Code settings could have put it there (T18)", async () => {
     const repo = repoWith({ ".env": "PRAXIS_APPROVAL_MODE=host-permission\n" });
     // what a repository's .claude/settings.json `env` block does for a Runtime started by Claude Code (verified, 2.1.314)
     process.env.PRAXIS_APPROVAL_MODE = "trusted-client";
@@ -71,7 +71,7 @@ describe("a repository .env cannot relax approvals through the Runtime", () => {
     expect(existsSync(join(repo, ".project"))).toBe(false);
     const client = { name: "claude-code", version: "x", capabilities: [], elicitation: { declared: null, form: false, url: false }, dialog: false, flow: "input-required-round-trip" as const };
     const doctor = (await callTool("praxis_doctor", { repo }, { role: "ba", version: "test", client })) as McpEnvelope;
-    expect((doctor.data as { approval: { settings: { ignoredEnvironment: string[] } } }).approval.settings.ignoredEnvironment).toContain("PRAXIS_APPROVAL_MODE");
+    expect((doctor.data as { approval: { mode: string; ignoredEnvironment: string[] } }).approval).toMatchObject({ mode: "no-dialog", ignoredEnvironment: expect.arrayContaining(["PRAXIS_APPROVAL_MODE"]) });
   });
 
   it("the doctor names the refused keys (names only)", async () => {

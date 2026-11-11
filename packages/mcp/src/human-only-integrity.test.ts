@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { ApprovalRequest, AskAnswer, UserApprovalChannel } from "@praxis/contracts";
+import { userChannelFor } from "@praxis/contracts";
 import { approvalMessage, elicitationChannel } from "./approval-channel.js";
 import { callTool } from "./tools.js";
 import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
@@ -54,7 +55,7 @@ async function lab() {
   return { repo, id };
 }
 
-/** One browser tab: the served page, what it showed, and its Save. */
+/** One browser tab: the served page, what it showed, and its Save (handed over, then applied through the dialog). */
 async function tab(repo: string, id: string, view: "requirements" | "story-plan" | "stories") {
   const res = await call("praxis_review_render", repo, { view, workItemId: id });
   expect(res.ok, JSON.stringify(res.errors)).toBe(true);
@@ -68,12 +69,15 @@ async function tab(repo: string, id: string, view: "requirements" | "story-plan"
       const body = { contract: "praxis.review.submission", version: 1, reviewId: page.reviewId, view, workItemId: id, baseFingerprint: page.baseFingerprint, baseStamp: page.baseStamp, ...payload };
       const sent = await fetch(`${data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": page.token }, body: JSON.stringify(body) });
       expect(sent.status).toBe(200);
-      return (await sent.json()) as { applied?: number; conflicts?: Array<{ item: string; reason: string }> };
+      expect(await sent.json()).toMatchObject({ handedOver: true, applied: 0 });
+      const applied = await call("praxis_review_apply", repo, { fromPage: true, workItemId: id, view, confirmation: "YES" }, approve().channel);
+      expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
+      return applied.data as { applied?: number; conflicts?: Array<{ item: string; reason: string }> };
     },
   };
 }
 
-describe("host-permission mode never stands in for the person", () => {
+describe("the retired host-permission setting never stands in for the person", () => {
   it("rewording, confirming a Story, recording review decisions and opening a classic item are refused even with a matching plan text", async () => {
     const { repo, id } = await lab();
     const before = readFileSync(itemFile(repo, id), "utf8");
@@ -81,10 +85,13 @@ describe("host-permission mode never stands in for the person", () => {
     const reword = { action: "revise-acceptance", edits: [{ id: "REQ-ORD-001-AC-01", statement: "A manager sees every order" }] };
     const p = await call("praxis_workflow_preview", repo, { command: JSON.stringify(reword), workItemId: id });
     expect(p.ok).toBe(true);
-    // the plan tool does not even offer a text for it
+    // the plan tool says what the dialog would ask; passing its text back approves nothing
     const plan = await call("praxis_approval_plan", repo, { tool: "praxis_workflow_apply", toolArguments: JSON.stringify({ command: JSON.stringify(reword), workItemId: id }) });
     expect(plan.ok, JSON.stringify(plan.errors)).toBe(true);
-    expect(plan.data).toMatchObject({ planText: null, available: false });
+    expect(plan.data).toMatchObject({ required: true, personalAct: true });
+    const planText = (plan.data as { planText: string }).planText;
+    const withPlan = await call("praxis_workflow_apply", repo, { command: JSON.stringify(reword), confirmation: "YES", previewFingerprint: p.data.fingerprint, workItemId: id, planText });
+    expect(code(withPlan)).toBe("APPROVAL_CLIENT_UI_REQUIRED");
     for (const planText of [undefined, "anything", "Reword 1 acceptance criterion(a)"]) {
       const res = await call("praxis_workflow_apply", repo, { command: JSON.stringify(reword), confirmation: "YES", previewFingerprint: p.data.fingerprint, workItemId: id, ...(planText ? { planText } : {}) });
       expect(res.ok).toBe(false);
@@ -208,7 +215,8 @@ describe("praxis_review_apply: a saved or handed-over file gets no way around th
     const file = fileFor(repo, body);
     // while the dialog is open another tab rejects that same criterion
     const dlg = dialog({ answer: "approve" }, () => {
-      applyRuntimeCommand(repo, { action: "review-requirements", via: "html-review", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "rejected", comment: "no" }] }] }, id, { via: "html-review" });
+      const other = { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", acceptance: [{ id: "REQ-ORD-001-AC-01", status: "rejected", comment: "no" }] }] };
+      applyRuntimeCommand(repo, other, id, userChannelFor(other));
     });
     const res = await call("praxis_review_apply", repo, { file, confirmation: "YES", workItemId: id }, dlg.channel);
     expect(res.ok).toBe(false);
@@ -227,8 +235,8 @@ describe("approval plans are held to the target tool's own arguments", () => {
   });
 });
 
-describe("trusted-client mode and the remaining approvals", () => {
-  it("with a real dialog, Trusted Client still asks the person for a rewording; without one it is refused", async () => {
+describe("the retired Trusted Client setting and the remaining approvals", () => {
+  it("with a real dialog, the person is still asked for a rewording; without one it is refused", async () => {
     const { repo, id } = await lab();
     process.env.PRAXIS_APPROVAL_MODE = "trusted-client";
     const reword = { action: "revise-acceptance", edits: [{ id: "REQ-ORD-001-AC-01", statement: "A manager sees every order" }] };
@@ -249,9 +257,9 @@ describe("trusted-client mode and the remaining approvals", () => {
     expect(none.ok).toBe(false);
   });
 
-  it("host-permission refuses the Quality fix commit approval (it needs a dialog)", async () => {
-    const { hostPermissionChannel } = await import("./approval-channel.js");
-    await expect(hostPermissionChannel("anything").ask({ action: "praxis_quality_service_fix", kind: "git_operation", summary: "Commit a Quality fix", description: "d", subject: "s" } as never)).rejects.toMatchObject({ code: "APPROVAL_CLIENT_UI_REQUIRED" });
+  it("no standing permission is left to stand in for a dialog (Quality fix commits included)", async () => {
+    const exported = Object.keys(await import("./approval-channel.js"));
+    for (const removed of ["hostPermissionChannel", "hostPermissionMode", "trustedClientChannel", "trustedClientMode", "trustedClientChannelWith"]) expect(exported).not.toContain(removed);
   });
 
   it("verify-stories and prepare-fix are held to the command schema: a misspelt key is an error", async () => {

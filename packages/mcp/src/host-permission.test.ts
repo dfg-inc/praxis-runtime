@@ -7,8 +7,9 @@ import { callTool } from "./tools.js";
 import type { McpEnvelope } from "./workflow-test-helpers.js";
 
 /**
- * The OPT-IN mode for a client with no approval dialog (PRAXIS_APPROVAL_MODE=host-permission): the host's own
- * tool-permission prompt shows the exact plan in the apply tool's arguments. Off by default; labelled host-prompt.
+ * praxis_approval_plan shows what the dialog will ask. The host-permission mode that took its text as an approval
+ * (PRAXIS_APPROVAL_MODE=host-permission, released 0.1.0-alpha.48 to alpha.49.1) is removed: the environment is reachable
+ * by a repository's Claude Code settings, so no variable makes approval weaker.
  */
 const saved = process.env.PRAXIS_APPROVAL_MODE;
 beforeEach(() => delete process.env.PRAXIS_APPROVAL_MODE);
@@ -50,8 +51,8 @@ describe("praxis_approval_plan: what the user would be asked, running nothing", 
   });
 });
 
-describe("default: no dialog means nothing protected runs, whatever planText says", () => {
-  it("a forged or even correct planText is ignored unless the mode is switched on", async () => {
+describe("no dialog means nothing protected runs, whatever planText says", () => {
+  it("a forged or even correct planText is ignored", async () => {
     const repo = project();
     const plan = await planFor(repo);
     for (const planText of [plan.planText, "anything", ""]) {
@@ -62,52 +63,37 @@ describe("default: no dialog means nothing protected runs, whatever planText say
   });
 });
 
-describe("PRAXIS_APPROVAL_MODE=host-permission (opt-in)", () => {
+describe("PRAXIS_APPROVAL_MODE=host-permission is retired: whoever sets it, nothing protected runs without the dialog", () => {
   beforeEach(() => {
     process.env.PRAXIS_APPROVAL_MODE = "host-permission";
   });
 
-  it("the exact plan runs, and the result is labelled host-prompt, never client-ui", async () => {
+  it("the exact plan text is not an approval, and nothing is written", async () => {
     const repo = project();
     const { planText } = await planFor(repo);
-    const applied = await call("praxis_project_init_apply", repo, { confirmation: "YES", planText });
-    expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
-    expect(existsSync(join(repo, ".project"))).toBe(true);
-    expect(applied.data.approval).toEqual([expect.objectContaining({ channel: "host-permission", assurance: "host-prompt" })]);
-    expect(readFileSync(join(repo, ".project"), "utf8")).toContain("requirementsFormat");
+    for (const text of [planText, undefined]) {
+      const refused = await call("praxis_project_init_apply", repo, { confirmation: "YES", ...(text === undefined ? {} : { planText: text }) });
+      expect(refused.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+      expect(JSON.stringify(refused)).not.toMatch(/host-prompt|"channel":"host-permission"/);
+    }
+    expect(existsSync(join(repo, ".project"))).toBe(false);
   });
 
-  it("no planText, an edited planText and a plan that changed after it was shown are all refused with the current plan", async () => {
-    const repo = project();
-    const { planText } = await planFor(repo);
-    const none = await call("praxis_project_init_apply", repo, { confirmation: "YES" });
-    expect(none.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
-    expect((none.data as { planText: string }).planText).toBe(planText);
-    const edited = await call("praxis_project_init_apply", repo, { confirmation: "YES", planText: `${planText}\nand also something else` });
-    expect(edited.code).toBe("APPROVAL_SCOPE_MISMATCH");
-    expect(existsSync(join(repo, ".project"))).toBe(false);
-    // the project changes after the plan was shown: the old text no longer matches
-    writeFileSync(join(repo, "package.json"), `${JSON.stringify({ name: "x", scripts: { test: "vitest", build: "tsc" } })}\n`);
-    const stale = await call("praxis_project_init_apply", repo, { confirmation: "YES", planText });
-    expect(stale.code).toBe("APPROVAL_SCOPE_MISMATCH");
-    expect((stale.data as { planText: string }).planText).not.toBe(planText);
-    expect(existsSync(join(repo, ".project"))).toBe(false);
-    const fresh = (await planFor(repo)).planText;
-    expect((await call("praxis_project_init_apply", repo, { confirmation: "YES", planText: fresh })).ok).toBe(true);
-  });
-
-  it("confirmation=NO still stops it (as the agent's withdrawal), and a real dialog wins over the mode", async () => {
+  it("confirmation=NO still stops it (as the agent's withdrawal), and the dialog decides", async () => {
     const repo = project();
     const { planText } = await planFor(repo);
     expect((await call("praxis_project_init_apply", repo, { confirmation: "NO", planText })).code).toBe("APPROVAL_WITHDRAWN");
     expect(existsSync(join(repo, ".project"))).toBe(false);
     const rejecting: UserApprovalChannel = { kind: "client-elicitation", ask: async () => ({ answer: "reject" }) };
-    const viaDialog = await call("praxis_project_init_apply", repo, { confirmation: "YES", planText }, rejecting);
-    expect(viaDialog.code).toBe("APPROVAL_REJECTED");
+    expect((await call("praxis_project_init_apply", repo, { confirmation: "YES", planText }, rejecting)).code).toBe("APPROVAL_REJECTED");
     expect(existsSync(join(repo, ".project"))).toBe(false);
+    const approving: UserApprovalChannel = { kind: "client-elicitation", ask: async () => ({ answer: "approve" }) };
+    const applied = await call("praxis_project_init_apply", repo, { confirmation: "YES" }, approving);
+    expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
+    expect(applied.data.approval).toEqual([expect.objectContaining({ channel: "client-elicitation", assurance: "client-ui" })]);
   });
 
-  it("the doctor says plainly what this mode is and is not", async () => {
+  it("the doctor reports no dialog", async () => {
     const repo = project();
     const doctor = await call("praxis_doctor", repo, {});
     expect(doctor.data.approval).toMatchObject({ mode: "no-dialog" }); // direct callTool has no client report; the MCP server adds it

@@ -249,49 +249,22 @@ const repoWithPackageJson = () => {
   }
 }
 
-// --- 5. OPT-IN host-permission mode: no dialog, the host's tool-permission prompt shows the exact plan ---------------------------
-{
-  const session = await open({ env: { PRAXIS_APPROVAL_MODE: "host-permission" } });
+// --- 5. the retired modes (T18: a repository's .claude/settings.json env block could set them) run nothing ---------------------
+for (const mode of ["host-permission", "trusted-client"]) {
+  const session = await open({ env: { PRAXIS_APPROVAL_MODE: mode } });
   try {
     const repo = repoWithPackageJson();
     const doctor = await call(session, "praxis_doctor", { repo });
-    expect(doctor.data.approval?.mode === "host-permission" && /always-allow/.test(doctor.data.approval.note), `host-permission doctor: ${JSON.stringify(doctor.data.approval)}`);
+    expect(doctor.data.approval?.mode === "no-dialog" && doctor.data.approval.ignoredEnvironment?.includes("PRAXIS_APPROVAL_MODE"), `${mode} doctor: ${JSON.stringify(doctor.data.approval)}`);
     const plan = await call(session, "praxis_approval_plan", { repo, tool: "praxis_project_init_apply", toolArguments: "{}" });
     expect(plan.ok && plan.data.required && /Creates .*\.project with exactly this content/.test(plan.data.planText) && !existsSync(join(repo, ".project")), `plan: ${JSON.stringify(plan)}`);
-    const wrong = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES", planText: `${plan.data.planText} plus more` });
-    expect(wrong.code === "APPROVAL_SCOPE_MISMATCH" && !existsSync(join(repo, ".project")), `wrong plan: ${JSON.stringify(wrong)}`);
-    const none = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-    expect(none.code === "APPROVAL_CLIENT_UI_REQUIRED" && none.data.planText === plan.data.planText, `no plan: ${JSON.stringify(none)}`);
-    const ok = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES", planText: plan.data.planText });
-    expect(ok.ok && existsSync(join(repo, ".project")) && ok.data.approval?.[0]?.assurance === "host-prompt", `host-permission apply: ${JSON.stringify(ok)}`);
-    prove("opt-in host-permission mode: the exact plan runs and is labelled host-prompt; a missing, edited or stale plan is refused with the current plan");
-  } finally {
-    await session.close();
-  }
-  const session2 = await open({});
-  try {
-    const repo = repoWithPackageJson();
-    const plan = await call(session2, "praxis_approval_plan", { repo, tool: "praxis_project_init_apply", toolArguments: "{}" });
-    const forged = await call(session2, "praxis_project_init_apply", { repo, confirmation: "YES", planText: plan.data.planText });
-    expect(forged.code === "APPROVAL_CLIENT_UI_REQUIRED" && !existsSync(join(repo, ".project")), `default mode accepted planText: ${JSON.stringify(forged)}`);
-    prove("by default planText is ignored: without the opt-in nothing protected runs on arguments alone");
-  } finally {
-    await session2.close();
-  }
-}
-
-// --- 6. OPT-IN Trusted Client: the owner's standing permission, labelled as such ------------------------------------------------
-{
-  const session = await open({ env: { PRAXIS_APPROVAL_MODE: "trusted-client" } });
-  try {
-    const repo = repoWithPackageJson();
-    const doctor = await call(session, "praxis_doctor", { repo });
-    expect(doctor.data.approval?.mode === "trusted-client" && /not proof/.test(doctor.data.approval.note), `trusted doctor: ${JSON.stringify(doctor.data.approval)}`);
+    for (const args of [{ confirmation: "YES" }, { confirmation: "YES", planText: plan.data.planText }]) {
+      const refused = await call(session, "praxis_project_init_apply", { repo, ...args });
+      expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && !existsSync(join(repo, ".project")) && !/host-prompt|"assurance":"trusted-client"/.test(JSON.stringify(refused)), `${mode} apply ${JSON.stringify(Object.keys(args))}: ${JSON.stringify(refused)}`);
+    }
     const no = await call(session, "praxis_project_init_apply", { repo, confirmation: "NO" });
-    expect(!no.ok && !existsSync(join(repo, ".project")), `trusted confirmation=NO: ${JSON.stringify(no)}`);
-    const ok = await call(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-    expect(ok.ok && existsSync(join(repo, ".project")) && ok.data.approval?.[0]?.assurance === "trusted-client", `trusted apply: ${JSON.stringify(ok)}`);
-    prove("opt-in Trusted Client: confirmation=YES runs the previewed init, labelled trusted-client (never client-ui); confirmation=NO still runs nothing");
+    expect(no.code === "APPROVAL_WITHDRAWN" && !existsSync(join(repo, ".project")), `${mode} confirmation=NO: ${JSON.stringify(no)}`);
+    prove(`PRAXIS_APPROVAL_MODE=${mode} (retired) is ignored and named by the doctor; confirmation=YES, even with the exact planText, runs nothing without the dialog`);
   } finally {
     await session.close();
   }

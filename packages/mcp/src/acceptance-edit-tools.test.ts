@@ -58,7 +58,7 @@ const state = (repo: string, id: string) => loadWorkflow(repo, id)!;
 const criteria = (repo: string, id: string) => state(repo, id).requirements.flatMap((r) => r.acceptanceCriteria);
 const itemFile = (repo: string, id: string) => join(repo, ".praxis", "workflow", "items", `${id}.json`);
 
-/** A review page open in one browser tab: what it showed, and how its Save posts. */
+/** A review page open in one browser tab: what it showed, and how its Save posts (then applied through the dialog). */
 async function openPage(repo: string, id: string) {
   const res = await call("praxis_review_render", repo, { view: "requirements", workItemId: id });
   expect(res.ok, JSON.stringify(res.errors)).toBe(true);
@@ -73,7 +73,11 @@ async function openPage(repo: string, id: string) {
       const body = { contract: "praxis.review.submission", version: 1, reviewId: page.reviewId, view: "requirements", workItemId: id, baseFingerprint: page.baseFingerprint, baseStamp: page.baseStamp, requirements: { requirements, acceptAll: false } };
       const sent = await fetch(`${data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": page.token }, body: JSON.stringify(body) });
       expect(sent.status).toBe(200);
-      return (await sent.json()) as { applied?: number; conflicts?: Array<{ item: string; reason: string }> };
+      expect(await sent.json()).toMatchObject({ handedOver: true, applied: 0 }); // the page records nothing
+      // the agent applies what the page handed over; the client's dialog shows those exact decisions
+      const applied = await call("praxis_review_apply", repo, { fromPage: true, workItemId: id, view: "requirements", confirmation: "YES" }, approve().channel);
+      expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
+      return applied.data as { applied?: number; conflicts?: Array<{ item: string; reason: string }> };
     },
     /** Marks every criterion as the page showed it: rejected for the ones named, accepted for the rest. */
     marks(rejected: Record<string, string>) {

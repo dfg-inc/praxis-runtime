@@ -3,9 +3,10 @@
  *  - Code tab: embedded Claude Code 2.1.309 declares elicitation (form, url), protocol 2026-07-28, and answers the dialog
  *    `decline` 9-34 ms after it is asked, with nothing on screen (anthropics/claude-code#89858).
  *  - Chat: client `claude-ai`, no elicitation declared.
- * Before this change Praxis recorded the Code tab's own decline as "rejected by the user". These tests hold the fix:
- * an instant answer is the client's, the approval page asks the person instead, and nothing is attributed to the user
- * without evidence.
+ * Before this change Praxis recorded the Code tab's own decline as "rejected by the user". These tests hold the fix: an
+ * instant answer is the client's and nothing is attributed to the user without evidence. The approval page they drive is
+ * the test source's mechanism (PRAXIS_APPROVAL_PAGE under PRAXIS_TEST_APPROVALS); a shipped Runtime never uses it for a
+ * protected action, because anything running as the user can operate a page on loopback (docs/approval-threat-model.md).
  */
 import { request as httpRequest } from "node:http";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -13,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApprovalNeedsInput, decisionLogPath, obtainUserApproval, withApprovalChannel, type ApprovalRequest, type UserApprovalChannel } from "@praxis/contracts";
-import { approvalKey, hostPermissionChannel, noteDialogAsked, planTextOf, roundTripChannel } from "./approval-channel.js";
+import { approvalKey, noteDialogAsked, roundTripChannel } from "./approval-channel.js";
 import { approvalPageChannel, setApprovalPageOpenerForTest, stopApprovalPages } from "./approval-page.js";
 import { serviceFixCommitRequest } from "./story-engine.js";
 import { diagnosticsPath } from "./diagnostics-log.js";
@@ -277,7 +278,7 @@ describe("Desktop Chat (no dialog): the approval page", () => {
     expect((await http(opened[0]!)).status).toBe(404);
   });
 
-  it("acts only the person may perform can be done in the page, even in the opt-in modes that exclude them", async () => {
+  it("acts only the person may perform go to the (test) page, whatever a retired mode variable says", async () => {
     for (const mode of ["trusted-client", "host-permission"]) {
       process.env.PRAXIS_APPROVAL_MODE = mode;
       process.env.PRAXIS_APPROVAL_PAGE_WAIT_MS = "4000";
@@ -325,25 +326,26 @@ describe("Desktop Chat (no dialog): the approval page", () => {
 });
 
 describe("the doctor says how approvals will be asked, with the evidence", () => {
-  it("Chat: the approval page, and what it is not", async () => {
+  it("Chat: no dialog, so protected actions are refused; independent human authorization is not available", async () => {
     const doctor = (await callTool("praxis_doctor", { repo }, { role: "developer", version: "t", client: CHAT })) as McpEnvelope;
     const approval = (doctor.data as { approval: Record<string, unknown> }).approval;
-    expect(approval.mode).toBe("approval-page");
-    expect(approval.page).toMatchObject({ enabled: true, browser: expect.stringMatching(/^default browser/) });
-    expect(String((approval.page as { note: string }).note)).toMatch(/could still operate it/);
+    expect(approval.mode).toBe("no-dialog");
+    expect(approval.page).toBeUndefined();
+    expect(approval.trust).toMatchObject({ protectedActions: expect.stringMatching(/refused/), independentHumanApproval: expect.stringMatching(/not available/) });
     expect(approval.minAnswerMs).toBe(1000);
   });
 
-  it("Code tab: once seen answering by itself, the doctor shows it and the mode is the page", async () => {
+  it("Code tab: once seen answering by itself, the doctor shows it and protected actions are refused there", async () => {
     process.env.PRAXIS_APPROVAL_PAGE = "off";
-    await codeTabDecline();
+    // no added delay: under a loaded test run the call's own work must still leave the answer far below a person's time
+    await codeTabDecline(0);
     writeFileSync(join(repo, "package.json"), `${JSON.stringify({ name: "x", scripts: { test: "node --test", build: "tsc" } })}\n`);
-    await codeTabDecline();
+    await codeTabDecline(0);
     process.env.PRAXIS_APPROVAL_PAGE = "on";
     const doctor = (await callTool("praxis_doctor", { repo }, { role: "developer", version: "t", client: CODE_TAB, approvalChannel: roundTripChannel(undefined) })) as McpEnvelope;
     const approval = (doctor.data as { approval: Record<string, unknown> }).approval;
     expect(approval.observedDialog).toMatchObject({ automatic: "decline" });
-    expect(approval.mode).toBe("approval-page");
+    expect(approval.mode).toBe("no-dialog");
   });
 });
 
@@ -477,21 +479,6 @@ describe("one click, one execution, of exactly what was shown (independent revie
     expect(two.request.description).toContain("evil.example");
   });
 
-  it("in host-permission mode a page approval and a later prompt approval in one call are each labelled as what they were", async () => {
-    process.env.PRAXIS_APPROVAL_PAGE_WAIT_MS = "2000";
-    const page = approvalPageChannel({ repo });
-    const ordinary: ApprovalRequest = { action: "praxis_developer_git_publish", kind: "git_operation", summary: "Push", description: "push it", subject: "p" };
-    const channel = hostPermissionChannel(planTextOf(ordinary), page);
-    const personal: ApprovalRequest = { action: "confirm-story", kind: "story_behavior", summary: "Confirm US-1", description: "the story", subject: "c" };
-    const labels = withApprovalChannel(channel, async () => {
-      const first = await obtainUserApproval(personal, { repo });
-      const second = await obtainUserApproval(ordinary, { repo });
-      return [first.channel, second.channel, second.assurance];
-    });
-    await decideInPage(await waitForPage(), "approve");
-    expect(await labels).toEqual(["approval-page", "host-permission", "host-prompt"]);
-  });
-
   it("answers no CORS preflight, accepts the localhost name, and never writes the secret to the diagnostics log", async () => {
     process.env.PRAXIS_APPROVAL_PAGE_WAIT_MS = "0";
     await init(CHAT);
@@ -509,7 +496,7 @@ describe("one click, one execution, of exactly what was shown (independent revie
 });
 
 describe("settings a repository could set are not taken from the environment (second review, verified with Claude Code)", () => {
-  it("outside the Desktop extension, a weakening setting in the environment is ignored and reported; a stricter one is kept", async () => {
+  it("outside the test source a weakening setting in the environment is ignored and reported; a stricter one is kept", async () => {
     const { approvalSettings } = await import("./approval-settings.js");
     const saved = { ...process.env };
     try {
@@ -519,15 +506,16 @@ describe("settings a repository could set are not taken from the environment (se
       process.env.PRAXIS_APPROVAL_BROWSER = "/usr/bin/true";
       process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS = "0";
       process.env.PRAXIS_APPROVAL_PAGE_MIN_MS = "5000";
+      process.env.PRAXIS_APPROVAL_PAGE = "on";
       const settings = approvalSettings();
-      expect(settings.mode).toBe("");
+      expect(settings).not.toHaveProperty("mode");
       expect(settings.browser).toBe("");
+      expect(settings.page).toBe(false);
       expect(settings.minAnswerMs).toBe(1000);
-      expect(settings.pageMinMs).toBe(5000);
-      expect(settings.ignoredEnvironment.sort()).toEqual(["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_MODE"]);
-      // turning the page off makes approval stricter and is taken from anywhere
-      process.env.PRAXIS_APPROVAL_PAGE = "off";
-      expect(approvalSettings().page).toBe(false);
+      expect(settings.ignoredEnvironment.sort()).toEqual(["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_MODE", "PRAXIS_APPROVAL_PAGE", "PRAXIS_APPROVAL_PAGE_MIN_MS"]);
+      // a longer minimum answer time is stricter and is taken from anywhere
+      process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS = "5000";
+      expect(approvalSettings().minAnswerMs).toBe(5000);
     } finally {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
       Object.assign(process.env, saved);

@@ -6,6 +6,7 @@
  */
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
+import { withTestBrowser } from "./test-browser.mjs";
 
 export function encodeMcpFrame(msg) {
   const json = Buffer.from(JSON.stringify(msg), "utf8");
@@ -47,8 +48,11 @@ function readOne(buffer) {
 export function spawnMcpServer({ command, args, cwd, env, timeoutMs = 20000 }) {
   const child = spawn(command, args, {
     cwd,
-    // a scripted client never opens a tab in the developer's browser unless the caller asks for the approval page
-    env: { PRAXIS_APPROVAL_PAGE: "off", PRAXIS_APPROVAL_MIN_ANSWER_MS: "0", ...(env ?? process.env) },
+    // a scripted client never lets the Runtime reach the developer's browser (test-browser.mjs)
+    env: (() => {
+      const merged = { PRAXIS_APPROVAL_PAGE: "off", PRAXIS_APPROVAL_MIN_ANSWER_MS: "0", ...(env ?? process.env) };
+      return { ...merged, PATH: withTestBrowser(merged.PATH) };
+    })(),
     stdio: ["pipe", "pipe", "pipe"],
   });
   let buf = Buffer.alloc(0);

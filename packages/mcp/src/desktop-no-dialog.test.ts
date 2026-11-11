@@ -78,6 +78,7 @@ describe("Claude Desktop capabilities: no dialog", () => {
     const approval = (result.data as { approval: { mode: string; hostGate?: string; diagnosticsLog?: string } }).approval;
     expect(approval.mode).toBe("no-dialog");
     expect(approval.hostGate).toMatch(/tool-permission prompt/);
+    expect(approval.hostGate).toMatch(/not an approval/);
     expect(approval.diagnosticsLog).toBe(diagnosticsPath());
   });
 });
@@ -101,30 +102,28 @@ describe("a declared dialog nobody answers", () => {
   });
 });
 
-describe("Trusted Client: an explicit opt-in, never the default", () => {
+describe("the retired Trusted Client setting (T18: a repository's Claude Code settings could set it for the Runtime)", () => {
   const trusted = () => {
     process.env.PRAXIS_APPROVAL_MODE = "trusted-client";
-    process.env.PRAXIS_TEST_APPROVALS = process.env.PRAXIS_TEST_APPROVALS ?? "1";
   };
 
-  it("by default (Desktop-like client, no dialog) the same apply is still refused", async () => {
+  it("without it (Desktop-like client, no dialog) a protected apply is refused", async () => {
     const client = describeClient(server(), desktopRequest);
     const result = (await callTool("praxis_project_init_apply", { repo, confirmation: "YES" }, { role: "developer", version: "t", client })) as McpEnvelope;
     expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
     expect(existsSync(join(repo, ".project"))).toBe(false);
   });
 
-  it("enabled: the apply writes, labelled trusted-client, and the journal says so", async () => {
+  it("with it the same apply is refused too: nothing is written and nothing is journaled as approved", async () => {
     trusted();
     const client = describeClient(server(), desktopRequest);
     const result = (await callTool("praxis_project_init_apply", { repo, confirmation: "YES" }, { role: "developer", version: "t", client })) as McpEnvelope;
-    expect(result.ok, JSON.stringify(result.errors)).toBe(true);
-    expect(existsSync(join(repo, ".project"))).toBe(true);
-    expect((result.data as { approval: Array<{ channel: string; assurance: string }> }).approval[0]).toMatchObject({ channel: "trusted-client", assurance: "trusted-client" });
-    expect(readFileSync(decisionLogPath(repo), "utf8")).toMatch(/"channel":"trusted-client"/);
+    expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    expect(existsSync(join(repo, ".project"))).toBe(false);
+    expect(existsSync(decisionLogPath(repo)) ? readFileSync(decisionLogPath(repo), "utf8") : "").not.toMatch(/"decision":"approved"|trusted-client/);
   });
 
-  it("enabled: confirmation=NO and a missing confirmation still write nothing", async () => {
+  it("with it confirmation=NO and a missing confirmation still write nothing", async () => {
     trusted();
     for (const confirmation of ["NO", undefined]) {
       const result = (await callTool("praxis_project_init_apply", { repo, ...(confirmation ? { confirmation } : {}) }, { role: "developer", version: "t" })) as McpEnvelope;
@@ -133,20 +132,13 @@ describe("Trusted Client: an explicit opt-in, never the default", () => {
     }
   });
 
-  it("enabled: the doctor reports trusted-client, not client-ui", async () => {
+  it("with it the doctor reports no dialog and names the variable it ignored", async () => {
     trusted();
     const client = describeClient(server(), desktopRequest);
     const result = (await callTool("praxis_doctor", { repo }, { role: "developer", version: "t", client })) as McpEnvelope;
-    expect((result.data as { approval: { mode: string; note: string } }).approval.mode).toBe("trusted-client");
-    expect((result.data as { approval: { note: string } }).approval.note).toMatch(/not proof/);
-  });
-
-  it("enabled: acts only a person may perform (confirming a Story) are still not run on a standing permission", async () => {
-    trusted();
-    const { trustedClientChannel } = await import("./approval-channel.js");
-    await expect(
-      trustedClientChannel.ask({ action: "confirm-story", kind: "story_behavior", summary: "Confirm story US-1", description: "d", subject: "s" }),
-    ).rejects.toMatchObject({ code: "APPROVAL_CLIENT_UI_REQUIRED" });
-    await expect(trustedClientChannel.ask({ action: "praxis_project_init_apply", kind: "development_action", summary: "x", description: "d", subject: "s" })).resolves.toMatchObject({ answer: "approve" });
+    const approval = (result.data as { approval: { mode: string; ignoredEnvironment?: string[]; trust: { independentHumanApproval: string } } }).approval;
+    expect(approval.mode).toBe("no-dialog");
+    expect(approval.ignoredEnvironment).toContain("PRAXIS_APPROVAL_MODE");
+    expect(approval.trust.independentHumanApproval).toMatch(/not available/);
   });
 });

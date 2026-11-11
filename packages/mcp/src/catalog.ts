@@ -28,7 +28,7 @@ const confirmProp = {
   type: "string",
   enum: ["YES", "NO"],
   description:
-    "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user itself (in the client's own approval dialog, or, when the client cannot show one, in the Praxis approval page it opens in the user's browser) and runs the action only if they approve. APPROVAL_PENDING means the page is open and nobody decided yet: call again with the same arguments after the user decided. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection.",
+    "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user itself in the client's own approval dialog and runs the action only if they approve. A client that cannot show the dialog gets APPROVAL_CLIENT_UI_REQUIRED and nothing runs. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection.",
 };
 const fingerprintProp = {
   type: "string",
@@ -837,13 +837,15 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_review_apply",
     description:
-      "Record the decisions a user made in an HTML review when the page could not save them itself (they copied or downloaded the decisions file). Pass the JSON text as submission or the downloaded file as file. Edits are applied; whatever records that the user ACCEPTED or REJECTED something is shown to the user in the client's approval dialog first, bound to exactly those decisions, and is refused without a dialog. Items that changed since the page was rendered are skipped and reported as conflicts; the rest is applied. The agent cannot record the user's acceptance any other way.",
+      "Record the decisions a user made in an HTML review: the ones they sent with Save in the served page (fromPage true), or a copied or downloaded decisions file (submission or file). Edits are applied; whatever records that the user ACCEPTED or REJECTED something is shown to the user in the client's approval dialog first, bound to exactly those decisions, and is refused without a dialog. Items that changed since the page was rendered are skipped and reported as conflicts; the rest is applied. The agent cannot record the user's acceptance any other way.",
     inputSchema: {
       type: "object",
       properties: {
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         submission: { type: "string", description: "The decisions JSON (contract praxis.review.submission) copied from the review page." },
+        fromPage: { type: "boolean", description: "Record the decisions the user sent with Save in the served review page (Save itself records nothing)." },
+        view: { type: "string", description: "With fromPage: which review the decisions came from (requirements, prototype, story-plan, stories). Default: the latest sent." },
         file: { type: "string", description: "Path of the downloaded decisions file (inside the repository or ~/Downloads)." },
         confirmation: confirmProp,
       },
@@ -1010,7 +1012,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_approval_plan",
     description:
-      "READ-ONLY: the exact plan the user would be asked to approve for a protected apply tool, computed by Praxis from the live state. Runs nothing. Use it to show the user what will happen; in host-permission mode (a client with no approval dialog and PRAXIS_APPROVAL_MODE=host-permission) pass its planText to the apply tool.",
+      "READ-ONLY: the exact plan the client's approval dialog will show for a protected apply tool, computed by Praxis from the live state. Runs nothing. Use it to show the user what will happen. Nothing taken from it and passed back approves anything.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1034,10 +1036,10 @@ for (const tool of TOOLS) {
   };
   tool.inputSchema.properties.planText = {
     type: "string",
-    description: "Only for PRAXIS_APPROVAL_MODE=host-permission: the exact planText returned by praxis_approval_plan for these arguments. Ignored otherwise.",
+    description: "Retired in 0.1.0-alpha.49.2 and ignored: no text you pass approves anything.",
   };
   tool.description +=
-    " The user approves this exact action before it runs, in the client's own approval dialog or the Praxis approval page; nothing else counts as approval, and a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the user said no), APPROVAL_DISMISSED (closed without deciding), APPROVAL_PENDING (page open, undecided), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask: not a rejection).";
+    " The user approves this exact action before it runs, in the client's own approval dialog (a client response: Praxis cannot authenticate the person). Nothing else counts as approval: not confirmation=YES, not a page, not a setting; a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the user said no), APPROVAL_DISMISSED (closed without deciding), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask, or the dialog is set up to be answered automatically: not a rejection, nothing ran).";
 }
 
 export function toolsForRole(role: PraxisRole): ToolDef[] {

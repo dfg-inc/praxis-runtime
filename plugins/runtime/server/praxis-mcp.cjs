@@ -5155,7 +5155,7 @@ var init_human_acts = __esm({
 
 // node_modules/@praxis/contracts/dist/user-approval.js
 function createUserApproval(input2) {
-  if (input2.channel === "test" && process.env.PRAXIS_TEST_APPROVALS !== "1") {
+  if (input2.channel === "test" && (process.env.PRAXIS_TEST_APPROVALS !== "1" || true)) {
     throw new ApprovalError("APPROVAL_REQUIRED", "a test approval is only accepted under the test harness");
   }
   const approval = Object.freeze({
@@ -5185,14 +5185,8 @@ function approvalsGivenInThisCall() {
 }
 function approvalModeReport() {
   const channel = currentApprovalChannel();
-  if (channel?.kind === "trusted-client") {
-    return { mode: "trusted-client", note: "TRUSTED CLIENT (enabled by you in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, without a separate confirmation of each action. This is your standing permission for this client, not proof that you confirmed each action. Every action is still checked against its preview and journaled." };
-  }
-  if (channel?.kind === "approval-page") {
-    return { mode: "approval-page", note: "This client cannot show Praxis's approval dialog, so Praxis opens its own approval page in your browser: you approve or reject the exact action there. The agent never gets that page's link. A browser-automation tool in that browser, or a program running as you, could still operate the page; Praxis cannot detect that." };
-  }
-  if (channel && channel.kind !== "host-permission") {
-    return { mode: "client-ui", note: "Protected actions are approved or rejected by the user in the client's own dialog; the agent cannot write that answer." };
+  if (channel && channel.kind !== "host-permission" && channel.kind !== "trusted-client" && channel.kind !== "approval-page") {
+    return { mode: "client-ui", note: "Protected actions are approved or rejected in the client's own dialog: a client response, which the agent cannot write through Praxis. It is not independently authenticated: Praxis cannot prove that a person, rather than automation, answered." };
   }
   return {
     mode: "no-dialog",
@@ -5278,7 +5272,7 @@ async function obtainUserApproval(request, options2 = {}) {
     ...answer?.evidence ? { evidence: answer.evidence } : {},
     reason: why.slice(0, 300)
   });
-  throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask the user (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog works, or the Praxis approval page when the Runtime runs on the user's own computer. The agent's or the user's text in chat is not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`, { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", decidedBy: automatic ? "client" : "nobody", ...answer?.evidence ? { evidence: answer.evidence } : {}, ...automatic ? { automatic } : {} });
+  throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask the user (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog is shown (for example the Claude Code CLI in a terminal). The agent's or the user's text in chat, a page and any setting are not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`, { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", decidedBy: automatic ? "client" : "nobody", ...answer?.evidence ? { evidence: answer.evidence } : {}, ...automatic ? { automatic } : {} });
 }
 function previewDetails(request) {
   return { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, ...request.risks?.length ? { risks: request.risks } : {} } };
@@ -6731,10 +6725,8 @@ function isUserDecision(command) {
   }
 }
 function verifiedVia(command, channel) {
-  if (!channel)
+  if (!channel || channel.via !== "approved")
     return null;
-  if (channel.via === "html-review")
-    return "html-review";
   verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch) });
   const mine = canonicalText(withoutVia(command));
   if (!channel.batch.some((item) => canonicalText(withoutVia(item)) === mine)) {
@@ -6771,7 +6763,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
   const now = options2.now;
   const verified = verifiedVia(rawCommand, options2.channel);
   if (isUserDecision(rawCommand) && !verified) {
-    throw new WorkflowError("USER_DECISION_REQUIRED", `${rawCommand.action} records that the user accepted or rejected something. It cannot come from the agent: the user decides in the HTML review (praxis_review_render), or approves the decisions in the client's dialog (praxis_review_apply).`);
+    throw new WorkflowError("USER_DECISION_REQUIRED", `${rawCommand.action} records that the user accepted or rejected something. It cannot come from the agent: the user sends them from the HTML review (praxis_review_render, Save) and approves exactly those decisions in the client's dialog (praxis_review_apply).`);
   }
   const command = "via" in rawCommand ? { ...rawCommand, via: verified ?? "chat" } : rawCommand;
   switch (command.action) {
@@ -7438,21 +7430,21 @@ function trustOfApproval(approval) {
   if (approval.channel === "test")
     return "test-only";
   if (approval.assurance === "client-ui")
-    return "independent-human";
+    return "client-response";
   if (approval.assurance === "approval-page")
     return "review-page";
   return "host-attested";
 }
 function describeApproval(approval) {
   if (approval === "review-page")
-    return "saved from the review page (a click in the browser page Praxis opened; the client did not vouch for it, and who clicked is not verified)";
+    return "saved from the review page (a click in a page served on this computer; not accepted as a decision since 0.1.0-alpha.49.2)";
   switch (trustOfApproval(approval)) {
-    case "independent-human":
-      return "approved in the client's approval dialog (the dialog answered; a person is not verified)";
+    case "client-response":
+      return "approved in the client's approval dialog (a client response; not independently authenticated)";
     case "review-page":
-      return "approved in the Praxis approval page (a click in the browser page Praxis opened; the client did not vouch for it, and who clicked is not verified)";
+      return "a click in a page served on this computer (not a decision of the user since 0.1.0-alpha.49.2)";
     case "host-attested":
-      return approval.channel === "trusted-client" ? "approved in Trusted Client mode (the host's own permission, no dialog was shown)" : "approved through the host's permission prompt (no Praxis dialog)";
+      return "a standing permission (removed in 0.1.0-alpha.49.2)";
     default:
       return "TEST harness approval (not a person)";
   }
@@ -7465,14 +7457,24 @@ function approvalSummary(state2) {
     ...state2.decisions.filter((d) => d.confirmed && !has("confirm-decision", "decision", d.id)).map((d) => `decision ${d.id}`),
     ...state2.services.filter((s) => (s.status === "approved" || s.status === "completed") && !has("approve-service", "service", s.id)).map((s) => `service ${s.id}`)
   ];
-  const by = (trust) => records.filter((r) => r.trust === trust).length;
-  return { total: records.length, independentHuman: by("independent-human"), reviewPage: by("review-page"), hostAttested: by("host-attested"), testOnly: by("test-only"), unverifiedProvenance: unverified };
+  const by = (trust) => records.filter((r) => currentTrust(r.trust) === trust).length;
+  return {
+    total: records.length,
+    clientResponse: by("client-response"),
+    // no record is independently authenticated; kept at 0 so readers of the earlier field are not misled by its old meaning
+    independentHuman: 0,
+    reviewPage: by("review-page"),
+    hostAttested: by("host-attested"),
+    testOnly: by("test-only"),
+    legacyIndependentHumanLabel: records.filter((r) => r.trust === "independent-human").length,
+    unverifiedProvenance: unverified
+  };
 }
-var APPROVAL_TRUST, ApprovalSubjectSchema, ApprovalRecordSchema;
+var APPROVAL_TRUST, ApprovalSubjectSchema, ApprovalRecordSchema, currentTrust;
 var init_approval_audit = __esm({
   "node_modules/@praxis/contracts/dist/approval-audit.js"() {
     init_zod();
-    APPROVAL_TRUST = ["independent-human", "review-page", "host-attested", "test-only"];
+    APPROVAL_TRUST = ["client-response", "independent-human", "review-page", "host-attested", "test-only"];
     ApprovalSubjectSchema = external_exports.object({
       type: external_exports.enum(["story", "decision", "service", "requirement", "criterion", "review", "work-item"]),
       id: external_exports.string(),
@@ -7495,6 +7497,7 @@ var init_approval_audit = __esm({
       /** Work item revision after this decision was applied: the link to its history entry. */
       workItemRevision: external_exports.number().int()
     });
+    currentTrust = (trust) => trust === "independent-human" ? "client-response" : trust;
   }
 });
 
@@ -8082,8 +8085,6 @@ function applyWorkflowCommand(state2, raw, options2) {
     record5 = { at: a.decidedAt, action: command.action === "open" ? "open-classic-work-item" : "review-decisions", subjects: (batchSubjects.length ? batchSubjects : subjectsOf(command, state2, out.state)).slice(0, 200), summary: a.summary.slice(0, 400), subjectDigest: a.subjectDigest, channel: a.channel, assurance: a.assurance, trust: trustOfApproval(a), workItemRevision: out.state.workItem.revision };
     if ((out.state.approvals ?? []).some((r) => r.subjectDigest === a.subjectDigest && r.at === a.decidedAt))
       record5 = null;
-  } else if (options2?.channel?.via === "html-review" && userDecision) {
-    record5 = { at, action: command.action, subjects: subjectsOf(command, state2, out.state), summary: `${command.action} from the review page`, channel: "html-review", assurance: "review-page", trust: "review-page", workItemRevision: out.state.workItem.revision };
   }
   if (!record5)
     return out;
@@ -9544,6 +9545,7 @@ var init_jira_orchestration = __esm({
 var init_human_act_testing = __esm({
   "node_modules/@praxis/contracts/dist/human-act-testing.js"() {
     init_human_acts();
+    init_planning();
     init_user_approval();
     init_workflow();
   }
@@ -9743,7 +9745,14 @@ function workStateStamp(state2) {
   return (0, import_node_crypto6.createHash)("sha256").update(canonicalText(slice)).digest("hex").slice(0, 24);
 }
 function needsApprovalWhenHandedOver(command) {
-  return isUserDecision(command) || SHOWN_AND_APPROVED.has(command.action);
+  return isUserDecision(command) || SHOWN_AND_APPROVED.has(command.action) || carriesRemark(command);
+}
+function carriesRemark(value, depth = 0) {
+  if (depth > 6 || !value || typeof value !== "object")
+    return false;
+  if (Array.isArray(value))
+    return value.some((item) => carriesRemark(item, depth + 1));
+  return Object.entries(value).some(([key, item]) => (key === "comment" || key === "scopeNote") && typeof item === "string" || carriesRemark(item, depth + 1));
 }
 function fingerprintFor(state2, view) {
   switch (view) {
@@ -9769,7 +9778,7 @@ function submissionToCommands(state2, raw) {
   if (submission.workItemId !== state2.workItem.id) {
     return { commands: [], conflicts: [{ item: "work item", reason: `the review is for ${submission.workItemId}, the current work item is ${state2.workItem.id}` }], stale: true, summary: [], details: [], affectsStories: false };
   }
-  const via = "html-review";
+  const via = "approved";
   let affectsStories = false;
   const editedPlan = /* @__PURE__ */ new Map();
   const planStatus = /* @__PURE__ */ new Map();
@@ -10970,7 +10979,7 @@ ${body2}
 <div id="out"><p class="meta">Decisions (give this to Claude if the page could not save them):</p><textarea readonly aria-label="Decisions"></textarea></div>
 </main>
 <div class="bar" role="region" aria-label="Actions">${barExtra}<span class="grow" id="toast" role="status" aria-live="polite"></span>
-<button id="btn-copy" type="button">Copy decisions</button><button id="btn-download" type="button">Download</button><button id="btn-save" class="primary" type="button">Save decisions</button></div>
+<button id="btn-copy" type="button">Copy decisions</button><button id="btn-download" type="button">Download</button><button id="btn-save" class="primary" type="button">Send for approval</button></div>
 <script type="application/json" id="praxis-data">${jsonForScript(payload)}</script>
 <script>${SCRIPT}</script>
 </body></html>`;
@@ -11297,6 +11306,7 @@ $('#btn-save').addEventListener('click',function(){
   toast('Saving...',false);
   fetch(D.saveUrl,{method:'POST',headers:{'content-type':'application/json','x-praxis-review-token':D.token||''},body:JSON.stringify(s)}).then(function(r){return r.json().then(function(j){return{ok:r.ok,j:j}})}).then(function(x){
     if(!x.ok){showOut(text);toast('Not saved ('+(x.j&&x.j.error||'error')+'). Decisions are below: copy them to Claude.',true);return}
+    if(x.j.handedOver){var hc=(x.j.conflicts||[]).length;toast((hc?('NOT sent, '+hc+' conflict(s) - this page is out of date: '+x.j.conflicts.map(function(k){return k.item+' ('+k.reason+')'}).join('; ')+'. Reload the page to see the current state, then decide again. The rest is handed over: '):'Handed over: ')+'nothing is recorded yet. Tell Claude to apply the review: your client then shows these exact decisions in its approval dialog, and only your answer there records them.',hc>0);return}
     var c=(x.j.conflicts||[]).length;
     toast(c?('Saved: '+(x.j.applied||0)+' change(s) applied. NOT saved, '+c+' conflict(s) - this page is out of date: '+x.j.conflicts.map(function(k){return k.item+' ('+k.reason+')'}).join('; ')+'. Reload the page to see the current state, then decide again.'):('Saved: '+(x.j.applied||0)+' change(s) applied. Reload to see the new revision.'),c>0);
   }).catch(function(){showOut(text);toast('Cannot reach Praxis (the review session ended). Decisions are below: copy them to Claude.',true)})
@@ -20996,13 +21006,13 @@ function firstMarkdownHeading(md) {
   }
   return void 0;
 }
-function readText(path2) {
+function readText2(path2) {
   if (!path2 || !(0, import_node_fs19.existsSync)(path2))
     return void 0;
   return (0, import_node_fs19.readFileSync)(path2, "utf8");
 }
 function readJson4(path2) {
-  const raw = readText(path2);
+  const raw = readText2(path2);
   if (!raw)
     return void 0;
   try {
@@ -21052,8 +21062,8 @@ function jiraWpSummary(id, title) {
   return `[${id}] ${title}`;
 }
 function readNormalizedWorkPackage(repo, local, opts) {
-  const designIndex = local.designDir ? readText((0, import_node_path19.join)(local.designDir, "index.md")) : void 0;
-  const canonIndex = local.canonWpDir ? readText((0, import_node_path19.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path19.join)(repo, "wp", local.id, "index.md"));
+  const designIndex = local.designDir ? readText2((0, import_node_path19.join)(local.designDir, "index.md")) : void 0;
+  const canonIndex = local.canonWpDir ? readText2((0, import_node_path19.join)(local.canonWpDir, "index.md")) : readText2((0, import_node_path19.join)(repo, "wp", local.id, "index.md"));
   const manifest = readJson4((0, import_node_path19.join)(local.manifestDir, "manifest.json"));
   const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path19.join)(local.designDir, "change-spec.json") : void 0);
   const spec = readJson4(specPath);
@@ -22013,7 +22023,7 @@ function runProjectVerification(repo) {
   if (!command) {
     throw new DeveloperCompleteError("VERIFICATION_FAILED", "no quality.test command in .project and no npm test script");
   }
-  const r = (0, import_node_child_process6.spawnSync)(command, {
+  const r = (0, import_node_child_process7.spawnSync)(command, {
     cwd: repo,
     shell: true,
     encoding: "utf8",
@@ -22352,13 +22362,13 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto13, import_node_fs21, import_node_path21, import_node_child_process6, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto13, import_node_fs21, import_node_path21, import_node_child_process7, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
     import_node_crypto13 = require("node:crypto");
     import_node_fs21 = require("node:fs");
     import_node_path21 = require("node:path");
-    import_node_child_process6 = require("node:child_process");
+    import_node_child_process7 = require("node:child_process");
     init_dist();
     init_mutation_auth();
     init_role_policy();
@@ -23947,11 +23957,8 @@ function doctorNextSteps(input2) {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
   }
-  if (input2.approval.mode === "approval-page") {
-    steps.push("This MCP client cannot show Praxis's approval dialog (or answers it without showing it, as the Claude Desktop Code tab does). Protected actions open the Praxis approval page in your browser instead: read the exact action there and choose Approve or Reject. The agent never receives that page's link. Anything that can operate your browser or run programs as you (a browser-automation extension, a shell) could still operate the page; set the browser for approval pages to one no agent controls (PRAXIS_APPROVAL_BROWSER).");
-  }
   if (input2.approval.mode === "no-dialog") {
-    steps.push("This MCP client cannot show an approval dialog (no elicitation support). Read-only tools and previews work, but protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says counts as your approval. Use a client that supports approval dialogs to apply them. Some hosts (Claude Desktop) have their own tool-permission prompt instead of a dialog: praxis_doctor approval.client shows what yours declared, and the optional host-permission setting (docs/user-approval.md) uses that prompt with the exact plan in the tool arguments; it is weaker, because Praxis cannot see whether the prompt was shown.");
+    steps.push("This MCP client cannot show an approval dialog (no elicitation support, or it answers without showing one, as the Claude Desktop Code tab does). Read-only tools, previews and reviews work, but protected actions (Git, Jira, accepting requirements or stories, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says, and no page or setting, counts as your approval. Apply them from the Claude Code CLI in a terminal, which shows the dialog.");
   }
   if (input2.dotenvRefused?.length) {
     steps.push(...dotenvRefusalSteps(input2.dotenvRefused));
@@ -24157,7 +24164,7 @@ function gitEnv(extra) {
   };
 }
 function runGit(repo, args, opts) {
-  const r = (0, import_node_child_process7.spawnSync)("git", args, {
+  const r = (0, import_node_child_process8.spawnSync)("git", args, {
     cwd: repo,
     encoding: "utf8",
     timeout: opts?.timeoutMs ?? 3e4,
@@ -24444,13 +24451,13 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto16, import_node_fs25, import_node_path25, import_node_child_process7;
+var import_node_crypto16, import_node_fs25, import_node_path25, import_node_child_process8;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
     import_node_crypto16 = require("node:crypto");
     import_node_fs25 = require("node:fs");
     import_node_path25 = require("node:path");
-    import_node_child_process7 = require("node:child_process");
+    import_node_child_process8 = require("node:child_process");
     init_redact();
     init_git_url();
     init_dist();
@@ -26317,7 +26324,7 @@ function classifySpawnFailure(err) {
   return QUALITY_CODES.QUALITY_SPAWN_FAILED;
 }
 function waitForChildStart(child, timeoutMs = 1500) {
-  return new Promise((resolve19) => {
+  return new Promise((resolve20) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -26327,7 +26334,7 @@ function waitForChildStart(child, timeoutMs = 1500) {
       child.off("spawn", onSpawn);
       child.off("error", onError);
       child.off("exit", onExit);
-      resolve19(result);
+      resolve20(result);
     };
     const onSpawn = () => finish({ spawned: true, pid: child.pid });
     const onError = (err) => finish({ spawned: false, pid: child.pid, error: err });
@@ -26614,7 +26621,7 @@ function probeSqliteInProcess() {
   };
 }
 function probeSqliteWithExecutable(execPath, extraEnv = {}, extraArgs = []) {
-  const r = (0, import_node_child_process8.spawnSync)(execPath, [...extraArgs, "-e", SQLITE_PROBE_SOURCE], {
+  const r = (0, import_node_child_process9.spawnSync)(execPath, [...extraArgs, "-e", SQLITE_PROBE_SOURCE], {
     encoding: "utf8",
     timeout: 5e3,
     env: { ...process.env, ...extraEnv }
@@ -26705,7 +26712,7 @@ function portListening(port3) {
   });
 }
 function waitForWorkerStart(worker, timeoutMs = 1500) {
-  return new Promise((resolve19) => {
+  return new Promise((resolve20) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -26715,7 +26722,7 @@ function waitForWorkerStart(worker, timeoutMs = 1500) {
       worker.off("online", onOnline);
       worker.off("error", onError);
       worker.off("exit", onExit);
-      resolve19(result);
+      resolve20(result);
     };
     const onOnline = () => finish({ spawned: true, pid: process.pid });
     const onError = (err) => finish({ spawned: false, pid: process.pid, error: err });
@@ -27024,7 +27031,7 @@ async function ensureQualityOnce(opts) {
     qlog("quality.spawn");
     let child;
     try {
-      child = (0, import_node_child_process8.spawn)(runtime.execPath, [...runtime.extraArgs, executable], {
+      child = (0, import_node_child_process9.spawn)(runtime.execPath, [...runtime.extraArgs, executable], {
         cwd: repo,
         env,
         detached: true,
@@ -27163,10 +27170,10 @@ function resetQualityEnsureForTests(repo) {
   }
   inFlight.clear();
 }
-var import_node_child_process8, import_node_worker_threads, import_node_fs29, import_node_net, import_node_module, import_node_path30, import_node_url, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
+var import_node_child_process9, import_node_worker_threads, import_node_fs29, import_node_net, import_node_module, import_node_path30, import_node_url, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
 var init_quality_ensure = __esm({
   "node_modules/@praxis/cli/dist/quality-ensure.js"() {
-    import_node_child_process8 = require("node:child_process");
+    import_node_child_process9 = require("node:child_process");
     import_node_worker_threads = require("node:worker_threads");
     import_node_fs29 = require("node:fs");
     import_node_net = __toESM(require("node:net"), 1);
@@ -27599,7 +27606,7 @@ function loadPraxisDotenv(repo) {
   }
 }
 function gitRoot(cwd) {
-  const r = (0, import_node_child_process9.spawnSync)("git", ["rev-parse", "--show-toplevel"], {
+  const r = (0, import_node_child_process10.spawnSync)("git", ["rev-parse", "--show-toplevel"], {
     cwd,
     encoding: "utf8",
     timeout: 2e3
@@ -28907,11 +28914,11 @@ ${preview.proposedComment}`,
     };
   }));
 }
-var import_node_crypto19, import_node_child_process9, import_node_fs30, import_node_path32, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto19, import_node_child_process10, import_node_fs30, import_node_path32, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
     import_node_crypto19 = require("node:crypto");
-    import_node_child_process9 = require("node:child_process");
+    import_node_child_process10 = require("node:child_process");
     import_node_fs30 = require("node:fs");
     import_node_path32 = require("node:path");
     init_dist2();
@@ -36071,7 +36078,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve19) {
+function isRecursive(inst, stack, resolve20) {
   const cached4 = recursive.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN : NONE;
@@ -36081,7 +36088,7 @@ function isRecursive(inst, stack, resolve19) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve19);
+      const answer = isRecursive(child, stack, resolve20);
       if (answer > result)
         result = answer;
     }
@@ -36092,7 +36099,7 @@ function isRecursive(inst, stack, resolve19) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve19) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve20) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -36155,7 +36162,7 @@ function isRecursive(inst, stack, resolve19) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve20 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -43557,7 +43564,7 @@ var recursive2 = /* @__PURE__ */ new WeakMap();
 var NONE2 = 0;
 var ASSUMED2 = 1;
 var PROVEN2 = 2;
-function isRecursive2(inst, stack, resolve19) {
+function isRecursive2(inst, stack, resolve20) {
   const cached4 = recursive2.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN2 : NONE2;
@@ -43567,7 +43574,7 @@ function isRecursive2(inst, stack, resolve19) {
   let result = NONE2;
   const check2 = (child) => {
     if (result !== PROVEN2 && child?._zod) {
-      const answer = isRecursive2(child, stack, resolve19);
+      const answer = isRecursive2(child, stack, resolve20);
       if (answer > result)
         result = answer;
     }
@@ -43578,7 +43585,7 @@ function isRecursive2(inst, stack, resolve19) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve19) : NONE2;
+      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve20) : NONE2;
       if (child > answer)
         answer = child;
     }
@@ -43641,7 +43648,7 @@ function isRecursive2(inst, stack, resolve19) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve20 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive2(inner, stack, false) : ASSUMED2);
       break;
     }
@@ -50246,14 +50253,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve19, reject) => {
+  return new Promise((resolve20, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve19();
+      resolve20();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -51047,7 +51054,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve19, reject) => {
+    return new Promise((resolve20, reject) => {
       const earlyReject = (error64) => {
         reject(error64);
       };
@@ -51115,7 +51122,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options2?.allowInputRequired === true) return resolve19(manualInputRequiredValue(decoded));
+          if (options2?.allowInputRequired === true) return resolve20(manualInputRequiredValue(decoded));
           const flow = {
             codec: codec2,
             request,
@@ -51127,11 +51134,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve19(this._resolveNonCompleteResult(decoded, flow));
+          return resolve20(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve19(parseResult.data);
+          if (parseResult.success) resolve20(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -54043,7 +54050,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve19.call(this, root, ref);
+    let _sch = resolve20.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a7 = root.localRefs) === null || _a7 === void 0 ? void 0 : _a7[ref];
       const { schemaId } = this.opts;
@@ -54069,7 +54076,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve19(root, ref) {
+  function resolve20(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -54519,7 +54526,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     else if (typeof uri === "object") uri = parse6(serialize(uri, options2), options2);
     return uri;
   }
-  function resolve19(baseURI, relativeURI, options2) {
+  function resolve20(baseURI, relativeURI, options2) {
     const schemelessOptions = options2 ? Object.assign({ scheme: "null" }, options2) : { scheme: "null" };
     const resolved = resolveComponent(parse6(baseURI, schemelessOptions), parse6(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
@@ -54693,7 +54700,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
   const fastUri = {
     SCHEMES,
     normalize,
-    resolve: resolve19,
+    resolve: resolve20,
     resolveComponent,
     equal,
     serialize,
@@ -60069,7 +60076,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve19, reject) => {
+    return new Promise((resolve20, reject) => {
       const json4 = serializeMessage(message);
       let settled = false;
       const onError = (error64) => {
@@ -60084,14 +60091,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve19();
+        resolve20();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json4)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve19();
+        resolve20();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -60145,14 +60152,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve19) => {
+    return await new Promise((resolve20) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve19(true);
+        resolve20(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve19(false);
+        resolve20(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -60501,7 +60508,7 @@ var wpProp = {
 var confirmProp = {
   type: "string",
   enum: ["YES", "NO"],
-  description: "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user itself (in the client's own approval dialog, or, when the client cannot show one, in the Praxis approval page it opens in the user's browser) and runs the action only if they approve. APPROVAL_PENDING means the page is open and nobody decided yet: call again with the same arguments after the user decided. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection."
+  description: "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user itself in the client's own approval dialog and runs the action only if they approve. A client that cannot show the dialog gets APPROVAL_CLIENT_UI_REQUIRED and nothing runs. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection."
 };
 var fingerprintProp = {
   type: "string",
@@ -61270,13 +61277,15 @@ var TOOLS = [
   },
   {
     name: "praxis_review_apply",
-    description: "Record the decisions a user made in an HTML review when the page could not save them itself (they copied or downloaded the decisions file). Pass the JSON text as submission or the downloaded file as file. Edits are applied; whatever records that the user ACCEPTED or REJECTED something is shown to the user in the client's approval dialog first, bound to exactly those decisions, and is refused without a dialog. Items that changed since the page was rendered are skipped and reported as conflicts; the rest is applied. The agent cannot record the user's acceptance any other way.",
+    description: "Record the decisions a user made in an HTML review: the ones they sent with Save in the served page (fromPage true), or a copied or downloaded decisions file (submission or file). Edits are applied; whatever records that the user ACCEPTED or REJECTED something is shown to the user in the client's approval dialog first, bound to exactly those decisions, and is refused without a dialog. Items that changed since the page was rendered are skipped and reported as conflicts; the rest is applied. The agent cannot record the user's acceptance any other way.",
     inputSchema: {
       type: "object",
       properties: {
         repo: repoProp,
         workItemId: { type: "string", description: "Work item to address. Omitted means the repository's current work item." },
         submission: { type: "string", description: "The decisions JSON (contract praxis.review.submission) copied from the review page." },
+        fromPage: { type: "boolean", description: "Record the decisions the user sent with Save in the served review page (Save itself records nothing)." },
+        view: { type: "string", description: "With fromPage: which review the decisions came from (requirements, prototype, story-plan, stories). Default: the latest sent." },
         file: { type: "string", description: "Path of the downloaded decisions file (inside the repository or ~/Downloads)." },
         confirmation: confirmProp
       },
@@ -61433,7 +61442,7 @@ var TOOLS = [
   },
   {
     name: "praxis_approval_plan",
-    description: "READ-ONLY: the exact plan the user would be asked to approve for a protected apply tool, computed by Praxis from the live state. Runs nothing. Use it to show the user what will happen; in host-permission mode (a client with no approval dialog and PRAXIS_APPROVAL_MODE=host-permission) pass its planText to the apply tool.",
+    description: "READ-ONLY: the exact plan the client's approval dialog will show for a protected apply tool, computed by Praxis from the live state. Runs nothing. Use it to show the user what will happen. Nothing taken from it and passed back approves anything.",
     inputSchema: {
       type: "object",
       properties: {
@@ -61457,9 +61466,9 @@ for (const tool of TOOLS) {
   };
   tool.inputSchema.properties.planText = {
     type: "string",
-    description: "Only for PRAXIS_APPROVAL_MODE=host-permission: the exact planText returned by praxis_approval_plan for these arguments. Ignored otherwise."
+    description: "Retired in 0.1.0-alpha.49.2 and ignored: no text you pass approves anything."
   };
-  tool.description += " The user approves this exact action before it runs, in the client's own approval dialog or the Praxis approval page; nothing else counts as approval, and a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the user said no), APPROVAL_DISMISSED (closed without deciding), APPROVAL_PENDING (page open, undecided), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask: not a rejection).";
+  tool.description += " The user approves this exact action before it runs, in the client's own approval dialog (a client response: Praxis cannot authenticate the person). Nothing else counts as approval: not confirmation=YES, not a page, not a setting; a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the user said no), APPROVAL_DISMISSED (closed without deciding), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask, or the dialog is set up to be answered automatically: not a rejection, nothing ran).";
 }
 function toolsForRole(role) {
   if (role === "runtime")
@@ -61525,7 +61534,7 @@ function noteAutoAnswer(key, automatic, latencyMs) {
   try {
     const file2 = path();
     (0, import_node_fs3.mkdirSync)((0, import_node_path3.dirname)(file2), { recursive: true, mode: 448 });
-    (0, import_node_fs3.writeFileSync)(`${file2}.tmp`, `${JSON.stringify({ about: "Clients seen answering Praxis's approval dialog without showing it; Praxis uses its approval page for them instead.", observations: all }, null, 2)}
+    (0, import_node_fs3.writeFileSync)(`${file2}.tmp`, `${JSON.stringify({ about: "Clients seen answering Praxis's approval dialog without showing it; Praxis does not ask them again.", observations: all }, null, 2)}
 `, { mode: 384 });
     (0, import_node_fs3.renameSync)(`${file2}.tmp`, file2);
   } catch {
@@ -61533,74 +61542,153 @@ function noteAutoAnswer(key, automatic, latencyMs) {
 }
 
 // packages/mcp/dist/approval-settings.js
-var import_node_fs4 = require("node:fs");
-var import_node_os3 = require("node:os");
-var import_node_path4 = require("node:path");
 var DEFAULT_MIN_ANSWER_MS = 1e3;
-var DEFAULT_PAGE_MIN_MS = 3e3;
-var WEAKENING = ["PRAXIS_APPROVAL_MODE", "PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_PAGE_MIN_MS"];
-var approvalSettingsPath = () => (0, import_node_path4.join)((0, import_node_os3.userInfo)().homedir, ".praxis", "approval-settings.json");
-function launchedAsExtension() {
-  const entry = process.argv[1];
-  if (!entry || !/\.cjs$/.test(entry))
-    return false;
-  try {
-    const manifest = JSON.parse((0, import_node_fs4.readFileSync)((0, import_node_path4.join)((0, import_node_path4.dirname)((0, import_node_path4.dirname)(entry)), "manifest.json"), "utf8"));
-    return manifest.name === "praxis-runtime" && manifest.server !== void 0;
-  } catch {
-    return false;
-  }
-}
-var testSource = () => process.env.PRAXIS_TEST_APPROVALS === "1" && false;
-function readFileSettings() {
-  const path2 = approvalSettingsPath();
-  try {
-    const stat = (0, import_node_fs4.statSync)(path2);
-    if (!stat.isFile())
-      return { settings: {}, refused: "not a regular file" };
-    if (typeof process.getuid === "function" && stat.uid !== process.getuid())
-      return { settings: {}, refused: "not owned by this account" };
-    if ((stat.mode & 18) !== 0)
-      return { settings: {}, refused: "writable by group or others" };
-    const parsed = JSON.parse((0, import_node_fs4.readFileSync)(path2, "utf8"));
-    return { settings: parsed && typeof parsed === "object" ? parsed : {} };
-  } catch (error64) {
-    return { settings: {}, ...error64.code === "ENOENT" ? {} : { refused: "unreadable" } };
-  }
-}
-var modeOf = (raw) => raw === "trusted-client" || raw === "host-permission" ? raw : "";
+var isShippedBundle = () => true;
+var testSource = () => !isShippedBundle() && process.env.PRAXIS_TEST_APPROVALS === "1";
+var RETIRED = ["PRAXIS_APPROVAL_MODE"];
+var TEST_ONLY = ["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_PAGE_MIN_MS"];
 var numberOf = (raw) => {
   const n = Number(raw);
   return raw !== void 0 && raw !== "" && Number.isFinite(n) && n >= 0 ? n : void 0;
 };
+var on = (raw) => /^(on|true|1|yes)$/i.test(raw?.trim() ?? "");
 function approvalSettings() {
   const env = process.env;
-  const trustedEnv = launchedAsExtension() || testSource();
-  const { settings: file2, refused } = trustedEnv ? { settings: {} } : readFileSettings();
-  const stricter = { PRAXIS_APPROVAL_MIN_ANSWER_MS: DEFAULT_MIN_ANSWER_MS, PRAXIS_APPROVAL_PAGE_MIN_MS: DEFAULT_PAGE_MIN_MS };
-  const ignoredEnvironment = trustedEnv ? [] : WEAKENING.filter((key) => env[key]?.trim() && !(stricter[key] !== void 0 && (numberOf(env[key]) ?? 0) >= stricter[key]));
-  const limit = (key, fromFile, fallback) => {
-    const fromEnv = numberOf(env[key]);
-    if (trustedEnv)
-      return fromEnv ?? fallback;
-    return Math.max(numberOf(fromFile) ?? fallback, fromEnv !== void 0 && fromEnv >= fallback ? fromEnv : 0);
-  };
-  const minAnswerMs2 = limit("PRAXIS_APPROVAL_MIN_ANSWER_MS", file2.minAnswerMs, DEFAULT_MIN_ANSWER_MS);
-  const pageMinMs = limit("PRAXIS_APPROVAL_PAGE_MIN_MS", file2.pageMinMs, DEFAULT_PAGE_MIN_MS);
-  const pageOff = (value2) => /^(off|false|0|no)$/i.test(String(value2 ?? "").trim());
+  const test = testSource();
+  const envMin = numberOf(env.PRAXIS_APPROVAL_MIN_ANSWER_MS);
+  const minAnswerMs2 = test && envMin !== void 0 ? envMin : Math.max(DEFAULT_MIN_ANSWER_MS, envMin ?? 0);
+  const ignoredEnvironment = [
+    ...RETIRED.filter((key) => env[key]?.trim()),
+    ...test ? [] : [...TEST_ONLY.filter((key) => env[key]?.trim()), ...envMin !== void 0 && envMin < DEFAULT_MIN_ANSWER_MS ? ["PRAXIS_APPROVAL_MIN_ANSWER_MS"] : [], ...on(env.PRAXIS_APPROVAL_PAGE) ? ["PRAXIS_APPROVAL_PAGE"] : []]
+  ];
   const wait = numberOf(env.PRAXIS_APPROVAL_PAGE_WAIT_MS);
-  const value = {
-    mode: modeOf(trustedEnv ? env.PRAXIS_APPROVAL_MODE?.trim() : file2.mode),
-    browser: (trustedEnv ? env.PRAXIS_APPROVAL_BROWSER : file2.browser)?.trim() ?? "",
+  return {
     minAnswerMs: minAnswerMs2,
-    pageMinMs,
-    page: !(pageOff(env.PRAXIS_APPROVAL_PAGE) || file2.page === false),
+    // the page mechanism is kept for a future approval authority and exercised by tests only
+    page: test && on(env.PRAXIS_APPROVAL_PAGE),
+    pageMinMs: test ? numberOf(env.PRAXIS_APPROVAL_PAGE_MIN_MS) ?? 3e3 : 3e3,
     waitMs: wait !== void 0 ? Math.min(wait, 11e4) : 45e3,
-    source: launchedAsExtension() ? "extension settings" : Object.keys(file2).length ? "approval-settings.json" : "defaults",
-    ignoredEnvironment,
-    file: { path: approvalSettingsPath(), ...refused ? { refused } : {} }
+    browser: test ? env.PRAXIS_APPROVAL_BROWSER?.trim() ?? "" : "",
+    ignoredEnvironment
   };
-  return value;
+}
+
+// packages/mcp/dist/dialog-automation.js
+var import_node_child_process = require("node:child_process");
+var import_node_fs4 = require("node:fs");
+var import_node_os3 = require("node:os");
+var import_node_path4 = require("node:path");
+var SETTINGS_NAMES = ["settings.json", "settings.local.json"];
+var HOOK_EVENT = /\bElicitation(Result)?\b/;
+function readText(path2, max = 2e6) {
+  try {
+    const stat = (0, import_node_fs4.statSync)(path2);
+    if (!stat.isFile() || stat.size > max)
+      return void 0;
+    return (0, import_node_fs4.readFileSync)(path2, "utf8");
+  } catch {
+    return void 0;
+  }
+}
+function jsonHook(path2) {
+  const text = readText(path2);
+  if (!text || !HOOK_EVENT.test(text))
+    return void 0;
+  try {
+    const parsed = JSON.parse(text);
+    const hooks = parsed?.hooks && typeof parsed.hooks === "object" ? parsed.hooks : parsed;
+    if (Object.keys(hooks ?? {}).some((key) => HOOK_EVENT.test(key)))
+      return { file: path2, why: "an Elicitation hook answers the approval dialog" };
+  } catch {
+  }
+  return { file: path2, why: "names the Elicitation hook event" };
+}
+function ancestors(start) {
+  const out = [];
+  let dir = (0, import_node_path4.resolve)(start);
+  for (let i = 0; i < 64; i += 1) {
+    out.push(dir);
+    const up = (0, import_node_path4.dirname)(dir);
+    if (up === dir)
+      break;
+    dir = up;
+  }
+  return out;
+}
+function walk2(dir, match, depth = 6, budget = { files: 4e3 }) {
+  const found = [];
+  if (depth < 0 || budget.files <= 0)
+    return found;
+  let entries;
+  try {
+    entries = (0, import_node_fs4.readdirSync)(dir, { withFileTypes: true });
+  } catch {
+    return found;
+  }
+  for (const entry of entries) {
+    if (budget.files-- <= 0)
+      break;
+    const path2 = (0, import_node_path4.join)(dir, entry.name);
+    if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git")
+      found.push(...walk2(path2, match, depth - 1, budget));
+    else if (entry.isFile() && match(entry.name))
+      found.push(path2);
+  }
+  return found;
+}
+function launchSettings() {
+  try {
+    const args = (0, import_node_child_process.execFileSync)("ps", ["-o", "args=", "-p", String(process.ppid)], { encoding: "utf8", timeout: 2e3 });
+    const match = /--settings[= ](\S+)/.exec(args);
+    if (!match)
+      return [];
+    const value = match[1];
+    if (value.startsWith("{"))
+      return HOOK_EVENT.test(value) ? [{ file: "--settings (inline)", why: "an Elicitation hook answers the approval dialog" }] : [];
+    const finding = jsonHook((0, import_node_path4.isAbsolute)(value) ? value : (0, import_node_path4.resolve)(value));
+    return finding ? [finding] : [];
+  } catch {
+    return [];
+  }
+}
+function dialogAutomation(input2 = {}) {
+  const findings = [];
+  const seen = /* @__PURE__ */ new Set();
+  const check2 = (path2) => {
+    if (seen.has(path2))
+      return;
+    seen.add(path2);
+    const finding = jsonHook(path2);
+    if (finding)
+      findings.push(finding);
+  };
+  const projectRoots = /* @__PURE__ */ new Set([...ancestors(process.cwd()), ...input2.repo ? ancestors(input2.repo) : []]);
+  const configDirs = /* @__PURE__ */ new Set([(0, import_node_path4.join)((0, import_node_os3.userInfo)().homedir, ".claude"), ...process.env.CLAUDE_CONFIG_DIR?.trim() ? [(0, import_node_path4.resolve)(process.env.CLAUDE_CONFIG_DIR.trim())] : []]);
+  for (const root of projectRoots)
+    for (const name of SETTINGS_NAMES)
+      check2((0, import_node_path4.join)(root, ".claude", name));
+  for (const dir of configDirs) {
+    for (const name of SETTINGS_NAMES)
+      check2((0, import_node_path4.join)(dir, name));
+    for (const file2 of walk2((0, import_node_path4.join)(dir, "plugins"), (name) => name === "hooks.json" || name === "plugin.json"))
+      check2(file2);
+  }
+  for (const managed of ["/Library/Application Support/ClaudeCode/managed-settings.json", "/etc/claude-code/managed-settings.json", "C:\\ProgramData\\ClaudeCode\\managed-settings.json"]) {
+    if ((0, import_node_fs4.existsSync)(managed))
+      check2(managed);
+  }
+  for (const base of [...[...projectRoots].map((r) => (0, import_node_path4.join)(r, ".claude")), ...configDirs]) {
+    for (const file2 of walk2((0, import_node_path4.join)(base, "agents"), (name) => name.endsWith(".md"), 3).concat(walk2((0, import_node_path4.join)(base, "skills"), (name) => name.endsWith(".md"), 4))) {
+      if (seen.has(file2))
+        continue;
+      seen.add(file2);
+      const text = readText(file2, 5e5);
+      if (text && /^---[\s\S]*?\bhooks\s*:[\s\S]*?\bElicitation(Result)?\b[\s\S]*?^---/m.test(text))
+        findings.push({ file: file2, why: "an agent or skill definition declares an Elicitation hook" });
+    }
+  }
+  findings.push(...launchSettings());
+  return findings;
 }
 
 // packages/mcp/dist/approval-channel.js
@@ -61703,6 +61791,26 @@ function elicitationChannel(input2) {
     }
   };
 }
+function automationGuarded(dialog, repo) {
+  const refused = (findings) => ({
+    answer: "unavailable",
+    channel: "client-elicitation",
+    reason: `the client's approval dialog is configured to be answered automatically (${findings.map((f) => f.file).slice(0, 5).join("; ")}); a configured answer is not the user's. Remove that hook to approve here`
+  });
+  return {
+    get kind() {
+      return dialog.kind;
+    },
+    async ask(request) {
+      const before = dialogAutomation(repo ? { repo } : {});
+      if (before.length)
+        return refused(before);
+      const answer = await dialog.ask(request);
+      const after = dialogAutomation(repo ? { repo } : {});
+      return after.length ? refused(after) : answer;
+    }
+  };
+}
 function dialogWithPageFallback(dialog, page, input2) {
   let used = page && knownAutoAnswer(input2.clientKey) ? page : dialog;
   return {
@@ -61712,6 +61820,10 @@ function dialogWithPageFallback(dialog, page, input2) {
     async ask(request) {
       if (used === page)
         return page.ask(request);
+      const known = page ? void 0 : knownAutoAnswer(input2.clientKey);
+      if (known) {
+        return { answer: "unavailable", channel: "client-elicitation", reason: `this client (${known.client}) was seen answering Praxis's approval dialog by itself (${known.automatic}, ${known.latencyMs} ms), without showing it, so it is not asked again` };
+      }
       const answer = await dialog.ask(request);
       if (answer.answer !== "unavailable" || !answer.automatic)
         return answer;
@@ -61735,48 +61847,8 @@ function dialogWithPageFallback(dialog, page, input2) {
     }
   };
 }
-var hostPermissionMode = () => approvalSettings().mode === "host-permission";
 var planTextOf = (request) => approvalMessage(request);
-function hostPermissionChannel(planText, personal) {
-  return {
-    kind: "host-permission",
-    async ask(request) {
-      if (PERSONAL_ACTS.has(request.action) || request.action === "praxis_quality_service_fix") {
-        if (personal) {
-          const answer = await personal.ask(request);
-          return { ...answer, channel: answer.channel ?? personal.kind };
-        }
-        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it. Host-permission mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item): the host's tool-permission prompt can be switched to "always allow", and then the agent would have approved itself. Do it where Praxis can ask you itself: a client that shows an approval dialog (for example Claude Code), or the Praxis approval page (on by default when the Runtime runs on your computer).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
-      }
-      const expected = planTextOf(request);
-      if (planText === void 0) {
-        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed. This client has no approval dialog; in host-permission mode call praxis_approval_plan for this action, show the plan to the user, then call this tool with that exact text as planText so the host's permission prompt shows what will run.`, { executed: false, planText: expected });
-      }
-      if (planText !== expected) {
-        throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `${request.summary} was NOT executed: planText is not the plan this call would run (the plan changed, or the text was edited). Show the user the current plan below and apply again with it.`, { executed: false, planText: expected });
-      }
-      return { answer: "approve", channel: "host-permission", reason: "the host's tool-permission prompt showed this exact plan (not verifiable by Praxis)" };
-    }
-  };
-}
-var trustedClientMode = () => approvalSettings().mode === "trusted-client";
 var PERSONAL_ACTS = /* @__PURE__ */ new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item", "amend-decision-journal"]);
-function trustedClientChannelWith(dialog) {
-  return {
-    kind: "trusted-client",
-    async ask(request) {
-      if (PERSONAL_ACTS.has(request.action)) {
-        if (dialog) {
-          const answer = await dialog.ask(request);
-          return { ...answer, channel: answer.channel ?? dialog.kind };
-        }
-        throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it where Praxis can ask you itself: a client that shows an approval dialog (for example Claude Code), or the Praxis approval page (on by default when the Runtime runs on your computer).`, { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } });
-      }
-      return { answer: "approve", channel: "trusted-client", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
-    }
-  };
-}
-var trustedClientChannel = trustedClientChannelWith(void 0);
 var planOnlyChannel = {
   kind: "client-elicitation",
   async ask(request) {
@@ -66831,7 +66903,7 @@ var recursive3 = /* @__PURE__ */ new WeakMap();
 var NONE3 = 0;
 var ASSUMED3 = 1;
 var PROVEN3 = 2;
-function isRecursive3(inst, stack, resolve19) {
+function isRecursive3(inst, stack, resolve20) {
   const cached4 = recursive3.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN3 : NONE3;
@@ -66841,7 +66913,7 @@ function isRecursive3(inst, stack, resolve19) {
   let result = NONE3;
   const check2 = (child) => {
     if (result !== PROVEN3 && child?._zod) {
-      const answer = isRecursive3(child, stack, resolve19);
+      const answer = isRecursive3(child, stack, resolve20);
       if (answer > result)
         result = answer;
     }
@@ -66852,7 +66924,7 @@ function isRecursive3(inst, stack, resolve19) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve19) : NONE3;
+      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve20) : NONE3;
       if (child > answer)
         answer = child;
     }
@@ -66915,7 +66987,7 @@ function isRecursive3(inst, stack, resolve19) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve19 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve20 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive3(inner, stack, false) : ASSUMED3);
       break;
     }
@@ -81524,7 +81596,7 @@ var import_node_fs6 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"9d55dde70d7424fb0a97322107f3f6f41daac62374563558ed0472e03b55ebf1","coreBaseline":"2fe145c51b3ce1384db6a9325d5d12746c7bb9a4","inputs":39}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"6acae770305b34c0fa02aa393049b876fc2a05672b5826d97de8a0252a23bbe7","coreBaseline":"2100c24584e9247e7a43c05b231d350c6bd7e4fa","inputs":40}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81600,7 +81672,7 @@ function containedPath(root, relative7) {
 }
 
 // packages/mcp/dist/approval-page.js
-var import_node_child_process = require("node:child_process");
+var import_node_child_process2 = require("node:child_process");
 var import_node_crypto8 = require("node:crypto");
 var import_node_fs8 = require("node:fs");
 var import_node_http = require("node:http");
@@ -81873,7 +81945,7 @@ var openApprovalPage = async (secretUrl) => {
   }
   return new Promise((done) => {
     try {
-      const child = (0, import_node_child_process.spawn)(command, args, { detached: true, stdio: "ignore" });
+      const child = (0, import_node_child_process2.spawn)(command, args, { detached: true, stdio: "ignore" });
       const timer = setTimeout(() => {
         child.unref();
         done(true);
@@ -82085,7 +82157,7 @@ function mcpEnvelope(opts) {
 }
 
 // packages/mcp/dist/story-engine.js
-var import_node_child_process5 = require("node:child_process");
+var import_node_child_process6 = require("node:child_process");
 var import_node_crypto11 = require("node:crypto");
 var import_node_fs15 = require("node:fs");
 var import_node_path13 = require("node:path");
@@ -82093,7 +82165,7 @@ init_dist();
 var import_node_os9 = require("node:os");
 
 // packages/mcp/dist/project-code-runner.js
-var import_node_child_process2 = require("node:child_process");
+var import_node_child_process3 = require("node:child_process");
 var import_node_fs10 = require("node:fs");
 var import_node_os6 = require("node:os");
 var import_node_path8 = require("node:path");
@@ -82153,7 +82225,7 @@ async function runIsolated(input2) {
   const home = (0, import_node_fs10.mkdtempSync)((0, import_node_path8.join)((0, import_node_os6.tmpdir)(), "praxis-project-code-"));
   try {
     return await new Promise((done, fail2) => {
-      const child = (0, import_node_child_process2.spawn)(process.execPath, ["--input-type=module", "-e", RUNNER], { cwd: input2.cwd, env: scrubbedEnv(home), stdio: ["pipe", "pipe", "pipe"] });
+      const child = (0, import_node_child_process3.spawn)(process.execPath, ["--input-type=module", "-e", RUNNER], { cwd: input2.cwd, env: scrubbedEnv(home), stdio: ["pipe", "pipe", "pipe"] });
       let stdout = "";
       let stderr = "";
       const limit = 20 * 1024 * 1024;
@@ -82196,12 +82268,12 @@ async function runIsolated(input2) {
 
 // packages/mcp/dist/generic-verification.js
 var import_node_os8 = require("node:os");
-var import_node_child_process4 = require("node:child_process");
+var import_node_child_process5 = require("node:child_process");
 var import_node_fs12 = require("node:fs");
 var import_node_path10 = require("node:path");
 
 // packages/mcp/dist/browser-verification.js
-var import_node_child_process3 = require("node:child_process");
+var import_node_child_process4 = require("node:child_process");
 var import_node_crypto9 = require("node:crypto");
 var import_node_fs11 = require("node:fs");
 var import_node_os7 = require("node:os");
@@ -82512,7 +82584,7 @@ function bundleDigest(root) {
 }
 function sweepProcesses(home) {
   try {
-    const listing = (0, import_node_child_process3.spawnSync)("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 }).stdout ?? "";
+    const listing = (0, import_node_child_process4.spawnSync)("ps", ["-axo", "pid=,command="], { encoding: "utf8", maxBuffer: 20 * 1024 * 1024 }).stdout ?? "";
     for (const line of listing.split("\n")) {
       if (!line.includes(home))
         continue;
@@ -82529,14 +82601,14 @@ function sweepProcesses(home) {
 }
 async function runBrowserChecks(input2) {
   const home = (0, import_node_fs11.mkdtempSync)((0, import_node_path9.join)((0, import_node_os7.tmpdir)(), "praxis-browser-"));
-  const { existsSync: existsSync29 } = await import("node:fs");
-  const executable = process.env.PRAXIS_BROWSER_EXECUTABLE || DEFAULT_EXECUTABLES.find((p) => existsSync29(p));
+  const { existsSync: existsSync30 } = await import("node:fs");
+  const executable = process.env.PRAXIS_BROWSER_EXECUTABLE || DEFAULT_EXECUTABLES.find((p) => existsSync30(p));
   const playwrightDirs = process.env.PRAXIS_PLAYWRIGHT_DIR ? [process.env.PRAXIS_PLAYWRIGHT_DIR] : [];
   try {
     return await new Promise((done) => {
       const env = { ...scrubbedEnv(home), ...executable ? {} : {} };
       const nonce = (0, import_node_crypto9.randomBytes)(16).toString("hex");
-      const child = (0, import_node_child_process3.spawn)(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input2.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
+      const child = (0, import_node_child_process4.spawn)(process.execPath, ["--input-type=module", "-e", DRIVER], { cwd: input2.serviceRoot, env, stdio: ["pipe", "pipe", "pipe"], detached: true });
       const killGroup = (signal = "SIGKILL") => {
         try {
           if (child.pid)
@@ -82624,7 +82696,7 @@ async function runSteps(root, modulePath, steps) {
   if (!(0, import_node_fs12.existsSync)(file2))
     throw new Error(`MODULE_MISSING:${modulePath}`);
   if (file2.endsWith(".py")) {
-    const result = (0, import_node_child_process4.spawnSync)("python3", ["-c", PYTHON, file2, JSON.stringify(steps)], {
+    const result = (0, import_node_child_process5.spawnSync)("python3", ["-c", PYTHON, file2, JSON.stringify(steps)], {
       cwd: root,
       encoding: "utf8",
       env: scrubbedEnv((0, import_node_os8.tmpdir)())
@@ -82918,7 +82990,7 @@ function inspectionPlan(input2) {
 var import_node_fs13 = require("node:fs");
 var import_node_path11 = require("node:path");
 var SKIP = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", "coverage"]);
-function walk2(root, dir, out, depth) {
+function walk3(root, dir, out, depth) {
   if (depth > 4 || out.length >= 200)
     return;
   let entries = [];
@@ -82938,7 +83010,7 @@ function walk2(root, dir, out, depth) {
       continue;
     }
     if (info.isDirectory())
-      walk2(root, absolute, out, depth + 1);
+      walk3(root, absolute, out, depth + 1);
     else if (info.isFile())
       out.push(absolute.slice(root.length + 1));
   }
@@ -82967,7 +83039,7 @@ function inspectService(service) {
     };
   }
   const files = [];
-  walk2(service.localPath, service.localPath, files, 0);
+  walk3(service.localPath, service.localPath, files, 0);
   const names = new Set(files.map((file2) => file2.split("/").pop() ?? file2));
   const languages = [];
   const frameworks = [];
@@ -83693,7 +83765,7 @@ function applyRuntimeCommand(repo, command, workItemId, channel) {
 // packages/mcp/dist/story-engine.js
 var PROTECTED = /* @__PURE__ */ new Set(["main", "master"]);
 function git(repo, args, input2) {
-  const result = (0, import_node_child_process5.spawnSync)("git", args, { cwd: repo, encoding: "utf8", input: input2 });
+  const result = (0, import_node_child_process6.spawnSync)("git", args, { cwd: repo, encoding: "utf8", input: input2 });
   if ((result.status ?? 1) !== 0) {
     throw new Error((result.stderr || result.stdout || "git failed").trim());
   }
@@ -83716,7 +83788,7 @@ function testsAreGreen(services) {
       const tests = (0, import_node_fs15.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
       if (tests.length) {
         saw = true;
-        const result = (0, import_node_child_process5.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path13.join)("src", name))], {
+        const result = (0, import_node_child_process6.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path13.join)("src", name))], {
           cwd: service.localPath,
           encoding: "utf8",
           env: scrubbedEnv((0, import_node_os9.tmpdir)())
@@ -83729,7 +83801,7 @@ function testsAreGreen(services) {
     const pytests = (0, import_node_fs15.existsSync)(testsDir) ? (0, import_node_fs15.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
     if (pytests.length) {
       saw = true;
-      const result = (0, import_node_child_process5.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
+      const result = (0, import_node_child_process6.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
         cwd: service.localPath,
         encoding: "utf8",
         env: scrubbedEnv((0, import_node_os9.tmpdir)())
@@ -83893,7 +83965,7 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
     assertDiffTouchesOnly(service.localPath, file2);
   }
   const findings = state2.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
-  const branchRef = (0, import_node_child_process5.spawnSync)("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
+  const branchRef = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
   const baseSha = (branchRef.status ?? 1) === 0 ? branchRef.stdout.trim() : git(service.localPath, ["rev-parse", "HEAD"]);
   return {
     action: "record-change",
@@ -83916,7 +83988,7 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
   };
 }
 function diffPaths(diff, root) {
-  const out = (0, import_node_child_process5.spawnSync)("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
+  const out = (0, import_node_child_process6.spawnSync)("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
   if ((out.status ?? 1) !== 0)
     throw new Error(`PROPOSAL_INVALID: git cannot read the diff (${(out.stderr || "").trim().slice(0, 160)})`);
   const tokens = out.stdout.split("\0");
@@ -83942,7 +84014,7 @@ function assertDiffTouchesOnly(root, file2) {
   const allowedReal = containedPath(root, file2.path);
   const realRoot = (0, import_node_fs15.realpathSync)((0, import_node_path13.resolve)(root));
   const allowedLexical = (0, import_node_path13.resolve)(realRoot, file2.path);
-  const top = (0, import_node_child_process5.spawnSync)("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  const top = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
   const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? (0, import_node_fs15.realpathSync)(top.stdout.trim()) : realRoot;
   const touched = diffPaths(file2.diff, root);
   if (touched.length === 0)
@@ -84049,7 +84121,7 @@ function commitServiceFixBody(root, planned) {
   applyProposal(root, planned.proposal);
   const current = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (current !== change.branch) {
-    const exists = (0, import_node_child_process5.spawnSync)("git", ["rev-parse", "--verify", change.branch], { cwd: root, encoding: "utf8" });
+    const exists = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--verify", change.branch], { cwd: root, encoding: "utf8" });
     if ((exists.status ?? 1) === 0)
       git(root, ["checkout", change.branch]);
     else
@@ -84083,10 +84155,10 @@ function pushServiceFix(root, committed) {
   const change = committed.change;
   let mrStatus = "opened";
   let changeRequest;
-  const remotes = (0, import_node_child_process5.spawnSync)("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
+  const remotes = (0, import_node_child_process6.spawnSync)("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
   if (!remotes.split(/\s+/).includes("origin"))
     git(root, ["remote", "add", "origin", change.remote]);
-  const pushed = (0, import_node_child_process5.spawnSync)("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
+  const pushed = (0, import_node_child_process6.spawnSync)("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
     cwd: root,
     encoding: "utf8"
   });
@@ -84322,7 +84394,7 @@ function openItems(state2) {
   };
 }
 function approvals(state2) {
-  return { summary: approvalSummary(state2), records: state2.approvals ?? [], note: "trust: independent-human = the client's approval dialog; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode; test-only = the test harness. No client identifies the person: actor stays empty." };
+  return { summary: approvalSummary(state2), records: state2.approvals ?? [], note: "trust: client-response = the client's approval dialog answered (not independently authenticated); test-only = the test harness. Earlier records: independent-human = the same as client-response; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode (both removed in 0.1.0-alpha.49.2). No client identifies the person: actor stays empty." };
 }
 function quality(state2) {
   const feature = evaluateFeature(state2);
@@ -84948,7 +85020,7 @@ var COLOR_VALUE = /^(#[0-9a-fA-F]{3,8}|(rgb|hsl)a?\([\d\s.,%\/-]{1,40}\))$/;
 var FONT_VALUE = /^[A-Za-z0-9 ,'"_-]{1,60}$/;
 var LENGTH_VALUE = /^[\d.]{1,6}(px|rem|em|%)?$/;
 var fontOk = (v) => FONT_VALUE.test(v) && v.split(",").length <= 6 && v.trim().split(/\s+/).length <= 10;
-function walk3(root) {
+function walk4(root) {
   const out = [];
   let truncated = false;
   const visit2 = (dir, depth) => {
@@ -85073,7 +85145,7 @@ function discoverFrontend(repoPath) {
   const root = (0, import_node_fs34.existsSync)(repoPath) ? (0, import_node_fs34.realpathSync)((0, import_node_path38.resolve)(repoPath)) : (0, import_node_path38.resolve)(repoPath);
   if (!(0, import_node_fs34.existsSync)(root) || !(0, import_node_fs34.statSync)(root).isDirectory())
     throw new Error(`INSPECT_PATH_INVALID: ${repoPath} is not a directory`);
-  const { files, truncated } = walk3(root);
+  const { files, truncated } = walk4(root);
   const names = /* @__PURE__ */ new Set();
   const packageFiles = files.filter((f) => !f.dir && /(^|\/)package\.json$/.test(f.rel) && f.rel.split("/").length <= 4);
   for (const pkg of packageFiles) {
@@ -85185,7 +85257,7 @@ function diagnoseContextTool(repo, input2) {
 }
 
 // packages/mcp/dist/repository-tools.js
-var import_node_child_process10 = require("node:child_process");
+var import_node_child_process11 = require("node:child_process");
 var import_node_fs36 = require("node:fs");
 var import_node_path40 = require("node:path");
 init_dist();
@@ -85197,7 +85269,7 @@ function requireState(repo, workItemId) {
 }
 function git2(path2, args) {
   try {
-    return (0, import_node_child_process10.execFileSync)("git", ["-C", path2, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1e4 }).trim() || void 0;
+    return (0, import_node_child_process11.execFileSync)("git", ["-C", path2, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1e4 }).trim() || void 0;
   } catch {
     return void 0;
   }
@@ -85282,7 +85354,7 @@ function repositoryBrief(repo, input2) {
 }
 
 // packages/mcp/dist/review-service.js
-var import_node_child_process11 = require("node:child_process");
+var import_node_child_process12 = require("node:child_process");
 var import_node_http2 = require("node:http");
 var import_node_crypto20 = require("node:crypto");
 var import_node_fs37 = require("node:fs");
@@ -85333,25 +85405,22 @@ function note(repo, workItemId, view, how, summary) {
   } catch {
   }
 }
-function applyFromPage(repo, workItemId, view, raw) {
-  const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
-  if (submission.view !== view || submission.workItemId !== workItemId)
-    throw new Error("REVIEW_MISMATCH: this submission belongs to another review");
-  const state2 = requireState2(repo, workItemId);
-  const plan = submissionToCommands(state2, submission);
-  const conflicts = [...plan.conflicts];
-  let applied = 0;
-  for (const command of plan.commands) {
-    try {
-      applyRuntimeCommand(repo, command, workItemId, { via: "html-review" });
-      applied += 1;
-    } catch (error64) {
-      conflicts.push({ item: String(command.action), reason: error64 instanceof Error ? error64.message.replace(/^[A-Z_]+: /, "") : String(error64) });
-    }
-  }
-  if (applied > 0)
-    note(repo, workItemId, view, describeApproval("review-page"), plan.summary);
-  return outcome(repo, workItemId, view, applied, conflicts, plan.stale, plan.summary);
+var handedOver = /* @__PURE__ */ new Map();
+var handoverKey = (repo, workItemId, view) => `${(0, import_node_path41.resolve)(repo)}
+${workItemId}
+${view}`;
+function takeHandover(repo, workItemId, view) {
+  const entries = [...handedOver.entries()].filter(([key2]) => key2.startsWith(`${(0, import_node_path41.resolve)(repo)}
+${workItemId ?? ""}`) && (!view || key2.endsWith(`
+${view}`)));
+  const latest = entries.sort((a, b) => b[1].at - a[1].at)[0];
+  if (!latest)
+    throw new Error("INVALID_INPUT: no decisions were sent from a review page for this work item; ask the user to press Send for approval in the page, or pass submission or file");
+  const [key, entry] = latest;
+  return { submission: entry.submission, applied: () => {
+    if (handedOver.get(key) === entry)
+      handedOver.delete(key);
+  } };
 }
 async function applyHandedOver(repo, workItemId, raw, confirmation) {
   const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
@@ -85467,8 +85536,12 @@ async function handle2(req, res) {
     if (!String(req.headers["content-type"] ?? "").startsWith("application/json"))
       return json3(res, 415, { error: "json only" });
     try {
-      const result = applyFromPage(session.repo, session.workItemId, session.view, JSON.parse(await body(req)));
-      return json3(res, 200, result);
+      const submission = parseStrict(ReviewSubmissionSchema, JSON.parse(await body(req)), { tolerate: false });
+      if (submission.view !== session.view || submission.workItemId !== session.workItemId)
+        throw new Error("REVIEW_MISMATCH: this submission belongs to another review");
+      handedOver.set(handoverKey(session.repo, session.workItemId, session.view), { submission, at: Date.now() });
+      const { conflicts } = submissionToCommands(requireState2(session.repo, session.workItemId), submission);
+      return json3(res, 200, { handedOver: true, applied: 0, conflicts, note: "Nothing is recorded yet. Ask Claude to record these decisions: it calls praxis_review_apply, and the client's approval dialog shows exactly these decisions for you to approve." });
     } catch (error64) {
       return json3(res, 400, { error: error64 instanceof Error ? error64.message.slice(0, 300) : String(error64) });
     }
@@ -85491,7 +85564,7 @@ async function ensureServer2() {
   return port2;
 }
 async function openInBrowser(url4) {
-  if (process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
+  if (!isShippedBundle() && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
     return false;
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
   return new Promise((done) => {
@@ -85501,7 +85574,7 @@ async function openInBrowser(url4) {
       const page = (0, import_node_path41.join)(dir, "open-review.html");
       (0, import_node_fs37.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><title>Opening review</title><meta http-equiv="refresh" content="0;url=${url4.replace(/"/g, "&quot;")}"><p>Opening the review... <a href="${url4.replace(/"/g, "&quot;")}">continue</a></p>`, { mode: 384 });
       setTimeout(() => (0, import_node_fs37.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
-      const child = (0, import_node_child_process11.spawn)(opener, [page], { detached: true, stdio: "ignore" });
+      const child = (0, import_node_child_process12.spawn)(opener, [page], { detached: true, stdio: "ignore" });
       const timer = setTimeout(() => {
         child.unref();
         done(true);
@@ -85544,7 +85617,7 @@ async function renderReviewTool(repo, input2) {
     const created2 = sessions.get(id);
     if (created2 && opened)
       created2.openedAt = Date.now();
-    if (!opened && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
+    if (!opened && !isShippedBundle() && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
       (0, import_node_fs37.writeFileSync)((0, import_node_path41.join)(dir, `${view}.url`), secretUrl);
     url4 = `http://127.0.0.1:${p}/r/${id}`;
   }
@@ -85556,7 +85629,7 @@ async function renderReviewTool(repo, input2) {
     fingerprint: fingerprintFor(state2, view),
     baseState: workStateStamp(state2),
     progress: progressFor(state2, view),
-    how: url4 ? opened ? "The review page was opened in the user's browser. Tell them to review it and press Save; their decisions are recorded directly. The address shown is not a usable link on its own. If they closed it, call this tool again." : "The live page could not be opened on this machine. Give the user the offline copy (file): its Copy decisions button produces a decisions file, which praxis_review_apply records after the user approves exactly those decisions in the client's dialog." : "Offline copy only. Its Copy/Download buttons produce a decisions file for praxis_review_apply.",
+    how: url4 ? opened ? "The review page was opened in the user's browser. Tell them to review it and press Save, which sends the decisions to Praxis without recording them; then call praxis_review_apply with fromPage true: the client's approval dialog shows exactly those decisions, and they are recorded only if the user approves there. The address shown is not a usable link on its own. If they closed it, call this tool again." : "The live page could not be opened on this machine. Give the user the offline copy (file): its Copy decisions button produces a decisions file, which praxis_review_apply records after the user approves exactly those decisions in the client's dialog." : "Offline copy only. Its Copy/Download buttons produce a decisions file for praxis_review_apply.",
     note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf."
   };
 }
@@ -85636,8 +85709,9 @@ async function approvalPlan(args, ctx, opts) {
     action: request.action,
     kind: request.kind,
     summary: request.summary,
-    // an act only a person may perform has no plan text to hand to the host's prompt: that prompt cannot stand for the person
-    ...hostPermissionMode() && PERSONAL_ACTS.has(request.action) ? { planText: null, available: false, reason: "this act needs a client with an approval dialog; host-permission mode does not cover it" } : { planText: planTextOf(request) },
+    // what the client's approval dialog will show; informational (no mode takes it as an approval any more)
+    planText: planTextOf(request),
+    ...PERSONAL_ACTS.has(request.action) ? { personalAct: true } : {},
     ...request.subject ? { subjectDigest: subjectDigest(request.subject) } : {},
     note: "This is what the user is asked to approve. It runs nothing."
   });
@@ -85670,53 +85744,31 @@ function withClientReport(data, client) {
       client,
       diagnosticsLog: diagnosticsPath(),
       ...!client.dialog ? {
-        hostGate: "Some hosts (Claude Desktop) hold an apply call at their own tool-permission prompt BEFORE it reaches Praxis. If you see no result and no prompt, look for that prompt in the host window; diagnosticsLog lists the calls that did reach Praxis (tool_enter). Praxis itself answers a protected call without a dialog immediately with APPROVAL_CLIENT_UI_REQUIRED."
+        hostGate: "Some hosts (Claude Desktop) hold an apply call at their own tool-permission prompt BEFORE it reaches Praxis. If you see no result and no prompt, look for that prompt in the host window; diagnosticsLog lists the calls that did reach Praxis (tool_enter). Praxis itself answers a protected call without a dialog immediately with APPROVAL_CLIENT_UI_REQUIRED. Allowing a call at that prompt lets it reach Praxis; it is not an approval of the action."
       } : {}
     };
     const observed = knownAutoAnswer(clientKey(client));
-    const pageOn = approvalPageEnabled();
+    const repoOf = target.repo;
+    const automation = dialogAutomation(repoOf ? { repo: repoOf } : {});
+    const settings = approvalSettings();
+    const available = client.dialog && !observed && automation.length === 0;
     target.approval = {
       ...target.approval,
-      ...observed ? { observedDialog: { ...observed, note: "This client was seen answering Praxis's approval dialog by itself, without showing it. Praxis no longer asks through it; approvals go to the approval page." } } : {},
-      page: {
-        enabled: pageOn,
-        browser: approvalPageOpener().opener,
-        waitMs: approvalPageWaitMs(),
-        note: pageOn ? "When the client cannot show Praxis's dialog, Praxis opens its approval page in the browser on this computer. The agent never gets that page's link. A browser-automation tool connected to that browser (for example Claude in Chrome), or a program running as you, could still operate it: set the browser for approval pages to one no agent controls." : "The approval page is switched off (PRAXIS_APPROVAL_PAGE=off): without a working client dialog, protected actions are not executed."
+      mode: available ? "client-ui" : "no-dialog",
+      trust: {
+        protectedActions: available ? "the client's approval dialog (a client response; not independently authenticated)" : "not available here: protected actions are refused, nothing runs",
+        independentHumanApproval: "not available in this version: no channel on this computer can prove that a person, rather than automation or an agent, answered",
+        ...!client.dialog ? { why: client.reason ?? "the client declares no approval dialog" } : observed ? { why: "this client was seen answering Praxis's approval dialog by itself, without showing it" } : automation.length ? { why: "the client's approval dialog is configured to be answered automatically" } : {}
       },
+      ...observed ? { observedDialog: { ...observed, note: "This client was seen answering Praxis's approval dialog by itself, without showing it. Praxis no longer asks through it: protected actions are refused here (nothing runs). Apply them from a client whose dialog is shown, such as the Claude Code CLI in a terminal." } } : {},
+      ...automation.length ? { dialogAutomation: automation.map((f) => ({ file: f.file, why: f.why })) } : {},
       minAnswerMs: minAnswerMs(),
-      settings: (() => {
-        const settings = approvalSettings();
-        return {
-          source: settings.source,
-          file: settings.file,
-          ...settings.ignoredEnvironment.length ? {
-            ignoredEnvironment: settings.ignoredEnvironment,
-            note: `Ignored ${settings.ignoredEnvironment.join(", ")} from the environment: for a Runtime started by Claude Code (the Desktop Code tab, Cowork, the CLI) a repository's .claude/settings.json can set environment variables, so settings that weaken approval are read only from ${settings.file.path} (or the Desktop extension's settings).`
-          } : {}
-        };
-      })()
+      ...settings.ignoredEnvironment.length ? { ignoredEnvironment: settings.ignoredEnvironment, ignoredNote: `Ignored ${settings.ignoredEnvironment.join(", ")}: no setting, in any file or environment, can make approval weaker (a repository's Claude Code settings and an agent with a shell can write them). The Trusted Client and host-permission modes are removed.` } : {}
     };
-    if (client.dialog && !observed && process.env.CLAUDE_CODE_ENTRYPOINT?.trim() === "claude-desktop") {
+    if (client.dialog && process.env.CLAUDE_CODE_ENTRYPOINT?.trim() === "claude-desktop") {
       target.approval = {
         ...target.approval,
-        hint: "This is the Claude Desktop Code tab. It declares an approval dialog but, as of Claude Code 2.1.309, answers it by itself without showing it (anthropics/claude-code#89858). Praxis tries the dialog; when it is answered faster than a person could read it, Praxis asks in the approval page instead, and after two such answers uses the page directly."
-      };
-    }
-    if (pageOn && (!client.dialog || observed) && target.approval.mode === "no-dialog") {
-      target.approval = { ...target.approval, mode: "approval-page" };
-    }
-    if (trustedClientMode()) {
-      target.approval = {
-        ...target.approval,
-        mode: "trusted-client",
-        note: "TRUSTED CLIENT (you enabled it in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, with no separate confirmation of each action. That is your standing permission for this client, not proof you confirmed each action; results and the journal say trusted-client. Previews, stale-plan checks and the journal still apply."
-      };
-    } else if (hostPermissionMode() && !client.dialog) {
-      target.approval = {
-        ...target.approval,
-        mode: "host-permission",
-        note: "OPT-IN host-permission mode: this client has no approval dialog, so protected actions rely on the host's own tool-permission prompt, which shows the exact plan (planText from praxis_approval_plan). Praxis cannot verify the prompt was shown: an always-allow setting for the tool removes it and then the agent approves itself. Quality fixes (commit and push) still need a dialog."
+        hint: "This looks like the Claude Desktop Code tab. As of Claude Code 2.1.309 it declares an approval dialog but answers it by itself without showing it (anthropics/claude-code#89858): protected actions are then refused (nothing runs, and nobody is said to have rejected them). Apply them from the Claude Code CLI in a terminal."
       };
     }
   }
@@ -85775,16 +85827,8 @@ async function callTool(name, rawArgs, opts) {
   const repo = str3(args.repo) ?? process.cwd();
   const label = opts.client?.name ? `${opts.client.name}${opts.client.version ? ` ${opts.client.version}` : ""}` : void 0;
   const page = approvalPageEnabled() ? approvalPageChannel({ repo, ...label ? { client: label } : {}, ...opts.extra?.signal ? { signal: opts.extra.signal } : {} }) : void 0;
-  const dialog = opts.approvalChannel;
-  const asked = dialog ? dialogWithPageFallback(dialog, page, { ...clientKey(opts.client) ? { clientKey: clientKey(opts.client) } : {}, repo }) : page;
-  let channel;
-  if (trustedClientMode() && PROTECTED_TOOLS.has(name)) {
-    channel = trustedClientChannelWith(asked);
-  } else if (!dialog && hostPermissionMode() && PROTECTED_TOOLS.has(name)) {
-    channel = hostPermissionChannel(str3(args.planText), page);
-  } else {
-    channel = asked;
-  }
+  const dialog = opts.approvalChannel ? automationGuarded(opts.approvalChannel, repo) : void 0;
+  const channel = dialog ? dialogWithPageFallback(dialog, page, { ...clientKey(opts.client) ? { clientKey: clientKey(opts.client) } : {}, repo }) : page;
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 async function callToolInner(name, rawArgs, opts) {
@@ -85967,15 +86011,20 @@ Left untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
     case "praxis_review_apply": {
       const text = str3(args.submission);
       const file2 = str3(args.file);
-      if (text === void 0 === (file2 === void 0))
-        throw new Error("INVALID_INPUT: pass exactly one of submission or file");
+      const fromPage = args.fromPage === true;
+      if ([text !== void 0, file2 !== void 0, fromPage].filter(Boolean).length !== 1)
+        throw new Error("INVALID_INPUT: pass exactly one of submission, file or fromPage");
       let raw;
+      let handover;
       try {
-        raw = text !== void 0 ? JSON.parse(text) : readSubmissionFile(repo, file2);
+        handover = fromPage ? takeHandover(repo, workItemId, str3(args.view)) : void 0;
+        raw = handover ? handover.submission : text !== void 0 ? JSON.parse(text) : readSubmissionFile(repo, file2);
       } catch (error64) {
         throw new Error(`INVALID_INPUT: the decisions could not be read: ${error64 instanceof SyntaxError ? "not valid JSON" : error64 instanceof Error && /^INVALID_INPUT/.test(error64.message) ? error64.message.replace(/^INVALID_INPUT: /, "") : "the file could not be opened"}`);
       }
-      return applyHandedOver(repo, workItemId, raw, str3(args.confirmation));
+      const applied = await applyHandedOver(repo, workItemId, raw, str3(args.confirmation));
+      handover?.applied();
+      return applied;
     }
     case "praxis_frontend_discover": {
       const registered = str3(args.repositoryId);

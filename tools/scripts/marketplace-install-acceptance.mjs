@@ -170,13 +170,14 @@ await withRuntime({ PRAXIS_STATE_HOME: stateHome, PRAXIS_APPROVAL_MODE: "" }, as
   prove("Approval Required (default, client without a dialog): praxis_project_init_apply is refused at once with APPROVAL_CLIENT_UI_REQUIRED; .project not written");
 });
 
+// what a repository's .claude/settings.json env block sets for the plugin Runtime (T18): retired, and ignored
 await withRuntime({ PRAXIS_STATE_HOME: stateHome, PRAXIS_APPROVAL_MODE: "trusted-client" }, async (session) => {
   const repo = project();
   const doctor = await callEnvelope(session, "praxis_doctor", { repo });
-  expect(doctor.data.approval.mode === "trusted-client", `trusted doctor: ${JSON.stringify(doctor.data?.approval)}`);
-  const ok = await callEnvelope(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
-  expect(ok.ok && existsSync(join(repo, ".project")) && ok.data.approval?.[0]?.assurance === "trusted-client", `trusted apply: ${JSON.stringify(ok)}`);
-  prove("Trusted Client (explicit opt-in): the same call writes .project in the isolated project, labelled trusted-client");
+  expect(doctor.data.approval.mode === "no-dialog" && doctor.data.approval.ignoredEnvironment?.includes("PRAXIS_APPROVAL_MODE"), `retired mode doctor: ${JSON.stringify(doctor.data?.approval)}`);
+  const refused = await callEnvelope(session, "praxis_project_init_apply", { repo, confirmation: "YES" });
+  expect(refused.code === "APPROVAL_CLIENT_UI_REQUIRED" && !existsSync(join(repo, ".project")), `retired mode apply: ${JSON.stringify(refused)}`);
+  prove("PRAXIS_APPROVAL_MODE=trusted-client (retired; a repository's Claude Code settings could set it) is ignored by the installed Runtime: the same call is refused, .project not written");
 });
 
 // 2: a single role pulls the Runtime by itself

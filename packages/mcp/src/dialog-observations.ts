@@ -5,12 +5,11 @@ import { dirname, join } from "node:path";
 /**
  * Clients seen answering the approval dialog by themselves: declared elicitation, then `decline` a few milliseconds after
  * being asked, with nothing on screen (the Claude Desktop Code tab, anthropics/claude-code#89858). Once seen, that client
- * version is not asked through its dialog again: approvals go to the approval page directly, instead of an attempt that is
- * known to fail. A new client version is tried once more, so a fixed client gets its dialog back.
+ * version is not asked through its dialog again: a protected action is refused at once, instead of an attempt that is known
+ * to fail. A new client version is tried once more, so a fixed client gets its dialog back.
  *
- * Stored in the user's Praxis home (never the repository). Editing it can only make Praxis use the approval page instead of
- * the client's dialog (a weaker channel when an agent controls the browser, see docs/approval-threat-model.md T15), or ask
- * the dialog again; it never approves anything.
+ * Stored in the user's Praxis home (never the repository). Editing it can only make Praxis refuse sooner or ask the dialog
+ * again (docs/approval-threat-model.md T15); it never approves anything.
  */
 
 export type DialogObservation = { client: string; automatic: string; latencyMs: number; at: string; count: number };
@@ -51,7 +50,7 @@ export function noteAutoAnswer(key: string | undefined, automatic: string, laten
   try {
     const file = path();
     mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-    writeFileSync(`${file}.tmp`, `${JSON.stringify({ about: "Clients seen answering Praxis's approval dialog without showing it; Praxis uses its approval page for them instead.", observations: all }, null, 2)}\n`, { mode: 0o600 });
+    writeFileSync(`${file}.tmp`, `${JSON.stringify({ about: "Clients seen answering Praxis's approval dialog without showing it; Praxis does not ask them again.", observations: all }, null, 2)}\n`, { mode: 0o600 });
     renameSync(`${file}.tmp`, file);
   } catch {
     // the in-memory note still keeps this process from retrying

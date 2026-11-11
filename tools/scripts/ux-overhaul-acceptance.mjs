@@ -29,6 +29,7 @@ if ((built.status ?? 1) !== 0) {
 const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
 const { extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
 const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationLegacy } = await import("./official-mcp-client.mjs");
+const { lastOpenedLink } = await import("./test-browser.mjs");
 
 const dist = await packClaudeExtension(version);
 const mcpbPath = dist.mcpbPath ?? join(root, "dist", "claude-extensions", version, "praxis-runtime.mcpb");
@@ -126,19 +127,24 @@ async function must(session, repo, command, workItemId) {
   return res;
 }
 
-/** The user's click on Save in the review page the Runtime served. */
+/**
+ * The (scripted) click on Send for approval in the review page the Runtime served, then what the agent does next: it applies
+ * the handed-over decisions and the client's dialog shows exactly them. The page itself records nothing.
+ */
 async function userSaves(session, repo, view, workItemId, payload) {
   const rendered = await call(session, "praxis_review_render", { repo, view, workItemId });
   check(rendered.ok, `render ${view}: ${JSON.stringify(rendered.errors)}`);
   check(!JSON.stringify(rendered).includes("?t="), "the tool result must not carry the page link token");
-  const secret = readFileSync(join(dirname(rendered.data.file), `${view}.url`), "utf8");
+  const secret = lastOpenedLink();
   const html = await (await fetch(secret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
   const submission = { contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: data.workItemId, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, ...payload(data) };
   const res = await fetch(`${rendered.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify(submission) });
-  const body = await res.json();
-  check(res.status === 200, `save ${view}: ${res.status} ${JSON.stringify(body)}`);
-  return { body, rendered: rendered.data, html, data };
+  const handover = await res.json();
+  check(res.status === 200 && handover.handedOver === true && handover.applied === 0, `save ${view}: ${res.status} ${JSON.stringify(handover)}`);
+  const applied = await call(session, "praxis_review_apply", { repo, fromPage: true, workItemId: data.workItemId, view, confirmation: "YES" });
+  const body = applied.ok ? applied.data : { ...(applied.data ?? {}), code: applied.code, errors: applied.errors, applied: 0, conflicts: applied.data?.conflicts ?? [] };
+  return { body, applied, handover, rendered: rendered.data, html, data };
 }
 
 const acceptAllRequirements = (repo, id) => (data) => {
@@ -232,7 +238,7 @@ await scenario("S01", "New feature without Jira: requirements to accepted, no Ji
   const s = stateOf(repo, id);
   eq(s.phase, "prototype", "phase");
   eq(s.mode, "guided", "an item opened without a mode is guided by default");
-  check(s.requirements.every((r) => r.acceptanceCriteria.every((c) => c.review.status === "accepted" && c.review.via === "html-review")), "criteria accepted by the user's save");
+  check(s.requirements.every((r) => r.acceptanceCriteria.every((c) => c.review.status === "accepted" && c.review.via === "approved")), "criteria accepted by the user's save, approved in the dialog");
   const status = await call(agent, "praxis_workflow_status", { repo, workItemId: id });
   eq(status.data.next.action, "build-prototype", "next step");
 });
@@ -278,7 +284,7 @@ await scenario("S03", "Per-criterion acceptance in the HTML review: marks, edits
   eq(r.acceptanceCriteria[1].review.comment, "also by phone", "comment kept");
   eq(r.acceptanceCriteria[2].statement, "Filtering by status works", "criterion added from the page");
   // the save endpoint refuses a request that does not come from the page: no Origin, or a foreign one
-  const secretUrl = readFileSync(join(dirname(saved.rendered.file), "requirements.url"), "utf8");
+  const secretUrl = lastOpenedLink();
   for (const headers of [{}, { origin: "http://evil.example" }]) {
     const r = await fetch(`${secretUrl.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", "x-praxis-review-token": saved.data.token, ...headers }, body: "{}" });
     check(r.status === 403, `save without the page's Origin must be refused (${JSON.stringify(headers)} -> ${r.status})`);
@@ -677,12 +683,13 @@ await scenario("S18", "Negative cases: invalid data, incomplete results, repeats
   check(dup.ok === true || dup.ok === false, "adding the same requirement again is handled");
   // conflict: a page rendered, then the requirement edited elsewhere
   const stale = await call(agent, "praxis_review_render", { repo, workItemId: id, view: "requirements" });
-  const staleSecret = readFileSync(join(dirname(stale.data.file), "requirements.url"), "utf8");
+  const staleSecret = lastOpenedLink();
   const html = await (await fetch(staleSecret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
   await must(agent, repo, { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "View and filter orders" }] }, id);
   const submit = await fetch(`${stale.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(staleSecret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view: "requirements", workItemId: id, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, statement: "My stale edit", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } }) });
-  const body = await submit.json();
+  check((await submit.json()).handedOver === true, "the stale page hands its decisions over; nothing is recorded by the page");
+  const body = (await call(agent, "praxis_review_apply", { repo, fromPage: true, workItemId: id, view: "requirements", confirmation: "YES" })).data;
   eq(body.conflicts.map((c) => c.item), ["REQ-ORD-001"], "the stale edit is reported");
   eq(stateOf(repo, id).requirements[0].statement, "View and filter orders", "the other edit is not overwritten");
   // one repository fails, the others are fine
@@ -761,7 +768,7 @@ await scenario("S21", "A user's remark on a criterion reaches the BA through pra
   // 2. the BA reads it through the tool, not from files
   const first = await inspect();
   const c1 = first.requirements[0].acceptanceCriteria.find((c) => c.id === AC);
-  eq([c1.review.status, c1.review.comment, c1.review.decidedVia], ["rejected", "Не нравится решение", "html-review"], "status, reason and source come back from inspect");
+  eq([c1.review.status, c1.review.comment, c1.review.decidedVia], ["rejected", "Не нравится решение", "approved"], "status, reason and source come back from inspect");
   check(c1.review.decidedAt && c1.review.commentAt, "times come back");
   eq(first.requirementReview.rejected.map((r) => [r.criterionId, r.comment]), [[AC, "Не нравится решение"]], "the rejected list names the criterion and the reason");
   eq(first.requirementReview.pending, [], "nothing pending");
@@ -785,7 +792,7 @@ await scenario("S21", "A user's remark on a criterion reaches the BA through pra
   eq(after.requirements[0].acceptanceCriteria[0].review.status, "accepted", "the other criterion keeps its decision");
   // 5. the review page shows the revised text and the earlier remark
   const rendered = await call(agent, "praxis_review_render", { repo, view: "requirements", workItemId: id });
-  const html = await (await fetch(readFileSync(join(dirname(rendered.data.file), "requirements.url"), "utf8"))).text();
+  const html = await (await fetch(lastOpenedLink())).text();
   check(html.includes("configurable number of rows") && html.includes("Before this revision: rejected") && html.includes("Лимит должен быть настраиваемым"), "the page shows the new text and what the user said before");
   check(stateOf(repo, id).requirements[0].acceptanceCriteria[0].review.status === "accepted", "the state on disk is what the tool reported");
 });
@@ -873,11 +880,13 @@ await scenario("S22", "Two criteria are reworded by id: exact preview, confirmat
   // two tabs opened before anyone saved: the second Save must not overwrite the first
   const tab = async () => {
     const r = await call(agent, "praxis_review_render", { repo, view: "requirements", workItemId: id });
-    const secret = readFileSync(join(dirname(r.data.file), "requirements.url"), "utf8");
+    const secret = lastOpenedLink();
     const d = JSON.parse((await (await fetch(secret)).text()).match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
     return async (criterion) => {
       const body = { contract: "praxis.review.submission", version: 1, reviewId: d.reviewId, view: "requirements", workItemId: id, baseFingerprint: d.baseFingerprint, baseStamp: d.baseStamp, requirements: { requirements: [{ id: "REQ-ORD-003", revision: stateOf(repo, id).requirements.find((q) => q.id === "REQ-ORD-003").revision, criteria: [criterion], addCriteria: [], removeCriteria: [] }], acceptAll: false } };
-      return (await fetch(`${r.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": d.token }, body: JSON.stringify(body) })).json();
+      const handover = await (await fetch(`${r.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": d.token }, body: JSON.stringify(body) })).json();
+      check(handover.handedOver === true, `the tab hands its decisions over: ${JSON.stringify(handover)}`);
+      return (await call(agent, "praxis_review_apply", { repo, fromPage: true, workItemId: id, view: "requirements", confirmation: "YES" })).data;
     };
   };
   const tabA = await tab();
@@ -897,7 +906,7 @@ await scenario("S22", "Two criteria are reworded by id: exact preview, confirmat
   check(!tooLarge.ok && tooLarge.code === "APPROVAL_TOO_LARGE", `a plan too large for the dialog must be refused: ${tooLarge.code}`);
   // the review page shows the current data
   const rendered = await call(agent, "praxis_review_render", { repo, view: "requirements", workItemId: id });
-  const html = await (await fetch(readFileSync(join(dirname(rendered.data.file), "requirements.url"), "utf8"))).text();
+  const html = await (await fetch(lastOpenedLink())).text();
   check(html.includes("История изменений статуса в панели не выводится") && html.includes("Данные истории смены статусов для этой функциональности не требуются") && html.includes("Before this revision: rejected") && html.includes(`Не нравится: ${AC6}`), "the page shows both new texts and the earlier rejections");
 });
 
