@@ -1,6 +1,6 @@
 # Upgrading the Claude Desktop extension (local build)
 
-This procedure installs `claude-extensions/praxis-runtime.mcpb` (0.1.0-alpha.49.1) over an older
+This procedure installs `claude-extensions/praxis-runtime.mcpb` (0.1.0-alpha.49.2) over an older
 Praxis Runtime in Claude Desktop **Chat** (Code, Cowork and the Claude CLI use the marketplace plugin instead). It has **not** been
 executed through Claude Desktop yet: the sections marked *check* are how you confirm it worked.
 Nothing here publishes, tags or bumps a version.
@@ -11,20 +11,14 @@ If Desktop treats the file as the same version, uninstall first rather than rely
 
 | Area | Older installed build | This build |
 | --- | --- | --- |
-| Protected writes (Git, Jira, confirming a Story) | Accepted a bare `confirmation=YES`, or demanded a broker | You approve or reject the exact action in the client's approval dialog; `confirmation=YES` alone is only the agent's request, and a client without the dialog gets the preview and a refusal (nothing is executed) |
+| Protected writes (Git, Jira, confirming a Story) | Accepted a bare `confirmation=YES`, Trusted Client, or demanded a broker | Only the client's own approval dialog approves the exact action; `confirmation=YES` alone is only the agent's request, and Desktop Chat (no dialog) gets the preview and a refusal (nothing is executed) |
 | Work items per repository | One; a second `open` silently resumes the first | Many; `workItemId`, `select-work-item`, `link-work-item` |
 | Handoffs | Drop `risks`/notes, lose context after one hop | Context carried to every later handoff |
 | Blank optional settings | Passed through as the text `${user_config.…}` | Treated as unset |
 | Jira settings | Required | Optional |
 | `praxis_doctor` | Flags only | `providers`, `approval`, `nextSteps` |
 
-Approval modes: the default is **Approval Required**; the extension setting *Approval mode* can be set to `trusted-client` (explicit opt-in: runs protected actions on the agent's `confirmation=YES` for a current preview, labelled `trusted-client`, never your per-action confirmation). Desktop Chat declared no approval dialog in a real test, so by default protected actions are refused there with the preview. Approvals are yours, in the client: before a commit, push, merge request, Jira write or Story confirmation runs,
-Praxis shows you the exact action in the client's own approval dialog (MCP elicitation) and runs it only if you
-approve. If your client cannot show that dialog, `praxis_doctor` says so (`approval.mode: no-dialog`) and the
-protected action is **not executed**: Praxis returns the preview and a clear message, and nothing the agent says
-counts as your approval. Read-only tools keep working. Nothing else needs installing: no service, no system account, no
-administrator rights. See `praxis-core/docs/user-approval.md`. If you ever started installing the removed native
-Approval Service, see `praxis-core/docs/cleanup-native-approval-service.md`.
+Approvals happen only in the client's own approval dialog (MCP elicitation): before a commit, push, merge request, Jira write, Story confirmation or recorded review decision runs, Praxis shows the exact action there and runs it only if it is approved. As of 0.1.0-alpha.49.2 there are no approval settings: the *Approval mode* extension setting and Trusted Client are removed, because a setting an agent or a repository can write cannot stand in for your approval. Claude Desktop Chat shows no approval dialog, so protected actions are **not executed** there (`praxis_doctor` → `approval.mode: no-dialog`): Praxis returns the preview, says nobody rejected it, and you apply it from the Claude Code CLI in a terminal. Read-only tools, previews and reviews keep working. Nothing else needs installing: no service, no system account, no administrator rights. See `praxis-core/docs/desktop-approvals.md` and `docs/user-approval.md`. If you ever started installing the removed native Approval Service, see `praxis-core/docs/cleanup-native-approval-service.md`.
 
 ## 1. Verify the artifact
 
