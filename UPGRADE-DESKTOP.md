@@ -61,7 +61,7 @@ If something is listed, stop it with `kill <pid>` after confirming it is the old
 
 ```bash
 INST="$HOME/Library/Application Support/Claude/Claude Extensions/local.mcpb.dfuture-co.praxis-runtime/server"
-shasum -a 256 "$INST/praxis-mcp.cjs"        # expect cb31297b43051c49b9dd8ea62e1b0e2684c9d55158e50678dc06861e1e45d82a
+shasum -a 256 "$INST/praxis-mcp.cjs"        # expect 5ced36fb3f63004e6961003e448db158432e5ffe5b10f71cee2d64c6664dc685
 grep -c "select-work-item" "$INST/praxis-mcp.cjs"   # expect a number greater than 0
 ```
 
@@ -69,7 +69,8 @@ In a new chat run **praxis_doctor** for a repository and confirm:
 
 - `providers.jira.state` is `unconfigured` (or your real state), never `configured` for blank settings;
 - `hostPlaceholdersIgnored` lists the settings you left blank;
-- `approval.mode` is `client-ui` when your client can show the approval dialog, otherwise `no-dialog` (protected actions are then refused);
+- `approval.mode` is `no-dialog` in Desktop Chat, which shows no approval dialog: protected actions are returned as previews and not executed;
+- `approval.trust` says that independently authenticated human approval is not available;
 - `nextSteps` names concrete actions, if any.
 
 Then call **praxis_workflow_status** and confirm the result contains `workItems`. If it does not, the
@@ -93,7 +94,7 @@ Restart Claude Desktop. Repositories already written by this build keep a new wo
 ## Claude Code (CLI)
 
 The Claude Code plugin ships the same runtime as `plugins/runtime/server/praxis-mcp.cjs`
-(sha256 `cb31297b43051c49b9dd8ea62e1b0e2684c9d55158e50678dc06861e1e45d82a`, byte-identical to the file inside the `.mcpb`). Claude Code shows its own permission prompt per tool call; Praxis marks previews read-only and applies destructive so that prompt can appear.
+(sha256 `5ced36fb3f63004e6961003e448db158432e5ffe5b10f71cee2d64c6664dc685`, byte-identical to the file inside the `.mcpb`). Claude Code shows its own permission prompt per tool call; Praxis marks previews read-only and applies destructive so that prompt can appear.
 
 ## Verify the loaded build, not the version string
 
@@ -102,38 +103,37 @@ One version string can name several different runtimes (alpha.47 did). After ins
 | field | expect |
 | --- | --- |
 | `origin` | `bundle` |
-| `bundleSha256` | `cb31297b43051c49b9dd8ea62e1b0e2684c9d55158e50678dc06861e1e45d82a` (the file Desktop is running) |
-| `coreBaseline` | `b2edcf3d833b6f082c1371aef067dd65b10e9596` |
+| `bundleSha256` | `5ced36fb3f63004e6961003e448db158432e5ffe5b10f71cee2d64c6664dc685` (the file Desktop is running) |
+| `coreBaseline` | `984d4f4058fbc0194def498bcb68bd0d852cbfba` |
 
 Mismatching `bundleSha256` means an older extension is still loaded: fully quit Claude Desktop and reopen.
 
 ## Approvals
 
-With a client that supports elicitation, `praxis_doctor` → `approval.mode` is `client-ui` and every protected action is approved or rejected by you in the dialog; the result of the call says so (`data.approval`). `approval.client` shows what your client declared (name, version, protocol, elicitation) and, if there is no dialog, why. With a client that has none, the mode is `no-dialog`: protected actions return `APPROVAL_CLIENT_UI_REQUIRED` with the preview and are not executed. Decisions are journaled outside the repository (`~/.praxis/decisions/`). `npm run accept:approval-ux` (scripted MCP client, both protocol eras) and `npm run accept:claude-code-approval` (the real Claude Code CLI as the client) prove the protocol; neither shows how Claude Desktop renders the dialog (see the Desktop Chat check in `desktop-install/INSTALL.md`).
+With a client that supports elicitation, `praxis_doctor` → `approval.mode` is `client-ui` and every protected action is approved or rejected by you in the dialog; the result of the call says so (`data.approval`). `approval.client` shows what your client declared (name, version, protocol, elicitation) and, if there is no dialog, why. With a client that has none, the mode is `no-dialog`: protected actions return `APPROVAL_CLIENT_UI_REQUIRED` with the preview and are not executed. Decisions are journaled outside the repository (`~/.praxis/decisions/`). `npm run accept:approval-ux` (scripted MCP client, both protocol eras) and `npm run accept:claude-code-approval` (the real Claude Code CLI as the client) prove the protocol; neither involves Claude Desktop. Desktop Chat and Cowork show no approval dialog, and the Desktop Code tab is refused because Desktop starts it with settings Praxis cannot check (see `praxis-core/docs/desktop-approvals.md`).
 
-An optional, weaker mode exists for a host with no dialog (extension setting *Approval without a client dialog*, `host-permission`): see `praxis-core/docs/user-approval.md`. Leave it blank if your client has the dialog.
+There are no approval settings. In Claude Desktop (Chat, Cowork and the Code tab), apply protected actions from the Claude Code CLI in a terminal, in the same repository.
 
-## This build: 51 tools, inspection, role initialisation
+## This build: 62 tools
 
 Expected after install (Desktop → ask Praxis Doctor, then list tools):
 
-- **52 MCP tools** (the installed previous build also has 52, but includes `praxis_approval_confirm`; this build removes it and adds the read-only `praxis_approval_plan`): new read-only `praxis_workflow_inspect` (requirements, Stories, decisions, work, handoffs, open items, Quality evidence, links) and `praxis_session_start` (role initialisation without a local script).
-- `praxis_developer_status` takes `workItemId` for a local Work Item; `workPackage` accepts only a Work Package id or a Jira key and refuses a Work Item id.
-- Role plugins: install the four `praxis-<role>.zip` files from `desktop-install/` (skills: BA 23, Architect 25, Developer 30, Quality 7). Their `session-start` skills call `praxis_session_start`.
-- `.mcpb` sha256 `892085e8e125e3608d14e432e886b628f14dc5cca52386fce7ff4ebb2e81a1e4`.
+- **62 MCP tools**, the same set as the Claude Code plugin; `praxis_doctor` → `build.tools.count` says the same.
+- Role plugins: install the four `praxis-<role>.zip` files from the `v0.1.0-alpha.49.2` Releases of `dfg-inc/praxis-ba`, `-architect`, `-developer` and `-quality`. Their `session-start` skills call `praxis_session_start`.
+- `.mcpb` sha256 `bb87dcc80571e717e3d45c450382a5dbba5b91518710d06a4b2c97ff1437c44e` (the file attached to the `v0.1.0-alpha.49.2` Release of `dfg-inc/praxis-runtime`).
 
 Desktop acceptance is **not** claimed for this build until it has been installed and re-tested on the real Desktop host.
 
 ## Chat and Code showed different tools: a stale session registry, not a different server
 
 A Claude session takes its tool list when it starts. After the extension is updated, a session opened earlier keeps
-the old list (50 tools) while its calls already reach the new server (the doctor reports the new bundle). Claude
+the old list while its calls already reach the new server (the doctor reports the new bundle). Claude
 Desktop has one Praxis Runtime server (the MCPB extension); Chat and Code use the same one. `npm run report:tool-origins`
 starts every local build and prints bundle sha, build kind, tool count and a digest of the tool names; all of them
-offer the same tool set (52 tools in this build; the tool-name digest differs from the installed build). `praxis_doctor` now reports `build.tools` (count, digest, names) and
+offer the same tool set (62 tools in this build). `praxis_doctor` now reports `build.tools` (count, digest, names) and
 `build.kind` (`production` for shipped bundles). If a session shows fewer tools than `build.tools.count`, start a
 new session; do not reinstall.
 
 ## Git writes
 
-Commit, push, merge request, remote connect and identity writes are approved per request in the client dialog (see Approvals). A commit approval is not a push approval, and each approval names one action and the exact content previewed.
+Commit, push, merge request, remote connect and identity writes are approved per request in the client dialog (see Approvals), so in Claude Desktop they are applied from the Claude Code CLI. A commit approval is not a push approval, and each approval names one action and the exact content previewed.

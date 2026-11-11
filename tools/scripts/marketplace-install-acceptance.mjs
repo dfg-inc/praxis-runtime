@@ -8,8 +8,9 @@
  * Proves (Claude Code CLI only; the Claude UI "Customize -> Plugins" flow is NOT exercised here):
  *   1. `praxis` installs its five dependencies; 2. a single role installs praxis-runtime by itself; 3. exactly one
  *   MCP server exists across all plugins; 4. skills are present; 5. the installed Runtime starts, lists the tools and
- *   answers praxis_doctor; 6. Approval Required refuses a write at once, Trusted Client (explicit) allows it, in an
- *   isolated project; 7. an older marketplace revision upgrades in place; 8. no absolute developer path is shipped.
+ *   answers praxis_doctor; 6. without a client dialog a protected write is refused at once, and the retired
+ *   PRAXIS_APPROVAL_MODE=trusted-client is ignored (the same write is still refused), in an isolated project; 7. an
+ *   older marketplace revision upgrades in place; 8. no absolute developer path is shipped.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
