@@ -56,6 +56,8 @@ async function open(bundle, elicit) {
     env: { ...hostedCleanEnv(work), PATH: `${dirname(process.execPath)}:/usr/bin:/bin`, PRAXIS_SKIP_DOTENV: "1", PRAXIS_STATE_HOME: state, PRAXIS_APPROVAL_MIN_ANSWER_MS: "1000" },
     versionNegotiation: versionNegotiationModern(),
     elicit,
+    // the answers here keep their own pace (answerAfter); the alpha.49.1 instant decline must stay instant
+    answerAfterMs: 0,
     timeoutMs: 20_000,
     clientName: "praxis-compat",
     clientVersion: "1.0",
