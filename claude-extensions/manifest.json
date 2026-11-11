@@ -2,7 +2,7 @@
   "contract": "praxis.claude-extensions.manifest",
   "version": "0.1.0-alpha.49.1",
   "file": "praxis-runtime.mcpb",
-  "sha256": "fb4add18e7e7bea3d7c705a7173b168d5e53c00d5da9ff0f8e8d15bcc7876dec",
-  "bytes": 1177141,
+  "sha256": "d382a9fe906ca80acd50d6dac0a2585c1c39dc980595927b0fe3300c6390f9c4",
+  "bytes": 1178052,
   "manifest_version": "0.4"
 }

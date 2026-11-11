@@ -40,16 +40,25 @@ const MAX_JSON = 16 * 1024 * 1024;
 const MAX_GLOBAL_JSON = 64 * 1024 * 1024;
 const MAX_MARKDOWN = 4 * 1024 * 1024;
 const MAX_WALK_ENTRIES = 200_000;
-// flags that bring configuration Praxis does not evaluate (--setting-sources only narrows the standard scopes, all checked)
-const LAUNCH_FLAGS = /(^|[\s"'=\x00])--(settings|plugin-dir|plugin-url|agents)(?=$|[\s"'=\x00])/;
+// any flag of the families that bring configuration Praxis does not evaluate, present or future (--plugin-dir,
+// --plugin-dir-no-mcp, --plugin-url, --settings, --setting-sources, --managed-settings ...), --agents, and an SDK host's
+// --await-initialize (it can hand the client plugins and hooks over stdin)
+const LAUNCH_FLAGS = /(^|[\s"'=\x00])--((?:plugin|setting|managed)[a-z0-9-]*|agents|await-initialize)(?=$|[\s"'=\x00])/i;
 /**
  * What a repository's own Claude Code settings may contain: keys that neither run anything nor configure the client or the
  * Runtime. Anything else (hooks, env, a status line command, plugins and marketplaces, helper commands, keys Praxis does not
  * know) refuses protected actions: a project does not configure its own approval.
  */
-const PROJECT_KEYS = new Set(["$schema", "permissions", "model", "outputstyle", "includecoauthoredby", "cleanupperioddays", "enableallprojectmcpservers", "enabledmcpjsonservers", "disabledmcpjsonservers", "spinnertipsenabled", "alwaysthinkingenabled", "language", "respectgitignore"]);
-/** Client environment that points it at configuration Praxis does not read (the environment form of --plugin-dir and the like). */
+// (the keys that start the repository's own MCP servers without asking, enableAllProjectMcpServers and
+// enabledMcpjsonServers, are not on it; disableAllHooks only switches hooks off; sandbox only narrows the agent's shell)
+const PROJECT_KEYS = new Set(["$schema", "permissions", "model", "outputstyle", "includecoauthoredby", "cleanupperioddays", "disabledmcpjsonservers", "spinnertipsenabled", "alwaysthinkingenabled", "language", "respectgitignore", "sandbox", "disableallhooks"]);
+/**
+ * Client environment that points it at configuration Praxis does not read (the environment form of --plugin-dir and the
+ * like): a CLAUDE* name of those families whose name says it holds a location, or whose value looks like one.
+ */
 const CLIENT_CONFIG_ENV = /PLUGIN|SETTING|MARKETPLACE|HOOK|SKILL|AGENTS|CONFIG/i;
+const LOCATION_NAME = /(DIRS?|PATHS?|FILES?|URLS?|SOURCES?|ROOTS?|HOME|JSON|LOCATION)$/i;
+const looksLikeLocation = (value: string): boolean => /^\s*([\\/~.{[]|[a-z]:[\\/]|[a-z]+:\/\/)/i.test(value) || /[\\/]/.test(value);
 const CLIENT_ENV_KNOWN = new Set(["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_CONFIG_DIR"]);
 
 const fold = (text: string): string => text.normalize("NFKC").toLowerCase();
@@ -94,7 +103,7 @@ function stripJsonc(text: string): string {
       for (i += 1; i < text.length && text[i] !== '"'; i += 1) if (text[i] === "\\") i += 1;
       out += text.slice(start, i + 1);
     } else if (c === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n") i += 1;
+      while (i < text.length && text[i] !== "\n" && text[i] !== "\r") i += 1;
       out += "\n";
     } else if (c === "/" && text[i + 1] === "*") {
       const end = text.indexOf("*/", i + 2);
@@ -145,10 +154,15 @@ function checkSettings(path: string, value: unknown, project: boolean, whole = f
     const settings = value as Record<string, unknown>;
     const env = settings.env && typeof settings.env === "object" ? Object.keys(settings.env as object) : [];
     if (env.length) out.push({ file: path, why: `the repository's settings set ${env.slice(0, 6).join(", ")} for the client and the Runtime it starts`, kind: "project-env" });
-    const other = Object.keys(settings).filter((k) => !PROJECT_KEYS.has(fold(k)) && fold(k) !== "hooks" && fold(k) !== "env");
+    const other = Object.keys(settings).filter((k) => (!PROJECT_KEYS.has(fold(k)) || (fold(k) === "disableallhooks" && settings[k] !== true)) && fold(k) !== "hooks" && fold(k) !== "env");
     if (other.length) out.push({ file: path, why: `the repository's settings configure ${other.slice(0, 6).join(", ")}, which a project may not set while it asks for protected actions`, kind: "project-config" });
   } else if (project && value !== undefined) {
     out.push({ file: path, why: "is not a settings object, so it cannot be checked", kind: "unverifiable" });
+  }
+  if (!project && value && typeof value === "object" && !Array.isArray(value)) {
+    const env = (value as Record<string, unknown>).env;
+    const pointing = env && typeof env === "object" ? Object.entries(env as Record<string, unknown>).filter(([name, v]) => pointsClientAtConfig(name, String(v ?? ""))).map(([name]) => name) : [];
+    if (pointing.length) out.push({ file: path, why: `its env sets ${pointing.slice(0, 4).join(", ")}, which points the client at configuration Praxis cannot check`, kind: "launch" });
   }
   return out;
 }
@@ -174,7 +188,8 @@ function checkMarkdown(path: string, project: boolean): AutomationFinding[] {
   if (!fm) return [];
   // a top-level hooks key (plain or quoted), or a front matter that is one flow mapping holding one, after escapes are undone;
   // the word inside a description is not a key
-  if (!/(^|\n)["']?hooks["']?[ \t]*:/.test(fm) && !/^\s*\{[\s\S]*["']?hooks["']?\s*:/.test(fm)) return [];
+  const key = /(^|\n)[ \t]*(![^\s]*[ \t]+)?["']?hooks["']?[ \t]*:/.test(fm) || /^\s*\{[\s\S]*["']?hooks["']?\s*:/.test(fm) || /(^|\n)[ \t]*<<[ \t]*:[\s\S]*hooks/.test(fm);
+  if (!key) return [];
   if (fm.includes("elicitation")) return [{ file: path, why: "an agent, skill or command definition declares an Elicitation hook", kind: "dialog-answer" }];
   if (project) return [{ file: path, why: "a repository agent, skill or command definition declares hooks: a project cannot authorize its own protected actions", kind: "project-hooks" }];
   return [];
@@ -227,7 +242,7 @@ function walk(dir: string, budget: Budget): string[] {
 }
 
 /** Files Claude Code reads hooks from by their name: a hook file, a plugin manifest, a marketplace manifest. */
-const isHookJson = (path: string): boolean => /(^|[\\/])(hooks\.json|plugin\.json|marketplace\.json)$/.test(path) || /[\\/]hooks[\\/][^\\/]+\.json$/.test(path);
+const isHookJson = (path: string): boolean => /(^|[\\/])(hooks\.json|plugin\.json|marketplace\.json)$/.test(path);
 const isDefinition = (path: string): boolean => path.endsWith(".md") && /[\\/](agents|skills|commands|output-styles)[\\/]/.test(path);
 
 /** Every string a `hooks` key holds (a path, or a list of paths), at any depth: hook files a manifest names. */
@@ -358,10 +373,15 @@ export function ancestry(): Process[] {
 }
 
 
+function pointsClientAtConfig(name: string, value: string): boolean {
+  if (!/^CLAUDE/i.test(name) || CLIENT_ENV_KNOWN.has(name.toUpperCase()) || !CLIENT_CONFIG_ENV.test(name) || !value.trim()) return false;
+  return LOCATION_NAME.test(name) || looksLikeLocation(value);
+}
+
 /** The client's environment, as the Runtime inherited it: the environment form of the configuration flags. */
 function checkClientEnvironment(): AutomationFinding[] {
   return Object.keys(process.env)
-    .filter((name) => /^CLAUDE/i.test(name) && !CLIENT_ENV_KNOWN.has(name) && CLIENT_CONFIG_ENV.test(name) && process.env[name]?.trim())
+    .filter((name) => pointsClientAtConfig(name, process.env[name] ?? ""))
     .map((name) => ({ file: `environment ${name}`, why: "points the client at configuration Praxis cannot check", kind: "launch" as const }));
 }
 

@@ -61582,9 +61582,11 @@ var MAX_JSON = 16 * 1024 * 1024;
 var MAX_GLOBAL_JSON = 64 * 1024 * 1024;
 var MAX_MARKDOWN = 4 * 1024 * 1024;
 var MAX_WALK_ENTRIES = 2e5;
-var LAUNCH_FLAGS = /(^|[\s"'=\x00])--(settings|plugin-dir|plugin-url|agents)(?=$|[\s"'=\x00])/;
-var PROJECT_KEYS = /* @__PURE__ */ new Set(["$schema", "permissions", "model", "outputstyle", "includecoauthoredby", "cleanupperioddays", "enableallprojectmcpservers", "enabledmcpjsonservers", "disabledmcpjsonservers", "spinnertipsenabled", "alwaysthinkingenabled", "language", "respectgitignore"]);
+var LAUNCH_FLAGS = /(^|[\s"'=\x00])--((?:plugin|setting|managed)[a-z0-9-]*|agents|await-initialize)(?=$|[\s"'=\x00])/i;
+var PROJECT_KEYS = /* @__PURE__ */ new Set(["$schema", "permissions", "model", "outputstyle", "includecoauthoredby", "cleanupperioddays", "disabledmcpjsonservers", "spinnertipsenabled", "alwaysthinkingenabled", "language", "respectgitignore", "sandbox", "disableallhooks"]);
 var CLIENT_CONFIG_ENV = /PLUGIN|SETTING|MARKETPLACE|HOOK|SKILL|AGENTS|CONFIG/i;
+var LOCATION_NAME = /(DIRS?|PATHS?|FILES?|URLS?|SOURCES?|ROOTS?|HOME|JSON|LOCATION)$/i;
+var looksLikeLocation = (value) => /^\s*([\\/~.{[]|[a-z]:[\\/]|[a-z]+:\/\/)/i.test(value) || /[\\/]/.test(value);
 var CLIENT_ENV_KNOWN = /* @__PURE__ */ new Set(["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "CLAUDE_CONFIG_DIR"]);
 var fold = (text) => text.normalize("NFKC").toLowerCase();
 var namesElicitation = (key) => fold(key).includes("elicitation");
@@ -61625,7 +61627,7 @@ function stripJsonc(text) {
           i += 1;
       out += text.slice(start, i + 1);
     } else if (c === "/" && text[i + 1] === "/") {
-      while (i < text.length && text[i] !== "\n")
+      while (i < text.length && text[i] !== "\n" && text[i] !== "\r")
         i += 1;
       out += "\n";
     } else if (c === "/" && text[i + 1] === "*") {
@@ -61682,11 +61684,17 @@ function checkSettings(path2, value, project, whole = false) {
     const env = settings.env && typeof settings.env === "object" ? Object.keys(settings.env) : [];
     if (env.length)
       out.push({ file: path2, why: `the repository's settings set ${env.slice(0, 6).join(", ")} for the client and the Runtime it starts`, kind: "project-env" });
-    const other = Object.keys(settings).filter((k) => !PROJECT_KEYS.has(fold(k)) && fold(k) !== "hooks" && fold(k) !== "env");
+    const other = Object.keys(settings).filter((k) => (!PROJECT_KEYS.has(fold(k)) || fold(k) === "disableallhooks" && settings[k] !== true) && fold(k) !== "hooks" && fold(k) !== "env");
     if (other.length)
       out.push({ file: path2, why: `the repository's settings configure ${other.slice(0, 6).join(", ")}, which a project may not set while it asks for protected actions`, kind: "project-config" });
   } else if (project && value !== void 0) {
     out.push({ file: path2, why: "is not a settings object, so it cannot be checked", kind: "unverifiable" });
+  }
+  if (!project && value && typeof value === "object" && !Array.isArray(value)) {
+    const env = value.env;
+    const pointing = env && typeof env === "object" ? Object.entries(env).filter(([name, v]) => pointsClientAtConfig(name, String(v ?? ""))).map(([name]) => name) : [];
+    if (pointing.length)
+      out.push({ file: path2, why: `its env sets ${pointing.slice(0, 4).join(", ")}, which points the client at configuration Praxis cannot check`, kind: "launch" });
   }
   return out;
 }
@@ -61705,7 +61713,8 @@ function checkMarkdown(path2, project) {
   const fm = frontMatter(text.value);
   if (!fm)
     return [];
-  if (!/(^|\n)["']?hooks["']?[ \t]*:/.test(fm) && !/^\s*\{[\s\S]*["']?hooks["']?\s*:/.test(fm))
+  const key = /(^|\n)[ \t]*(![^\s]*[ \t]+)?["']?hooks["']?[ \t]*:/.test(fm) || /^\s*\{[\s\S]*["']?hooks["']?\s*:/.test(fm) || /(^|\n)[ \t]*<<[ \t]*:[\s\S]*hooks/.test(fm);
+  if (!key)
     return [];
   if (fm.includes("elicitation"))
     return [{ file: path2, why: "an agent, skill or command definition declares an Elicitation hook", kind: "dialog-answer" }];
@@ -61758,7 +61767,7 @@ function walk2(dir, budget) {
   }
   return found;
 }
-var isHookJson = (path2) => /(^|[\\/])(hooks\.json|plugin\.json|marketplace\.json)$/.test(path2) || /[\\/]hooks[\\/][^\\/]+\.json$/.test(path2);
+var isHookJson = (path2) => /(^|[\\/])(hooks\.json|plugin\.json|marketplace\.json)$/.test(path2);
 var isDefinition = (path2) => path2.endsWith(".md") && /[\\/](agents|skills|commands|output-styles)[\\/]/.test(path2);
 function hookRefs(value) {
   const refs = [];
@@ -61885,8 +61894,13 @@ function ancestry() {
   }
   return chain;
 }
+function pointsClientAtConfig(name, value) {
+  if (!/^CLAUDE/i.test(name) || CLIENT_ENV_KNOWN.has(name.toUpperCase()) || !CLIENT_CONFIG_ENV.test(name) || !value.trim())
+    return false;
+  return LOCATION_NAME.test(name) || looksLikeLocation(value);
+}
 function checkClientEnvironment() {
-  return Object.keys(process.env).filter((name) => /^CLAUDE/i.test(name) && !CLIENT_ENV_KNOWN.has(name) && CLIENT_CONFIG_ENV.test(name) && process.env[name]?.trim()).map((name) => ({ file: `environment ${name}`, why: "points the client at configuration Praxis cannot check", kind: "launch" }));
+  return Object.keys(process.env).filter((name) => pointsClientAtConfig(name, process.env[name] ?? "")).map((name) => ({ file: `environment ${name}`, why: "points the client at configuration Praxis cannot check", kind: "launch" }));
 }
 function checkLaunch(read) {
   let chain;
@@ -81908,7 +81922,7 @@ var import_node_fs6 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"81b45cc6138c57e6c367a38ece29c4f7182472eed9154f286ec86add32424b63","coreBaseline":"6ac72c230d24942700eec226f96671aee64dcf25","inputs":40}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"0e3a76fd0ea801ca7cc7eaeed6f4f623986076db750b7065cb89d9df91de33d4","coreBaseline":"99e70434aa3828661f3b5c68f5d8de5bbf6b2153","inputs":40}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {

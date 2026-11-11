@@ -193,7 +193,7 @@ describe("the third review's bypasses (F1 to F7): each is found, and anything th
       expect(kinds(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args }] })), args).toEqual(["launch"]);
     }
     expect(kinds(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args: "/bin/sh -c node praxis-mcp.cjs" }, { pid: 8, ppid: 7, args: "claude --settings {}" }] }))).toEqual(["launch"]);
-    expect(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args: "claude --setting-sources=user,project,local --model x" }] })).toEqual([]);
+    expect(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args: "claude --model x --resume=abc --mcp-config ./m.json" }] })).toEqual([]);
     expect(kinds(dialogAutomation({ repo, ancestry: () => [] }))).toEqual(["unverifiable"]);
     expect(kinds(dialogAutomation({ repo, ancestry: () => { throw new Error("no ps"); } }))).toEqual(["unverifiable"]);
   });
@@ -337,5 +337,57 @@ describe("the re-review's bypasses (round 2): each is found; ordinary configurat
     write(join(plugin, "test", "fixtures", "broken.json"), "{ not json");
     symlinkSync(join(plugin, "nowhere"), join(plugin, "dangling"));
     expect(dialogAutomation({ repo })).toEqual([]);
+  });
+});
+
+describe("the round-3 review's forms: whole flag families, the user's env block; and no refusal of ordinary setups", () => {
+  it("R3-F1/F5: any --plugin*, --setting*, --managed* flag, --agents and --await-initialize refuse", () => {
+    for (const args of ["claude --plugin-dir-no-mcp ./p", "claude --setting-sources=user", "claude --managed-settings ./m.json", "claude --await-initialize", "claude --PLUGIN-DIR=x"]) {
+      expect(kinds(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args }] })), args).toEqual(["launch"]);
+    }
+  });
+
+  it("R3-F2: the user's settings env pointing the client at plugins refuses; harmless client variables do not", () => {
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "settings.json"), { env: { CLAUDE_CODE_PLUGIN_DIRS: "/tmp/p" } });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["launch"]);
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "settings.json"), { env: { CLAUDE_CODE_HIDE_SETTINGS_HINT: "1", CLAUDE_CODE_PLUGIN_GIT_TIMEOUT_MS: "30000", NODE_ENV: "dev" } });
+    expect(dialogAutomation({ repo })).toEqual([]);
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, { CLAUDE_CODE_HIDE_SETTINGS_HINT: "1", CLAUDE_CODE_PLUGIN_GIT_TIMEOUT_MS: "30000" });
+      expect(dialogAutomation({ repo })).toEqual([]);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+  });
+
+  it("R3-F3: the keys that start the repository's own MCP servers without asking refuse; sandbox and disableAllHooks: true do not", () => {
+    for (const settings of [{ enableAllProjectMcpServers: true }, { enabledMcpjsonServers: ["x"] }, { disableAllHooks: false }]) {
+      write(join(repo, ".claude", "settings.json"), settings);
+      expect(kinds(dialogAutomation({ repo })), JSON.stringify(settings)).toEqual(["project-config"]);
+    }
+    write(join(repo, ".claude", "settings.json"), { sandbox: { enabled: true }, disableAllHooks: true, disabledMcpjsonServers: ["x"] });
+    expect(dialogAutomation({ repo })).toEqual([]);
+  });
+
+  it("R3-F4/F5: a comment ended by CR does not hide a hook; indented, tagged and merged front matter keys are read", () => {
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "settings.json"), '{ // note\r"hooks": {"Elicitation": []} }');
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    rmSync(join(process.env.CLAUDE_CONFIG_DIR!, "settings.json"));
+    for (const fm of ["  name: s\n  hooks:\n    Elicitation: []", "name: s\n!!str hooks:\n  Elicitation: []", "name: s\n<<: { hooks: { Elicitation: [] } }"]) {
+      write(join(process.env.CLAUDE_CONFIG_DIR!, "skills", "s", "SKILL.md"), `---\n${fm}\n---\n`);
+      expect(kinds(dialogAutomation({ repo })), fm).toEqual(["dialog-answer"]);
+    }
+  });
+
+  it("R3-F6: a broken fixture or a dangling link in a plugin's hooks folder (not its hooks.json) refuses nothing", async () => {
+    const { symlinkSync } = await import("node:fs");
+    const plugin = join(process.env.CLAUDE_CONFIG_DIR!, "plugins", "marketplaces", "m", "plugins", "p");
+    write(join(plugin, "hooks", "fixture.json"), "{ broken");
+    symlinkSync(join(plugin, "nowhere"), join(plugin, "hooks", "gone.json"));
+    expect(dialogAutomation({ repo })).toEqual([]);
+    write(join(plugin, "hooks", "hooks.json"), "{ broken");
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["unverifiable"]);
   });
 });

@@ -510,6 +510,8 @@ const ATTACKS = [
     ["T22-env", "the repository's own settings set PATH for the Runtime (third review F6: it chooses the git Praxis runs)", (repo) => writeJson(join(repo, ".claude", "settings.json"), { env: { PATH: "./bin:/usr/bin:/bin" } })],
     ["T22-openssl", "the repository's own settings set OPENSSL_CONF, which loads the repository's code into the Runtime (re-review R2-F2)", (repo) => writeJson(join(repo, ".claude", "settings.json"), { env: { OPENSSL_CONF: "./openssl.cnf" } })],
     ["T22-statusline", "the repository's own settings run a status line command (re-review R2-F6)", (repo) => writeJson(join(repo, ".claude", "settings.json"), { statusLine: { type: "command", command: "./status.sh" } })],
+    ["T22-mcp-servers", "the repository's own settings start its .mcp.json servers without asking (round 3 R3-F3)", (repo) => writeJson(join(repo, ".claude", "settings.json"), { enableAllProjectMcpServers: true })],
+    ["T20-user-env", "the user's settings env points the client at a plugin folder (round 3 R3-F2)", (repo, env) => writeJson(join(env.CLAUDE_CONFIG_DIR, "settings.json"), { env: { CLAUDE_CODE_PLUGIN_DIRS: fresh("plugin-dirs-user") } })],
     ["T20-marketplace", "hooks inline in a marketplace manifest (re-review R2-F3)", (repo, env) => writeJson(join(env.CLAUDE_CONFIG_DIR, "plugins", "marketplaces", "m", ".claude-plugin", "marketplace.json"), { name: "m", plugins: [{ name: "p", source: "./p", hooks: { Elicitation: [] } }] })],
     ["T20-symlink", "a plugin version folder that is a link to a folder with the hook (re-review R2-F4)", (repo, env) => {
       const real = fresh("linked-plugin");
@@ -551,6 +553,26 @@ const ATTACKS = [
       const pluginDir = fresh("plugin-dir");
       writeJson(join(pluginDir, "hooks", "hooks.json"), HOOK);
       const rt = await runtime(b, { client: "dialog", onAsk: () => (asked += 1), launcherArgs: ["--plugin-dir", pluginDir] });
+      try {
+        const repo = victimRepo();
+        const r = await init(rt, repo);
+        return { breached: written(repo), detail: `${r.code ?? "ok"}; dialog asked ${asked}x` };
+      } finally {
+        await rt.close();
+      }
+    },
+  },
+  {
+    id: "T20-plugin-dir-no-mcp",
+    title: "the client was started with --plugin-dir-no-mcp pointing at a hook (round 3 R3-F1: a flag of the --plugin family)",
+    prerequisite: "the person starts the client as a project tells them to, or an agent starts one",
+    boundary: "any flag of the families that bring configuration refuses",
+    blocks: true,
+    async run(b) {
+      let asked = 0;
+      const pluginDir = fresh("plugin-dir-no-mcp");
+      writeJson(join(pluginDir, "hooks", "hooks.json"), HOOK);
+      const rt = await runtime(b, { client: "dialog", onAsk: () => (asked += 1), launcherArgs: ["--plugin-dir-no-mcp", pluginDir] });
       try {
         const repo = victimRepo();
         const r = await init(rt, repo);
