@@ -29,7 +29,10 @@ if (!existsSync(chromePath)) {
   console.error(`no Chrome at ${chromePath}; pass --chrome <path>`);
   process.exit(2);
 }
+// the source, not a shipped bundle: the review link comes from the test file, and the test harness stands in for the dialog
 process.env.PRAXIS_TEST_REVIEW_NO_BROWSER = "1";
+process.env.PRAXIS_TEST_APPROVALS = "1";
+process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS = "0";
 const C = await import("@praxis/contracts");
 if (!C.ELEMENT_KINDS.includes("conversation") || !C.ELEMENT_KINDS.includes("custom")) {
   console.error("this build's @praxis/contracts has no conversation/custom element kinds: refresh the praxis-core vendor first");
@@ -37,6 +40,16 @@ if (!C.ELEMENT_KINDS.includes("conversation") || !C.ELEMENT_KINDS.includes("cust
 }
 const { renderReviewTool, reviewDir, stopReviewServer } = await import(pathToFileURL(join(root, "packages/mcp/dist/review-service.js")).href);
 const { applyRuntimeCommand, loadWorkflow } = await import(pathToFileURL(join(root, "packages/mcp/dist/workflow-store.js")).href);
+const { callTool } = await import(pathToFileURL(join(root, "packages/mcp/dist/tools.js")).href);
+/** A scripted approval dialog (a test action, never a person's consent). */
+const approvingDialog = { kind: "client-elicitation", ask: async () => ({ answer: "approve", channel: "client-elicitation" }) };
+/** After the page's Send for approval: the agent applies the handed-over decisions and the dialog approves exactly them. */
+async function applyFromPage(wi, view = "prototype") {
+  const res = await callTool("praxis_review_apply", { repo: wi.repo, fromPage: true, workItemId: wi.id, view, confirmation: "YES" }, { role: "ba", version: "test", approvalChannel: approvingDialog });
+  if (!res.ok) throw new Error(`apply ${view}: ${res.code} ${JSON.stringify(res.errors)}`);
+  return res.data;
+}
+const handedOver = () => /nothing is recorded yet/.test(document.querySelector("#toast")?.textContent ?? "");
 const F = JSON.parse(readFileSync(join(root, "tools/fixtures/agronomist-journal.json"), "utf8"));
 const ME = "Ирина Ковалёва";
 if (shots) mkdirSync(shots, { recursive: true });
@@ -62,7 +75,7 @@ async function scenario(id, title, fn) {
   console.error(`${cur.status === "PASS" ? "  ok  " : "  FAIL"} ${id} ${title}${cur.error ? `\n        ${cur.error}` : ` (${cur.checks} checks)`}`);
 }
 
-// --- the work item: requirements accepted on the page's channel, then the prototype as the agent writes it ---------------------
+// --- the work item: requirements accepted through the (test) dialog, then the prototype as the agent writes it ------------------
 /** The journal screen: the existing elements in their order, with the note feed (id "feed") replaced by the given element. */
 const screenOf = (feed, extra = []) => ({ ...F.screen, elements: [...F.existing.map((e) => (e.id === "feed" && feed ? feed : e)), ...extra] });
 const common = (mock) => ({ kind: "ui", startScreen: "journal", styles: F.styles, mock, datasets: F.datasets });
@@ -83,7 +96,8 @@ function workItem(prototype) {
   applyRuntimeCommand(repo, F.repository, id);
   for (const r of F.requirements) applyRuntimeCommand(repo, { action: "add-requirement", ...r }, id);
   applyRuntimeCommand(repo, F.impact, id);
-  applyRuntimeCommand(repo, { action: "accept-requirements", via: "html-review" }, id, { via: "html-review" });
+  const accept = { action: "accept-requirements" };
+  applyRuntimeCommand(repo, accept, id, C.userChannelFor(accept));
   applyRuntimeCommand(repo, { action: "advance-phase", to: "prototype" }, id);
   applyRuntimeCommand(repo, { action: "set-prototype", prototype, summary: "browser acceptance" }, id);
   return { repo, id, state: () => loadWorkflow(repo, id) };
@@ -250,10 +264,12 @@ await scenario("P02", "Journal chat at phone width: the acceptance scenario, the
   await page.check("#accept-proto");
   eq(chat.state().prototype.feedback.length, 0, "nothing is written before Save");
   await page.click("#btn-save");
-  await page.waitForFunction(() => /Saved/.test(document.querySelector("#toast")?.textContent ?? ""));
+  await page.waitForFunction(handedOver);
+  eq(chat.state().prototype.feedback.length, 0, "the page's Save hands over and records nothing");
+  await applyFromPage(chat);
   const s = chat.state();
   eq(s.prototype.feedback.map((f) => [f.target, f.comment]), [["journal#feed", "Разделитель дат сделать заметнее"]], "the comment is saved against the feed");
-  eq(s.phaseAcceptance.prototype?.via, "html-review", "accepted by the user's Save");
+  eq(s.phaseAcceptance.prototype?.via, "approved", "accepted by the user's Save, approved in the dialog");
   eq(s.prototype.revision, 1, "reviewing does not make a new revision");
   const { feedback: _f, status: _s, ...after } = s.prototype;
   const { feedback: _bf, status: _bs, ...was } = JSON.parse(before);
@@ -396,7 +412,8 @@ await scenario("P05", "Custom part in Inspect and Review: only a click into the 
   await page.fill('textarea[data-fb="journal#board@legend"]', "Легенду перенести вниз");
   if (shots) await page.locator(".pv-grid").screenshot({ path: join(shots, "P05-custom-review.png"), style: SHOT_STYLE });
   await page.click("#btn-save");
-  await page.waitForFunction(() => /Saved/.test(document.querySelector("#toast")?.textContent ?? ""));
+  await page.waitForFunction(handedOver);
+  await applyFromPage(wi);
   eq(wi.state().prototype.feedback.map((f) => f.target), ["journal#board@legend"], "the comment is saved against the part");
   eq(errors, [], "no script errors");
   await ctx.close();

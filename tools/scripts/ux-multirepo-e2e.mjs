@@ -25,6 +25,7 @@ if ((built.status ?? 1) !== 0) {
 const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
 const { extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
 const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationLegacy } = await import("./official-mcp-client.mjs");
+const { lastOpenedLink } = await import("./test-browser.mjs");
 const dist = await packClaudeExtension(version);
 const extracted = extractMcpbRuntime(dist.mcpbPath ?? join(root, "dist", "claude-extensions", version, "praxis-runtime.mcpb"), mkdtempSync(join(tmpdir(), "praxis-mr-")));
 
@@ -86,13 +87,16 @@ async function must(command, wi) {
 async function userSave(view, wi, payload) {
   const r = await call(agent, "praxis_review_render", { repo, view, workItemId: wi });
   check(r.ok, `render ${view}`);
-  const secret = readFileSync(join(dirname(r.data.file), `${view}.url`), "utf8");
+  const secret = lastOpenedLink();
   const html = await (await fetch(secret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
   const res = await fetch(`${secret.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: wi, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, ...payload }) });
-  const body = await res.json();
-  check(res.status === 200 && body.conflicts.length === 0, `save ${view}: ${res.status} ${JSON.stringify(body)}`);
-  return body;
+  const handover = await res.json();
+  check(res.status === 200 && handover.handedOver === true && handover.applied === 0, `save ${view}: ${res.status} ${JSON.stringify(handover)}`);
+  // the page records nothing: the agent applies what it handed over and the client's dialog shows exactly those decisions
+  const applied = await call(agent, "praxis_review_apply", { repo, fromPage: true, workItemId: wi, view, confirmation: "YES" });
+  check(applied.ok && applied.data.conflicts.length === 0, `apply ${view}: ${applied.code} ${JSON.stringify(applied.errors ?? applied.data)}`);
+  return applied.data;
 }
 
 // ===== BA ===============================================================================================================
@@ -119,7 +123,7 @@ await must(story("US-ORD-002", acs[1], "Web order search"), wi);
 await must(story("US-ORD-003", acs[2], "Mobile order search"), wi);
 await must({ action: "advance-phase", to: "stories_review" }, wi);
 await userSave("stories", wi, { stories: { items: [], stories: ["US-ORD-001", "US-ORD-002", "US-ORD-003"].map((id) => ({ storyId: id, revision: 1, acceptAll: true })), accept: true } });
-eq(stateOf(wi).phaseAcceptance.stories_review?.via, "html-review", "stories accepted by the user's save");
+eq(stateOf(wi).phaseAcceptance.stories_review?.via, "approved", "stories accepted by the user's save, approved in the dialog");
 // reviewing the stories and confirming their behaviour are two decisions: the gate wants every story confirmed (the client's dialog answers)
 const storyView = (await call(agent, "praxis_workflow_inspect", { repo, workItemId: wi, view: "stories" })).data.stories;
 for (const st of storyView) await must({ action: "confirm-story", id: st.id, revision: st.revision, contentFingerprint: st.contentFingerprint }, wi);

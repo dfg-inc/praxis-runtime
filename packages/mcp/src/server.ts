@@ -7,7 +7,7 @@ import {
   toolsForRole,
   type PraxisRole,
 } from "./catalog.js";
-import { approvalKey, elicitParams, elicitationChannel, roundTripChannel } from "./approval-channel.js";
+import { approvalKey, elicitParams, elicitationChannel, noteDialogAsked, roundTripChannel } from "./approval-channel.js";
 import { bundleVersion, PRAXIS_MCP_SDK } from "./protocol.js";
 import { jsonSchemaToZod } from "./schema.js";
 import { callTool, type ClientReport } from "./tools.js";
@@ -28,7 +28,7 @@ function logStderr(line: string): void {
  * agent's notes (so a client that prompts per tool call prompts here, in addition to Praxis asking for the decision).
  */
 /** Tools filed as reads that still write into the work item or start a local page server: clients must not treat them as harmless. */
-const STATE_WRITING_READS = new Set(["praxis_repository_inspect", "praxis_review_render"]);
+const STATE_WRITING_READS = new Set(["praxis_repository_inspect", "praxis_review_render", "praxis_approval_journal"]);
 
 function annotationsFor(tool: ToolDef) {
   const applies = tool.kind === "apply";
@@ -82,12 +82,14 @@ export function describeClient(server: McpServer, extra: unknown): ClientReport 
 function clientApprovalChannel(extra: unknown, client: ClientReport) {
   if (!client.dialog) return undefined;
   const ctx = (extra as { mcpReq?: { elicitInput?: (params: never, options?: never) => Promise<never>; inputResponses?: Record<string, unknown> } } | undefined)?.mcpReq;
-  if (client.flow === "input-required-round-trip") return roundTripChannel(ctx?.inputResponses);
+  const label = client.name ? `${client.name}${client.version ? ` ${client.version}` : ""}` : undefined;
+  if (client.flow === "input-required-round-trip") return roundTripChannel(ctx?.inputResponses, label);
   const elicit = ctx?.elicitInput;
   if (!elicit) return undefined;
   return elicitationChannel({
     supported: true,
     elicitInput: (params, options) => (elicit as unknown as (p: unknown, o?: unknown) => Promise<never>)(params, options),
+    ...(label ? { client: label } : {}),
   });
 }
 
@@ -137,7 +139,10 @@ export function createPraxisMcpServer(opts: { role: PraxisRole; version: string 
           // 2026-07-28: nothing has run; ask the user in the client's dialog and let it retry the call with the answer
           if (error instanceof ApprovalNeedsInput) {
             recordDiagnostic({ event: "input_required", callId, tool: tool.name, ms: Date.now() - started });
-            return inputRequired({ inputRequests: { [approvalKey(error.request)]: inputRequired.elicit(elicitParams(error.request) as never) } });
+            const key = approvalKey(error.request);
+            // the retry carrying the answer is timed against this moment: an instant answer is the client's, not the user's
+            noteDialogAsked(key);
+            return inputRequired({ inputRequests: { [key]: inputRequired.elicit(elicitParams(error.request) as never) } });
           }
           recordDiagnostic({ event: "tool_failed", callId, tool: tool.name, ms: Date.now() - started, error: error instanceof Error ? error.name : "unknown" });
           throw error;

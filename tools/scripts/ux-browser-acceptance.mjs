@@ -31,6 +31,7 @@ if ((built.status ?? 1) !== 0) {
 const { packClaudeExtension } = await import("./pack-claude-extension.mjs");
 const { extractMcpbRuntime } = await import("./mcpb-runtime.mjs");
 const { connectOfficialMcp, hostedCleanEnv, parseDoctorEnvelope, versionNegotiationLegacy } = await import("./official-mcp-client.mjs");
+const { lastOpenedLink } = await import("./test-browser.mjs");
 const dist = await packClaudeExtension(version);
 const extracted = extractMcpbRuntime(dist.mcpbPath ?? join(root, "dist", "claude-extensions", version, "praxis-runtime.mcpb"), mkdtempSync(join(tmpdir(), "praxis-br-")));
 
@@ -79,7 +80,7 @@ const browser = await chromium.launch({ executablePath: chromePath, headless: tr
 const linkOf = async (view, workItemId = wi) => {
   const r = await call(agent, "praxis_review_render", { repo, view, workItemId });
   if (!r.ok) throw new Error(`render ${view}: ${JSON.stringify(r.errors)}`);
-  return { ...r.data, secret: readFileSync(join(dirname(r.data.file), `${view}.url`), "utf8"), offline: r.data.file };
+  return { ...r.data, secret: lastOpenedLink(), offline: r.data.file };
 };
 async function page(urlOrFile) {
   const ctx = await browser.newContext({ viewport: { width: 1100, height: 900 } });
@@ -101,7 +102,9 @@ async function httpSave(view, workItemId, payload) {
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
   const r = await fetch(l.secret.split("?")[0] + "/submit", { method: "POST", headers: { "content-type": "application/json", origin: new URL(l.secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, ...payload }) });
   if (r.status !== 200) throw new Error("setup save " + view + ": " + r.status);
-  return r.json();
+  const applied = await call(agent, "praxis_review_apply", { repo, fromPage: true, workItemId, view, confirmation: "YES" });
+  if (!applied.ok) throw new Error("setup apply " + view + ": " + applied.code + " " + JSON.stringify(applied.errors));
+  return applied.data;
 }
 async function newGuided(title) {
   const id = (await must({ action: "open", projectId: "orders", title, request: title, mode: "guided" })).data.workItemId;
@@ -115,6 +118,21 @@ async function newGuided(title) {
 let wi3;
 let wi4;
 const toast = (p) => p.locator("#toast").innerText();
+/**
+ * The (scripted) click on Send for approval, then what the agent does next: the page hands the decisions over and records
+ * nothing; praxis_review_apply shows exactly them in the client's dialog (here answered by the scripted client).
+ */
+async function sendForApproval(p, view, workItemId, session = agent) {
+  const before = readFileSync(join(repo, ".praxis", "workflow", "items", `${workItemId}.json`), "utf8");
+  await p.locator("#btn-save").click();
+  await p.waitForFunction(() => /nothing is recorded yet|Not saved|Cannot reach/.test(document.querySelector("#toast").textContent));
+  const shown = await toast(p);
+  check(/nothing is recorded yet/.test(shown), `the page hands over and records nothing: ${shown.slice(0, 300)}`);
+  eq(readFileSync(join(repo, ".praxis", "workflow", "items", `${workItemId}.json`), "utf8"), before, "the page's Save wrote nothing");
+  const applied = await call(session, "praxis_review_apply", { repo, fromPage: true, workItemId, view, confirmation: "YES" });
+  check(applied.ok, `apply ${view}: ${applied.code} ${JSON.stringify(applied.errors)}`);
+  return { ...applied.data, toast: shown };
+}
 
 await scenario("B01", "Requirements review in Chrome: controls, point edits, no write before Save, Save writes, reopen shows the saved state", async () => {
   const link = await linkOf("requirements");
@@ -130,8 +148,7 @@ await scenario("B01", "Requirements review in Chrome: controls, point edits, no 
   await p.locator('[data-req="REQ-ORD-001"] [data-f=statement]').fill("Managers can view, search and filter orders");
   await p.locator('[data-req="REQ-ORD-002"] [data-f=scope]').selectOption("deferred");
   eq(readFileSync(join(repo, ".praxis", "workflow", "items", `${wi}.json`), "utf8"), before, "nothing is written before Save");
-  await p.locator("#btn-save").click();
-  await p.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(p, "requirements", wi);
   const s = stateOf(wi);
   const r1 = s.requirements.find((r) => r.id === "REQ-ORD-001");
   eq(r1.statement, "Managers can view, search and filter orders", "statement edited by id");
@@ -140,7 +157,7 @@ await scenario("B01", "Requirements review in Chrome: controls, point edits, no 
   eq(r1.acceptanceCriteria[2].statement, "Filtering by status works", "criterion added");
   eq(r1.acceptanceCriteria[1].review.comment, "also by phone", "comment");
   eq(s.requirements.find((r) => r.id === "REQ-ORD-002").scope, "deferred", "scope");
-  check(s.requirements.every((r) => r.acceptanceCriteria.every((c) => c.review.via === undefined || c.review.via === "html-review")), "recorded as the page's own channel");
+  check(s.requirements.every((r) => r.acceptanceCriteria.every((c) => c.review.via === undefined || c.review.via === "approved")), "recorded as approved in the dialog, never as the page's");
   // reopen: a fresh page load shows the saved state
   const link2 = await linkOf("requirements");
   const q = await page(link2.secret);
@@ -152,14 +169,13 @@ await scenario("B01", "Requirements review in Chrome: controls, point edits, no 
   // accept the rest through the page, review completes
   await q.locator('[data-ac="REQ-ORD-001-AC-02"] input[value=accepted]').check();
   await q.locator('[data-ac="REQ-ORD-001-AC-04"] input[value=accepted]').check();
-  await q.locator("#btn-save").click();
-  await q.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
-  check(stateOf(wi).phaseAcceptance.requirements_review?.via === "html-review", "marking every criterion accepted records the review as accepted by the user");
+  await sendForApproval(q, "requirements", wi);
+  check(stateOf(wi).phaseAcceptance.requirements_review?.via === "approved", "marking every criterion accepted records the review as accepted by the user");
   // a stale page: edit elsewhere, save the old page
   await must({ action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "Changed by someone else" }] }, wi);
   await p.locator('[data-req="REQ-ORD-001"] [data-f=statement]').fill("My stale edit");
-  await p.locator("#btn-save").click();
-  await p.waitForFunction(() => /conflict/i.test(document.querySelector("#toast").textContent));
+  const stale = await sendForApproval(p, "requirements", wi);
+  check(stale.conflicts.length > 0 && /out of date/.test(stale.toast), `the stale page is told it is out of date: ${stale.toast.slice(0, 300)}`);
   eq(stateOf(wi).requirements.find((r) => r.id === "REQ-ORD-001").statement, "Changed by someone else", "a stale edit does not overwrite");
   check(!(await q.evaluate(() => window.__xss)) && !(p.errors ?? []).length, "no script ran or failed");
 });
@@ -241,11 +257,10 @@ await scenario("B03", "Prototype in Chrome: navigation, states, roles, mock data
   await p.locator('[data-el="detail#status"]').click();
   await p.locator('[data-fb="detail#status"]').fill("make status a dropdown");
   await p.locator("#accept-proto").check();
-  await p.locator("#btn-save").click();
-  await p.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(p, "prototype", wi);
   const s = stateOf(wi);
   eq(s.prototype.feedback[0].target, "detail#status", "comment target");
-  check(s.phaseAcceptance.prototype?.via === "html-review", "accepted by the user's save");
+  check(s.phaseAcceptance.prototype?.via === "approved", "accepted by the user's save");
   // links are consistent with requirements
   const ids = new Set(s.requirements.flatMap((r) => r.acceptanceCriteria.map((c) => c.id)));
   for (const sc of s.prototype.screens) for (const e of sc.elements) for (const id of e.acIds) check(ids.has(id), `prototype ${sc.id}#${e.id} links ${id}`);
@@ -270,8 +285,7 @@ await scenario("B04", "Story plan in Chrome: edit a line, exclude one, agree", a
   await p.locator('[data-entry="US-ORD-001"] input[value=accepted]').check();
   await p.locator('[data-entry="US-ORD-002"] [data-f=exclude]').fill("next release");
   await p.locator("#agree-plan").check();
-  await p.locator("#btn-save").click();
-  await p.waitForFunction(() => /Saved|conflict/i.test(document.querySelector("#toast").textContent));
+  await sendForApproval(p, "story-plan", wi);
   const plan = stateOf(wi).storyPlan;
   eq(plan.entries[0].implementation, "list page with paging", "line edited");
   eq(plan.entries[1].status, "excluded", "line excluded with a reason");
@@ -298,8 +312,7 @@ await scenario("B05", "Stories review in Chrome: per-item checkboxes, edit one s
   await p.locator('[data-story="US-ORD-001"] [data-key="step:0"] input[value=accepted]').check();
   await p.locator('[data-story="US-ORD-001"] [data-key="neg:0"] input[value=rejected]').check();
   await p.locator('[data-story="US-ORD-001"] [data-key="neg:0"] [data-f=comment]').fill("what does a viewer see?");
-  await p.locator("#btn-save").click();
-  await p.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(p, "stories", wi);
   let s = stateOf(wi).stories.find((x) => x.id === "US-ORD-001");
   eq([s.review["step:0"].status, s.review["neg:0"].status, s.review["neg:0"].comment], ["accepted", "rejected", "what does a viewer see?"], "item marks");
   // edit the story: new revision, its marks start over
@@ -307,23 +320,20 @@ await scenario("B05", "Stories review in Chrome: per-item checkboxes, edit one s
   const q = await page(link2.secret);
   eq(await q.locator('[data-story="US-ORD-001"] [data-key="step:0"] input[value=accepted]').isChecked(), true, "mark persists after reopening");
   await q.locator('[data-story="US-ORD-001"] [data-f=objective]').fill("see and find orders quickly");
-  await q.locator("#btn-save").click();
-  await q.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(q, "stories", wi);
   s = stateOf(wi).stories.find((x) => x.id === "US-ORD-001" && x.status !== "superseded");
   eq([s.revision, s.objective, s.review["step:0"]?.status, s.confirmedBehavior], [2, "see and find orders quickly", "accepted", false], "edit by id makes a revision; marks of untouched items are kept, confirmation is not");
   // exclude, then restore
   const l3 = await linkOf("stories", wi);
   const r = await page(l3.secret);
   await r.locator('[data-story="US-ORD-001"] [data-f=exclude]').fill("not needed");
-  await r.locator("#btn-save").click();
-  await r.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(r, "stories", wi);
   eq(stateOf(wi).stories.find((x) => x.id === "US-ORD-001" && x.status !== "superseded").status, "excluded", "excluded");
   const l4 = await linkOf("stories", wi);
   const t = await page(l4.secret);
   check((await t.locator('[data-story="US-ORD-001"]').innerText()).includes("Restore this story"), "an excluded story offers Restore after reopening");
   await t.locator('[data-story="US-ORD-001"] [data-f=restore]').check();
-  await t.locator("#btn-save").click();
-  await t.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(t, "stories", wi);
   eq(stateOf(wi).stories.find((x) => x.id === "US-ORD-001" && x.status !== "superseded").status, "proposed", "restored");
   const fin = stateOf(wi);
   for (const sx of fin.stories) check(sx.requirementIds.every((id) => fin.requirements.some((rq) => rq.id === id)), "story requirement ids exist");
@@ -343,10 +353,9 @@ await scenario("B06", "Contracts review in Chrome: the user agrees a contract; r
   eq(stateOf(wi6).contracts[0].status, "proposed", "nothing is agreed before Save");
   await p.locator('[data-contract="C-1"] [data-f=agree]').check();
   eq(stateOf(wi6).contracts[0].status, "proposed", "ticking is not enough: nothing is written before Save");
-  await p.locator("#btn-save").click();
-  await p.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(p, "contracts", wi6);
   eq(stateOf(wi6).contracts[0].status, "agreed", "agreed by the user's Save");
-  eq(stateOf(wi6).contracts[0].agreement.via, "html-review", "recorded as the user's");
+  eq(stateOf(wi6).contracts[0].agreement.via, "approved", "recorded as the user's");
   const q = await page((await linkOf("contracts", wi6)).secret);
   check((await q.locator('[data-contract="C-1"]').innerText()).includes("agreed"), "reopened: shown as agreed");
   eq(await q.locator('[data-contract="C-1"] [data-f=agree]').count(), 0, "no Agree box once agreed");
@@ -360,16 +369,14 @@ await scenario("B07", "Two tabs in Chrome: the second Save does not overwrite th
   await tabA.locator('[data-ac="REQ-ORD-001-AC-01"] [data-f=ac-comment]').fill("tab A remark");
   await tabA.locator('[data-ac="REQ-ORD-001-AC-02"] input[value=rejected]').check();
   await tabA.locator('[data-req="REQ-ORD-001"] [data-f=comment]').fill("tab A requirement remark");
-  await tabA.locator("#btn-save").click();
-  await tabA.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(tabA, "requirements", w);
   // tab B, opened before A saved, edits the same three things
   await tabB.locator('[data-ac="REQ-ORD-001-AC-01"] [data-f=ac-comment]').fill("tab B remark");
   await tabB.locator('[data-ac="REQ-ORD-001-AC-02"] input[value=pending]').check();
   await tabB.locator('[data-req="REQ-ORD-001"] [data-f=comment]').fill("tab B requirement remark");
-  await tabB.locator("#btn-save").click();
-  await tabB.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
-  const toast = await tabB.locator("#toast").innerText();
-  check(/out of date/.test(toast) && /Reload the page/.test(toast), `tab B must be told the page is out of date and to reload: ${toast.slice(0, 300)}`);
+  const savedB = await sendForApproval(tabB, "requirements", w);
+  check(/out of date/.test(savedB.toast) && /Reload the page/.test(savedB.toast), `tab B must be told the page is out of date and to reload: ${savedB.toast.slice(0, 300)}`);
+  check(savedB.conflicts.length > 0, "and applying what tab B handed over reports the same conflicts");
   const stored = stateOf(w).requirements[0];
   eq([stored.acceptanceCriteria[0].review.comment, stored.acceptanceCriteria[1].review.status, stored.comment], ["tab A remark", "rejected", "tab A requirement remark"], "tab A's remarks and decision survive tab B's Save");
   // a reload shows what is stored now
@@ -486,11 +493,10 @@ await scenario("B08", "Orders prototype in Chrome: filter, side card, URL, empty
   check(stateOf(w8).prototype.feedback.length === 0, "nothing is written before Save");
   eq(JSON.stringify(stateOf(w8).prototype), before, "using the prototype did not change it");
   await p.locator("#accept-proto").check();
-  await p.locator("#btn-save").click();
-  await p.waitForFunction(() => /Saved/.test(document.querySelector("#toast").textContent));
+  await sendForApproval(p, "prototype", w8);
   const s8 = stateOf(w8);
   eq(s8.prototype.feedback[0].target, "orders#tbl", "the comment is saved against the element");
-  check(s8.phaseAcceptance.prototype?.via === "html-review", "accepted by the user's save");
+  check(s8.phaseAcceptance.prototype?.via === "approved", "accepted by the user's save");
   check(s8.history.some((h) => /prototype/i.test(h.note) && /accept/i.test(h.note)) || s8.history.some((h) => /prototype/i.test(h.note)), "the history records the prototype and the decision");
   check(s8.history.length > 0 && s8.prototype.revision === 1, "history kept, prototype revision unchanged by reviewing");
   // coverage is collapsed and grouped

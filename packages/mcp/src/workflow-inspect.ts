@@ -284,7 +284,7 @@ function openItems(state: WorkflowState) {
 
 /** Every decision that needed a person, with what its channel proves; decisions without a record are listed as unverified provenance. */
 function approvals(state: WorkflowState) {
-  return { summary: approvalSummary(state as never), records: state.approvals ?? [], note: "trust: independent-human = the client's approval dialog; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode; test-only = the test harness. No client identifies the person: actor stays empty." };
+  return { summary: approvalSummary(state as never), records: state.approvals ?? [], note: "trust: client-response = the client's approval dialog answered (not independently authenticated); test-only = the test harness. Earlier records: independent-human = the same as client-response; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode (both removed in 0.1.0-alpha.49.2). No client identifies the person: actor stays empty." };
 }
 
 function quality(state: WorkflowState) {

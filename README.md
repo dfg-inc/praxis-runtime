@@ -13,7 +13,7 @@ Repository: [github.com/dfg-inc/praxis-runtime](https://github.com/dfg-inc/praxi
 1. Open [Releases](https://github.com/dfg-inc/praxis-runtime/releases).
 2. Download `praxis-runtime.mcpb` (and `release-meta.json` for SHA-256 / compatibility).
 3. Install in Claude Desktop (Settings → Extensions). Start a new Chat.
-4. Optionally configure Jira, GitHub or GitLab in Runtime settings (every setting is optional; local no-Jira workflows work without them). Leave **Approval mode** empty unless you want [Trusted Client](https://github.com/dfg-inc/praxis-core/blob/master/docs/user-approval.md).
+4. Optionally configure Jira, GitHub or GitLab in Runtime settings (every setting is optional; local no-Jira workflows work without them). There are no approval settings: protected actions are approved only in the client's own dialog, so in Claude Desktop they are applied from the Claude Code CLI ([desktop-approvals](https://github.com/dfg-inc/praxis-core/blob/master/docs/desktop-approvals.md)).
 5. Role skills: use the marketplace, or upload the role ZIPs from their repositories' Releases.
 
 ## Clone / develop

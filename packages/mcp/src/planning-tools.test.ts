@@ -52,6 +52,9 @@ async function project(): Promise<{ repo: string; id: string }> {
   return { repo, id: opened.data.workItemId as string };
 }
 
+/** What the user does after Send for approval: the agent applies the handed-over decisions and the client's dialog asks. */
+const applyFromPage = (repo: string, id: string, view: string, channel?: UserApprovalChannel) => call("praxis_review_apply", repo, { fromPage: true, workItemId: id, view, confirmation: "YES" }, channel);
+
 const listItemsOf = (repo: string) => { try { return JSON.parse(readFileSync(join(repo, ".praxis", "workflow", "index.json"), "utf8")); } catch { return {}; } };
 const state = (repo: string, id: string) => loadWorkflow(repo, id)!;
 
@@ -114,7 +117,7 @@ describe("the review page", () => {
     stopReviewServer();
   });
 
-  it("Save records the user's decisions as html-review, and an agent cannot reuse that route without the token", async () => {
+  it("Save hands the decisions over and records nothing: only the dialog's approval of exactly them records them", async () => {
     const { repo, id } = await project();
     const { url, secret } = await served(repo);
     const html = await (await fetch(secret)).text();
@@ -141,15 +144,25 @@ describe("the review page", () => {
     const ok = await send(data.token);
     expect(ok.status).toBe(200);
     const result = await ok.json();
-    expect(result.applied).toBeGreaterThan(0);
-    expect(result.conflicts).toEqual([]);
+    expect(result).toMatchObject({ handedOver: true, applied: 0, conflicts: [] });
+    expect(state(repo, id).requirements[0].acceptanceCriteria[0].review.status).toBe("pending");
+    // no dialog: nothing is recorded, and the decisions stay handed over for when one can ask
+    const noDialog = await applyFromPage(repo, id, "requirements");
+    expect(noDialog.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    expect(state(repo, id).requirements[0].acceptanceCriteria[0].review.status).toBe("pending");
+    const { channel, seen } = dialog({ answer: "approve" });
+    const applied = await applyFromPage(repo, id, "requirements", channel);
+    expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
+    expect(seen[0].description).toMatch(/REQ-ORD-001-AC-01/);
     const review = state(repo, id).requirements[0].acceptanceCriteria[0].review;
-    expect(review).toMatchObject({ status: "accepted", via: "html-review" });
+    expect(review).toMatchObject({ status: "accepted", via: "approved" });
     expect(state(repo, id).sessionLog.at(-1)?.summary).toMatch(/requirements review saved/);
+    expect((await applyFromPage(repo, id, "requirements", channel)).errors?.join(" ")).toMatch(/no decisions were sent/); // used once
     // a second page for the same review is stale after an edit elsewhere: the item is reported, not overwritten
     await must(repo, { action: "review-requirements", decisions: [{ requirementId: "REQ-ORD-001", statement: "Changed elsewhere" }] });
-    const again = await (await send(data.token, { ...submission, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, statement: "My version", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } })).json();
-    expect(again.conflicts.map((c: { item: string }) => c.item)).toEqual(["REQ-ORD-001"]);
+    expect((await send(data.token, { ...submission, requirements: { requirements: [{ id: "REQ-ORD-001", revision: 1, statement: "My version", criteria: [], addCriteria: [], removeCriteria: [] }], acceptAll: false } })).status).toBe(200);
+    const again = (await applyFromPage(repo, id, "requirements", channel)).data as { conflicts: Array<{ item: string }> };
+    expect(again.conflicts.map((c) => c.item)).toEqual(["REQ-ORD-001"]);
     expect(state(repo, id).requirements[0].statement).toBe("Changed elsewhere");
     stopReviewServer();
   });
@@ -456,7 +469,7 @@ describe("quality findings", () => {
     const { buildServer } = await import("./server.js").catch(() => ({ buildServer: undefined as any }));
     expect(buildServer === undefined || typeof buildServer === "function").toBe(true);
     const src = readFileSync(join(__dirname, "server.ts"), "utf8");
-    expect(src).toMatch(/STATE_WRITING_READS = new Set\(\["praxis_repository_inspect", "praxis_review_render"\]\)/);
+    expect(src).toMatch(/STATE_WRITING_READS = new Set\(\["praxis_repository_inspect", "praxis_review_render", "praxis_approval_journal"\]\)/);
   });
 
   it("D17: prose in a stylesheet and symlinks out of the repository do not reach the agent", async () => {
@@ -567,7 +580,10 @@ describe("default mode, switching and contract agreement through the tools", () 
     expect((await post({})).status).toBe(403);
     const ok = await post({ origin });
     expect(ok.status).toBe(200);
-    expect(state(repo, id).contracts[0]).toMatchObject({ status: "agreed", agreement: { via: "html-review" } });
+    expect(state(repo, id).contracts[0].status).toBe("proposed"); // handed over, not agreed
+    const agreed = await applyFromPage(repo, id, "contracts", dialog({ answer: "approve" }).channel);
+    expect(agreed.ok, JSON.stringify(agreed.errors)).toBe(true);
+    expect(state(repo, id).contracts[0]).toMatchObject({ status: "agreed", agreement: { via: "approved" } });
     stopReviewServer();
   });
 });
@@ -687,7 +703,9 @@ describe("the user's remarks on criteria reach the BA through praxis_workflow_in
     const body = { contract: "praxis.review.submission", version: 1, reviewId: page.reviewId, view: "requirements", workItemId: id, baseFingerprint: page.baseFingerprint, baseStamp: page.baseStamp, requirements: { requirements: [{ id: "REQ-ORD-001", revision: state(repo, id).requirements[0].revision, criteria, addCriteria: [], removeCriteria: [] }], acceptAll: false } };
     const sent = await fetch(`${data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": page.token }, body: JSON.stringify(body) });
     expect(sent.status).toBe(200);
-    return sent.json();
+    const applied = await applyFromPage(repo, id, "requirements", dialog({ answer: "approve" }).channel);
+    expect(applied.ok, JSON.stringify(applied.errors)).toBe(true);
+    return applied.data;
   }
   const inspect = async (repo: string, id: string, view = "requirements") => (await call("praxis_workflow_inspect", repo, { workItemId: id, view })).data as any;
 
@@ -699,8 +717,8 @@ describe("the user's remarks on criteria reach the BA through praxis_workflow_in
     ]);
     let view = await inspect(repo, id);
     const [a1, a2] = view.requirements[0].acceptanceCriteria;
-    expect(a1.review).toMatchObject({ status: "accepted", comment: null, decidedVia: "html-review" });
-    expect(a2.review).toMatchObject({ status: "rejected", comment: "Не нравится решение", decidedVia: "html-review", commentVia: "html-review" });
+    expect(a1.review).toMatchObject({ status: "accepted", comment: null, decidedVia: "approved" });
+    expect(a2.review).toMatchObject({ status: "rejected", comment: "Не нравится решение", decidedVia: "approved", commentVia: "approved" });
     expect(a2.review.decidedAt).toBeTruthy();
     expect(view.requirementReview.rejected.map((r: any) => r.criterionId)).toEqual(["REQ-ORD-001-AC-02"]);
     expect(view.requirementReview.progress).toMatchObject({ accepted: 1, rejected: 1, pending: 0 });

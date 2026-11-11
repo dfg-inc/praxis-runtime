@@ -8,6 +8,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
+import { withTestBrowser } from "./test-browser.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -49,6 +50,9 @@ export function hostedCleanEnv(home) {
     TMPDIR: home,
     LANG: "C",
     NODE_ENV: "test",
+    // Acceptance clients must never open a tab in the developer's browser. (A shipped Runtime takes no answer faster than
+    // 1 s as the user's, whatever the environment says: the scripted client waits instead, see answerAfterMs.)
+    PRAXIS_APPROVAL_PAGE: "off",
   };
 }
 
@@ -87,12 +91,19 @@ export async function connectOfficialMcp({
    * client that cannot ask the user anything.
    */
   elicit,
+  /**
+   * The scripted dialog answers no sooner than this after it was asked. A shipped Runtime takes a faster answer as the
+   * client's own (no person reads a dialog in under a second); 0 plays a client that answers by itself. Either way the
+   * answer is a synthetic test action, never a person's consent.
+   */
+  answerAfterMs = 1100,
 }) {
   const transport = new StdioClientTransport({
     command,
     args,
     cwd,
-    env,
+    // a scripted client never lets the Runtime reach the developer's browser (test-browser.mjs)
+    env: env ? { ...env, PATH: withTestBrowser(env.PATH) } : env,
     stderr: "pipe",
   });
   let stderr = "";
@@ -106,8 +117,12 @@ export async function connectOfficialMcp({
   );
   if (elicit) {
     client.setRequestHandler("elicitation/create", async (request) => {
+      const asked = Date.now();
       elicited.push(request.params);
-      return elicit(request.params);
+      const answer = await elicit(request.params);
+      const wait = answerAfterMs - (Date.now() - asked);
+      if (wait > 0) await new Promise((resolveWait) => setTimeout(resolveWait, wait));
+      return answer;
     });
   }
   const started = Date.now();

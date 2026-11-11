@@ -21,7 +21,12 @@ import {
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
 import { containedPath } from "./path-guard.js";
-import { PERSONAL_ACTS, hostPermissionChannel, hostPermissionMode, planOnlyChannel, planTextOf, trustedClientChannelWith, trustedClientMode } from "./approval-channel.js";
+import { PERSONAL_ACTS, automationGuarded, automationReason, dialogWithPageFallback, minAnswerMs, planOnlyChannel, planTextOf } from "./approval-channel.js";
+import { dialogAutomation } from "./dialog-automation.js";
+import { approvalPageChannel, approvalPageEnabled } from "./approval-page.js";
+import { approvalSettings } from "./approval-settings.js";
+import { amendJournal, journalAudit } from "./approval-journal.js";
+import { clientKey, knownAutoAnswer } from "./dialog-observations.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
 import { TOOLS as CATALOG_TOOLS, toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
@@ -31,7 +36,7 @@ import { applyCanonInit, planCanonInit } from "./canon-init.js";
 import { diagnoseContextTool } from "./context-tool.js";
 import { discoverFrontend } from "./frontend-discover.js";
 import { inspectRepository, repositoryBrief } from "./repository-tools.js";
-import { applyHandedOver, readSubmissionFile, renderReviewTool } from "./review-service.js";
+import { applyHandedOver, readSubmissionFile, renderReviewTool, takeHandover } from "./review-service.js";
 import { applyResolved, applyWorkflow, applyWorkflowApproved, capabilityRoute, loadWorkflow, previewWorkflow, workflowStatus } from "./workflow-store.js";
 
 export {
@@ -92,9 +97,10 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
 
 /**
  * Tools that change something outside the agent's own notes. Each one needs confirmation=YES (the agent's intent to
- * apply what it previewed) and then the user's approval, asked in the client's dialog when the client has one. The
- * approval is obtained where the change is made (core guardWrite, the workflow store, the fix committer), never here.
- * confirmation=NO is the user's refusal reported by the agent: it is recorded and nothing runs.
+ * apply what it previewed) and then the user's approval in the client's own dialog; where there is none, nothing runs.
+ * The approval is obtained where the change is made (core guardWrite, the workflow store, the fix
+ * committer), never here. confirmation=NO is the agent withdrawing the request: it is recorded as withdrawn, never as the
+ * user's rejection, and nothing runs.
  */
 const PROTECTED_TOOLS = new Set([
   "praxis_project_init_apply",
@@ -157,11 +163,16 @@ async function approvalPlan(args: Record<string, unknown>, ctx: OpContext, opts:
     action: request.action,
     kind: request.kind,
     summary: request.summary,
-    // an act only a person may perform has no plan text to hand to the host's prompt: that prompt cannot stand for the person
-    ...(hostPermissionMode() && PERSONAL_ACTS.has(request.action) ? { planText: null, available: false, reason: "this act needs a client with an approval dialog; host-permission mode does not cover it" } : { planText: planTextOf(request as never) }),
+    // what the client's approval dialog will show; informational (no mode takes it as an approval any more)
+    planText: planTextOf(request as never),
+    ...(PERSONAL_ACTS.has(request.action) ? { personalAct: true } : {}),
     ...(request.subject ? { subjectDigest: subjectDigest(request.subject) } : {}),
     note: "This is what the user is asked to approve. It runs nothing.",
   });
+  // the plan is computed for `repo`; a different repository inside toolArguments would describe one and name another
+  if (typeof targetArgs.repo === "string" && resolve(targetArgs.repo) !== resolve(ctx.repo)) {
+    throw new Error(`INVALID_INPUT: toolArguments.repo (${targetArgs.repo}) is not the repository this plan is for (${ctx.repo}); pass that repository as repo`);
+  }
   // the arguments the plan is for are held to the target tool's own list: a misspelt workItemId must not plan the current item
   const targetDef = CATALOG_TOOLS.find((t) => t.name === target);
   const strayTarget = targetDef ? strayArguments(target, targetDef, targetArgs) : null;
@@ -193,21 +204,35 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
       ...(!client.dialog
         ? {
             hostGate:
-              "Some hosts (Claude Desktop) hold an apply call at their own tool-permission prompt BEFORE it reaches Praxis. If you see no result and no prompt, look for that prompt in the host window; diagnosticsLog lists the calls that did reach Praxis (tool_enter). Praxis itself answers a protected call without a dialog immediately with APPROVAL_CLIENT_UI_REQUIRED.",
+              "Some hosts (Claude Desktop) hold an apply call at their own tool-permission prompt BEFORE it reaches Praxis. If you see no result and no prompt, look for that prompt in the host window; diagnosticsLog lists the calls that did reach Praxis (tool_enter). Praxis itself answers a protected call without a dialog immediately with APPROVAL_CLIENT_UI_REQUIRED. Allowing a call at that prompt lets it reach Praxis; it is not an approval of the action.",
           }
         : {}),
     };
-    if (trustedClientMode()) {
+    const observed = knownAutoAnswer(clientKey(client));
+    const repoOf = (target as { repo?: string }).repo;
+    const automation = dialogAutomation(repoOf ? { repo: repoOf } : {});
+    const settings = approvalSettings();
+    // how a protected action can be approved right now: only the client's own dialog, when it works and nothing answers it
+    const available = client.dialog && !observed && automation.length === 0;
+    target.approval = {
+      ...target.approval,
+      mode: available ? "client-ui" : "no-dialog",
+      trust: {
+        protectedActions: available ? "the client's approval dialog (a client response; not independently authenticated)" : "not available here: protected actions are refused, nothing runs",
+        independentHumanApproval: "not available in this version: no channel on this computer can prove that a person, rather than automation or an agent, answered",
+        ...(!client.dialog ? { why: client.reason ?? "the client declares no approval dialog" } : observed ? { why: "this client was seen answering Praxis's approval dialog by itself, without showing it" } : automation.length ? { why: automationReason(automation) } : {}),
+      },
+      ...(observed ? { observedDialog: { ...observed, note: "This client was seen answering Praxis's approval dialog by itself, without showing it. Praxis no longer asks through it: protected actions are refused here (nothing runs). Apply them from a client whose dialog is shown, such as the Claude Code CLI in a terminal." } } : {}),
+      ...(automation.length ? { dialogAutomation: automation.map((f) => ({ file: f.file, why: f.why, kind: f.kind })) } : {}),
+      minAnswerMs: minAnswerMs(),
+      ...(settings.ignoredEnvironment.length
+        ? { ignoredEnvironment: settings.ignoredEnvironment, ignoredNote: `Ignored ${settings.ignoredEnvironment.join(", ")}: no setting, in any file or environment, can make approval weaker (a repository's Claude Code settings and an agent with a shell can write them). The Trusted Client and host-permission modes are removed.` }
+        : {}),
+    };
+    if (client.dialog && process.env.CLAUDE_CODE_ENTRYPOINT?.trim() === "claude-desktop") {
       target.approval = {
         ...target.approval,
-        mode: "trusted-client",
-        note: "TRUSTED CLIENT (you enabled it in the extension settings): protected actions run on the agent's confirmation=YES for a current preview, with no separate confirmation of each action. That is your standing permission for this client, not proof you confirmed each action; results and the journal say trusted-client. Previews, stale-plan checks and the journal still apply.",
-      };
-    } else if (hostPermissionMode() && !client.dialog) {
-      target.approval = {
-        ...target.approval,
-        mode: "host-permission",
-        note: "OPT-IN host-permission mode: this client has no approval dialog, so protected actions rely on the host's own tool-permission prompt, which shows the exact plan (planText from praxis_approval_plan). Praxis cannot verify the prompt was shown: an always-allow setting for the tool removes it and then the agent approves itself. Quality fixes (commit and push) still need a dialog.",
+        hint: "This looks like the Claude Desktop Code tab. As of Claude Code 2.1.309 it declares an approval dialog but answers it by itself without showing it (anthropics/claude-code#89858): protected actions are then refused (nothing runs, and nobody is said to have rejected them). Apply them from the Claude Code CLI in a terminal.",
       };
     }
   }
@@ -216,33 +241,45 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
 
 export const isProtectedTool = (name: string): boolean => PROTECTED_TOOLS.has(name);
 
+/**
+ * How a result names an approval: the channel that gave it, and that no person was verified (Praxis knows the client's
+ * dialog answered, never who or what operated it).
+ */
+function approvalView(item: { action: string; channel: string; assurance: string; decidedAt: string }) {
+  const decidedBy = item.channel === "client-elicitation" ? "client-dialog" : item.channel === "host-permission" ? "host-prompt" : item.channel;
+  return { action: item.action, channel: item.channel, assurance: item.assurance, decidedBy, personVerified: false, decidedAt: item.decidedAt };
+}
+
 /** Says in the result how the user's approval was obtained: always in the client's own dialog (the agent cannot write that answer). */
 function withApprovalNote(name: string, data: unknown): { data: unknown } {
   if (!PROTECTED_TOOLS.has(name)) return { data };
   const given = approvalsGivenInThisCall();
   if (given.length === 0) return { data };
-  const approval = given.map((item) => ({ action: item.action, channel: item.channel, assurance: item.assurance, decidedAt: item.decidedAt }));
+  const approval = given.map(approvalView);
   return { data: data && typeof data === "object" && !Array.isArray(data) ? { ...(data as object), approval } : { result: data, approval } };
 }
 
 function preflight(name: string, args: Record<string, unknown>, ctx: OpContext, version: string): McpEnvelope | undefined {
   if (!PROTECTED_TOOLS.has(name)) return undefined;
   if (ctx.confirmation === "NO") {
+    // the agent's own argument: it stops the action, and it is not evidence of what the user decided
     logDecision(ctx.repo, {
       at: new Date().toISOString(),
       action: name,
-      summary: `${name} declined`,
+      summary: `${name} withdrawn`,
       subjectDigest: subjectDigest(JSON.stringify({ name, previewFingerprint: str(args.previewFingerprint) ?? "" })),
-      decision: "rejected",
+      decision: "withdrawn",
+      decidedBy: "agent",
       channel: "none",
-      reason: "the user declined (reported by the agent)",
+      reason: "the agent withdrew the request (confirmation=NO); no decision of the user is claimed",
     });
     return mcpEnvelope({
       ok: false,
       operation: name,
       version,
-      code: "APPROVAL_REJECTED",
-      errors: [`${name} was rejected by the user. Nothing was changed.`],
+      code: "APPROVAL_WITHDRAWN",
+      data: { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false },
+      errors: [`${name} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision.`],
     });
   }
   if (ctx.confirmation !== "YES") {
@@ -270,11 +307,14 @@ export async function callTool(
     client?: ClientReport;
   },
 ): Promise<McpEnvelope> {
-  // OPT-IN (PRAXIS_APPROVAL_MODE=host-permission): a client with no dialog, the host's own tool-permission prompt, and the
-  // exact plan in the arguments (see approval-channel.ts). Never chosen when the client has a dialog.
   const args = rawArgs && typeof rawArgs === "object" ? (rawArgs as Record<string, unknown>) : {};
-  // Trusted Client (explicit opt-in) replaces any dialog for protected tools: the owner chose not to be asked per action.
-  const channel = trustedClientMode() && PROTECTED_TOOLS.has(name) ? trustedClientChannelWith(opts.approvalChannel) : opts.approvalChannel ?? (hostPermissionMode() && PROTECTED_TOOLS.has(name) ? hostPermissionChannel(str(args.planText)) : undefined);
+  const repo = str(args.repo) ?? process.cwd();
+  // The only channel that approves a protected action: the client's own dialog, taken only while nothing is configured to
+  // answer it (automationGuarded). The approval page is a test-only mechanism in a shipped Runtime (approval-settings.ts).
+  const label = opts.client?.name ? `${opts.client.name}${opts.client.version ? ` ${opts.client.version}` : ""}` : undefined;
+  const page = approvalPageEnabled() ? approvalPageChannel({ repo, ...(label ? { client: label } : {}), ...(opts.extra?.signal ? { signal: opts.extra.signal } : {}) }) : undefined;
+  const dialog = opts.approvalChannel ? automationGuarded(opts.approvalChannel, repo) : undefined;
+  const channel: UserApprovalChannel | undefined = dialog ? dialogWithPageFallback(dialog, page, { ...(clientKey(opts.client) ? { clientKey: clientKey(opts.client) } : {}), repo }) : page;
   return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
 }
 
@@ -317,6 +357,28 @@ async function callToolInner(
   try {
     if (name === "praxis_approval_plan") {
       return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: await approvalPlan(args, ctx, opts) });
+    }
+    if (name === "praxis_approval_journal") {
+      if (args.amend === true) {
+        if (ctx.confirmation !== "YES") {
+          return mcpEnvelope({ ok: false, operation: name, version: opts.version, code: "CONFIRMATION_REQUIRED", errors: ["amend=true requires confirmation=YES after the user has seen the corrections (call with amend=false first)"] });
+        }
+        const amended = await amendJournal(ctx.repo, ctx.confirmation, opts.version);
+        const approval = approvalsGivenInThisCall().map(approvalView);
+        return mcpEnvelope({ ok: true, operation: name, version: opts.version, data: { ...amended, approval } });
+      }
+      const audit = journalAudit(ctx.repo);
+      return mcpEnvelope({
+        ok: true,
+        operation: name,
+        version: opts.version,
+        data: {
+          ...audit,
+          note: audit.toAmend.length
+            ? `${audit.toAmend.length} entr${audit.toAmend.length === 1 ? "y attributes" : "ies attribute"} a rejection to the user that the evidence shows was not theirs. Show the user this list; to record the corrections, call again with amend=true and confirmation=YES (the user approves exactly these corrections). Existing lines are never changed.`
+            : "No entry claims a decision of the user that the evidence contradicts.",
+        },
+      });
     }
     if (
       name === "praxis_workflow_status" ||
@@ -483,14 +545,19 @@ async function runPlanningTool(name: string, args: Record<string, unknown>, repo
     case "praxis_review_apply": {
       const text = str(args.submission);
       const file = str(args.file);
-      if ((text === undefined) === (file === undefined)) throw new Error("INVALID_INPUT: pass exactly one of submission or file");
+      const fromPage = args.fromPage === true;
+      if ([text !== undefined, file !== undefined, fromPage].filter(Boolean).length !== 1) throw new Error("INVALID_INPUT: pass exactly one of submission, file or fromPage");
       let raw: unknown;
+      let handover: ReturnType<typeof takeHandover> | undefined;
       try {
-        raw = text !== undefined ? JSON.parse(text) : readSubmissionFile(repo, file as string);
+        handover = fromPage ? takeHandover(repo, workItemId, str(args.view)) : undefined;
+        raw = handover ? handover.submission : text !== undefined ? JSON.parse(text) : readSubmissionFile(repo, file as string);
       } catch (error) {
         throw new Error(`INVALID_INPUT: the decisions could not be read: ${error instanceof SyntaxError ? "not valid JSON" : error instanceof Error && /^INVALID_INPUT/.test(error.message) ? error.message.replace(/^INVALID_INPUT: /, "") : "the file could not be opened"}`);
       }
-      return applyHandedOver(repo, workItemId, raw, str(args.confirmation));
+      const applied = await applyHandedOver(repo, workItemId, raw, str(args.confirmation));
+      handover?.applied();
+      return applied;
     }
     case "praxis_frontend_discover": {
       const registered = str(args.repositoryId);

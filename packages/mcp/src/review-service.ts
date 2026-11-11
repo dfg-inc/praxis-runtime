@@ -28,13 +28,16 @@ import {
   describeApproval,
 } from "@praxis/contracts";
 import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
+import { isShippedBundle } from "./approval-settings.js";
 
 /**
- * The HTML reviews. The page is a view; the workflow state is the source of truth. Decisions come back in one of two ways,
- * and only these two are accepted as the user's own:
- *  1. the user clicks Save in a page this Runtime served on 127.0.0.1 (a per-review token, a Host and Origin check);
- *  2. the user pastes or hands over the decisions file and approves them in the client's own approval dialog.
- * Without either, an agent can still edit the artifact, but cannot record that the user accepted anything.
+ * The HTML reviews. The page is a view; the workflow state is the source of truth.
+ *
+ * Decisions (accepting or rejecting something) are recorded in one way only: the client's own approval dialog shows exactly
+ * those decisions and the user approves them (praxis_review_apply). Save in the served page no longer records anything: it
+ * hands the decisions to the Runtime (fromPage), and the dialog then asks. A page served on 127.0.0.1 can be operated by
+ * anything that runs as the user (a shell reads the link, browser automation clicks), so a click there is never taken as the
+ * user's decision (released 0.1.0-alpha.48 to alpha.49.1 took it as one). Without a working dialog, decisions are not recorded.
  */
 
 const IDLE_MS = 4 * 60 * 60 * 1000;
@@ -102,24 +105,20 @@ function note(repo: string, workItemId: string, view: ReviewView, how: string, s
   }
 }
 
-/** The user clicked Save in the served page. The decisions are the user's own. */
-export function applyFromPage(repo: string, workItemId: string, view: ReviewView, raw: unknown): SubmissionOutcome {
-  const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
-  if (submission.view !== view || submission.workItemId !== workItemId) throw new Error("REVIEW_MISMATCH: this submission belongs to another review");
-  const state = requireState(repo, workItemId);
-  const plan = submissionToCommands(state, submission);
-  const conflicts = [...plan.conflicts];
-  let applied = 0;
-  for (const command of plan.commands) {
-    try {
-      applyRuntimeCommand(repo, command, workItemId, { via: "html-review" });
-      applied += 1;
-    } catch (error) {
-      conflicts.push({ item: String(command.action), reason: error instanceof Error ? error.message.replace(/^[A-Z_]+: /, "") : String(error) });
-    }
-  }
-  if (applied > 0) note(repo, workItemId, view, describeApproval("review-page"), plan.summary);
-  return outcome(repo, workItemId, view, applied, conflicts, plan.stale, plan.summary);
+/**
+ * Decisions sent from a served page, waiting for praxis_review_apply (fromPage) to show them in the client's dialog. Kept in
+ * memory only, one per work item and view; never recorded by the page itself.
+ */
+const handedOver = new Map<string, { submission: unknown; at: number }>();
+const handoverKey = (repo: string, workItemId: string, view: string) => `${resolve(repo)}\n${workItemId}\n${view}`;
+
+/** The latest decisions a page sent for this work item. They are dropped once applied; a refused dialog leaves them to ask again. */
+export function takeHandover(repo: string, workItemId: string | undefined, view?: string): { submission: unknown; applied: () => void } {
+  const entries = [...handedOver.entries()].filter(([key]) => key.startsWith(`${resolve(repo)}\n${workItemId ?? ""}`) && (!view || key.endsWith(`\n${view}`)));
+  const latest = entries.sort((a, b) => b[1].at - a[1].at)[0];
+  if (!latest) throw new Error("INVALID_INPUT: no decisions were sent from a review page for this work item; ask the user to press Send for approval in the page, or pass submission or file");
+  const [key, entry] = latest;
+  return { submission: entry.submission, applied: () => { if (handedOver.get(key) === entry) handedOver.delete(key); } };
 }
 
 /**
@@ -246,8 +245,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (origin !== `http://127.0.0.1:${port}` && origin !== `http://localhost:${port}`) return json(res, 403, { error: "bad origin" });
     if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) return json(res, 415, { error: "json only" });
     try {
-      const result = applyFromPage(session.repo, session.workItemId, session.view, JSON.parse(await body(req)));
-      return json(res, 200, result);
+      const submission = parseStrict(ReviewSubmissionSchema, JSON.parse(await body(req)), { tolerate: false });
+      if (submission.view !== session.view || submission.workItemId !== session.workItemId) throw new Error("REVIEW_MISMATCH: this submission belongs to another review");
+      handedOver.set(handoverKey(session.repo, session.workItemId, session.view), { submission, at: Date.now() });
+      // what is already out of date is said at once (nothing is recorded either way); the rest waits for the dialog
+      const { conflicts } = submissionToCommands(requireState(session.repo, session.workItemId), submission);
+      return json(res, 200, { handedOver: true, applied: 0, conflicts, note: "Nothing is recorded yet. Ask Claude to record these decisions: it calls praxis_review_apply, and the client's approval dialog shows exactly these decisions for you to approve." });
     } catch (error) {
       return json(res, 400, { error: error instanceof Error ? error.message.slice(0, 300) : String(error) });
     }
@@ -260,6 +263,9 @@ async function ensureServer(): Promise<number> {
   server = createServer((req, res) => {
     handle(req, res).catch((error) => json(res, 500, { error: error instanceof Error ? error.message : String(error) }));
   });
+  // a client that reuses a kept-alive socket the moment the server times it out gets ECONNRESET (seen under load): keep
+  // idle sockets far longer than a client's own keep-alive
+  server.keepAliveTimeout = 60_000;
   await new Promise<void>((ok, fail) => {
     server!.once("error", fail);
     server!.listen(0, "127.0.0.1", () => ok());
@@ -279,7 +285,7 @@ export function stopReviewServer(): void {
 
 /** Opens a URL in the user's default browser without a shell. False when there is no way to do it here. */
 async function openInBrowser(url: string): Promise<boolean> {
-  if (process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1") return false;
+  if (!isShippedBundle() && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1") return false;
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
   return new Promise((done) => {
     try {
@@ -335,7 +341,9 @@ export async function renderReviewTool(repo: string, input: { view: string; work
     opened = await openInBrowser(secretUrl);
     const created = sessions.get(id);
     if (created && opened) created.openedAt = Date.now();
-    if (!opened && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1") writeFileSync(join(dir, `${view}.url`), secretUrl);
+    // tests only: a shipped Runtime never writes the secret link anywhere (released alpha.48 to alpha.49.1 wrote it into the
+    // repository when a repository's settings set this variable)
+    if (!opened && !isShippedBundle() && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1") writeFileSync(join(dir, `${view}.url`), secretUrl);
     url = `http://127.0.0.1:${p}/r/${id}`;
   }
   return {
@@ -348,7 +356,7 @@ export async function renderReviewTool(repo: string, input: { view: string; work
     progress: progressFor(state, view),
     how: url
       ? opened
-        ? "The review page was opened in the user's browser. Tell them to review it and press Save; their decisions are recorded directly. The address shown is not a usable link on its own. If they closed it, call this tool again."
+        ? "The review page was opened in the user's browser. Tell them to review it and press Save, which sends the decisions to Praxis without recording them; then call praxis_review_apply with fromPage true: the client's approval dialog shows exactly those decisions, and they are recorded only if the user approves there. The address shown is not a usable link on its own. If they closed it, call this tool again."
         : "The live page could not be opened on this machine. Give the user the offline copy (file): its Copy decisions button produces a decisions file, which praxis_review_apply records after the user approves exactly those decisions in the client's dialog."
       : "Offline copy only. Its Copy/Download buttons produce a decisions file for praxis_review_apply.",
     note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf.",

@@ -1,5 +1,8 @@
 import { inputResponse } from "@modelcontextprotocol/server";
-import { ApprovalError, ApprovalNeedsInput, subjectDigest, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
+import { ApprovalError, ApprovalNeedsInput, logDecision, subjectDigest, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
+import { knownAutoAnswer, noteAutoAnswer } from "./dialog-observations.js";
+import { approvalSettings } from "./approval-settings.js";
+import { dialogAutomation, type AutomationFinding } from "./dialog-automation.js";
 
 /**
  * The user's approval, asked through the MCP client's own elicitation dialog.
@@ -8,6 +11,11 @@ import { ApprovalError, ApprovalNeedsInput, subjectDigest, type ApprovalRequest,
  * answer comes back as a protocol response to this server: it is not a tool argument, so the agent cannot write it.
  * Accept with "approve" selected is an approval; Accept with "reject", Decline and Cancel all stop the action
  * (Cancel is reported as a dismissal, not a rejection).
+ *
+ * An answer that comes back faster than a person can read the dialog is not a person's answer. The Claude Desktop Code tab
+ * declares elicitation and then answers `decline` itself within milliseconds, with nothing on screen (measured: 9 ms and
+ * 34 ms; anthropics/claude-code#89858). Such an answer, `accept` included, is the client's: it is reported as "automatic",
+ * never as the user's rejection or approval, and nothing runs.
  */
 
 type ElicitResult = { action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> };
@@ -69,19 +77,47 @@ export function elicitParams(request: ApprovalRequest) {
   };
 }
 
-/** Maps the client's elicitation result to the user's answer: only Accept with "approve" selected approves. */
-export function answerFrom(result: { action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> }): AskAnswer {
+/**
+ * The fastest answer taken as coming from the user's channel: below it the client answered by itself. It can be raised from
+ * anywhere and lowered only by the test source, never in a shipped Runtime (approval-settings.ts). A slower answer is not
+ * proof of a person either: it only rules out the client's own immediate answer.
+ */
+export const minAnswerMs = (): number => approvalSettings().minAnswerMs;
+
+/**
+ * Maps the client's elicitation result to the user's answer: only Accept with "approve" selected approves. With the time the
+ * answer took, one faster than minAnswerMs is the client's own ("automatic"), whatever it says.
+ */
+export function answerFrom(result: { action: "accept" | "decline" | "cancel"; content?: Record<string, unknown> }, latencyMs?: number, client?: string): AskAnswer {
   const reason = typeof result.content?.reason === "string" && result.content.reason.trim() ? result.content.reason.trim() : undefined;
-  if (result.action === "cancel") return { answer: "dismiss", ...(reason ? { reason } : {}) };
-  if (result.action === "decline") return { answer: "reject", ...(reason ? { reason } : {}) };
-  return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...(reason ? { reason } : {}) };
+  const evidence = latencyMs === undefined ? undefined : { latencyMs, via: "client-elicitation", ...(client ? { client } : {}) };
+  if (latencyMs !== undefined && latencyMs < minAnswerMs()) {
+    return { answer: "unavailable", channel: "client-elicitation", automatic: result.action, evidence: evidence!, reason: "no dialog reached the user" };
+  }
+  const tagged = { channel: "client-elicitation" as const, ...(reason ? { reason } : {}), ...(evidence ? { evidence } : {}) };
+  if (result.action === "cancel") return { answer: "dismiss", ...tagged };
+  if (result.action === "decline") return { answer: "reject", ...tagged };
+  return { answer: result.content?.decision === "approve" ? "approve" : "reject", ...tagged };
 }
 
 /**
  * The key under which the client answers for this exact action. It is derived from the content that will run, so an
  * answer given for one plan can never satisfy a different plan: a changed plan has another key and is asked again.
  */
-export const approvalKey = (request: ApprovalRequest): string => `approval-${subjectDigest(request.subject).slice(7, 23)}`;
+export const approvalKey = (request: ApprovalRequest): string => `approval-${subjectDigest(`${request.action}\n${request.subject}\n${approvalMessage(request)}`).slice(7, 39)}`;
+
+/** Faster than any person reacts: the Desktop Code tab answers in 9-34 ms (160 ms over WSL). */
+export const CLEARLY_AUTOMATIC_MS = 250;
+
+/**
+ * When each round-trip dialog was asked for (the input_required answer left this server). The retry carrying the answer is
+ * timed against it; an answer for a key this process never asked for is not used, and the user is asked properly.
+ */
+const askedAt = new Map<string, number>();
+export function noteDialogAsked(key: string, at: number = Date.now()): void {
+  askedAt.set(key, at);
+  for (const [k, t] of askedAt) if (at - t > 30 * 60_000) askedAt.delete(k);
+}
 
 /**
  * The 2026-07-28 protocol revision: the server cannot ask in the middle of a call. It returns input_required with the
@@ -89,13 +125,16 @@ export const approvalKey = (request: ApprovalRequest): string => `approval-${sub
  * (asking comes before every write), so the retry simply runs the call again, now with the user's answer in hand.
  * The answer arrives in the protocol's own `inputResponses` field, which the host fills: it is not a tool argument.
  */
-export function roundTripChannel(inputResponses: Record<string, unknown> | undefined): UserApprovalChannel {
+export function roundTripChannel(inputResponses: Record<string, unknown> | undefined, client?: string): UserApprovalChannel {
   return {
     kind: "client-elicitation",
     async ask(request: ApprovalRequest): Promise<AskAnswer> {
-      const view = inputResponse(inputResponses, approvalKey(request));
-      if (view.kind !== "elicit") throw new ApprovalNeedsInput(request);
-      return answerFrom({ action: view.action, ...(view.content ? { content: view.content } : {}) });
+      const key = approvalKey(request);
+      const view = inputResponse(inputResponses, key);
+      const asked = askedAt.get(key);
+      if (view.kind !== "elicit" || asked === undefined) throw new ApprovalNeedsInput(request);
+      askedAt.delete(key);
+      return answerFrom({ action: view.action, ...(view.content ? { content: view.content } : {}) }, Date.now() - asked, client);
     },
   };
 }
@@ -105,12 +144,14 @@ export function elicitationChannel(input: {
   supported: boolean;
   elicitInput: ElicitInput;
   timeoutMs?: number;
+  client?: string;
 }): UserApprovalChannel | undefined {
   if (!input.supported) return undefined;
   return {
     kind: "client-elicitation",
     async ask(request: ApprovalRequest): Promise<AskAnswer> {
       let result: ElicitResult;
+      const started = Date.now();
       try {
         result = await input.elicitInput(elicitParams(request), { timeout: input.timeoutMs ?? 10 * 60_000 });
       } catch (error) {
@@ -121,102 +162,103 @@ export function elicitationChannel(input: {
         if (error instanceof Error && UNAVAILABLE.test(error.message)) return { answer: "unavailable", reason: error.message };
         throw error;
       }
-      return answerFrom(result);
+      return answerFrom(result, Date.now() - started, input.client);
     },
   };
 }
 
-// --- OPT-IN: no client dialog, the host's own tool-permission prompt --------------------------------------------------------
+/**
+ * The client's dialog, taken only while nothing is configured to answer it (dialog-automation.ts). Checked before the
+ * dialog is asked for and again when its answer arrives: a hook added in between makes the answer the configuration's,
+ * whatever it says. Any answer then counts for nothing: the action does not run and no decision is attributed to anyone.
+ */
+/** Why the dialog is not used, naming what was found (files and flags, never their contents). */
+export function automationReason(findings: AutomationFinding[]): string {
+  const answers = findings.filter((f) => f.kind === "dialog-answer");
+  if (answers.length) return `the client's approval dialog is configured to be answered automatically (${answers.map((f) => f.file).slice(0, 5).join("; ")}); a configured answer is not the user's. Remove that hook to approve here`;
+  return `the client's approval dialog cannot be relied on here: ${findings.slice(0, 4).map((f) => `${f.file} ${f.why}`).join("; ")}`;
+}
+
+export function automationGuarded(dialog: UserApprovalChannel, repo?: string): UserApprovalChannel {
+  const refused = (findings: AutomationFinding[]): AskAnswer => ({
+    answer: "unavailable",
+    channel: "client-elicitation",
+    reason: automationReason(findings),
+  });
+  return {
+    get kind() {
+      return dialog.kind;
+    },
+    async ask(request: ApprovalRequest): Promise<AskAnswer> {
+      const before = dialogAutomation(repo ? { repo } : {});
+      if (before.length) return refused(before);
+      const answer = await dialog.ask(request);
+      const after = dialogAutomation(repo ? { repo } : {});
+      return after.length ? refused(after) : answer;
+    },
+  };
+}
 
 /**
- * PRAXIS_APPROVAL_MODE=host-permission (an extension setting, never the default, never settable from a repository).
- * For a host with no elicitation dialog, the only built-in confirmation is the host's prompt before an MCP tool runs. It
- * shows the tool's arguments, so the apply tool must carry the EXACT plan text (`planText`, from praxis_approval_plan);
- * Praxis recomputes the plan itself and refuses unless the text matches, so the prompt shows what will really run, and a
- * changed plan needs a new planText and a new prompt.
- *
- * What this cannot do: Praxis cannot see whether the prompt was shown. An "always allow" setting for the tool removes it,
- * and then the agent has approved itself. The result is labelled `host-prompt`, never `client-ui`.
+ * A client dialog, with the approval page behind it in the test source only. A client already seen answering by itself is not
+ * asked through its dialog again: without a page (a shipped Runtime) the action is refused at once, nothing runs and nobody
+ * decided; with the test page, the page is used directly. One that answers by itself now is noted and its automatic answer
+ * stands (nothing runs), or, with the test page, is journaled as the client's and the same request goes to the page.
  */
-export const hostPermissionMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "host-permission";
+export function dialogWithPageFallback(dialog: UserApprovalChannel, page: UserApprovalChannel | undefined, input: { clientKey?: string; repo?: string }): UserApprovalChannel {
+  // only a client seen answering by itself repeatedly and far faster than any person goes to the page without asking
+  let used: UserApprovalChannel = page && knownAutoAnswer(input.clientKey) ? page : dialog;
+  return {
+    get kind() {
+      return used.kind;
+    },
+    async ask(request: ApprovalRequest): Promise<AskAnswer> {
+      if (used === page) return page.ask(request);
+      const known = page ? undefined : knownAutoAnswer(input.clientKey);
+      if (known) {
+        return { answer: "unavailable", channel: "client-elicitation", reason: `this client (${known.client}) was seen answering Praxis's approval dialog by itself (${known.automatic}, ${known.latencyMs} ms), without showing it, so it is not asked again` };
+      }
+      const answer = await dialog.ask(request);
+      if (answer.answer !== "unavailable" || !answer.automatic) return answer;
+      // An answer under minAnswerMs is not taken as the person's either way; the page asks again with clear evidence, so a
+      // person who really pressed Reject that fast only has to reject once more. Only a decline far faster than a person
+      // (CLEARLY_AUTOMATIC_MS) counts towards sending this client version to the page from now on.
+      if (answer.automatic !== "accept" && (answer.evidence?.latencyMs ?? Infinity) < CLEARLY_AUTOMATIC_MS) noteAutoAnswer(input.clientKey, answer.automatic, answer.evidence?.latencyMs ?? -1);
+      if (!page) return answer;
+      logDecision(input.repo, {
+        at: new Date().toISOString(),
+        action: request.action,
+        summary: request.summary,
+        subjectDigest: subjectDigest(request.subject),
+        decision: "auto-answered",
+        decidedBy: "client",
+        channel: "client-elicitation",
+        ...(answer.evidence ? { evidence: answer.evidence } : {}),
+        reason: `the client answered "${answer.automatic}" faster than a person could read the dialog; asking in the approval page instead`,
+      });
+      used = page;
+      return page.ask(request);
+    },
+  };
+}
 
-/** The text the user must see in the host's prompt for this action: the same text the dialog would show. */
+// --- removed: standing permissions ------------------------------------------------------------------------------
+
+/**
+ * The opt-in host-permission and Trusted Client modes of 0.1.0-alpha.48 to alpha.49.1 are removed. Both let a protected
+ * action run on the agent's own confirmation=YES (host-permission: with a planText the agent obtained from
+ * praxis_approval_plan; Trusted Client: with nothing more), and both were switched on by configuration that a repository's
+ * Claude Code settings, or an agent with a shell on the account, can write. No setting brings them back.
+ */
+
+/** The text a client's approval dialog shows for this action (praxis_approval_plan returns it, for the person to read). */
 export const planTextOf = (request: ApprovalRequest): string => approvalMessage(request);
 
-export function hostPermissionChannel(planText: string | undefined): UserApprovalChannel {
-  return {
-    kind: "host-permission",
-    async ask(request: ApprovalRequest): Promise<AskAnswer> {
-      if (PERSONAL_ACTS.has(request.action) || request.action === "praxis_quality_service_fix") {
-        throw new ApprovalError(
-          "APPROVAL_CLIENT_UI_REQUIRED",
-          `${request.summary} was NOT executed. Host-permission mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion, recording review decisions, opening a classic work item): the host's tool-permission prompt can be switched to "always allow", and then the agent would have approved itself. Do it in a client that shows an approval dialog (for example Claude Code).`,
-          { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } },
-        );
-      }
-      const expected = planTextOf(request);
-      if (planText === undefined) {
-        throw new ApprovalError(
-          "APPROVAL_CLIENT_UI_REQUIRED",
-          `${request.summary} was NOT executed. This client has no approval dialog; in host-permission mode call praxis_approval_plan for this action, show the plan to the user, then call this tool with that exact text as planText so the host's permission prompt shows what will run.`,
-          { executed: false, planText: expected },
-        );
-      }
-      if (planText !== expected) {
-        throw new ApprovalError(
-          "APPROVAL_SCOPE_MISMATCH",
-          `${request.summary} was NOT executed: planText is not the plan this call would run (the plan changed, or the text was edited). Show the user the current plan below and apply again with it.`,
-          { executed: false, planText: expected },
-        );
-      }
-      return { answer: "approve", reason: "the host's tool-permission prompt showed this exact plan (not verifiable by Praxis)" };
-    },
-  };
-}
-
 /**
- * PRAXIS_APPROVAL_MODE=trusted-client (an extension setting; never the default, never settable from a repository).
- * The owner's explicit decision to trust this client with protected actions without a separate confirmation of each one.
- * It is a standing permission, not an approval of the specific action, and is labelled "trusted-client" in results and
- * the journal. Unchanged: the agent's confirmation=YES, the preview and its fingerprint, argument checks, the journal.
+ * Acts only a person may perform. They need the client's dialog like every protected action; listed so results and
+ * plans can say which acts record a decision of the person.
  */
-export const trustedClientMode = (): boolean => process.env.PRAXIS_APPROVAL_MODE?.trim() === "trusted-client";
-
-/**
- * Acts only a person may perform. A standing "always allow", whether Trusted Client mode or the host's own tool-permission
- * prompt, is not the person doing them: only the client's own dialog (the answer an agent cannot write) can stand for them.
- */
-export const PERSONAL_ACTS: ReadonlySet<string> = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item"]);
-
-/**
- * The Trusted Client channel. Acts only a person may perform are not covered by the standing permission: when the client has
- * a real dialog it is asked for those (the permission only replaces the confirmation of ordinary protected actions); when it
- * has none they are refused.
- */
-export function trustedClientChannelWith(dialog: UserApprovalChannel | undefined): UserApprovalChannel {
-  let delegated = false;
-  return {
-    // the person's own answer is recorded as the dialog's, not as the weaker standing permission
-    get kind() {
-      return delegated && dialog ? dialog.kind : ("trusted-client" as const);
-    },
-    async ask(request: ApprovalRequest): Promise<AskAnswer> {
-      if (PERSONAL_ACTS.has(request.action)) {
-        if (dialog) {
-          delegated = true;
-          return dialog.ask(request);
-        }
-        throw new ApprovalError(
-          "APPROVAL_CLIENT_UI_REQUIRED",
-          `${request.summary} was NOT executed. Trusted Client mode does not cover acts only you can perform (confirming a Story or an architecture decision, approving a service, rewording an acceptance criterion): a standing permission is not you doing it. Do it in a client that shows an approval dialog (for example Claude Code).`,
-          { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, risks: request.risks } },
-        );
-      }
-      return { answer: "approve", reason: "Trusted Client mode, enabled by the user: no separate confirmation of this action" };
-    },
-  };
-}
-export const trustedClientChannel: UserApprovalChannel = trustedClientChannelWith(undefined);
+export const PERSONAL_ACTS: ReadonlySet<string> = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item", "amend-decision-journal"]);
 
 /** A channel that never answers: used to compute what the user would be asked, without running anything. */
 export const planOnlyChannel: UserApprovalChannel = {
