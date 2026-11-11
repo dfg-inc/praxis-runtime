@@ -81596,7 +81596,7 @@ var import_node_fs6 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"6acae770305b34c0fa02aa393049b876fc2a05672b5826d97de8a0252a23bbe7","coreBaseline":"2100c24584e9247e7a43c05b231d350c6bd7e4fa","inputs":40}';
+    const raw = '{"version":"0.1.0-alpha.49.1","sourceDigest":"42559844e1ad87bada7e9a441370768bd1f799848e4a0e7cff1dd78b72d951c8","coreBaseline":"2100c24584e9247e7a43c05b231d350c6bd7e4fa","inputs":40}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -85715,6 +85715,9 @@ async function approvalPlan(args, ctx, opts) {
     ...request.subject ? { subjectDigest: subjectDigest(request.subject) } : {},
     note: "This is what the user is asked to approve. It runs nothing."
   });
+  if (typeof targetArgs.repo === "string" && (0, import_node_path42.resolve)(targetArgs.repo) !== (0, import_node_path42.resolve)(ctx.repo)) {
+    throw new Error(`INVALID_INPUT: toolArguments.repo (${targetArgs.repo}) is not the repository this plan is for (${ctx.repo}); pass that repository as repo`);
+  }
   const targetDef = TOOLS.find((t) => t.name === target);
   const strayTarget = targetDef ? strayArguments(target, targetDef, targetArgs) : null;
   if (strayTarget)

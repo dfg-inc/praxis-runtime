@@ -49,6 +49,15 @@ describe("praxis_approval_plan: what the user would be asked, running nothing", 
     const open = await call("praxis_approval_plan", repo, { tool: "praxis_workflow_apply", toolArguments: JSON.stringify({ command: JSON.stringify({ action: "open", projectId: "p", title: "T", request: "r" }) }) });
     expect(open.ok && (open.data as { required: boolean }).required === false).toBe(true);
   });
+
+  it("a plan is for `repo` only: another repository inside toolArguments is refused, not planned as `repo`", async () => {
+    const repo = project();
+    const other = project();
+    const res = await call("praxis_approval_plan", repo, { tool: "praxis_project_init_apply", toolArguments: JSON.stringify({ repo: other }) });
+    expect(res.ok).toBe(false);
+    expect(res.errors?.join(" ")).toMatch(/toolArguments\.repo/);
+    expect((await call("praxis_approval_plan", repo, { tool: "praxis_project_init_apply", toolArguments: JSON.stringify({ repo }) })).ok).toBe(true);
+  });
 });
 
 describe("no dialog means nothing protected runs, whatever planText says", () => {

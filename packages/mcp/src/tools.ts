@@ -169,6 +169,10 @@ async function approvalPlan(args: Record<string, unknown>, ctx: OpContext, opts:
     ...(request.subject ? { subjectDigest: subjectDigest(request.subject) } : {}),
     note: "This is what the user is asked to approve. It runs nothing.",
   });
+  // the plan is computed for `repo`; a different repository inside toolArguments would describe one and name another
+  if (typeof targetArgs.repo === "string" && resolve(targetArgs.repo) !== resolve(ctx.repo)) {
+    throw new Error(`INVALID_INPUT: toolArguments.repo (${targetArgs.repo}) is not the repository this plan is for (${ctx.repo}); pass that repository as repo`);
+  }
   // the arguments the plan is for are held to the target tool's own list: a misspelt workItemId must not plan the current item
   const targetDef = CATALOG_TOOLS.find((t) => t.name === target);
   const strayTarget = targetDef ? strayArguments(target, targetDef, targetArgs) : null;
