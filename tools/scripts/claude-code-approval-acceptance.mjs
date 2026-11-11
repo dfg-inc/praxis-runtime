@@ -108,8 +108,8 @@ try {
     if (existsSync(join(dir, ".project"))) fail(`a hook answering ${answer} wrote .project`);
     if (existsSync(asked)) fail(`${answer}: the dialog was asked although a hook answers it`);
     const mine = journal().filter((r) => r.repository === dir);
-    if (!mine.length || mine.some((r) => r.decision !== "unavailable" || r.decidedBy !== "nobody") || !mine.some((r) => /configured to be answered automatically/.test(r.reason ?? ""))) fail(`${answer}: journal ${JSON.stringify(mine)}`);
-    prove(`a --settings hook answering ${answer}: nothing written, the dialog not asked, journaled as unavailable (the hook named), never as the user's`);
+    if (!mine.length || mine.some((r) => r.decision !== "unavailable" || r.decidedBy !== "nobody") || !mine.some((r) => /configured to be answered automatically|started with --settings/.test(r.reason ?? ""))) fail(`${answer}: journal ${JSON.stringify(mine)}`);
+    prove(`a --settings hook answering ${answer}: nothing written, the dialog not asked, journaled as unavailable (the --settings flag named), never as the user's`);
   }
   // 3. the same hook in the repository's own .claude/settings.json (T20)
   const repoHook = project("repo-hook");
@@ -120,6 +120,24 @@ try {
   if (existsSync(join(repoHook, ".project"))) fail("a repository's own hook (and its env block) wrote .project");
   if (existsSync(asked)) fail("the dialog was asked although the repository's hook answers it");
   prove("a hook and PRAXIS_APPROVAL_MODE=trusted-client in the repository's own .claude/settings.json: nothing written, the dialog not asked");
+  // 3b. the third review's repository-only forms: an escaped event key, a file too large to check, a hook of another event
+  const forms = [
+    ["escaped event key", JSON.stringify({ hooks: { Elicitation: [{ hooks: [{ type: "command", command: hook }] }] } }).replace('"Elicitation"', '"\\u0045licitation"')],
+    ["file padded past the size limit", `${" ".repeat(16 * 1024 * 1024 + 100)}${JSON.stringify({ hooks: { Elicitation: [{ hooks: [{ type: "command", command: hook }] }] } })}`],
+    ["a PreToolUse hook of the repository", JSON.stringify({ hooks: { PreToolUse: [{ matcher: "", hooks: [{ type: "command", command: "cat > /dev/null" }] }] } })],
+  ];
+  for (const [form, body] of forms) {
+    const dir = project(`form-${forms.findIndex((f) => f[0] === form)}`);
+    mkdirSync(join(dir, ".claude"));
+    writeFileSync(join(dir, ".claude", "settings.json"), body);
+    rmSync(asked, { force: true });
+    run(applyPrompt(dir), { answer: "approve", tools: "mcp__praxis__praxis_project_init_apply", cwd: dir, withHook: false });
+    if (existsSync(join(dir, ".project"))) fail(`${form}: .project written`);
+    if (existsSync(asked)) fail(`${form}: the dialog was asked`);
+    const mine = journal().filter((r) => r.repository === dir);
+    if (!mine.length || mine.some((r) => r.decision !== "unavailable")) fail(`${form}: journal ${JSON.stringify(mine)}`);
+    prove(`${form} in the repository's .claude/settings.json: nothing written, the dialog not asked, journaled as unavailable`);
+  }
   // 4. headless with no hook: nobody to ask, so nothing runs
   const none = project("nobody");
   run(applyPrompt(none), { tools: "mcp__praxis__praxis_project_init_apply", cwd: none, withHook: false });

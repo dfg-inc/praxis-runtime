@@ -383,3 +383,29 @@ test('scale', () => assert.equal(scale(5), 10));
     });
   });
 });
+
+describe("only the Runtime on this computer is answered (third review F8)", () => {
+  it("a browser request (Origin, Sec-Fetch-Site) and a foreign Host are refused; the Runtime's own request is answered", async () => {
+    const store = new QualityStore(":memory:");
+    try {
+      await withServer(store, async (base) => {
+        const { request } = await import("node:http");
+        const send = (path: string, headers: Record<string, string>, method = "GET") =>
+          new Promise<number>((done, reject) => {
+            const url = new URL(path, base);
+            const req = request({ host: url.hostname, port: url.port, path: url.pathname, method, headers }, (res) => (res.resume(), done(res.statusCode ?? 0)));
+            req.on("error", reject);
+            req.end(method === "POST" ? "{}" : undefined);
+          });
+        expect((await fetch(`${base}/health`)).status).toBe(200);
+        expect(await send("/health", { origin: "https://evil.example" })).toBe(403);
+        expect(await send("/shutdown", { origin: "null", "content-type": "text/plain" }, "POST")).toBe(403);
+        expect(await send("/health", { "sec-fetch-site": "cross-site" })).toBe(403);
+        expect(await send("/health", { host: `attacker.example:${new URL(base).port}` })).toBe(403);
+        expect((await fetch(`${base}/health`)).status).toBe(200); // still running: the refused shutdown did nothing
+      });
+    } finally {
+      store.close();
+    }
+  });
+});

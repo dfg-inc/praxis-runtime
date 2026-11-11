@@ -172,11 +172,18 @@ export function elicitationChannel(input: {
  * dialog is asked for and again when its answer arrives: a hook added in between makes the answer the configuration's,
  * whatever it says. Any answer then counts for nothing: the action does not run and no decision is attributed to anyone.
  */
+/** Why the dialog is not used, naming what was found (files and flags, never their contents). */
+export function automationReason(findings: AutomationFinding[]): string {
+  const answers = findings.filter((f) => f.kind === "dialog-answer");
+  if (answers.length) return `the client's approval dialog is configured to be answered automatically (${answers.map((f) => f.file).slice(0, 5).join("; ")}); a configured answer is not the user's. Remove that hook to approve here`;
+  return `the client's approval dialog cannot be relied on here: ${findings.slice(0, 4).map((f) => `${f.file} ${f.why}`).join("; ")}`;
+}
+
 export function automationGuarded(dialog: UserApprovalChannel, repo?: string): UserApprovalChannel {
   const refused = (findings: AutomationFinding[]): AskAnswer => ({
     answer: "unavailable",
     channel: "client-elicitation",
-    reason: `the client's approval dialog is configured to be answered automatically (${findings.map((f) => f.file).slice(0, 5).join("; ")}); a configured answer is not the user's. Remove that hook to approve here`,
+    reason: automationReason(findings),
   });
   return {
     get kind() {
@@ -248,7 +255,7 @@ export function dialogWithPageFallback(dialog: UserApprovalChannel, page: UserAp
 export const planTextOf = (request: ApprovalRequest): string => approvalMessage(request);
 
 /**
- * Acts only a person may perform. They need the user's own channel like every protected action; listed so results and
+ * Acts only a person may perform. They need the client's dialog like every protected action; listed so results and
  * plans can say which acts record a decision of the person.
  */
 export const PERSONAL_ACTS: ReadonlySet<string> = new Set(["confirm-story", "confirm-decision", "approve-service", "review-decisions", "revise-acceptance", "open-classic-work-item", "amend-decision-journal"]);

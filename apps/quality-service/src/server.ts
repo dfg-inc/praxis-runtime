@@ -104,10 +104,25 @@ function errorPayload(err: unknown): {
   };
 }
 
+/**
+ * The service answers the Praxis Runtime on this computer only. A web page the person visits can send requests to
+ * 127.0.0.1 (a form post, a no-cors fetch) or reach it through a name it controls (DNS rebinding): a browser always sends
+ * Origin on such requests and the Host is the page's name, so both are refused. Praxis's own client sends neither.
+ */
+function fromThisComputer(req: IncomingMessage): boolean {
+  if (req.headers.origin !== undefined || req.headers["sec-fetch-site"] !== undefined) return false;
+  const port = req.socket.localPort;
+  return [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`].includes(String(req.headers.host ?? ""));
+}
+
 export function createQualityApp(store: QualityStore) {
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       try {
+        if (!fromThisComputer(req)) {
+          sendJson(res, 403, { error: "forbidden", message: "the Quality service answers the Praxis Runtime on this computer only" });
+          return;
+        }
         const url = new URL(req.url ?? "/", "http://localhost");
 
         if (req.method === "GET" && url.pathname === "/health") {

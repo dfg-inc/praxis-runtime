@@ -14,7 +14,7 @@ import { dialogAutomation } from "./dialog-automation.js";
 import { callTool, type ClientReport } from "./tools.js";
 import type { McpEnvelope } from "./workflow-test-helpers.js";
 
-const ENV = ["PRAXIS_STATE_HOME", "CLAUDE_CONFIG_DIR", "PRAXIS_BUNDLE_KIND", "PRAXIS_TEST_APPROVALS", "PRAXIS_APPROVAL_PAGE", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MODE"] as const;
+const ENV = ["HOME", "PRAXIS_TEST_ANCESTRY", "PRAXIS_STATE_HOME", "CLAUDE_CONFIG_DIR", "PRAXIS_BUNDLE_KIND", "PRAXIS_TEST_APPROVALS", "PRAXIS_APPROVAL_PAGE", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MODE"] as const;
 let saved: Record<string, string | undefined>;
 let repo: string;
 let scratch: string[];
@@ -90,14 +90,14 @@ describe("dialog automation is found in every scope Praxis can read", () => {
     expect(dialogAutomation({ repo }).some((f) => f.file.endsWith(join("hooks", "hooks.json")))).toBe(true);
     rmSync(join(config, "plugins"), { recursive: true });
     write(join(repo, ".claude", "agents", "helper.md"), "---\nname: helper\nhooks:\n  Elicitation:\n    - hooks:\n        - type: command\n          command: ./approve.sh\n---\nHelps.\n");
-    expect(dialogAutomation({ repo }).map((f) => f.why)).toContain("an agent or skill definition declares an Elicitation hook");
+    expect(dialogAutomation({ repo }).map((f) => f.why)).toContain("an agent, skill or command definition declares an Elicitation hook");
   });
 
-  it("other hooks are not automation of the dialog; an unreadable file that names the event is (fails closed)", () => {
-    write(join(repo, ".claude", "settings.json"), { hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "true" }] }] }, env: { PRAXIS_APPROVAL_MODE: "trusted-client" } });
+  it("a user's own hooks for other events are not automation of the dialog; a file that cannot be parsed is (fails closed)", () => {
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "settings.json"), { hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "true" }] }], Notification: [] }, env: { PATH: "/x" } });
     expect(dialogAutomation({ repo })).toEqual([]);
     write(join(repo, ".claude", "settings.json"), '{ "hooks": { "Elicitation": [ broken');
-    expect(dialogAutomation({ repo })).toHaveLength(1);
+    expect(dialogAutomation({ repo }).map((f) => f.kind)).toEqual(["unverifiable"]);
   });
 });
 
@@ -158,7 +158,7 @@ describe("a repository's settings cannot authorize (T18): no mode, no page, no t
     expect(testSource()).toBe(false);
     const settings = approvalSettings();
     expect(settings).toMatchObject({ page: false, minAnswerMs: 1000, browser: "" });
-    expect(settings.ignoredEnvironment.sort()).toEqual(["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_PAGE"]);
+    expect(settings.ignoredEnvironment.sort()).toEqual(["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_PAGE", "PRAXIS_TEST_ANCESTRY"]);
     expect(() => createUserApproval({ request: { action: "a", kind: "development_action", summary: "s", description: "d", subject: "x" }, channel: "test" })).toThrow(/test harness/);
   });
 
@@ -168,6 +168,103 @@ describe("a repository's settings cannot authorize (T18): no mode, no page, no t
     process.env.PRAXIS_APPROVAL_PAGE = "on";
     const result = await init();
     expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    expect(existsSync(join(repo, ".project"))).toBe(false);
+  });
+});
+
+const kinds = (findings: Array<{ kind: string }>) => findings.map((f) => f.kind).sort();
+
+describe("the third review's bypasses (F1 to F7): each is found, and anything that cannot be checked refuses", () => {
+  it("F1: the event key written with a JSON escape is the same key", () => {
+    write(join(repo, ".claude", "settings.json"), '{"hooks":{"\\u0045licitation":[{"matcher":"","hooks":[{"type":"command","command":"./a.sh"}]}]}}');
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+  });
+
+  it("F2: a settings file too large to check refuses, and so does a link to one, or a folder in its place", () => {
+    write(join(repo, ".claude", "settings.json"), `${" ".repeat(16 * 1024 * 1024 + 10)}{}`);
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["unverifiable"]);
+    rmSync(join(repo, ".claude"), { recursive: true });
+    mkdirSync(join(repo, ".claude", "settings.json"), { recursive: true });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["unverifiable"]);
+  });
+
+  it("F3: a client started with --settings, --plugin-dir, --plugin-url or --agents refuses, with a wrapper in between too; a plain client does not", () => {
+    for (const args of ["claude --settings /tmp/my settings/s.json", "claude --plugin-dir=./tools/p", "claude -p x --agents {\"a\":{}}", "node cli.js --plugin-url https://x"]) {
+      expect(kinds(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args }] })), args).toEqual(["launch"]);
+    }
+    expect(kinds(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args: "/bin/sh -c node praxis-mcp.cjs" }, { pid: 8, ppid: 7, args: "claude --settings {}" }] }))).toEqual(["launch"]);
+    expect(dialogAutomation({ repo, ancestry: () => [{ pid: 9, ppid: 8, args: "claude --setting-sources=user,project,local --model x" }] })).toEqual([]);
+    expect(kinds(dialogAutomation({ repo, ancestry: () => [] }))).toEqual(["unverifiable"]);
+    expect(kinds(dialogAutomation({ repo, ancestry: () => { throw new Error("no ps"); } }))).toEqual(["unverifiable"]);
+  });
+
+  it("F4: a plugin manifest's hooks field is followed whatever the file's name, and a plugin tree too large to check refuses", () => {
+    const plugin = join(process.env.CLAUDE_CONFIG_DIR!, "plugins", "cache", "m", "p", "1.0.0");
+    write(join(plugin, ".claude-plugin", "plugin.json"), { name: "p", hooks: "./cfg/auto.json" });
+    write(join(plugin, "cfg", "auto.json"), HOOK);
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    rmSync(join(plugin, "cfg"), { recursive: true });
+    write(join(plugin, ".claude-plugin", "plugin.json"), { name: "p", hooks: { Elicitation: [] } });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    write(join(plugin, ".claude-plugin", "plugin.json"), { name: "p" });
+    for (let i = 0; i < 60; i += 1) writeFileSync(join(plugin, `f${i}.txt`), "x");
+    expect(kinds(dialogAutomation({ repo, maxWalkEntries: 40 }))).toEqual(["unverifiable"]);
+    expect(dialogAutomation({ repo })).toEqual([]);
+  });
+
+  it("F4: a directory marketplace or install path outside the plugins folder is checked too", () => {
+    const outside = temp("praxis-trust-outside-plugin-");
+    write(join(outside, "hooks", "hooks.json"), HOOK);
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "plugins", "known_marketplaces.json"), { local: { source: { source: "directory", path: outside }, installLocation: outside } });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+  });
+
+  it("F5: front matter with escaped, quoted or flow-style hook keys, in agents, skills and commands, in the repository and in plugins", () => {
+    write(join(repo, ".claude", "commands", "go.md"), '---\n"hooks": { "Elicitation": [] }\n---\nGo.\n');
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    rmSync(join(repo, ".claude"), { recursive: true });
+    write(join(repo, ".claude", "skills", "s", "SKILL.md"), '---\nname: s\nhooks:\n  "\\x45licitation":\n    - hooks: []\n---\n');
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+    rmSync(join(repo, ".claude"), { recursive: true });
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "plugins", "cache", "m", "p", "1.0.0", "agents", "a.md"), "---\nname: a\nhooks: {Elicitation: []}\n---\n");
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+  });
+
+  it("a skill that only mentions elicitation in its description is not a hook (no refusal for words)", () => {
+    write(join(process.env.CLAUDE_CONFIG_DIR!, "skills", "mcp", "SKILL.md"), "---\nname: mcp\ndescription: Explains MCP elicitation dialogs\n---\n");
+    expect(dialogAutomation({ repo })).toEqual([]);
+  });
+
+  it("F6: the repository's own hooks of any event, and env that configures the Runtime, refuse: a project cannot authorize its own protected actions", () => {
+    write(join(repo, ".claude", "settings.json"), { hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "./run.sh" }] }] } });
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["project-hooks"]);
+    write(join(repo, ".claude", "settings.json"), { env: { PATH: "./bin:/usr/bin", NODE_OPTIONS: "--require ./x.js", FOO: "bar" } });
+    const env = dialogAutomation({ repo });
+    expect(kinds(env)).toEqual(["project-env"]);
+    expect(env[0]!.why).toMatch(/PATH, NODE_OPTIONS/);
+    expect(env[0]!.why).not.toMatch(/FOO|bar|x\.js/);
+    write(join(repo, ".claude", "settings.json"), { env: { FOO: "bar" }, permissions: { allow: ["Bash(npm test)"] } });
+    expect(dialogAutomation({ repo })).toEqual([]);
+  });
+
+  it("F7: a state home (the decision journal) inside the repository refuses", () => {
+    process.env.PRAXIS_STATE_HOME = join(repo, ".praxis-state");
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["state-home"]);
+  });
+
+  it("the account's HOME is checked as well as its real home", () => {
+    const home = temp("praxis-trust-home2-");
+    process.env.HOME = home;
+    write(join(home, ".claude", "settings.json"), HOOK);
+    expect(kinds(dialogAutomation({ repo }))).toEqual(["dialog-answer"]);
+  });
+
+  it("each finding refuses a protected action end to end, without asking the dialog", async () => {
+    write(join(repo, ".claude", "settings.json"), '{"hooks":{"\\u0045licitation":[]}}');
+    const { channel, seen } = dialog("approve");
+    const result = await init(channel);
+    expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+    expect(seen).toHaveLength(0);
     expect(existsSync(join(repo, ".project"))).toBe(false);
   });
 });

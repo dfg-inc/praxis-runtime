@@ -512,7 +512,7 @@ describe("settings a repository could set are not taken from the environment (se
       expect(settings.browser).toBe("");
       expect(settings.page).toBe(false);
       expect(settings.minAnswerMs).toBe(1000);
-      expect(settings.ignoredEnvironment.sort()).toEqual(["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_MODE", "PRAXIS_APPROVAL_PAGE", "PRAXIS_APPROVAL_PAGE_MIN_MS"]);
+      expect(settings.ignoredEnvironment.sort()).toEqual(["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_MIN_ANSWER_MS", "PRAXIS_APPROVAL_MODE", "PRAXIS_APPROVAL_PAGE", "PRAXIS_APPROVAL_PAGE_MIN_MS", "PRAXIS_TEST_ANCESTRY"]);
       // a longer minimum answer time is stricter and is taken from anywhere
       process.env.PRAXIS_APPROVAL_MIN_ANSWER_MS = "5000";
       expect(approvalSettings().minAnswerMs).toBe(5000);

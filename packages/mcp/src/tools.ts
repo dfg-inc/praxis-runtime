@@ -21,7 +21,7 @@ import {
 } from "@praxis/contracts";
 import { runtimeBuildInfo, toolOrigin } from "./build-info.js";
 import { containedPath } from "./path-guard.js";
-import { PERSONAL_ACTS, automationGuarded, dialogWithPageFallback, minAnswerMs, planOnlyChannel, planTextOf } from "./approval-channel.js";
+import { PERSONAL_ACTS, automationGuarded, automationReason, dialogWithPageFallback, minAnswerMs, planOnlyChannel, planTextOf } from "./approval-channel.js";
 import { dialogAutomation } from "./dialog-automation.js";
 import { approvalPageChannel, approvalPageEnabled } from "./approval-page.js";
 import { approvalSettings } from "./approval-settings.js";
@@ -220,10 +220,10 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
       trust: {
         protectedActions: available ? "the client's approval dialog (a client response; not independently authenticated)" : "not available here: protected actions are refused, nothing runs",
         independentHumanApproval: "not available in this version: no channel on this computer can prove that a person, rather than automation or an agent, answered",
-        ...(!client.dialog ? { why: client.reason ?? "the client declares no approval dialog" } : observed ? { why: "this client was seen answering Praxis's approval dialog by itself, without showing it" } : automation.length ? { why: "the client's approval dialog is configured to be answered automatically" } : {}),
+        ...(!client.dialog ? { why: client.reason ?? "the client declares no approval dialog" } : observed ? { why: "this client was seen answering Praxis's approval dialog by itself, without showing it" } : automation.length ? { why: automationReason(automation) } : {}),
       },
       ...(observed ? { observedDialog: { ...observed, note: "This client was seen answering Praxis's approval dialog by itself, without showing it. Praxis no longer asks through it: protected actions are refused here (nothing runs). Apply them from a client whose dialog is shown, such as the Claude Code CLI in a terminal." } } : {}),
-      ...(automation.length ? { dialogAutomation: automation.map((f) => ({ file: f.file, why: f.why })) } : {}),
+      ...(automation.length ? { dialogAutomation: automation.map((f) => ({ file: f.file, why: f.why, kind: f.kind })) } : {}),
       minAnswerMs: minAnswerMs(),
       ...(settings.ignoredEnvironment.length
         ? { ignoredEnvironment: settings.ignoredEnvironment, ignoredNote: `Ignored ${settings.ignoredEnvironment.join(", ")}: no setting, in any file or environment, can make approval weaker (a repository's Claude Code settings and an agent with a shell can write them). The Trusted Client and host-permission modes are removed.` }
@@ -242,13 +242,12 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
 export const isProtectedTool = (name: string): boolean => PROTECTED_TOOLS.has(name);
 
 /**
- * How a result names an approval: the channel that gave it and, for the user's own channels, that no person was verified
- * (Praxis knows the dialog or the page answered, never who or what operated it).
+ * How a result names an approval: the channel that gave it, and that no person was verified (Praxis knows the client's
+ * dialog answered, never who or what operated it).
  */
-const USER_CHANNEL_KINDS = new Set(["client-elicitation", "approval-page", "terminal-prompt"]);
 function approvalView(item: { action: string; channel: string; assurance: string; decidedAt: string }) {
   const decidedBy = item.channel === "client-elicitation" ? "client-dialog" : item.channel === "host-permission" ? "host-prompt" : item.channel;
-  return { action: item.action, channel: item.channel, assurance: item.assurance, decidedBy, ...(USER_CHANNEL_KINDS.has(item.channel) ? { personVerified: false } : {}), decidedAt: item.decidedAt };
+  return { action: item.action, channel: item.channel, assurance: item.assurance, decidedBy, personVerified: false, decidedAt: item.decidedAt };
 }
 
 /** Says in the result how the user's approval was obtained: always in the client's own dialog (the agent cannot write that answer). */

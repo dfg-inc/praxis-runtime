@@ -22,7 +22,7 @@ export const testSource = (): boolean => !isShippedBundle() && process.env.PRAXI
 /** Read by released 0.1.0-alpha.48 to alpha.49.1 (the Trusted Client and host-permission modes) and by nothing now. */
 const RETIRED = ["PRAXIS_APPROVAL_MODE"] as const;
 /** Read by the test source only; a shipped Runtime ignores them. */
-const TEST_ONLY = ["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_PAGE_MIN_MS"] as const;
+const TEST_ONLY = ["PRAXIS_APPROVAL_BROWSER", "PRAXIS_APPROVAL_PAGE_MIN_MS", "PRAXIS_TEST_ANCESTRY"] as const;
 
 export type ApprovalSettings = {
   minAnswerMs: number;
