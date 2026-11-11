@@ -110,14 +110,29 @@ async function waitForPage(count = 1): Promise<string> {
 const init = (client: ClientReport | undefined, approvalChannel?: UserApprovalChannel) =>
   callTool("praxis_project_init_apply", { repo, confirmation: "YES" }, { role: "developer", version: "t", ...(client ? { client } : {}), ...(approvalChannel ? { approvalChannel } : {}) }) as Promise<McpEnvelope>;
 
-/** The Code tab's exchange: input_required, then the retry carrying the client's own `decline` a few ms later. */
+/**
+ * The Code tab's exchange: input_required, then the retry carrying the client's own `decline` exactly `after` ms later.
+ * The clock is fixed for the retry, so the measured time is `after` on any machine (a slow CI runner included).
+ */
 async function codeTabDecline(after = 30) {
   const needs = await init(CODE_TAB, roundTripChannel(undefined, "claude-code 2.1.309")).catch((e: unknown) => e);
   expect(needs).toBeInstanceOf(ApprovalNeedsInput);
   const key = approvalKey((needs as ApprovalNeedsInput).request);
+  return answeredAfter(key, after, () => init(CODE_TAB, roundTripChannel({ [key]: { action: "decline" } }, "claude-code 2.1.309")));
+}
+
+/** Runs the retry that carries the client's answer with the clock fixed `after` ms past the question. */
+async function answeredAfter<T>(key: string, after: number, retry: () => Promise<T>): Promise<T> {
+  const asked = Date.now();
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(asked);
   noteDialogAsked(key);
-  await sleep(after);
-  return init(CODE_TAB, roundTripChannel({ [key]: { action: "decline" } }, "claude-code 2.1.309"));
+  vi.setSystemTime(asked + after);
+  try {
+    return await retry();
+  } finally {
+    vi.useRealTimers();
+  }
 }
 
 describe("the Code tab's instant decline is the client's answer, never the user's", () => {
@@ -175,8 +190,7 @@ describe("the Code tab's instant decline is the client's answer, never the user'
     const other = mkdtempSync(join(tmpdir(), "praxis-desktop-repo-"));
     try {
       const needs = (await callTool("praxis_project_init_apply", { repo: other, confirmation: "YES" }, { role: "developer", version: "t", client: CODE_TAB, approvalChannel: roundTripChannel(undefined) }).catch((e: unknown) => e)) as ApprovalNeedsInput;
-      noteDialogAsked(approvalKey(needs.request));
-      const again = callTool("praxis_project_init_apply", { repo: other, confirmation: "YES" }, { role: "developer", version: "t", client: CODE_TAB, approvalChannel: roundTripChannel({ [approvalKey(needs.request)]: { action: "decline" } }) });
+      const again = answeredAfter(approvalKey(needs.request), 30, () => callTool("praxis_project_init_apply", { repo: other, confirmation: "YES" }, { role: "developer", version: "t", client: CODE_TAB, approvalChannel: roundTripChannel({ [approvalKey(needs.request)]: { action: "decline" } }) }));
       await decideInPage(await waitForPage(2), "reject");
       await again;
     } finally {
@@ -202,8 +216,7 @@ describe("the Code tab's instant decline is the client's answer, never the user'
   it("an instant Accept is not an approval either", async () => {
     process.env.PRAXIS_APPROVAL_PAGE = "off";
     const needs = (await init(CODE_TAB, roundTripChannel(undefined)).catch((e: unknown) => e)) as ApprovalNeedsInput;
-    noteDialogAsked(approvalKey(needs.request));
-    const result = await init(CODE_TAB, roundTripChannel({ [approvalKey(needs.request)]: { action: "accept", content: { decision: "approve" } } }));
+    const result = (await answeredAfter(approvalKey(needs.request), 30, () => init(CODE_TAB, roundTripChannel({ [approvalKey(needs.request)]: { action: "accept", content: { decision: "approve" } } })))) as McpEnvelope;
     expect(result.ok).toBe(false);
     expect(result.data).toMatchObject({ outcome: "auto-answered", automatic: "accept" });
     expect(existsSync(join(repo, ".project"))).toBe(false);
@@ -337,10 +350,9 @@ describe("the doctor says how approvals will be asked, with the evidence", () =>
 
   it("Code tab: once seen answering by itself, the doctor shows it and protected actions are refused there", async () => {
     process.env.PRAXIS_APPROVAL_PAGE = "off";
-    // no added delay: under a loaded test run the call's own work must still leave the answer far below a person's time
-    await codeTabDecline(0);
+    await codeTabDecline();
     writeFileSync(join(repo, "package.json"), `${JSON.stringify({ name: "x", scripts: { test: "node --test", build: "tsc" } })}\n`);
-    await codeTabDecline(0);
+    await codeTabDecline();
     process.env.PRAXIS_APPROVAL_PAGE = "on";
     const doctor = (await callTool("praxis_doctor", { repo }, { role: "developer", version: "t", client: CODE_TAB, approvalChannel: roundTripChannel(undefined) })) as McpEnvelope;
     const approval = (doctor.data as { approval: Record<string, unknown> }).approval;
