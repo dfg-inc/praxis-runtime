@@ -91,14 +91,18 @@ function reportedPrototype() {
   s.elements = s.elements.map((e) => (e.id === "card" ? { ...e, detailFields: [{ field: "date" }, { field: "created" }, { field: "author" }, { field: "text" }] } : e));
   return { ...common([{ ...F.reported.mock, rows }, F.mock.attachments]), title: "Журнал агронома", notes: F.reported.notes, screens: [s] };
 }
-/** A human act through the tools, approved in the scripted dialog within that call: so the decision ledger records it. */
-async function applyInDialog(repo, id, command) {
+/** The user's acceptance of every criterion, sent as a review submission and approved in the scripted dialog within that call. */
+async function acceptRequirementsInDialog(repo, id) {
   const context = { role: "ba", version: "test", approvalChannel: approvingDialog };
-  const args = { repo, workItemId: id, command: JSON.stringify(command) };
-  const preview = await callTool("praxis_workflow_preview", args, context);
-  if (!preview.ok) throw new Error(`preview ${command.action}: ${preview.code} ${JSON.stringify(preview.errors)}`);
-  const applied = await callTool("praxis_workflow_apply", { ...args, previewFingerprint: preview.data.fingerprint, confirmation: "YES" }, context);
-  if (!applied.ok) throw new Error(`apply ${command.action}: ${applied.code} ${JSON.stringify(applied.errors)}`);
+  const rendered = await callTool("praxis_review_render", { repo, view: "requirements", serve: false, workItemId: id }, context);
+  if (!rendered.ok) throw new Error(`render requirements: ${rendered.code} ${JSON.stringify(rendered.errors)}`);
+  const state = loadWorkflow(repo, id);
+  const requirements = state.requirements
+    .filter((r) => r.status !== "superseded" && r.scope === "in")
+    .map((r) => ({ id: r.id, revision: r.revision, criteria: r.acceptanceCriteria.map((c) => ({ id: c.id, revision: c.revision, status: "accepted" })), addCriteria: [], removeCriteria: [] }));
+  const submission = { contract: "praxis.review.submission", version: 1, reviewId: "patterns", view: "requirements", workItemId: id, baseFingerprint: rendered.data.fingerprint, baseStamp: C.reviewStamp(state, "requirements"), baseState: rendered.data.baseState, requirements: { requirements, acceptAll: true } };
+  const applied = await callTool("praxis_review_apply", { repo, workItemId: id, submission: JSON.stringify(submission), confirmation: "YES" }, context);
+  if (!applied.ok || !(applied.data?.applied > 0)) throw new Error(`accept requirements: ${applied.code} ${JSON.stringify(applied.errors)} ${JSON.stringify(applied.data).slice(0, 1500)}`);
 }
 async function workItem(prototype) {
   const repo = mkdtempSync(join(tmpdir(), "praxis-patterns-"));
@@ -106,7 +110,7 @@ async function workItem(prototype) {
   applyRuntimeCommand(repo, F.repository, id);
   for (const r of F.requirements) applyRuntimeCommand(repo, { action: "add-requirement", ...r }, id);
   applyRuntimeCommand(repo, F.impact, id);
-  await applyInDialog(repo, id, { action: "accept-requirements" });
+  await acceptRequirementsInDialog(repo, id);
   applyRuntimeCommand(repo, { action: "advance-phase", to: "prototype" }, id);
   applyRuntimeCommand(repo, { action: "set-prototype", prototype, summary: "browser acceptance" }, id);
   return { repo, id, state: () => loadWorkflow(repo, id) };

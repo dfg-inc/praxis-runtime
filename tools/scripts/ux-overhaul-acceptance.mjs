@@ -138,7 +138,7 @@ async function userSaves(session, repo, view, workItemId, payload) {
   const secret = lastOpenedLink();
   const html = await (await fetch(secret)).text();
   const data = JSON.parse(html.match(/<script type="application\/json" id="praxis-data">([\s\S]*?)<\/script>/)[1]);
-  const submission = { contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: data.workItemId, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, ...payload(data) };
+  const submission = { contract: "praxis.review.submission", version: 1, reviewId: data.reviewId, view, workItemId: data.workItemId, baseFingerprint: data.baseFingerprint, baseStamp: data.baseStamp, baseState: data.baseState, ...payload(data) };
   const res = await fetch(`${rendered.data.url.split("?")[0]}/submit`, { method: "POST", headers: { "content-type": "application/json", origin: new URL(secret).origin, "x-praxis-review-token": data.token }, body: JSON.stringify(submission) });
   const handover = await res.json();
   check(res.status === 200 && handover.handedOver === true && handover.applied === 0, `save ${view}: ${res.status} ${JSON.stringify(handover)}`);
@@ -635,8 +635,8 @@ await scenario("S16", "Upgrade from alpha.48: existing work items are read witho
   // alpha.48 item is classic by default with no such record: the gates apply until the user chooses classic in the dialog.
   const gated = await record(upgraded, repo, story("US-LEG-002", ["REQ-LEG-002"], "As a manager, I want export, so that I share them."), id);
   check(!gated.ok && gated.code === "STORY_PLAN_NOT_AGREED", `an unrecorded classic mode does not switch the gates off: ${gated.code}`);
-  const kept = await record(upgraded, repo, { action: "set-mode", mode: "classic", reason: "keep the old flow" }, id);
-  check(kept.ok, `choosing classic again in the dialog: ${kept.code} ${JSON.stringify(kept.errors)}`);
+  const kept = await userSaves(upgraded, repo, "requirements", id, () => ({ modeChange: { to: "classic", reason: "keep the old flow" } }));
+  check(kept.applied.ok && kept.body.applied > 0, `choosing classic again in the review and the dialog: ${kept.applied.code} ${JSON.stringify(kept.applied.errors)} ${JSON.stringify(kept.body).slice(0, 1200)}`);
   await must(upgraded, repo, story("US-LEG-002", ["REQ-LEG-002"], "As a manager, I want export, so that I share them."), id);
   const inspect = await call(upgraded, "praxis_workflow_inspect", { repo, workItemId: id, view: "stories" });
   check(inspect.ok, "the old inspect tool keeps working");
