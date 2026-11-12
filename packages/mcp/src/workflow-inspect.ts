@@ -1,7 +1,11 @@
 import { basename, resolve } from "node:path";
 import {
+  annotationOf,
   approvalSummary,
   acceptanceStatus,
+  subjectKey,
+  trustedView,
+  type SubjectKind,
   decisionContentFingerprint,
   evaluateFeature,
   featureReadiness,
@@ -13,7 +17,7 @@ import {
   storyContentFingerprint,
   type WorkflowState,
 } from "@praxis/contracts";
-import { listWorkItems, loadWorkflow, WorkItemError } from "./workflow-store.js";
+import { acceptanceView, listWorkItems, loadWorkflow, WorkItemError } from "./workflow-store.js";
 
 /**
  * Read-only inspection of the stored workflow. One tool, one view per question, so a Chat session can show
@@ -24,7 +28,15 @@ import { listWorkItems, loadWorkflow, WorkItemError } from "./workflow-store.js"
  *  - It is scoped to one repository and one Work Item. Links to other repositories are reported, not followed.
  *  - Responses are built from the persisted state, not from a parallel store, so what is shown is what is stored.
  *  - Machine paths are shown repository-relative; secret-shaped keys and values are redacted.
+ *  - Acceptance is shown as stored AND with its integrity (acceptance-integrity.ts): only "accepted" counts; the counts,
+ *    readiness and verdicts here are computed on what the decision ledger backs.
  */
+
+/** The integrity of one stored claim: proposed (no claim), or what the store found against the decision ledger. */
+function integrityOf(state: WorkflowState, kind: SubjectKind, id: string, claimed: boolean): string {
+  if (!claimed) return "proposed";
+  return annotationOf(state)?.subjects[subjectKey(kind, id)]?.status ?? "accepted";
+}
 
 export const INSPECT_SCHEMA = "praxis.workflow.inspect.v1";
 export const INSPECT_VIEWS = [
@@ -64,9 +76,9 @@ function scrub<T>(repo: string, value: T): T {
   return clean(redactPersistent(value)) as T;
 }
 
-function storyConfirmation(story: WorkflowState["stories"][number]): "confirmed" | "unconfirmed" | "superseded" {
+function storyConfirmation(state: WorkflowState, story: WorkflowState["stories"][number]): "confirmed" | "unconfirmed" | "superseded" {
   if (story.status === "superseded") return "superseded";
-  return story.status === "confirmed" && story.confirmedBehavior ? "confirmed" : "unconfirmed";
+  return story.status === "confirmed" && story.confirmedBehavior && integrityOf(state, "story", story.id, true) === "accepted" ? "confirmed" : "unconfirmed";
 }
 
 function overview(state: WorkflowState, repo: string) {
@@ -92,11 +104,11 @@ function overview(state: WorkflowState, repo: string) {
       requirements: state.requirements.filter((item) => item.status !== "superseded").length,
       stories: {
         total: live.length,
-        confirmed: live.filter((story) => storyConfirmation(story) === "confirmed").length,
-        unconfirmed: live.filter((story) => storyConfirmation(story) === "unconfirmed").length,
+        confirmed: live.filter((story) => storyConfirmation(state, story) === "confirmed").length,
+        unconfirmed: live.filter((story) => storyConfirmation(state, story) === "unconfirmed").length,
         stale: live.filter((story) => story.stale).length,
       },
-      decisions: { total: state.decisions.length, confirmed: state.decisions.filter((item) => item.confirmed).length },
+      decisions: { total: state.decisions.length, confirmed: trustedView(state).decisions.filter((item) => item.confirmed).length },
       services: state.services.length,
       implementationUnits: state.implementationUnits.length,
       handoffs: state.handoffs.length,
@@ -111,6 +123,7 @@ function overview(state: WorkflowState, repo: string) {
       coverageEntries: state.coverage.length,
     },
     feature: { verdict: feature.verdict, gaps: feature.gaps, readiness: featureReadiness(state) },
+    acceptance: acceptanceView(repo, state),
     history: state.history,
     workItems: items.map((item) => ({
       workItemId: item.workItemId,
@@ -141,7 +154,9 @@ function reviewOf(review: WorkflowState["requirements"][number]["acceptanceCrite
 }
 
 /** What the user said in the requirements review: the list a BA works through. Derived from the same stored marks as the page. */
-function requirementReview(state: WorkflowState) {
+function requirementReview(raw: WorkflowState) {
+  // what counts: an acceptance the decision ledger does not back is listed as pending (and under unverified)
+  const state = trustedView(raw);
   // only what is in scope: progress counts the same set, so the lists and the numbers agree
   const rows = state.requirements
     .filter((req) => req.status !== "superseded" && req.scope === "in")
@@ -162,6 +177,9 @@ function requirementReview(state: WorkflowState) {
     rejected: rows.filter((r) => r.status === "rejected"),
     commented: rows.filter((r) => r.comment !== null),
     pending: rows.filter((r) => r.status === "pending").map((r) => r.criterionId),
+    unverified: raw.requirements
+      .filter((req) => req.status !== "superseded" && req.scope === "in")
+      .flatMap((req) => req.acceptanceCriteria.filter((c) => c.review.status === "accepted" && integrityOf(raw, "criterion", c.id, true) !== "accepted").map((c) => ({ criterionId: c.id, integrity: integrityOf(raw, "criterion", c.id, true) }))),
     requirementComments: state.requirements
       .filter((req) => req.status !== "superseded" && req.scope === "in" && req.comment)
       .map((req) => ({ requirementId: req.id, comment: req.comment as string })),
@@ -179,7 +197,7 @@ function requirements(state: WorkflowState) {
       scope: req.scope,
       scopeNote: req.scopeNote ?? null,
       comment: req.comment ?? null,
-      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision, review: reviewOf(c.review) })),
+      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision, review: reviewOf(c.review), integrity: integrityOf(state, "criterion", c.id, c.review.status === "accepted") })),
       serviceIds: req.serviceIds,
       assumptions: state.assumptions.filter((a) => req.assumptionIds.includes(a.id) || a.requirementIds.includes(req.id)),
       storyIds: state.stories.filter((s) => s.requirementIds.includes(req.id)).map((s) => s.id),
@@ -196,7 +214,8 @@ function stories(state: WorkflowState) {
     ...story,
     /** What confirm-story must carry: the digest of exactly this revision. The user is shown this content before approving. */
     contentFingerprint: storyContentFingerprint(story),
-    confirmation: storyConfirmation(story),
+    confirmation: storyConfirmation(state, story),
+    integrity: integrityOf(state, "story", story.id, story.status !== "superseded" && (story.confirmedBehavior || story.status === "confirmed")),
     coverage: state.coverage
       .filter((entry) => entry.storyId === story.id)
       .map((entry) => ({
@@ -213,7 +232,7 @@ function stories(state: WorkflowState) {
 
 function decisions(state: WorkflowState) {
   return {
-    decisions: state.decisions.map((decision) => ({ ...decision, contentFingerprint: decisionContentFingerprint(decision) })),
+    decisions: state.decisions.map((decision) => ({ ...decision, contentFingerprint: decisionContentFingerprint(decision), integrity: integrityOf(state, "decision", decision.id, decision.confirmed) })),
     assumptions: state.assumptions,
     openQuestions: state.openQuestions,
     unresolvedByStory: state.stories
@@ -241,7 +260,8 @@ async function workPackages(repo: string) {
 
 async function work(state: WorkflowState, repo: string) {
   return {
-    services: state.services,
+    services: state.services.map((service) => ({ ...service, integrity: integrityOf(state, "service", service.id, service.status === "approved" || service.status === "completed") })),
+    contracts: state.contracts.map((contract) => ({ id: contract.id, name: contract.name, status: contract.status, integrity: integrityOf(state, "contract", contract.id, contract.status === "agreed") })),
     implementationUnits: state.implementationUnits,
     changes: state.changes,
     readiness: featureReadiness(state),
@@ -283,8 +303,9 @@ function openItems(state: WorkflowState) {
 }
 
 /** Every decision that needed a person, with what its channel proves; decisions without a record are listed as unverified provenance. */
-function approvals(state: WorkflowState) {
-  return { summary: approvalSummary(state as never), records: state.approvals ?? [], note: "trust: client-response = the client's approval dialog answered (not independently authenticated); test-only = the test harness. Earlier records: independent-human = the same as client-response; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode (both removed in 0.1.0-alpha.49.2). No client identifies the person: actor stays empty." };
+function approvals(state: WorkflowState, repo: string) {
+  const records = annotationOf(state)?.records ?? {};
+  return { summary: approvalSummary(state), acceptance: acceptanceView(repo, state), records: (state.approvals ?? []).map((record) => ({ ...record, ledger: records[record.id] ?? "accepted" })), note: "trust: client-response = the client's approval dialog answered (not independently authenticated); test-only = the test harness. Earlier records: independent-human = the same as client-response; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode (both removed in 0.1.0-alpha.49.2). No client identifies the person: actor stays empty. ledger: accepted = a decision-ledger record on this computer (outside the repository) carries this approval; unverified = none does, so the record is only a line in the repository file and is not counted." };
 }
 
 function quality(state: WorkflowState) {
@@ -374,7 +395,7 @@ export async function inspectWorkflow(
       case "links":
         return links(state, repo);
       case "approvals":
-        return approvals(state);
+        return approvals(state, repo);
     }
   };
   const body: Record<string, unknown> = {};
@@ -419,7 +440,7 @@ export function developerWorkItemStatus(repo: string, workItemId: string): Recor
     revision: state.workItem.revision,
     nextRole: resume.nextRole,
     requirementIds: resume.requirementIds,
-    services: state.services.map((s) => ({ id: s.id, name: s.name, status: s.status, requirementIds: s.requirementIds, dependsOn: s.dependsOn })),
+    services: state.services.map((s) => ({ id: s.id, name: s.name, status: s.status, integrity: integrityOf(state, "service", s.id, s.status === "approved" || s.status === "completed"), requirementIds: s.requirementIds, dependsOn: s.dependsOn })),
     implementationUnits: state.implementationUnits.map((u) => ({
       id: u.id,
       serviceId: u.serviceId,

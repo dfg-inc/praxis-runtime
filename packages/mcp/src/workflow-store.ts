@@ -4,7 +4,23 @@ import { createHash } from "node:crypto";
 import { bundleDigest } from "./browser-verification.js";
 import { browserServeRoot } from "./generic-verification.js";
 import { humanApprovalView, requireUserApproval } from "./human-approval.js";
+import { appendDecisions, ledgerLocation, readDecisionLedger } from "./decision-ledger.js";
 import {
+  ACCEPTANCE_INTEGRITY_NOTE,
+  acceptanceSubjects,
+  annotationOf,
+  approvalsGivenInThisCall,
+  batchCoverage,
+  evaluateIntegrity,
+  humanActCoverage,
+  integrityReport,
+  integritySummary,
+  planLedgerEntries,
+  stripIntegrity,
+  subjectKey,
+  withIntegrity,
+  type ApprovalCoverage,
+  type LedgerEntry,
   applyWorkflowCommand,
   effectiveServices,
   buildResumeBriefing,
@@ -324,7 +340,7 @@ function fingerprintFor(repo: string, command: WorkflowCommand, workItemId?: str
     token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
   } else {
     const state = loadWorkflow(repo, workItemId);
-    token = state ? `state:${createHash("sha256").update(canonicalJson(withoutDrift(state))).digest("hex")}` : "state:none";
+    token = state ? `state:${createHash("sha256").update(canonicalJson(persistable(state))).digest("hex")}` : "state:none";
   }
   return commandFingerprint({ ...command, previewedAgainst: token } as unknown as WorkflowCommand);
 }
@@ -347,8 +363,19 @@ function resolveId(layout: Layout, explicit?: string): string | null {
 }
 
 function readItem(repo: string, layout: Layout, id: string): WorkflowState {
-  if (layout.legacy) return readLegacy(repo) as WorkflowState;
-  return markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id))))));
+  if (layout.legacy) return annotateAcceptance(repo, readLegacy(repo) as WorkflowState);
+  return annotateAcceptance(repo, markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id)))))));
+}
+
+/**
+ * Every acceptance the file claims is checked against the decision ledger outside the repository (decision-ledger.ts) and
+ * the result is attached in memory only, as markSubjectDrift does for browser evidence: gates, readiness, verdicts and
+ * summaries count a claim only when it is "accepted" (acceptance-integrity.ts in core). The file's own claims are left as
+ * they are; the annotation is stripped before anything is written. This is the only place Work Item files are read for
+ * use (rebuildIndex reads them for the index summary only), so no state reaches a gate without it.
+ */
+function annotateAcceptance(repo: string, state: WorkflowState): WorkflowState {
+  return withIntegrity(state, evaluateIntegrity(state, readDecisionLedger(repo, state.workItem.id)));
 }
 
 /**
@@ -371,6 +398,11 @@ function markSubjectDrift(repo: string, state: WorkflowState): WorkflowState {
     if (current !== entry.source?.subjectDigest) entry.source = { ...(entry.source as EvidenceSource), drifted: true };
   }
   return state;
+}
+
+/** The state as it is written: no drift mark, no integrity annotation. */
+function persistable(state: WorkflowState): WorkflowState {
+  return withoutDrift(stripIntegrity(state));
 }
 
 function withoutDrift(state: WorkflowState): WorkflowState {
@@ -419,6 +451,8 @@ export function workflowStatus(repo: string, workItemId?: string): {
   /** When several work items are candidates: what each one is and where it stands, so the user can choose. */
   choose?: string;
   modeNote?: string;
+  /** Which acceptances Praxis can stand behind (acceptance-integrity.ts): only "accepted" counts. */
+  acceptance?: ReturnType<typeof acceptanceView>;
 } {
   const layout = readLayout(repo);
   if (layout && workItemId === undefined && layout.index.current === null && layout.index.items.length > 1) {
@@ -458,10 +492,25 @@ export function workflowStatus(repo: string, workItemId?: string): {
     mode: state.mode,
     next: nextStep(state),
     briefing: buildResumeBriefing(state),
+    acceptance: acceptanceView(repo, state),
     ...(state.mode === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {}),
     ...(items.length > 1
       ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} \"${item.title}\" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` }
       : {}),
+  };
+}
+
+/** What status and inspect say about acceptance: counts, each claim with its integrity, and what "accepted" means. */
+export function acceptanceView(repo: string, state: WorkflowState) {
+  const annotation = annotationOf(state);
+  const where = ledgerLocation(repo, state.workItem.id);
+  return {
+    ...integritySummary(state),
+    ledger: annotation?.ledger ?? "available",
+    ...(annotation?.ledgerReason ? { ledgerReason: annotation.ledgerReason } : {}),
+    ...("repositoryKey" in where ? { repositoryKey: { source: where.repositoryKey.source, key: where.repositoryKey.key.slice(0, 16) } } : {}),
+    subjects: integrityReport(state).map(({ key, label, status, reason }) => ({ subject: key, label, integrity: status, reason })),
+    note: ACCEPTANCE_INTEGRITY_NOTE,
   };
 }
 
@@ -557,7 +606,7 @@ function writeItem(repo: string, state: WorkflowState): string {
   requireMutationLease();
   const path = itemPath(repo, state.workItem.id);
   keepPreviousVersion(path);
-  writeAtomic(path, redactState(toPortable(repo, withoutDrift(state))));
+  writeAtomic(path, redactState(toPortable(repo, persistable(state))));
   return path;
 }
 
@@ -755,7 +804,9 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
     // A human act carries the user's approval (made by the Runtime, never part of the command); the contract verifies
     // it against the exact content again before it changes anything.
     const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...(userApproval ? { userApproval } : {}), ...(channel ? { channel } : {}), ...(evidenceSource ? { evidenceSource } : {}), ...(evidenceSources ? { evidenceSources } : {}) });
-    const path = writeItem(repo, applied.state);
+    // the decision ledger first: if it cannot be written, nothing is (DECISION_LEDGER_UNAVAILABLE) and the item file stays as it was
+    const recorded = recordDecisions(repo, resolved.state, applied.state, resolved.command, userApproval, channel);
+    const path = writeItem(repo, recorded);
     const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1 as const, current: null, items: [] };
     const entry = summarize(applied.state);
     const exists = index.items.some((item) => item.workItemId === entry.workItemId);
@@ -777,6 +828,36 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
       currentWorkItemId: current,
     };
   });
+}
+
+/**
+ * What the user's approval in THIS call covers, or null. An approval counts only when the client's dialog gave it while
+ * serving this call (approvalsGivenInThisCall): an approval object kept from an earlier call, made by a test helper or
+ * passed in any other way never produces an acceptance. A human act covers its own target; an approved review batch
+ * covers what its commands name.
+ */
+function approvalCoverage(command: WorkflowCommand, pre: WorkflowState | null, userApproval?: UserApproval, channel?: ReviewChannel): { approval: UserApproval; coverage: ApprovalCoverage } | null {
+  const given = approvalsGivenInThisCall();
+  if (userApproval && given.includes(userApproval)) return { approval: userApproval, coverage: humanActCoverage(userApproval.action, command as unknown as Record<string, unknown>) };
+  if (channel?.via === "approved" && given.includes(channel.approval)) return { approval: channel.approval, coverage: batchCoverage(channel.batch, pre) };
+  return null;
+}
+
+/**
+ * Appends what this write decided to the decision ledger and returns the state to write, with the new records' actionIds next
+ * to the acceptances they back. An agent-authored write (no approval in this call) never produces an acceptance: a claim it
+ * makes stays unverified. Revisions and withdrawals of recorded acceptances are recorded either way, so the latest decision wins.
+ */
+function recordDecisions(repo: string, pre: WorkflowState | null, post: WorkflowState, command: WorkflowCommand, userApproval?: UserApproval, channel?: ReviewChannel): WorkflowState {
+  const approved = approvalCoverage(command, pre, userApproval, channel);
+  const planned = planLedgerEntries(pre, post, approved?.coverage ?? null);
+  const written: LedgerEntry[] = planned.length ? appendDecisions(repo, post.workItem.id, planned, approved?.approval ?? null) : [];
+  const claimed = new Set(acceptanceSubjects(post).filter((s) => s.claimed).map((s) => s.key));
+  const actions: Record<string, string> = {};
+  for (const [key, id] of Object.entries(post.acceptanceActions ?? {})) if (claimed.has(key)) actions[key] = id;
+  for (const entry of written) if (entry.decision === "accept") actions[subjectKey(entry.subject.kind, entry.subject.id)] = entry.actionId;
+  const { acceptanceActions: _previous, ...rest } = post;
+  return (Object.keys(actions).length ? { ...rest, acceptanceActions: actions } : rest) as WorkflowState;
 }
 
 function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel, evidenceSource?: EvidenceSource, evidenceSources?: Record<string, EvidenceSource>): WorkflowApplyResult {
