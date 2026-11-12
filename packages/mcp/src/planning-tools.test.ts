@@ -395,8 +395,18 @@ describe("state written by alpha.48 (contract 1.0.0)", () => {
     const stored = JSON.parse(readFileSync(itemPath, "utf8"));
     expect(stored.version).toBe("1.1.0");
     expect(stored.requirements.map((r: { id: string }) => r.id)).toEqual(["REQ-ORD-001", "REQ-ORD-002"]);
+    // 0.1.0-alpha.49.3: classic switches the gates off, so it counts only as the user's choice recorded in the decision ledger. A
+    // 1.0.0 file says classic by default and nothing backs it: the gates apply until the user chooses classic again in the dialog.
+    const story = { action: "add-story", id: "US-ORD-001", requirementIds: ["REQ-ORD-001"], actor: "m", narrative: "As a m, I want x, so that y.", objective: "o", userValue: "v", happyPath: ["a"], acceptanceCriteria: [{ id: "US-ORD-001-AC-01", given: "g", when: "w", then: "t" }], expectedResults: ["r"], confirmedBehavior: false };
+    const gated = await record(repo, story);
+    expect(gated.ok).toBe(false);
+    expect((await call("praxis_workflow_status", repo, {})).data.acceptance.subjects).toEqual([expect.objectContaining({ subject: "mode:mode", integrity: "unverified" })]);
+    const rendered = (await call("praxis_review_render", repo, { view: "requirements", serve: false, workItemId: id })).data as { fingerprint: string; baseState: string };
+    const submission = JSON.stringify({ contract: "praxis.review.submission", version: 1, reviewId: "m", view: "requirements", workItemId: id, baseFingerprint: rendered.fingerprint, baseState: rendered.baseState, modeChange: { to: "classic", reason: "keep the old flow" } });
+    const chosen = await call("praxis_review_apply", repo, { submission, confirmation: "YES", workItemId: id }, dialog({ answer: "approve" }).channel);
+    expect(chosen.ok, JSON.stringify(chosen.errors)).toBe(true);
     // classic mode: the old flow (stories without a plan) is not blocked
-    await must(repo, { action: "add-story", id: "US-ORD-001", requirementIds: ["REQ-ORD-001"], actor: "m", narrative: "As a m, I want x, so that y.", objective: "o", userValue: "v", happyPath: ["a"], acceptanceCriteria: [{ id: "US-ORD-001-AC-01", given: "g", when: "w", then: "t" }], expectedResults: ["r"], confirmedBehavior: false });
+    await must(repo, story);
     expect(state(repo, id).stories.length).toBe(1);
   });
 });
@@ -760,6 +770,7 @@ describe("the user's remarks on criteria reach the BA through praxis_workflow_in
     const view = await inspect(repo, id);
     expect(view.requirements[0].acceptanceCriteria[1].review).toMatchObject({ status: "rejected", comment: "old remark", commentAt: null, previous: null });
     expect(view.requirements[0].id).toBe("REQ-ORD-001"); // the existing fields are unchanged
-    expect(Object.keys(view.requirements[0].acceptanceCriteria[0]).sort()).toEqual(["id", "review", "revision", "statement"]);
+    // integrity (0.1.0-alpha.49.3): what the decision ledger says about the stored mark
+    expect(Object.keys(view.requirements[0].acceptanceCriteria[0]).sort()).toEqual(["id", "integrity", "review", "revision", "statement"]);
   });
 });
