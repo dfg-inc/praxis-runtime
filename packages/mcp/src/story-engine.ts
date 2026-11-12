@@ -41,7 +41,7 @@ type VerificationCommand = {
   evidenceSources: Record<string, EvidenceSource>;
 };
 
-/** Git runs the service's hooks: it gets the allowlisted environment, never the Runtime's credentials (contracts child-env.ts). */
+/** Git runs the service's hooks: it gets the allowlisted environment, not the Runtime's credentials (hygiene: contracts child-env.ts). */
 function git(repo: string, args: string[], input?: string): string {
   const result = spawnSync("git", args, { cwd: repo, encoding: "utf8", input, env: gitEnv() });
   if ((result.status ?? 1) !== 0) {

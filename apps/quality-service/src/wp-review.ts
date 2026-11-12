@@ -140,7 +140,7 @@ function runConfiguredTest(repo: string, command: string): QualityVerification {
     encoding: "utf8",
     shell: true,
     timeout: 20_000,
-    // the work package's own test command: repository code, run without any credential (contracts child-env.ts)
+    // the work package's own test command: repository code, not handed any credential (hygiene, contracts child-env.ts)
     env: repositoryCodeEnv({ CI: "1" }),
   });
   const combined = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
