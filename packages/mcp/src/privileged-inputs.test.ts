@@ -101,6 +101,7 @@ describe("repository files and tool parameters have no effect either", () => {
   it("a repository .env cannot set approval, test or state-location settings", async () => {
     const journal = production();
     delete process.env.PRAXIS_TEST_APPROVALS; // the test setup sets it; here it must stay unset
+    delete process.env.PRAXIS_SKIP_DOTENV; // the packaged-extension acceptance runs the suite with it; this test reads the file
     writeFileSync(join(repo, ".env"), "PRAXIS_STATE_HOME=./state\nPRAXIS_TEST_APPROVALS=1\nPRAXIS_APPROVAL_MODE=trusted-client\nPRAXIS_APPROVAL_PAGE=on\nPRAXIS_BUNDLE_KIND=source\n");
     const doctor = await call("praxis_doctor", {});
     const data = doctor.data as { approval: { decisionLog: string }; dotenvRefused: Array<{ key: string }> };

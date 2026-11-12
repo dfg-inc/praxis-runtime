@@ -631,6 +631,12 @@ await scenario("S16", "Upgrade from alpha.48: existing work items are read witho
   eq(after.requirements.map((r) => r.id), ["REQ-LEG-001", "REQ-LEG-002"], "requirement ids are stable");
   eq(after.stories[0].id, "US-LEG-001", "story id is stable");
   eq(after.decisions[0].id, "DEC-LEG-1", "decision is kept");
+  // 0.1.0-alpha.49.3: classic switches the stage gates off, so it counts only as a choice recorded in the decision ledger. The
+  // alpha.48 item is classic by default with no such record: the gates apply until the user chooses classic in the dialog.
+  const gated = await record(upgraded, repo, story("US-LEG-002", ["REQ-LEG-002"], "As a manager, I want export, so that I share them."), id);
+  check(!gated.ok && gated.code === "STORY_PLAN_NOT_AGREED", `an unrecorded classic mode does not switch the gates off: ${gated.code}`);
+  const kept = await record(upgraded, repo, { action: "set-mode", mode: "classic", reason: "keep the old flow" }, id);
+  check(kept.ok, `choosing classic again in the dialog: ${kept.code} ${JSON.stringify(kept.errors)}`);
   await must(upgraded, repo, story("US-LEG-002", ["REQ-LEG-002"], "As a manager, I want export, so that I share them."), id);
   const inspect = await call(upgraded, "praxis_workflow_inspect", { repo, workItemId: id, view: "stories" });
   check(inspect.ok, "the old inspect tool keeps working");

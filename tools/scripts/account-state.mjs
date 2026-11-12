@@ -15,8 +15,12 @@ const home = () => join(userInfo().homedir, ".praxis");
 
 export function accountState() {
   const keys = new Map();
+  // every key seen for a path: one computed before the folder existed differs from the real path's (/var vs /private/var)
+  const removable = new Set();
   const track = (repo) => {
-    if (!keys.has(repo)) keys.set(repo, repositoryKey(repo));
+    const key = repositoryKey(repo);
+    keys.set(repo, key);
+    removable.add(key);
     return repo;
   };
   const journalFile = (repo) => join(home(), "decisions", `${track(repo) && keys.get(repo)}.jsonl`);
@@ -31,7 +35,7 @@ export function accountState() {
       }),
     /** Removes the journal and ledger kept for the tracked repositories. */
     remove: () => {
-      for (const key of new Set(keys.values())) {
+      for (const key of removable) {
         rmSync(join(home(), "decisions", `${key}.jsonl`), { force: true });
         rmSync(join(home(), "ledger", key), { recursive: true, force: true });
       }

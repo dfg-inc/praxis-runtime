@@ -91,14 +91,22 @@ function reportedPrototype() {
   s.elements = s.elements.map((e) => (e.id === "card" ? { ...e, detailFields: [{ field: "date" }, { field: "created" }, { field: "author" }, { field: "text" }] } : e));
   return { ...common([{ ...F.reported.mock, rows }, F.mock.attachments]), title: "Журнал агронома", notes: F.reported.notes, screens: [s] };
 }
-function workItem(prototype) {
+/** A human act through the tools, approved in the scripted dialog within that call: so the decision ledger records it. */
+async function applyInDialog(repo, id, command) {
+  const context = { role: "ba", version: "test", approvalChannel: approvingDialog };
+  const args = { repo, workItemId: id, command: JSON.stringify(command) };
+  const preview = await callTool("praxis_workflow_preview", args, context);
+  if (!preview.ok) throw new Error(`preview ${command.action}: ${preview.code} ${JSON.stringify(preview.errors)}`);
+  const applied = await callTool("praxis_workflow_apply", { ...args, previewFingerprint: preview.data.fingerprint, confirmation: "YES" }, context);
+  if (!applied.ok) throw new Error(`apply ${command.action}: ${applied.code} ${JSON.stringify(applied.errors)}`);
+}
+async function workItem(prototype) {
   const repo = mkdtempSync(join(tmpdir(), "praxis-patterns-"));
   const id = applyRuntimeCommand(repo, F.open).workItemId;
   applyRuntimeCommand(repo, F.repository, id);
   for (const r of F.requirements) applyRuntimeCommand(repo, { action: "add-requirement", ...r }, id);
   applyRuntimeCommand(repo, F.impact, id);
-  const accept = { action: "accept-requirements" };
-  applyRuntimeCommand(repo, accept, id, C.userChannelFor(accept));
+  await applyInDialog(repo, id, { action: "accept-requirements" });
   applyRuntimeCommand(repo, { action: "advance-phase", to: "prototype" }, id);
   applyRuntimeCommand(repo, { action: "set-prototype", prototype, summary: "browser acceptance" }, id);
   return { repo, id, state: () => loadWorkflow(repo, id) };
@@ -178,7 +186,7 @@ async function acceptance(page, phone) {
   );
 }
 
-const chat = workItem(chatPrototype());
+const chat = await workItem(chatPrototype());
 const before = JSON.stringify(chat.state().prototype);
 
 await scenario("P01", "Journal chat at desktop width: every criterion of the acceptance scenario, filters, tabs, deep link, Back, the note card", async () => {
@@ -278,7 +286,7 @@ await scenario("P02", "Journal chat at phone width: the acceptance scenario, the
   eq(errors, [], "no script errors");
   await ctx.close();
   // the conversation's own composer, which this journal does not use (it keeps its note form), still works
-  const withComposer = workItem(chatPrototype([], { ...F.chat.feed, conversation: { ...F.chat.feed.conversation, composer: { placeholder: "Новая запись…", sendLabel: "Отправить", values: { role: "агроном", kind: "Наблюдение", status: "active" } } } }));
+  const withComposer = await workItem(chatPrototype([], { ...F.chat.feed, conversation: { ...F.chat.feed.conversation, composer: { placeholder: "Новая запись…", sendLabel: "Отправить", values: { role: "агроном", kind: "Наблюдение", status: "active" } } } }));
   const c = await link(withComposer);
   const t2 = await tab(390, 844, c.port);
   await t2.page.goto(c.url);
@@ -293,7 +301,7 @@ await scenario("P02", "Journal chat at phone width: the acceptance scenario, the
 });
 
 await scenario("P03", "The same measurement on the reported table fails it: the check tells a table from a chat", async () => {
-  const wi = workItem(reportedPrototype());
+  const wi = await workItem(reportedPrototype());
   const { url, port } = await link(wi);
   const { ctx, page } = await tab(1440, 1000, port);
   await page.goto(url);
@@ -349,7 +357,7 @@ const NAV = (to) => ({ id: "nav", kind: "custom", label: "Уход со стра
 
 await scenario("P04", "Custom part in the served page: hostile script cannot reach the page, its token, the review server or the network", async () => {
   // the frame is told the real review address; it does not get the save token
-  const wi = workItem(chatPrototype(hostile("http://127.0.0.1:0/r/0")));
+  const wi = await workItem(chatPrototype(hostile("http://127.0.0.1:0/r/0")));
   const { url, port } = await link(wi);
   applyRuntimeCommand(wi.repo, { action: "update-prototype", operations: [{ op: "update-element", screenId: "journal", id: "board", patch: { custom: { ...BOARD.custom, script: `var REVIEW=${JSON.stringify(new URL(url).origin + new URL(url).pathname)};${HOSTILE}` } } }], summary: "real address" }, wi.id);
   const fresh = await link(wi);
@@ -393,7 +401,7 @@ await scenario("P04", "Custom part in the served page: hostile script cannot rea
 });
 
 await scenario("P05", "Custom part in Inspect and Review: only a click into the frame selects a declared part; the comment is saved against it", async () => {
-  const wi = workItem(chatPrototype([{ ...BOARD, custom: { ...BOARD.custom, script: "praxis.onData=function(d){document.getElementById('count').textContent=(d.rows.notes||[]).length+' notes'}" } }]));
+  const wi = await workItem(chatPrototype([{ ...BOARD, custom: { ...BOARD.custom, script: "praxis.onData=function(d){document.getElementById('count').textContent=(d.rows.notes||[]).length+' notes'}" } }]));
   const { url, port } = await link(wi);
   const { ctx, page, errors } = await tab(1440, 1000, port);
   await page.goto(url);
@@ -430,7 +438,7 @@ await scenario("P06", "Offline copy (file, no server header): the page's and the
   await new Promise((ok) => probe.listen(0, "127.0.0.1", ok));
   const probeUrl = `http://127.0.0.1:${probe.address().port}`;
   const script = `var r={};function d(k,v){r[k]=v;document.getElementById('report').textContent=JSON.stringify(r)}fetch('${probeUrl}/fetch').then(function(){d('fetch','sent')},function(){d('fetch','blocked')});var i=new Image();i.onload=function(){d('image','loaded')};i.onerror=function(){d('image','blocked')};i.src='${probeUrl}/img.png';`;
-  const wi = workItem(chatPrototype([{ ...BOARD, custom: { ...BOARD.custom, html: '<pre id="report"></pre>', script } }, NAV(probeUrl)]));
+  const wi = await workItem(chatPrototype([{ ...BOARD, custom: { ...BOARD.custom, html: '<pre id="report"></pre>', script } }, NAV(probeUrl)]));
   const { file } = await link(wi);
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
@@ -445,7 +453,7 @@ await scenario("P06", "Offline copy (file, no server header): the page's and the
 });
 
 await scenario("P07", "A part that spins its script for five seconds does not freeze the review page (Chrome runs it apart)", async () => {
-  const wi = workItem(chatPrototype([{ ...BOARD, custom: { ...BOARD.custom, html: "<p>busy</p>", script: "setTimeout(function(){var t=Date.now();while(Date.now()-t<5000){}},300)" } }]));
+  const wi = await workItem(chatPrototype([{ ...BOARD, custom: { ...BOARD.custom, html: "<p>busy</p>", script: "setTimeout(function(){var t=Date.now();while(Date.now()-t<5000){}},300)" } }]));
   const { url, port } = await link(wi);
   const { ctx, page, errors } = await tab(1440, 1000, port);
   await page.goto(url);
@@ -461,7 +469,7 @@ await scenario("P07", "A part that spins its script for five seconds does not fr
 });
 
 await scenario("P08", "Only the feed changes: the existing journal and the chat version have the same header, tabs, filters, search, note form and card, measured in Chrome", async () => {
-  const before = workItem(existingPrototype());
+  const before = await workItem(existingPrototype());
   const after = chat;
   const look = async (wi, name) => {
     const { url, port } = await link(wi);
