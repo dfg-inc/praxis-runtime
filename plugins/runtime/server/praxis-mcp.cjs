@@ -5114,7 +5114,14 @@ var init_planning_schemas = __esm({
       waivers: external_exports.array(CoverageWaiverSchema).default([]),
       /** Earlier content of requirements, the prototype and the story plan (JSON text), so a revision never loses what it replaced. */
       artifactHistory: external_exports.array(external_exports.object({ kind: external_exports.enum(["requirement", "prototype", "story-plan"]), id: external_exports.string(), revision: external_exports.number().int().positive(), at: external_exports.string(), snapshot: external_exports.string() })).default([]),
-      updatedAt: external_exports.string().optional()
+      updatedAt: external_exports.string().optional(),
+      /**
+       * Next to each acceptance the file claims ("criterion:REQ-1-AC-01", "phase:prototype", "story:US-1" ...), the id of the
+       * decision-ledger record that backs it (acceptance-integrity.ts). Written only by the Runtime's store, never by a command.
+       * A claim without one is unverified; an id is evidence only together with the ledger outside the repository. Optional and
+       * absent until the first ledger-backed acceptance, so a 0.1.0-alpha.49.2 file reads unchanged (no version bump needed).
+       */
+      acceptanceActions: external_exports.record(external_exports.string(), external_exports.string()).optional()
     };
   }
 });
@@ -5153,211 +5160,21 @@ var init_human_acts = __esm({
   }
 });
 
-// node_modules/@praxis/contracts/dist/user-approval.js
-function createUserApproval(input2) {
-  if (input2.channel === "test" && (process.env.PRAXIS_TEST_APPROVALS !== "1" || true)) {
-    throw new ApprovalError("APPROVAL_REQUIRED", "a test approval is only accepted under the test harness");
+// node_modules/@praxis/contracts/dist/acceptance-integrity.js
+function canonical(value) {
+  if (Array.isArray(value))
+    return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.entries(value).filter(([, v]) => v !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    return `{${entries.map(([k, v]) => `${JSON.stringify(k.normalize("NFC"))}:${canonical(v)}`).join(",")}}`;
   }
-  const approval = Object.freeze({
-    contract: USER_APPROVAL_CONTRACT,
-    version: USER_APPROVAL_VERSION,
-    action: input2.request.action,
-    kind: input2.request.kind,
-    summary: input2.request.summary,
-    subjectDigest: subjectDigest(input2.request.subject),
-    decision: "approved",
-    channel: input2.channel,
-    assurance: assuranceOf(input2.channel),
-    decidedAt: (input2.now ?? /* @__PURE__ */ new Date()).toISOString(),
-    ...input2.reason ? { reason: input2.reason } : {}
-  });
-  issued.add(approval);
-  return approval;
+  if (typeof value === "string")
+    return JSON.stringify(value.normalize("NFC"));
+  return JSON.stringify(value ?? null);
 }
-function withApprovalChannel(channel, run) {
-  return channelStore.run({ channel, approvals: [] }, run);
+function contentDigest(value) {
+  return `sha256:${(0, import_node_crypto.createHash)("sha256").update(canonical(value), "utf8").digest("hex")}`;
 }
-function currentApprovalChannel() {
-  return channelStore.getStore()?.channel;
-}
-function approvalsGivenInThisCall() {
-  return channelStore.getStore()?.approvals ?? [];
-}
-function approvalModeReport() {
-  const channel = currentApprovalChannel();
-  if (channel && channel.kind !== "host-permission" && channel.kind !== "trusted-client" && channel.kind !== "approval-page") {
-    return { mode: "client-ui", note: "Protected actions are approved or rejected in the client's own dialog: a client response, which the agent cannot write through Praxis. It is not independently authenticated: Praxis cannot prove that a person, rather than automation, answered." };
-  }
-  return {
-    mode: "no-dialog",
-    note: "This client cannot show an approval dialog (no MCP elicitation support). Read-only tools and previews work; protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed, because nothing the agent says can stand in for the user's approval. Use a client that supports elicitation."
-  };
-}
-function decisionLogPath(repo) {
-  const root = (0, import_node_path.resolve)(repo);
-  const home = process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path.join)((0, import_node_os.homedir)(), ".praxis");
-  const id = (0, import_node_crypto.createHash)("sha256").update(root).digest("hex").slice(0, 16);
-  return (0, import_node_path.join)(home, "decisions", `${id}.jsonl`);
-}
-function logDecision(repo, entry) {
-  if (!repo)
-    return;
-  try {
-    const path2 = decisionLogPath(repo);
-    (0, import_node_fs.mkdirSync)((0, import_node_path.dirname)(path2), { recursive: true, mode: 448 });
-    (0, import_node_fs.appendFileSync)(path2, `${JSON.stringify({ v: 2, ...entry, repository: (0, import_node_path.resolve)(repo) })}
-`, { mode: 384 });
-  } catch {
-  }
-}
-async function obtainUserApproval(request, options2 = {}) {
-  const base = { at: (/* @__PURE__ */ new Date()).toISOString(), action: request.action, summary: request.summary, subjectDigest: subjectDigest(request.subject) };
-  if (options2.confirmation === "NO") {
-    logDecision(options2.repo, { ...base, decision: "withdrawn", decidedBy: "agent", channel: "none", reason: "the agent withdrew the request (confirmation=NO); no decision of the user is claimed" });
-    throw new ApprovalError("APPROVAL_WITHDRAWN", `${request.summary} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision: Praxis has no evidence of one.`, { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false, dismissed: false });
-  }
-  const channel = currentApprovalChannel();
-  let answer;
-  if (channel) {
-    try {
-      answer = await channel.ask(request);
-    } catch (error64) {
-      if (error64 instanceof ApprovalNeedsInput)
-        throw error64;
-      if (error64 instanceof ApprovalError) {
-        const known = OUTCOME_OF_CODE[error64.code] ?? { decision: "refused", decidedBy: "praxis" };
-        const raisedBy = error64.details.channel ?? channel.kind;
-        if (error64.details.journaled !== true) {
-          const evidence = error64.details.evidence;
-          logDecision(options2.repo, { ...base, ...known, channel: raisedBy, ...evidence ? { evidence } : {}, reason: error64.message.slice(0, 200) });
-        }
-        error64.details.outcome ??= known.decision;
-        error64.details.decidedBy ??= known.decidedBy;
-        error64.details.executed ??= false;
-        delete error64.details.journaled;
-        throw error64;
-      }
-      logDecision(options2.repo, { ...base, decision: "refused", decidedBy: "praxis", channel: channel.kind, reason: error64 instanceof Error ? error64.message : String(error64) });
-      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error64 instanceof Error ? error64.message : String(error64)}. Nothing was changed.`, { ...previewDetails(request), outcome: "refused", decidedBy: "praxis" });
-    }
-  }
-  if (channel && answer && answer.answer !== "unavailable") {
-    const answeredBy = answer.channel ?? channel.kind;
-    const decidedBy = decidedByFor(answeredBy);
-    const said = { channel: answeredBy, decidedBy, personVerified: false, ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {} };
-    if (answer.answer === "approve") {
-      const clicked = answer.evidence?.decidedAt ? new Date(answer.evidence.decidedAt) : void 0;
-      const approval = createUserApproval({ request, channel: answeredBy, ...clicked && Number.isFinite(clicked.getTime()) && clicked.getTime() <= Date.now() ? { now: clicked } : {} });
-      channelStore.getStore()?.approvals.push(approval);
-      if (!answer.journaled)
-        logDecision(options2.repo, { ...base, decision: "approved", ...said });
-      return approval;
-    }
-    const dismissed = answer.answer === "dismiss";
-    if (!answer.journaled)
-      logDecision(options2.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", ...said });
-    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", decidedBy, personVerified: false, channel: answeredBy, ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {}, rejected: !dismissed, dismissed };
-    if (dismissed) {
-      throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: ${whereAsked(answeredBy)} was closed without a decision. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
-    }
-    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected in ${whereAsked(answeredBy)}. Nothing was changed.`, details);
-  }
-  const automatic = answer?.automatic;
-  const why = automatic ? `the client answered "${automatic}" ${answer?.evidence?.latencyMs ?? "?"} ms after it was asked, faster than a person can read the request${answer?.reason ? ` (${answer.reason})` : ""}; that is the client's answer, not the user's` : answer?.reason ?? "this client cannot show an approval dialog (no MCP elicitation support)";
-  logDecision(options2.repo, {
-    ...base,
-    decision: automatic ? "auto-answered" : "unavailable",
-    decidedBy: automatic ? "client" : "nobody",
-    channel: answer?.channel ?? channel?.kind ?? "none",
-    ...answer?.evidence ? { evidence: answer.evidence } : {},
-    reason: why.slice(0, 300)
-  });
-  throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask the user (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog is shown (for example the Claude Code CLI in a terminal). The agent's or the user's text in chat, a page and any setting are not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`, { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", decidedBy: automatic ? "client" : "nobody", ...answer?.evidence ? { evidence: answer.evidence } : {}, ...automatic ? { automatic } : {} });
-}
-function previewDetails(request) {
-  return { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, ...request.risks?.length ? { risks: request.risks } : {} } };
-}
-function verifyUserApproval(approval, expected) {
-  if (!approval || typeof approval !== "object" || !issued.has(approval)) {
-    throw new ApprovalError("APPROVAL_REQUIRED", `${expected.action} needs the user's approval; none was given for this call`);
-  }
-  if (approval.decision !== "approved")
-    throw new ApprovalError("APPROVAL_REJECTED", `${expected.action} was not approved`);
-  if (approval.action !== expected.action) {
-    throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is for ${approval.action}, not ${expected.action}`);
-  }
-  if (approval.subjectDigest !== subjectDigest(expected.subject)) {
-    throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is not for ${expected.action} as it is now: the content differs from what the user approved`);
-  }
-  const age = (expected.now ?? /* @__PURE__ */ new Date()).getTime() - Date.parse(approval.decidedAt);
-  if (!Number.isFinite(age) || age > USER_APPROVAL_TTL_MS || age < -6e4) {
-    throw new ApprovalError("APPROVAL_EXPIRED", "the user's approval is too old; ask again");
-  }
-  return approval;
-}
-function hasMutationLease() {
-  return lease.getStore() !== void 0;
-}
-function requireMutationLease() {
-  if (!lease.getStore()) {
-    throw new ApprovalError("APPROVAL_REQUIRED", "direct mutation is not authorized: the user has not approved it. It must run through a Praxis apply tool, after the user's approval");
-  }
-}
-function runWorkflowRecordWrite(write) {
-  return lease.run({ action: "workflow-record" }, write);
-}
-function runApprovedMutation(approval, write) {
-  if (!issued.has(approval) || approval.decision !== "approved") {
-    throw new ApprovalError("APPROVAL_REQUIRED", "a mutation needs an approval issued for this call");
-  }
-  return lease.run({ action: approval.action, approval }, write);
-}
-var import_node_async_hooks, import_node_crypto, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, issued, subjectDigest, assuranceOf, ApprovalError, ApprovalNeedsInput, channelStore, decidedByFor, whereAsked, OUTCOME_OF_CODE, lease;
-var init_user_approval = __esm({
-  "node_modules/@praxis/contracts/dist/user-approval.js"() {
-    import_node_async_hooks = require("node:async_hooks");
-    import_node_crypto = require("node:crypto");
-    import_node_fs = require("node:fs");
-    import_node_os = require("node:os");
-    import_node_path = require("node:path");
-    USER_APPROVAL_CONTRACT = "praxis.approval.user";
-    USER_APPROVAL_VERSION = 1;
-    USER_APPROVAL_TTL_MS = 10 * 60 * 1e3;
-    issued = /* @__PURE__ */ new WeakSet();
-    subjectDigest = (subject) => `sha256:${(0, import_node_crypto.createHash)("sha256").update(subject, "utf8").digest("hex")}`;
-    assuranceOf = (channel) => channel === "host-permission" ? "host-prompt" : channel === "trusted-client" ? "trusted-client" : channel === "approval-page" ? "approval-page" : "client-ui";
-    ApprovalError = class extends Error {
-      code;
-      details;
-      constructor(code, message, details = {}) {
-        super(message);
-        this.name = "ApprovalError";
-        this.code = code;
-        this.details = details;
-      }
-    };
-    ApprovalNeedsInput = class extends Error {
-      request;
-      constructor(request) {
-        super(`approval needed: ${request.summary}`);
-        this.name = "ApprovalNeedsInput";
-        this.request = request;
-      }
-    };
-    channelStore = new import_node_async_hooks.AsyncLocalStorage();
-    decidedByFor = (channel) => channel === "trusted-client" ? "trusted-client" : channel === "host-permission" ? "host-prompt" : channel === "approval-page" ? "approval-page" : channel === "terminal-prompt" ? "terminal-prompt" : "client-dialog";
-    whereAsked = (kind) => kind === "approval-page" ? "the Praxis approval page" : kind === "terminal-prompt" ? "the terminal prompt" : "the client's approval dialog";
-    OUTCOME_OF_CODE = {
-      APPROVAL_PENDING: { decision: "pending", decidedBy: "nobody" },
-      APPROVAL_TIMED_OUT: { decision: "timed-out", decidedBy: "nobody" },
-      APPROVAL_EXPIRED: { decision: "expired", decidedBy: "nobody" },
-      APPROVAL_CLIENT_UI_REQUIRED: { decision: "unavailable", decidedBy: "nobody" }
-    };
-    lease = new import_node_async_hooks.AsyncLocalStorage();
-  }
-});
-
-// node_modules/@praxis/contracts/dist/planning.js
 function sorted(value) {
   if (Array.isArray(value))
     return value.map(sorted);
@@ -5366,19 +5183,17 @@ function sorted(value) {
   }
   return value;
 }
-function requirementsFingerprint(state2) {
-  return hash(activeRequirements(state2).map((r) => ({
+function requirementsReviewFields(state2) {
+  return activeRequirements(state2).map((r) => ({
     id: r.id,
     statement: r.statement,
     scope: r.scope,
     ac: r.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement }))
-  })));
+  }));
 }
-function contractsFingerprint(state2) {
-  return hash(state2.contracts.map(({ status: _s, agreement: _a7, everAgreed: _e, ...content }) => content));
-}
-function withoutEmptyDefaults(prototype) {
-  const { datasets, scenarios, limitations, screens, ...rest } = prototype;
+function prototypeContent(prototype) {
+  const { feedback: _f, history: _h, status: _s, revision: _r, ...content } = prototype;
+  const { datasets, scenarios, limitations, screens, ...rest } = content;
   const out = { ...rest };
   if (datasets?.length)
     out.datasets = datasets;
@@ -5403,19 +5218,11 @@ function withoutEmptyDefaults(prototype) {
   }));
   return out;
 }
-function prototypeFingerprint(prototype) {
-  if (!prototype)
-    return "none";
-  const { feedback: _f, history: _h, status: _s, revision: _r, ...content } = prototype;
-  return hash(withoutEmptyDefaults(content));
+function storyPlanContent(plan) {
+  return plan.entries.map(({ review: _r, status, excludedReason, ...entry }) => ({ ...entry, excluded: status === "excluded", ...status === "excluded" && excludedReason !== void 0 ? { excludedReason } : {} }));
 }
-function storyPlanFingerprint(plan) {
-  if (!plan)
-    return "none";
-  return hash(plan.entries.map(({ review: _r, status, excludedReason, ...entry }) => ({ ...entry, excluded: status === "excluded", ...status === "excluded" && excludedReason !== void 0 ? { excludedReason } : {} })));
-}
-function storiesFingerprint(state2) {
-  return hash(activeStories(state2).map((s) => ({
+function storyReviewContent(s) {
+  return {
     id: s.id,
     revision: s.revision,
     requirementIds: s.requirementIds,
@@ -5427,7 +5234,26 @@ function storiesFingerprint(state2) {
     edgeCases: s.edgeCases,
     businessRules: s.businessRules,
     expectedResults: s.expectedResults
-  })));
+  };
+}
+function requirementsFingerprint(state2) {
+  return fingerprint16(requirementsReviewFields(state2));
+}
+function contractsFingerprint(state2) {
+  return fingerprint16(state2.contracts.map(({ status: _s, agreement: _a7, everAgreed: _e, ...content }) => content));
+}
+function prototypeFingerprint(prototype) {
+  if (!prototype)
+    return "none";
+  return fingerprint16(prototypeContent(prototype));
+}
+function storyPlanFingerprint(plan) {
+  if (!plan)
+    return "none";
+  return fingerprint16(storyPlanContent(plan));
+}
+function storiesFingerprint(state2) {
+  return fingerprint16(activeStories(state2).map(storyReviewContent));
 }
 function currentFingerprint(state2, phase) {
   if (phase === "requirements_review")
@@ -5438,21 +5264,752 @@ function currentFingerprint(state2, phase) {
     return storyPlanFingerprint(state2.storyPlan);
   return storiesFingerprint(state2);
 }
+function phaseContent(state2, phase) {
+  switch (phase) {
+    case "requirements_review":
+      return {
+        kind: "phase",
+        phase,
+        requirements: activeRequirements(state2).map((r) => ({ id: r.id, statement: r.statement, scope: r.scope, criteria: r.acceptanceCriteria.map((c) => contentDigest(criterionContent(r.id, c))) }))
+      };
+    case "prototype":
+      return { kind: "phase", phase, prototype: state2.prototype ? prototypeContent(state2.prototype) : null };
+    case "story_plan":
+      return { kind: "phase", phase, plan: state2.storyPlan ? storyPlanContent(state2.storyPlan) : null };
+    default:
+      return { kind: "phase", phase, stories: activeStories(state2).map((s) => contentDigest({ ...storyReviewContent(s), title: s.title ?? null, capabilities: s.capabilities })) };
+  }
+}
+function contractContent(c) {
+  const { status: _s, agreement: _a7, everAgreed: _e, ...content } = c;
+  return { kind: "contract", ...content };
+}
+function acceptanceSubjects(state2) {
+  const out = [];
+  const add = (kind, id, claimed, content, label, revision, stale = false) => out.push({ kind, id, key: subjectKey(kind, id), claimed, contentDigest: contentDigest(content), label, ...revision !== void 0 ? { revision } : {}, stale });
+  for (const r of activeRequirements(state2)) {
+    for (const c of r.acceptanceCriteria)
+      add("criterion", c.id, c.review.status === "accepted", criterionContent(r.id, c), `acceptance criterion ${c.id}`, c.revision);
+  }
+  for (const phase of ACCEPTABLE_PHASES) {
+    const acceptance = state2.phaseAcceptance?.[phase];
+    if (!acceptance)
+      continue;
+    add("phase", phase, true, phaseContent(state2, phase), `${phase} acceptance`, acceptance.revision, acceptance.fingerprint !== currentFingerprint(state2, phase));
+  }
+  for (const s of state2.stories) {
+    if (s.status === "superseded")
+      continue;
+    add("story", s.id, s.confirmedBehavior || s.status === "confirmed", storyContent(s), `story ${s.id} confirmation`, s.revision);
+  }
+  for (const d of state2.decisions)
+    add("decision", d.id, d.confirmed, decisionContent(d), `decision ${d.id} confirmation`, d.revision);
+  for (const s of state2.services)
+    add("service", s.id, s.status === "approved" || s.status === "completed", serviceContent(s), `service ${s.id} approval (${s.status})`);
+  for (const c of state2.contracts ?? [])
+    add("contract", c.id, c.status === "agreed", contractContent(c), `contract ${c.id} agreement`);
+  for (const w of state2.waivers ?? [])
+    add("waiver", w.id, true, waiverContent(w), `waiver ${w.id} (${w.kind}${w.requirementId ? ` for ${w.requirementId}` : ""})`);
+  add("mode", "mode", state2.mode === "classic", { kind: "mode", mode: "classic" }, "classic mode (stage gates off)");
+  return out;
+}
+function annotationOf(state2) {
+  return state2 ? state2[INTEGRITY_KEY] : void 0;
+}
+function withIntegrity(state2, annotation) {
+  return { ...state2, [INTEGRITY_KEY]: annotation };
+}
+function stripIntegrity(state2) {
+  if (!(INTEGRITY_KEY in state2))
+    return state2;
+  const { [INTEGRITY_KEY]: _a7, ...rest } = state2;
+  return rest;
+}
+function judge(subject, actionId, ledger, byAction, bySubject) {
+  if (subject.stale)
+    return { status: "stale", reason: "it changed after it was accepted (a later revision): accept it again" };
+  if (ledger.status === "corrupt")
+    return { status: "invalid", reason: `the decision ledger cannot be trusted: ${ledger.reason}` };
+  if (ledger.status === "unavailable")
+    return { status: "unverified", reason: `the decision ledger could not be read: ${ledger.reason}` };
+  if (!actionId)
+    return { status: "unverified", reason: "the file references no Praxis decision record (accepted before 0.1.0-alpha.49.3, or written into the file)" };
+  const found = byAction.get(actionId) ?? [];
+  if (found.length === 0)
+    return { status: "unverified", reason: "no decision record on this computer matches it (made on another clone or computer, or written into the file)" };
+  if (found.length > 1)
+    return { status: "invalid", reason: `decision record ${actionId} appears ${found.length} times in the ledger` };
+  const entry = found[0];
+  const recorded = subjectKey(entry.subject.kind, entry.subject.id);
+  if (recorded !== subject.key)
+    return { status: "invalid", reason: `decision record ${actionId} belongs to ${recorded}, not to this subject (copied)` };
+  if (entry.decision !== "accept")
+    return { status: "invalid", reason: `decision record ${actionId} is a ${entry.decision}, not an acceptance` };
+  const later = (bySubject.get(subject.key) ?? []).filter((e) => e.seq > entry.seq);
+  if (entry.contentDigest !== subject.contentDigest) {
+    if (later.some((e) => e.decision === "supersede" && e.contentDigest === subject.contentDigest))
+      return { status: "stale", reason: "it was accepted for an earlier revision: accept it again" };
+    return { status: "invalid", reason: "its content changed after it was accepted, outside Praxis" };
+  }
+  const takenBack = later.find((e) => (e.decision === "reject" || e.decision === "revoke" && e.approval !== null) && e.contentDigest === subject.contentDigest);
+  if (takenBack)
+    return { status: "invalid", reason: `a later decision on this computer, on any branch or worktree, took this content back (${takenBack.decision}, ${takenBack.at}): accept it again if it still applies` };
+  return { status: "accepted", reason: `recorded by Praxis on this computer at ${entry.at} after ${entry.approval?.decidedBy ?? "an approval"} answered (a client response; not proof a person decided)` };
+}
+function evaluateIntegrity(state2, ledger) {
+  const entries = ledger.status === "available" ? ledger.entries.filter((e) => e.workItemId === state2.workItem.id) : [];
+  const byAction = /* @__PURE__ */ new Map();
+  const bySubject = /* @__PURE__ */ new Map();
+  for (const entry of [...entries].sort((a, b) => a.seq - b.seq)) {
+    byAction.set(entry.actionId, [...byAction.get(entry.actionId) ?? [], entry]);
+    const key = subjectKey(entry.subject.kind, entry.subject.id);
+    bySubject.set(key, [...bySubject.get(key) ?? [], entry]);
+  }
+  const actions = state2.acceptanceActions ?? {};
+  const subjects = {};
+  const all = acceptanceSubjects(state2);
+  const copies = duplicateKeys(all);
+  for (const subject of all) {
+    if (!subject.claimed)
+      continue;
+    const actionId = typeof actions[subject.key] === "string" ? actions[subject.key] : void 0;
+    const count2 = copies.get(subject.key);
+    const verdict = count2 ? { status: "invalid", reason: `its id appears ${count2} times in the work item (duplicate id): no copy counts until the duplicates are removed` } : judge(subject, actionId, ledger, byAction, bySubject);
+    subjects[subject.key] = { key: subject.key, kind: subject.kind, id: subject.id, label: subject.label, ...verdict, ...actionId ? { actionId } : {}, ...count2 ? { duplicate: true } : {} };
+  }
+  const records = {};
+  for (const record5 of state2.approvals ?? [])
+    records[record5.id] = recordBacked(record5, entries) ? "accepted" : "unverified";
+  return {
+    ledger: ledger.status,
+    ...ledger.status !== "available" ? { ledgerReason: ledger.reason } : {},
+    subjects,
+    records,
+    independentVerification: "unavailable"
+  };
+}
+function duplicateKeys(subjects) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const s of subjects)
+    counts.set(s.key, (counts.get(s.key) ?? 0) + 1);
+  return new Map([...counts].filter(([, n]) => n > 1));
+}
+function recordBacked(record5, entries) {
+  if (!record5.subjectDigest)
+    return false;
+  const batchAction = record5.action === "review-decisions" || record5.action === "open-classic-work-item";
+  const same = entries.filter((e) => e.approval && e.approval.subjectDigest === record5.subjectDigest && e.approval.decidedAt === record5.at && (batchAction ? e.approval.action === "review-decisions" : e.approval.action === record5.action));
+  if (same.length === 0)
+    return false;
+  const named = record5.subjects.filter((s) => RECORD_SUBJECT_KINDS[s.type]);
+  if (named.length === 0)
+    return true;
+  const backedSubject = (s) => same.some((e) => e.subject.kind === RECORD_SUBJECT_KINDS[s.type] && e.subject.id === s.id);
+  return batchAction ? named.some(backedSubject) : named.every(backedSubject);
+}
+function isTrusted(state2, key) {
+  const entry = annotationOf(state2)?.subjects[key];
+  return entry === void 0 || entry.status === "accepted";
+}
+function untrustedClaim(state2, key) {
+  const entry = annotationOf(state2)?.subjects[key];
+  return entry && entry.status !== "accepted" ? entry : void 0;
+}
+function clearIntegrity(state2, keys2) {
+  const annotation = annotationOf(state2);
+  if (!annotation)
+    return state2;
+  const clearable = keys2.filter((key) => key in annotation.subjects && !annotation.subjects[key].duplicate);
+  if (clearable.length === 0)
+    return state2;
+  const subjects = { ...annotation.subjects };
+  for (const key of clearable)
+    delete subjects[key];
+  return withIntegrity(state2, { ...annotation, subjects });
+}
+function enforcedMode(state2) {
+  return state2.mode === "classic" && !isTrusted(state2, subjectKey("mode", "mode")) ? "guided" : state2.mode;
+}
+function trustedView(state2) {
+  const annotation = annotationOf(state2);
+  if (!annotation || !Object.values(annotation.subjects).some((s) => s.status !== "accepted"))
+    return state2;
+  const bad2 = (kind, id) => !isTrusted(state2, subjectKey(kind, id));
+  const phaseAcceptance = { ...state2.phaseAcceptance };
+  for (const phase of ACCEPTABLE_PHASES)
+    if (phaseAcceptance[phase] && bad2("phase", phase) && untrustedClaim(state2, subjectKey("phase", phase))?.status !== "stale")
+      delete phaseAcceptance[phase];
+  return {
+    ...state2,
+    mode: enforcedMode(state2),
+    requirements: state2.requirements.map((r) => r.acceptanceCriteria.some((c) => c.review.status === "accepted" && bad2("criterion", c.id)) ? { ...r, acceptanceCriteria: r.acceptanceCriteria.map((c) => c.review.status === "accepted" && bad2("criterion", c.id) ? { ...c, review: { ...c.review, status: "pending" } } : c) } : r),
+    phaseAcceptance,
+    stories: state2.stories.map((s) => (s.confirmedBehavior || s.status === "confirmed") && s.status !== "superseded" && bad2("story", s.id) ? { ...s, confirmedBehavior: false, status: s.status === "confirmed" ? "proposed" : s.status } : s),
+    decisions: state2.decisions.map((d) => d.confirmed && bad2("decision", d.id) ? { ...d, confirmed: false } : d),
+    services: state2.services.map((s) => (s.status === "approved" || s.status === "completed") && bad2("service", s.id) ? { ...s, status: "review_required" } : s),
+    contracts: (state2.contracts ?? []).map((c) => c.status === "agreed" && bad2("contract", c.id) ? { ...c, status: "proposed" } : c),
+    waivers: (state2.waivers ?? []).filter((w) => !bad2("waiver", w.id)),
+    ...state2.prototype && state2.prototype.status === "accepted" && bad2("phase", "prototype") ? { prototype: { ...state2.prototype, status: "draft" } } : {},
+    ...state2.storyPlan && state2.storyPlan.status === "agreed" && bad2("phase", "story_plan") ? { storyPlan: { ...state2.storyPlan, status: "draft" } } : {}
+  };
+}
+function outstandingIntegrity(state2) {
+  const annotation = annotationOf(state2);
+  if (!annotation)
+    return [];
+  const waivers = state2.waivers ?? [];
+  const sameGap = (a, b) => a.kind === b.kind && (a.requirementId ?? null) === (b.requirementId ?? null);
+  const replaced = (id) => {
+    const old = waivers.find((w) => w.id === id);
+    return old !== void 0 && waivers.some((w) => w.id !== id && sameGap(w, old) && isTrusted(state2, subjectKey("waiver", w.id)));
+  };
+  return Object.values(annotation.subjects).filter((e) => (e.status === "unverified" || e.status === "invalid") && !(e.kind === "waiver" && !e.duplicate && replaced(e.id)));
+}
+function integrityReport(state2) {
+  const annotation = annotationOf(state2);
+  return acceptanceSubjects(state2).filter((s) => s.claimed).map((s) => annotation?.subjects[s.key] ?? { key: s.key, kind: s.kind, id: s.id, label: s.label, status: s.stale ? "stale" : "accepted", reason: annotation ? "accepted in this call" : "in-memory state (not read from a file)" });
+}
+function integritySummary(state2) {
+  const integrity = { accepted: 0, unverified: 0, invalid: 0, stale: 0 };
+  for (const entry of integrityReport(state2))
+    if (entry.status in integrity)
+      integrity[entry.status] += 1;
+  return { integrity, independentVerification: "unavailable" };
+}
+function integrityProblem(state2, key) {
+  const entry = untrustedClaim(state2, key);
+  if (!entry || entry.status === "stale")
+    return null;
+  const code = entry.status === "invalid" ? ACCEPTANCE_INVALID : ACCEPTANCE_UNVERIFIED;
+  return { code, subject: key, status: entry.status, text: `${code}: ${entry.label} is marked accepted in the work item file but ${entry.reason}; re-accept it through the review` };
+}
+function planLedgerEntries(pre, post, approval) {
+  const preAnnotation = annotationOf(pre);
+  const postAnnotation = annotationOf(post);
+  if (pre && (!preAnnotation || !postAnnotation))
+    throw new WorkflowError(DECISION_LEDGER_UNAVAILABLE, "a write must start from a work item the store read and checked against the decision ledger");
+  const before = new Map((pre ? acceptanceSubjects(pre) : []).map((s) => [s.key, s]));
+  const afterList = acceptanceSubjects(post);
+  const after = new Map(afterList.map((s) => [s.key, s]));
+  const duplicated = duplicateKeys(afterList);
+  const recorded = (key) => before.get(key)?.claimed === true && preAnnotation?.subjects[key]?.status === "accepted";
+  const madeNow = (key) => !postAnnotation || !(key in postAnnotation.subjects);
+  const out = [];
+  const plan = (s, decision) => out.push({ key: s.key, subject: { kind: s.kind, id: s.id, ...s.revision !== void 0 ? { revision: s.revision } : {} }, contentDigest: s.contentDigest, decision });
+  const withdrawn = (b, s) => approval ? plan(b, "revoke") : plan(s && s.contentDigest !== b.contentDigest ? s : b, "supersede");
+  const criterionStatus2 = (state2, id) => state2?.requirements.flatMap((r) => r.acceptanceCriteria).find((c) => c.id === id)?.review.status;
+  for (const [key, s] of after) {
+    const b = before.get(key);
+    const changed = b !== void 0 && b.contentDigest !== s.contentDigest;
+    if (s.claimed) {
+      if (recorded(key) && !changed)
+        continue;
+      if (madeNow(key) && !s.stale && !duplicated.has(key) && approval?.covers(key))
+        plan(s, "accept");
+      else if (recorded(key))
+        withdrawn(b, s);
+      continue;
+    }
+    if (s.kind === "criterion" && approval?.covers(key) && criterionStatus2(post, s.id) === "rejected" && !(criterionStatus2(pre, s.id) === "rejected" && !changed)) {
+      if (recorded(key) && changed)
+        plan(b, "revoke");
+      plan(s, "reject");
+      continue;
+    }
+    if (recorded(key))
+      withdrawn(b, s);
+    else if (approval && changed && s.kind === "criterion" && approval.covers(key))
+      plan(b, "revoke");
+  }
+  for (const [key, b] of before)
+    if (!after.has(key) && recorded(key))
+      withdrawn(b, void 0);
+  return out;
+}
+function batchCoverage(batch, pre) {
+  const keys2 = /* @__PURE__ */ new Set();
+  let newWaivers = false;
+  for (const command of batch) {
+    switch (command.action) {
+      case "review-requirements": {
+        for (const decision of command.decisions ?? []) {
+          for (const a of decision.acceptance ?? [])
+            if (a.status !== void 0)
+              keys2.add(subjectKey("criterion", a.id));
+        }
+        keys2.add(subjectKey("phase", "requirements_review"));
+        break;
+      }
+      case "accept-requirements": {
+        const ids = command.requirementIds ?? (pre ? activeRequirements(pre).filter((r) => r.scope === "in").map((r) => r.id) : []);
+        for (const r of pre ? activeRequirements(pre) : [])
+          if (ids.includes(r.id))
+            for (const c of r.acceptanceCriteria)
+              keys2.add(subjectKey("criterion", c.id));
+        keys2.add(subjectKey("phase", "requirements_review"));
+        break;
+      }
+      case "accept-prototype":
+        keys2.add(subjectKey("phase", "prototype"));
+        break;
+      case "agree-story-plan":
+        keys2.add(subjectKey("phase", "story_plan"));
+        break;
+      case "accept-stories":
+        keys2.add(subjectKey("phase", "stories_review"));
+        break;
+      case "set-contract": {
+        const contract = command.contract;
+        if (contract?.status === "agreed" && contract.id)
+          keys2.add(subjectKey("contract", contract.id));
+        break;
+      }
+      case "waive-coverage":
+        newWaivers = true;
+        break;
+      case "set-mode":
+        if (command.mode === "classic")
+          keys2.add(subjectKey("mode", "mode"));
+        break;
+      case "open":
+        if (command.mode === "classic")
+          keys2.add(subjectKey("mode", "mode"));
+        break;
+      default:
+        break;
+    }
+  }
+  const existingWaivers = new Set((pre?.waivers ?? []).map((w) => subjectKey("waiver", w.id)));
+  return { covers: (key) => keys2.has(key) || newWaivers && key.startsWith("waiver:") && !existingWaivers.has(key) };
+}
+function humanActCoverage(action, command) {
+  const keys2 = /* @__PURE__ */ new Set();
+  if (action === "confirm-story" && command.action === "confirm-story")
+    keys2.add(subjectKey("story", String(command.id)));
+  if (action === "confirm-decision" && command.action === "confirm-decision")
+    keys2.add(subjectKey("decision", String(command.id)));
+  if (action === "approve-service" && command.action === "set-service")
+    keys2.add(subjectKey("service", String(command.service?.id)));
+  if (action === "revise-acceptance" && command.action === "revise-acceptance")
+    for (const edit of command.edits ?? [])
+      keys2.add(subjectKey("criterion", edit.id));
+  return { covers: (candidate) => keys2.has(candidate) };
+}
+var import_node_crypto, SUBJECT_KINDS, subjectKey, LEDGER_DECISIONS, ACCEPTANCE_UNVERIFIED, ACCEPTANCE_INVALID, DECISION_LEDGER_UNAVAILABLE, ACCEPTANCE_INTEGRITY_NOTE, fingerprint16, activeRequirements, activeStories, EMPTY_ELEMENT_DEFAULTS, criterionContent, storyContent, decisionContent, serviceContent, waiverContent, INTEGRITY_KEY, GENESIS, RECORD_SUBJECT_KINDS;
+var init_acceptance_integrity = __esm({
+  "node_modules/@praxis/contracts/dist/acceptance-integrity.js"() {
+    import_node_crypto = require("node:crypto");
+    init_errors2();
+    init_planning_schemas();
+    SUBJECT_KINDS = ["criterion", "phase", "story", "decision", "service", "contract", "waiver", "mode"];
+    subjectKey = (kind, id) => `${kind}:${id}`;
+    LEDGER_DECISIONS = ["accept", "reject", "revoke", "supersede"];
+    ACCEPTANCE_UNVERIFIED = "ACCEPTANCE_UNVERIFIED";
+    ACCEPTANCE_INVALID = "ACCEPTANCE_INVALID";
+    DECISION_LEDGER_UNAVAILABLE = "DECISION_LEDGER_UNAVAILABLE";
+    ACCEPTANCE_INTEGRITY_NOTE = "accepted = recorded by Praxis on this computer (in its decision ledger, outside the repository) after the MCP client's approval dialog answered for exactly this content. That is a client response, not proof that a person decided: a program running as the same OS user can answer the dialog or write the ledger. unverified = the work item file claims an acceptance that nothing on this computer backs (made before 0.1.0-alpha.49.3, on another clone or computer, or written into the file). invalid = the ledger contradicts the file (content changed after acceptance, a later rejection, revocation or revision, or a record copied from another subject). stale = accepted for an earlier revision. Only accepted counts for gates; re-accept the others through the normal review, where the content is shown. No acceptance is independently verified in this release.";
+    fingerprint16 = (value) => (0, import_node_crypto.createHash)("sha256").update(JSON.stringify(sorted(value))).digest("hex").slice(0, 16);
+    activeRequirements = (state2) => state2.requirements.filter((r) => r.status !== "superseded");
+    activeStories = (state2) => state2.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded");
+    EMPTY_ELEMENT_DEFAULTS = { options: [], filters: [], detailFields: [], tabs: [], related: [], required: false };
+    criterionContent = (requirementId, c) => ({ kind: "criterion", id: c.id, requirementId, revision: c.revision, statement: c.statement });
+    storyContent = (s) => ({
+      kind: "story",
+      id: s.id,
+      revision: s.revision,
+      requirementIds: s.requirementIds,
+      actor: s.actor,
+      narrative: s.narrative,
+      objective: s.objective,
+      userValue: s.userValue,
+      preconditions: s.preconditions,
+      happyPath: s.happyPath,
+      alternatives: s.alternatives,
+      negative: s.negative,
+      edgeCases: s.edgeCases,
+      businessRules: s.businessRules,
+      acceptanceCriteria: s.acceptanceCriteria,
+      expectedResults: s.expectedResults,
+      assumptionIds: s.assumptionIds,
+      title: s.title ?? null,
+      capabilities: s.capabilities
+    });
+    decisionContent = (d) => ({ kind: "decision", id: d.id, revision: d.revision, statement: d.statement, rationale: d.rationale ?? null, notes: d.notes ?? null });
+    serviceContent = (s) => ({ kind: "service", id: s.id, name: s.name, serviceKind: s.kind, responsibilities: s.responsibilities, requirementIds: s.requirementIds, dependsOn: s.dependsOn, status: s.status });
+    waiverContent = (w) => ({ kind: "waiver", id: w.id, waived: w.kind, requirementId: w.requirementId ?? null, reason: w.reason });
+    INTEGRITY_KEY = "acceptanceIntegrity";
+    GENESIS = "0".repeat(64);
+    RECORD_SUBJECT_KINDS = { story: "story", decision: "decision", service: "service", criterion: "criterion" };
+  }
+});
+
+// node_modules/@praxis/contracts/dist/user-approval.js
+function createUserApproval(input2) {
+  if (input2.channel === "test" && (process.env.PRAXIS_TEST_APPROVALS !== "1" || true)) {
+    throw new ApprovalError("APPROVAL_REQUIRED", "a test approval is only accepted under the test harness");
+  }
+  const approval = Object.freeze({
+    contract: USER_APPROVAL_CONTRACT,
+    version: USER_APPROVAL_VERSION,
+    action: input2.request.action,
+    kind: input2.request.kind,
+    summary: input2.request.summary,
+    subjectDigest: subjectDigest(input2.request.subject),
+    decision: "approved",
+    channel: input2.channel,
+    decidedBy: decidedByFor(input2.channel),
+    personVerified: false,
+    independentlyVerified: false,
+    assurance: assuranceOf(input2.channel),
+    decidedAt: (input2.now ?? /* @__PURE__ */ new Date()).toISOString(),
+    ...input2.reason ? { reason: input2.reason } : {}
+  });
+  issued.add(approval);
+  return approval;
+}
+function withApprovalChannel(channel, run) {
+  return channelStore.run({ channel, approvals: [] }, run);
+}
+function currentApprovalChannel() {
+  return channelStore.getStore()?.channel;
+}
+function approvalsGivenInThisCall() {
+  return channelStore.getStore()?.approvals ?? [];
+}
+function approvalModeReport() {
+  const channel = currentApprovalChannel();
+  if (channel && channel.kind !== "host-permission" && channel.kind !== "trusted-client" && channel.kind !== "approval-page") {
+    return {
+      mode: "client-ui",
+      note: "Protected actions run only when the client's own approval dialog answers approve for exactly that action. That answer is a client response, which the agent cannot write through Praxis's tools; it is not verified approval by a person: Praxis cannot tell whether a person or automation answered, and a program running as the user can run its own MCP client and answer it.",
+      personVerified: false,
+      independentlyVerified: false
+    };
+  }
+  return {
+    mode: "no-dialog",
+    note: "This client cannot show an approval dialog (no MCP elicitation support). Read-only tools and previews work; protected actions (Git, Jira, confirming a Story or decision, Quality fixes) are NOT executed, because nothing the agent says can stand in for an answer in the client's dialog. Use a client that supports elicitation.",
+    personVerified: false,
+    independentlyVerified: false
+  };
+}
+function securityStateHome() {
+  if (false) {
+    const override = process.env.PRAXIS_STATE_HOME?.trim();
+    if (override)
+      return (0, import_node_path.resolve)(override);
+  }
+  const home = (0, import_node_os.userInfo)().homedir;
+  if (!home)
+    throw new ApprovalError("DECISION_LEDGER_UNAVAILABLE", "the account home cannot be read from the OS account database, so Praxis has no place for its security state");
+  return (0, import_node_path.join)(home, ".praxis");
+}
+function realLocation(path2) {
+  const rest = [];
+  let current = (0, import_node_path.resolve)(path2);
+  for (; ; ) {
+    try {
+      return (0, import_node_path.join)((0, import_node_fs.realpathSync)(current), ...rest);
+    } catch {
+      const up = (0, import_node_path.dirname)(current);
+      if (up === current)
+        return (0, import_node_path.resolve)(path2);
+      rest.unshift((0, import_node_path.basename)(current));
+      current = up;
+    }
+  }
+}
+function linkedWorktreeCommonDir(dotGit) {
+  try {
+    const named = /^gitdir:\s*(.+?)\s*$/m.exec((0, import_node_fs.readFileSync)(dotGit, "utf8"))?.[1];
+    if (!named)
+      return void 0;
+    const gitDir = (0, import_node_fs.realpathSync)((0, import_node_path.resolve)((0, import_node_path.dirname)(dotGit), named));
+    const common = (0, import_node_fs.realpathSync)((0, import_node_path.resolve)(gitDir, (0, import_node_fs.readFileSync)((0, import_node_path.join)(gitDir, "commondir"), "utf8").trim()));
+    if ((0, import_node_path.dirname)(gitDir) !== (0, import_node_path.join)(common, "worktrees"))
+      return void 0;
+    const back = (0, import_node_fs.realpathSync)((0, import_node_path.resolve)(gitDir, (0, import_node_fs.readFileSync)((0, import_node_path.join)(gitDir, "gitdir"), "utf8").trim()));
+    return back === (0, import_node_fs.realpathSync)(dotGit) ? common : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function accountHomeReal() {
+  try {
+    const home = (0, import_node_os.userInfo)().homedir;
+    return home ? (0, import_node_fs.realpathSync)(home) : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function repositoryIdentity(repo, options2 = {}) {
+  const real = realOrResolved(repo);
+  const home = options2.accountHome !== void 0 ? realOrResolved(options2.accountHome) : accountHomeReal();
+  const directory = () => ({ key: (0, import_node_crypto2.createHash)("sha256").update(`dir:${real}`).digest("hex"), kind: "directory", real, root: real, basis: real, roots: [real] });
+  for (let dir = real; ; ) {
+    if (home !== void 0 && dir === home)
+      return directory();
+    const dotGit = (0, import_node_path.join)(dir, ".git");
+    let st;
+    try {
+      st = (0, import_node_fs.lstatSync)(dotGit);
+    } catch {
+      st = void 0;
+    }
+    if (st) {
+      const common = st.isDirectory() ? realOrResolved(dotGit) : st.isFile() ? linkedWorktreeCommonDir(dotGit) : void 0;
+      if (!common)
+        return directory();
+      const mainTree = (0, import_node_path.basename)(common) === ".git" ? (0, import_node_path.dirname)(common) : void 0;
+      return {
+        key: (0, import_node_crypto2.createHash)("sha256").update(`git:${common}`).digest("hex"),
+        kind: "git",
+        real,
+        root: dir,
+        basis: common,
+        roots: [.../* @__PURE__ */ new Set([real, dir, common, ...mainTree ? [mainTree] : []])]
+      };
+    }
+    const up = (0, import_node_path.dirname)(dir);
+    if (up === dir)
+      return directory();
+    dir = up;
+  }
+}
+function securityStateInsideRepository(repo, home, options2 = {}) {
+  let location;
+  try {
+    location = realLocation(home ?? securityStateHome());
+  } catch {
+    return void 0;
+  }
+  return repositoryIdentity(repo, options2).roots.some((root) => within(location, root)) ? location : void 0;
+}
+function assertSecurityStateOutside(repo) {
+  const home = securityStateHome();
+  const inside2 = securityStateInsideRepository(repo, home);
+  if (inside2) {
+    throw new ApprovalError("DECISION_LEDGER_UNAVAILABLE", `Praxis's security state (the decision journal and ledger) would be inside the repository being operated on (${inside2}), where the repository's own contents can edit it. It is neither read nor written there, and protected actions are refused. Nothing was changed.`, { executed: false, outcome: "refused", ...approvalLabels("none", "praxis"), stateHome: inside2 });
+  }
+  return home;
+}
+function decisionLogPath(repo) {
+  return (0, import_node_path.join)(securityStateHome(), "decisions", `${repositoryKey(repo)}.jsonl`);
+}
+function adoptLegacyDecisionLog(repo) {
+  const path2 = decisionLogPath(repo);
+  if ((0, import_node_fs.existsSync)(path2))
+    return;
+  const legacy = (0, import_node_path.join)((0, import_node_path.dirname)(path2), `${(0, import_node_crypto2.createHash)("sha256").update((0, import_node_path.resolve)(repo)).digest("hex").slice(0, 16)}.jsonl`);
+  if (!(0, import_node_fs.existsSync)(legacy))
+    return;
+  (0, import_node_fs.mkdirSync)((0, import_node_path.dirname)(path2), { recursive: true, mode: 448 });
+  (0, import_node_fs.copyFileSync)(legacy, path2, import_node_fs.constants.COPYFILE_EXCL);
+  (0, import_node_fs.chmodSync)(path2, 384);
+}
+function logDecision(repo, entry) {
+  if (!repo)
+    return;
+  try {
+    if (securityStateInsideRepository(repo))
+      return;
+    adoptLegacyDecisionLog(repo);
+    const path2 = decisionLogPath(repo);
+    (0, import_node_fs.mkdirSync)((0, import_node_path.dirname)(path2), { recursive: true, mode: 448 });
+    (0, import_node_fs.appendFileSync)(path2, `${JSON.stringify({ v: 2, ...entry, personVerified: false, independentlyVerified: false, repository: repositoryIdentity(repo).root })}
+`, { mode: 384 });
+  } catch {
+  }
+}
+async function obtainUserApproval(request, options2 = {}) {
+  const base = { at: (/* @__PURE__ */ new Date()).toISOString(), action: request.action, summary: request.summary, subjectDigest: subjectDigest(request.subject) };
+  if (options2.confirmation === "NO") {
+    logDecision(options2.repo, { ...base, decision: "withdrawn", decidedBy: "agent", channel: "none", reason: "the agent withdrew the request (confirmation=NO); no decision of the user is claimed" });
+    throw new ApprovalError("APPROVAL_WITHDRAWN", `${request.summary} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision: Praxis has no evidence of one.`, { executed: false, outcome: "withdrawn", ...approvalLabels("none", "agent"), rejected: false, dismissed: false });
+  }
+  if (options2.repo) {
+    try {
+      assertSecurityStateOutside(options2.repo);
+    } catch (error64) {
+      if (error64 instanceof ApprovalError)
+        Object.assign(error64.details, previewDetails(request));
+      throw error64;
+    }
+  }
+  const channel = currentApprovalChannel();
+  let answer;
+  if (channel) {
+    try {
+      answer = await channel.ask(request);
+    } catch (error64) {
+      if (error64 instanceof ApprovalNeedsInput)
+        throw error64;
+      if (error64 instanceof ApprovalError) {
+        const known = OUTCOME_OF_CODE[error64.code] ?? { decision: "refused", decidedBy: "praxis" };
+        const raisedBy = error64.details.channel ?? channel.kind;
+        if (error64.details.journaled !== true) {
+          const evidence = error64.details.evidence;
+          logDecision(options2.repo, { ...base, ...known, channel: raisedBy, ...evidence ? { evidence } : {}, reason: error64.message.slice(0, 200) });
+        }
+        error64.details.outcome ??= known.decision;
+        error64.details.channel ??= raisedBy;
+        error64.details.decidedBy ??= known.decidedBy;
+        error64.details.personVerified = false;
+        error64.details.independentlyVerified = false;
+        error64.details.executed ??= false;
+        delete error64.details.journaled;
+        throw error64;
+      }
+      logDecision(options2.repo, { ...base, decision: "refused", decidedBy: "praxis", channel: channel.kind, reason: error64 instanceof Error ? error64.message : String(error64) });
+      throw new ApprovalError("APPROVAL_REQUIRED", `the client could not ask for approval: ${error64 instanceof Error ? error64.message : String(error64)}. Nothing was changed.`, { ...previewDetails(request), outcome: "refused", ...approvalLabels(channel.kind, "praxis") });
+    }
+  }
+  if (channel && answer && answer.answer !== "unavailable") {
+    const answeredBy = answer.channel ?? channel.kind;
+    const decidedBy = decidedByFor(answeredBy);
+    const said = { ...approvalLabels(answeredBy, decidedBy), ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {} };
+    if (answer.answer === "approve") {
+      const clicked = answer.evidence?.decidedAt ? new Date(answer.evidence.decidedAt) : void 0;
+      const approval = createUserApproval({ request, channel: answeredBy, ...clicked && Number.isFinite(clicked.getTime()) && clicked.getTime() <= Date.now() ? { now: clicked } : {} });
+      channelStore.getStore()?.approvals.push(approval);
+      if (!answer.journaled)
+        logDecision(options2.repo, { ...base, decision: "approved", ...said });
+      return approval;
+    }
+    const dismissed = answer.answer === "dismiss";
+    if (!answer.journaled)
+      logDecision(options2.repo, { ...base, decision: dismissed ? "dismissed" : "rejected", ...said });
+    const details = { executed: false, outcome: dismissed ? "dismissed" : "rejected", ...approvalLabels(answeredBy, decidedBy), ...answer.evidence ? { evidence: answer.evidence } : {}, ...answer.reason ? { reason: answer.reason } : {}, rejected: !dismissed, dismissed };
+    if (dismissed) {
+      throw new ApprovalError("APPROVAL_DISMISSED", `${request.summary} was not run: ${whereAsked(answeredBy)} was closed without a decision. Nothing was changed. This is not a rejection; ask the user whether to try again.`, details);
+    }
+    throw new ApprovalError("APPROVAL_REJECTED", `${request.summary} was rejected in ${whereAsked(answeredBy)}. Nothing was changed.`, details);
+  }
+  const automatic = answer?.automatic;
+  const why = automatic ? `the client answered "${automatic}" ${answer?.evidence?.latencyMs ?? "?"} ms after it was asked, faster than a person can read the request${answer?.reason ? ` (${answer.reason})` : ""}; that is the client's answer, not the user's` : answer?.reason ?? "this client cannot show an approval dialog (no MCP elicitation support)";
+  const unansweredChannel = answer?.channel ?? channel?.kind ?? "none";
+  logDecision(options2.repo, {
+    ...base,
+    decision: automatic ? "auto-answered" : "unavailable",
+    decidedBy: automatic ? "client" : "nobody",
+    channel: unansweredChannel,
+    ...answer?.evidence ? { evidence: answer.evidence } : {},
+    reason: why.slice(0, 300)
+  });
+  throw new ApprovalError("APPROVAL_CLIENT_UI_REQUIRED", `${request.summary} was NOT executed, and nobody rejected it: Praxis could not ask through a client dialog (${why}). Show the user the preview below. It can be applied where Praxis can ask: a client whose approval dialog is shown (for example the Claude Code CLI in a terminal). The agent's or the user's text in chat, a page and any setting are not accepted as approval, and trying again here gives the same answer. Read-only tools still work.`, { ...previewDetails(request), outcome: automatic ? "auto-answered" : "unavailable", ...approvalLabels(unansweredChannel, automatic ? "client" : "nobody"), ...answer?.evidence ? { evidence: answer.evidence } : {}, ...automatic ? { automatic } : {} });
+}
+function previewDetails(request) {
+  return { executed: false, preview: { action: request.action, summary: request.summary, description: request.description, ...request.risks?.length ? { risks: request.risks } : {} } };
+}
+function verifyUserApproval(approval, expected) {
+  if (!approval || typeof approval !== "object" || !issued.has(approval)) {
+    throw new ApprovalError("APPROVAL_REQUIRED", `${expected.action} needs the user's approval; none was given for this call`);
+  }
+  if (approval.decision !== "approved")
+    throw new ApprovalError("APPROVAL_REJECTED", `${expected.action} was not approved`);
+  if (approval.action !== expected.action) {
+    throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is for ${approval.action}, not ${expected.action}`);
+  }
+  if (approval.subjectDigest !== subjectDigest(expected.subject)) {
+    throw new ApprovalError("APPROVAL_SCOPE_MISMATCH", `this approval is not for ${expected.action} as it is now: the content differs from what the approval dialog showed`);
+  }
+  const age = (expected.now ?? /* @__PURE__ */ new Date()).getTime() - Date.parse(approval.decidedAt);
+  if (!Number.isFinite(age) || age > USER_APPROVAL_TTL_MS || age < -6e4) {
+    throw new ApprovalError("APPROVAL_EXPIRED", "the approval is too old; ask again");
+  }
+  return approval;
+}
+function hasMutationLease() {
+  return lease.getStore() !== void 0;
+}
+function requireMutationLease() {
+  if (!lease.getStore()) {
+    throw new ApprovalError("APPROVAL_REQUIRED", "direct mutation is not authorized: no approval was given for it. It must run through a Praxis apply tool, after the client's approval dialog approves it");
+  }
+}
+function runWorkflowRecordWrite(write) {
+  return lease.run({ action: "workflow-record" }, write);
+}
+function runApprovedMutation(approval, write) {
+  if (!issued.has(approval) || approval.decision !== "approved") {
+    throw new ApprovalError("APPROVAL_REQUIRED", "a mutation needs an approval issued for this call");
+  }
+  return lease.run({ action: approval.action, approval }, write);
+}
+var import_node_async_hooks, import_node_crypto2, import_node_fs, import_node_os, import_node_path, USER_APPROVAL_CONTRACT, USER_APPROVAL_VERSION, USER_APPROVAL_TTL_MS, approvalLabels, issued, subjectDigest, assuranceOf, ApprovalError, ApprovalNeedsInput, channelStore, decidedByFor, realOrResolved, repositoryKey, within, whereAsked, OUTCOME_OF_CODE, lease;
+var init_user_approval = __esm({
+  "node_modules/@praxis/contracts/dist/user-approval.js"() {
+    import_node_async_hooks = require("node:async_hooks");
+    import_node_crypto2 = require("node:crypto");
+    import_node_fs = require("node:fs");
+    import_node_os = require("node:os");
+    import_node_path = require("node:path");
+    USER_APPROVAL_CONTRACT = "praxis.approval.user";
+    USER_APPROVAL_VERSION = 1;
+    USER_APPROVAL_TTL_MS = 10 * 60 * 1e3;
+    approvalLabels = (channel, decidedBy) => ({ channel, decidedBy, personVerified: false, independentlyVerified: false });
+    issued = /* @__PURE__ */ new WeakSet();
+    subjectDigest = (subject) => `sha256:${(0, import_node_crypto2.createHash)("sha256").update(subject, "utf8").digest("hex")}`;
+    assuranceOf = (channel) => channel === "host-permission" ? "host-prompt" : channel === "trusted-client" ? "trusted-client" : channel === "approval-page" ? "approval-page" : "client-ui";
+    ApprovalError = class extends Error {
+      code;
+      details;
+      constructor(code, message, details = {}) {
+        super(message);
+        this.name = "ApprovalError";
+        this.code = code;
+        this.details = details;
+      }
+    };
+    ApprovalNeedsInput = class extends Error {
+      request;
+      constructor(request) {
+        super(`approval needed: ${request.summary}`);
+        this.name = "ApprovalNeedsInput";
+        this.request = request;
+      }
+    };
+    channelStore = new import_node_async_hooks.AsyncLocalStorage();
+    decidedByFor = (channel) => channel === "trusted-client" ? "trusted-client" : channel === "host-permission" ? "host-prompt" : channel === "approval-page" ? "approval-page" : channel === "terminal-prompt" ? "terminal-prompt" : "client-dialog";
+    realOrResolved = (path2) => {
+      try {
+        return (0, import_node_fs.realpathSync)(path2);
+      } catch {
+        return (0, import_node_path.resolve)(path2);
+      }
+    };
+    repositoryKey = (repo) => repositoryIdentity(repo).key;
+    within = (child, parent) => child === parent || child.startsWith(parent.endsWith(import_node_path.sep) ? parent : `${parent}${import_node_path.sep}`);
+    whereAsked = (kind) => kind === "approval-page" ? "the Praxis approval page (test source)" : kind === "terminal-prompt" ? "the terminal prompt" : "the client's approval dialog";
+    OUTCOME_OF_CODE = {
+      APPROVAL_PENDING: { decision: "pending", decidedBy: "nobody" },
+      APPROVAL_TIMED_OUT: { decision: "timed-out", decidedBy: "nobody" },
+      APPROVAL_EXPIRED: { decision: "expired", decidedBy: "nobody" },
+      APPROVAL_CLIENT_UI_REQUIRED: { decision: "unavailable", decidedBy: "nobody" }
+    };
+    lease = new import_node_async_hooks.AsyncLocalStorage();
+  }
+});
+
+// node_modules/@praxis/contracts/dist/planning.js
 function acceptanceStatus(state2, phase) {
   const acceptance = state2.phaseAcceptance[phase];
   if (!acceptance)
     return "missing";
-  return acceptance.fingerprint === currentFingerprint(state2, phase) ? "accepted" : "stale";
+  if (acceptance.fingerprint !== currentFingerprint(state2, phase))
+    return "stale";
+  const untrusted = untrustedClaim(state2, subjectKey("phase", phase));
+  return untrusted ? untrusted.status === "invalid" ? "invalid" : untrusted.status === "stale" ? "stale" : "unverified" : "accepted";
 }
 function recordAcceptance(state2, phase, via, now) {
   const revision = phase === "prototype" ? state2.prototype?.revision ?? 0 : phase === "story_plan" ? state2.storyPlan?.revision ?? 0 : state2.workItem.revision;
-  return {
+  return clearIntegrity({
     ...state2,
     phaseAcceptance: {
       ...state2.phaseAcceptance,
       [phase]: { revision, at: iso(now), via, fingerprint: currentFingerprint(state2, phase) }
     }
-  };
+  }, [subjectKey("phase", phase)]);
 }
 function touch(state2, now, note2) {
   const revision = state2.workItem.revision + 1;
@@ -5595,7 +6152,7 @@ function expectationsFor(state2, requirement) {
   return { required: STORY_CAPABILITIES.filter((c) => c !== "other" && required4.has(c)), advisory, because };
 }
 function analyzeStoryCoverage(state2) {
-  const waivers = state2.waivers;
+  const waivers = state2.waivers.filter((w) => isTrusted(state2, subjectKey("waiver", w.id)));
   const waived = (kind, requirementId) => waivers.some((w) => w.kind === kind && (w.requirementId === void 0 || w.requirementId === requirementId));
   const stories2 = activeStories(state2);
   const planEntries = (state2.storyPlan?.entries ?? []).filter((e) => e.status !== "excluded");
@@ -5752,6 +6309,7 @@ function applyRequirementDecisions(state2, command, now, approvedRewording = fal
   const changed = [];
   const summary = [];
   const acceptanceChanges = [];
+  const redecided = [];
   let contentChanged = false;
   for (const decision of command.decisions) {
     const current = requirementOf(next, decision.requirementId);
@@ -5802,7 +6360,9 @@ function applyRequirementDecisions(state2, command, now, approvedRewording = fal
       }
       if (ac.status !== void 0 || ac.comment !== void 0) {
         const old = criterion.review;
-        const statusChanged = ac.status !== void 0 && ac.status !== old.status;
+        const statusChanged = ac.status !== void 0 && ac.status !== effectiveReview(state2, criterion);
+        if (statusChanged && command.via === "approved")
+          redecided.push(subjectKey("criterion", criterion.id));
         const nextComment = ac.comment !== void 0 ? ac.comment === "" ? void 0 : ac.comment : old.comment;
         const commentChanged = ac.comment !== void 0 && nextComment !== old.comment;
         if (commentChanged && command.via === "chat" && old.comment && (old.commentVia === "html-review" || old.commentVia === "approved" || old.commentVia === void 0 && old.via !== void 0 && old.via !== "chat")) {
@@ -5867,7 +6427,7 @@ function applyRequirementDecisions(state2, command, now, approvedRewording = fal
   if (summary.length === 0 && !contentChanged) {
     return { state: state2, duplicate: true, result: { changedRequirementIds: [], noChange: true, reviewProgress: reviewProgress(state2), accepted: acceptanceStatus(state2, "requirements_review") === "accepted" } };
   }
-  next = touch(next, now, `requirements reviewed (${command.via}): ${summary.join("; ")}`);
+  next = touch(clearIntegrity(next, redecided), now, `requirements reviewed (${command.via}): ${summary.join("; ")}`);
   const marked = command.decisions.some((d) => d.acceptance.some((a) => a.status !== void 0));
   if (marked && (command.via === "html-review" || command.via === "approved") && reviewProgress(next).complete && acceptanceStatus(next, "requirements_review") !== "accepted") {
     next = recordAcceptance(next, "requirements_review", command.via, now);
@@ -5893,7 +6453,9 @@ function markDownstreamStale(state2, requirementId, now) {
 function reviewProgress(state2) {
   const reqs = inScope(state2);
   const criteria = reqs.flatMap((r) => r.acceptanceCriteria);
-  const count2 = (status) => criteria.filter((c) => c.review.status === status).length;
+  const statusOf = (c) => effectiveReview(state2, c);
+  const count2 = (status) => criteria.filter((c) => statusOf(c) === status).length;
+  const unverified = criteria.filter((c) => c.review.status === "accepted" && statusOf(c) !== "accepted").length;
   return {
     requirements: reqs.length,
     deferred: activeRequirements(state2).filter((r) => r.scope === "deferred").length,
@@ -5902,7 +6464,8 @@ function reviewProgress(state2) {
     accepted: count2("accepted"),
     rejected: count2("rejected"),
     pending: count2("pending"),
-    complete: criteria.length > 0 && criteria.every((c) => c.review.status === "accepted") && reqs.every((r) => r.acceptanceCriteria.length > 0)
+    ...unverified > 0 ? { unverifiedAcceptances: unverified } : {},
+    complete: criteria.length > 0 && criteria.every((c) => statusOf(c) === "accepted") && reqs.every((r) => r.acceptanceCriteria.length > 0)
   };
 }
 function assertNoRealSecrets(value, where) {
@@ -6478,23 +7041,80 @@ function implementationOrderOf(state2) {
   }
   return ids.filter((id) => !done.has(id));
 }
-function phaseGates(state2, to) {
+function phaseGates(rawState, to) {
+  const state2 = trustedView(rawState);
   const missingItems = [];
   const warnings = [];
+  const integrity = [];
   const reqs = inScope(state2);
   const need = (condition, text) => {
     if (!condition)
       missingItems.push(text);
   };
+  const needTrusted = (key) => {
+    const problem = integrityProblem(rawState, key);
+    if (!problem)
+      return false;
+    if (!integrity.some((i) => i.subject === key))
+      integrity.push({ code: problem.code, subject: problem.subject, status: problem.status });
+    missingItems.push(problem.text);
+    return true;
+  };
+  const phaseAccepted = (phase, text) => {
+    const status = acceptanceStatus(rawState, phase);
+    if (status === "unverified" || status === "invalid")
+      needTrusted(subjectKey("phase", phase));
+    else
+      need(status === "accepted", text);
+  };
+  const claimed = stripIntegrity(rawState);
+  const criteriaAccepted = (text) => {
+    const flagged = /* @__PURE__ */ new Set();
+    for (const r of inScope(rawState))
+      for (const c of r.acceptanceCriteria)
+        if (c.review.status === "accepted" && needTrusted(subjectKey("criterion", c.id)))
+          flagged.add(c.id);
+    const criteria = reqs.flatMap((r) => r.acceptanceCriteria);
+    need(criteria.length > 0 && reqs.every((r) => r.acceptanceCriteria.length > 0) && criteria.every((c) => c.review.status === "accepted" || flagged.has(c.id)), text);
+  };
   const kind = state2.workItem.kind;
   const STALE_LABEL = { requirements_review: "the requirements", prototype: "the prototype", story_plan: "the story plan", stories_review: "the stories" };
   const upstreamFresh = (phases) => {
-    for (const phase of phases)
-      need(acceptanceStatus(state2, phase) !== "stale", `${STALE_LABEL[phase]} changed after you accepted ${phase === "story_plan" ? "it" : "them"}: review and accept again`);
+    for (const phase of phases) {
+      const status = acceptanceStatus(rawState, phase);
+      if (status === "unverified" || status === "invalid")
+        needTrusted(subjectKey("phase", phase));
+      else
+        need(status !== "stale", `${STALE_LABEL[phase]} changed after you accepted ${phase === "story_plan" ? "it" : "them"}: review and accept again`);
+    }
   };
   const confirmedStories = () => {
-    const unconfirmed = activeStories(state2).filter((st) => !st.confirmedBehavior);
+    const flagged = /* @__PURE__ */ new Set();
+    for (const st of activeStories(rawState))
+      if (st.confirmedBehavior && needTrusted(subjectKey("story", st.id)))
+        flagged.add(st.id);
+    const unconfirmed = activeStories(state2).filter((st) => !st.confirmedBehavior && !flagged.has(st.id));
     need(unconfirmed.length === 0, `every story confirmed by the user (confirm-story): ${unconfirmed.map((st) => st.id).join(", ")} still ${unconfirmed.length === 1 ? "needs" : "need"} it`);
+  };
+  const contractsAgreed = (suffix) => {
+    const flagged = /* @__PURE__ */ new Set();
+    for (const contract of rawState.contracts)
+      if (contract.status === "agreed" && needTrusted(subjectKey("contract", contract.id)))
+        flagged.add(contract.id);
+    for (const contract of state2.contracts)
+      if (!flagged.has(contract.id))
+        need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user${suffix}`);
+  };
+  const coverageOk = () => {
+    const coverage2 = analyzeStoryCoverage(state2);
+    if (coverage2.ok)
+      return;
+    const outstanding = new Set(outstandingIntegrity(rawState).map((e) => e.key));
+    for (const w of rawState.waivers)
+      if (outstanding.has(subjectKey("waiver", w.id)))
+        needTrusted(subjectKey("waiver", w.id));
+    const asClaimed = analyzeStoryCoverage(claimed);
+    need(asClaimed.ok, `coverage gaps: ${asClaimed.gaps.map((g) => g.reason).concat(asClaimed.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
   };
   switch (to) {
     case "requirements_review":
@@ -6502,29 +7122,34 @@ function phaseGates(state2, to) {
       need(reqs.every((r) => r.acceptanceCriteria.length > 0), "every in-scope requirement needs acceptance criteria");
       break;
     case "prototype":
-      need(acceptanceStatus(state2, "requirements_review") === "accepted", "requirements accepted by the user (every criterion) and unchanged since");
-      need(reviewProgress(state2).complete, `every criterion accepted (${reviewProgress(state2).rejected} rejected, ${reviewProgress(state2).pending} pending)`);
+      phaseAccepted("requirements_review", "requirements accepted by the user (every criterion) and unchanged since");
+      criteriaAccepted(`every criterion accepted (${reviewProgress(state2).rejected} rejected, ${reviewProgress(state2).pending} pending)`);
       if (kind !== "feature")
         need(state2.impact !== void 0, `${kind} work needs the existing behaviour and impact recorded first (record-impact)`);
       break;
     case "story_plan":
-      need(acceptanceStatus(state2, "requirements_review") === "accepted", "requirements accepted and unchanged since");
-      need(reviewProgress(state2).complete, "every criterion accepted (one was rejected or reopened since)");
-      need(acceptanceStatus(state2, "prototype") === "accepted" || state2.waivers.some((w) => w.kind === "prototype"), "prototype accepted (or an explicit waiver with a reason)");
+      phaseAccepted("requirements_review", "requirements accepted and unchanged since");
+      criteriaAccepted("every criterion accepted (one was rejected or reopened since)");
+      if (acceptanceStatus(rawState, "prototype") !== "accepted" && !state2.waivers.some((w) => w.kind === "prototype")) {
+        const claimedWaiver = rawState.waivers.filter((w) => w.kind === "prototype");
+        for (const w of claimedWaiver)
+          needTrusted(subjectKey("waiver", w.id));
+        if (claimedWaiver.length === 0)
+          phaseAccepted("prototype", "prototype accepted (or an explicit waiver with a reason)");
+      }
       break;
     case "stories_review": {
-      need(acceptanceStatus(state2, "story_plan") === "accepted", "story plan agreed and unchanged since");
+      phaseAccepted("story_plan", "story plan agreed and unchanged since");
       const plan = state2.storyPlan?.entries.filter((e) => e.status !== "excluded") ?? [];
       const detailed = plan.filter((e) => activeStories(state2).some((s) => s.id === e.id));
       need(plan.length > 0 && detailed.length === plan.length, `every planned story needs detailed content (${plan.length - detailed.length} still planned)`);
       break;
     }
     case "architecture": {
-      need(acceptanceStatus(state2, "stories_review") === "accepted", "stories reviewed and accepted, unchanged since");
+      phaseAccepted("stories_review", "stories reviewed and accepted, unchanged since");
       upstreamFresh(["requirements_review", "prototype", "story_plan"]);
       confirmedStories();
-      const coverage2 = analyzeStoryCoverage(state2);
-      need(coverage2.ok, `coverage gaps: ${coverage2.gaps.map((g) => g.reason).concat(coverage2.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
+      coverageOk();
       break;
     }
     case "development":
@@ -6541,8 +7166,7 @@ function phaseGates(state2, to) {
         for (const dep of service.dependsOn)
           if (!state2.services.some((s) => s.id === dep))
             missingItems.push(`service ${service.id} depends on unknown ${dep}`);
-      for (const contract of state2.contracts)
-        need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user: implementation across services waits for it`);
+      contractsAgreed(": implementation across services waits for it");
       const cyc = implementationOrderOf(state2);
       need(cyc.length === 0, `services depend on each other in a cycle: ${cyc.join(", ")}`);
       for (const repo of state2.repositories) {
@@ -6553,28 +7177,32 @@ function phaseGates(state2, to) {
     case "quality": {
       upstreamFresh(["requirements_review", "prototype", "story_plan", "stories_review"]);
       confirmedStories();
-      for (const contract of state2.contracts)
-        need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user (it was changed after implementation started?)`);
+      contractsAgreed(" (it was changed after implementation started?)");
       for (const service of state2.services)
         need(state2.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
       break;
     }
     case "delivery":
-      for (const contract of state2.contracts)
-        need(contract.status === "agreed", `contract ${contract.id} (${contract.name}) is not agreed by the user`);
+      contractsAgreed("");
       need(state2.verdicts.some((v) => v.scope === "feature" && v.verdict !== "FAIL" && !v.stale), "a current feature verdict that is not FAIL");
       const evidence = evaluateEvidence(state2);
       need(evidence.totals.attested === 0, `every passing criterion has an independently executed result (${evidence.totals.attested} rest on an agent's own record or on a record from before provenance existed: run verify-stories)`);
       need(evidence.verdict !== "FAIL", `the evidence for the current criteria and stories is complete and passing${evidence.gaps.length ? `: ${evidence.gaps.slice(0, 4).join("; ")}${evidence.gaps.length > 4 ? "; ..." : ""}` : ""}`);
       for (const service of state2.services) {
         need(state2.implementationUnits.some((u) => u.serviceId === service.id && !u.stale), `service ${service.id} has no current implementation record`);
-        need(service.status === "approved" || service.status === "completed" || state2.verdicts.some((v) => v.scope === "service" && v.scopeId === service.id && v.verdict !== "FAIL" && !v.stale), `service ${service.id} has no current non-FAIL verdict`);
+        const passing = state2.verdicts.some((v) => v.scope === "service" && v.scopeId === service.id && v.verdict !== "FAIL" && !v.stale);
+        if (!passing && service.status !== "approved" && service.status !== "completed") {
+          const raw = rawState.services.find((s) => s.id === service.id);
+          if (raw && (raw.status === "approved" || raw.status === "completed"))
+            needTrusted(subjectKey("service", service.id));
+        }
+        need(service.status === "approved" || service.status === "completed" || passing, `service ${service.id} has no current non-FAIL verdict`);
       }
       break;
     default:
       break;
   }
-  return { ok: missingItems.length === 0, missing: missingItems, warnings };
+  return { ok: missingItems.length === 0, missing: missingItems, warnings, ...integrity.length ? { integrity } : {} };
 }
 function advancePhase(state2, command, now) {
   const from = state2.phase;
@@ -6582,19 +7210,25 @@ function advancePhase(state2, command, now) {
     throw missing("PHASE_NOT_FORWARD", `${command.to} is not after ${from}; use return-to-phase to go back`);
   const failures = [];
   const warnings = [];
+  const integrity = [];
   for (let i = phaseIndex(from) + 1; i <= phaseIndex(command.to); i += 1) {
     const gate = phaseGates(state2, PHASES[i]);
     warnings.push(...gate.warnings);
     if (!gate.ok)
       failures.push({ phase: PHASES[i], missing: gate.missing });
+    for (const item of gate.integrity ?? [])
+      if (!integrity.some((x) => x.subject === item.subject))
+        integrity.push(item);
   }
-  if (failures.length > 0 && state2.mode === "guided") {
-    throw missing("PHASE_GATE", `cannot enter ${command.to}: ${failures.map((f) => `${f.phase} needs ${f.missing.join("; ")}`).join(" | ")}`, { failures });
+  if (failures.length > 0 && enforcedMode(state2) === "guided") {
+    const onlyIntegrity = failures.every((f) => f.missing.every((m) => m.startsWith(`${ACCEPTANCE_UNVERIFIED}:`) || m.startsWith(`${ACCEPTANCE_INVALID}:`)));
+    const code = onlyIntegrity ? integrity.some((i) => i.code === ACCEPTANCE_INVALID) ? ACCEPTANCE_INVALID : ACCEPTANCE_UNVERIFIED : "PHASE_GATE";
+    throw missing(code, `cannot enter ${command.to}: ${failures.map((f) => `${f.phase} needs ${f.missing.join("; ")}`).join(" | ")}`, { failures, ...integrity.length ? { integrity } : {} });
   }
   const entry = { at: iso(now), kind: "advance", from, to: command.to, reason: command.reason ?? "", invalidated: [] };
   let next = touch({ ...state2, phase: command.to, phaseHistory: [...state2.phaseHistory, entry].slice(-200) }, now, `phase ${from} -> ${command.to}`);
   next = { ...next, sessionLog: [...next.sessionLog, { at: iso(now), summary: `moved from ${from} to ${command.to}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep(next).summary }].slice(-200) };
-  return { state: next, duplicate: false, result: { phase: command.to, gatesMissing: failures, warnings: [...new Set(warnings)], enforced: state2.mode === "guided" } };
+  return { state: next, duplicate: false, result: { phase: command.to, gatesMissing: failures, warnings: [...new Set(warnings)], enforced: enforcedMode(state2) === "guided" } };
 }
 function returnToPhase(state2, command, now) {
   const from = state2.phase;
@@ -6609,11 +7243,19 @@ function returnToPhase(state2, command, now) {
   const next = touch({ ...state2, phase: command.to, phaseAcceptance, phaseHistory: [...state2.phaseHistory, entry].slice(-200), sessionLog: [...state2.sessionLog, note2].slice(-200) }, now, `returned from ${from} to ${command.to}: ${command.reason}`);
   return { state: next, duplicate: false, result: { phase: command.to, invalidated } };
 }
-function nextStep(state2) {
+function nextStep(rawState) {
+  const state2 = trustedView(rawState);
   const phase = state2.phase;
   const progress = reviewProgress(state2);
   const open4 = state2.openQuestions;
-  const base = { phase, blockers: [...state2.blockers] };
+  const untrusted = outstandingIntegrity(rawState);
+  const base = {
+    phase,
+    blockers: [
+      ...state2.blockers,
+      ...untrusted.length ? [`${untrusted.length} acceptance(s) in this work item are not backed by a Praxis decision record on this computer (${untrusted.map((s) => `${s.label}: ${s.status}`).slice(0, 6).join("; ")}${untrusted.length > 6 ? "; ..." : ""}); they do not count until the user accepts them again in the review`] : []
+    ]
+  };
   switch (phase) {
     case "request":
     case "discovery":
@@ -6668,7 +7310,7 @@ function nextStep(state2) {
         tools: ["praxis_review_render", "praxis_workflow_inspect"],
         skills: ["praxis-ba:stories-review"],
         userDecision: coverage2.ok,
-        blockers: [...state2.blockers, ...coverage2.ok ? [] : ["coverage gaps"]]
+        blockers: [...base.blockers, ...coverage2.ok ? [] : ["coverage gaps"]]
       };
     }
     case "architecture": {
@@ -6689,16 +7331,17 @@ function withoutVia(command) {
   const { via: _via, sequence: _sequence, ...rest } = command;
   return rest;
 }
-function reviewBatchSubject(batch) {
-  return canonicalText(batch.map(withoutVia));
+function reviewBatchSubject(batch, baseState) {
+  const commands = batch.map(withoutVia);
+  return canonicalText(baseState === void 0 ? commands : { commands, baseState });
 }
-function reviewApprovalRequest(batch, summary) {
+function reviewApprovalRequest(batch, summary, baseState) {
   return {
     action: REVIEW_DECISION_ACTION,
     kind: "requirement_acceptance",
     summary,
     description: batch.map((c) => `- ${String(c.action)}${c.decisions ? ` (${c.decisions.length} requirement(s))` : ""}`).join("\n"),
-    subject: reviewBatchSubject(batch),
+    subject: reviewBatchSubject(batch, baseState),
     risks: ["These decisions record that you accepted or rejected the reviewed items; later stages rely on them."]
   };
 }
@@ -6726,7 +7369,7 @@ function isUserDecision(command) {
 function verifiedVia(command, channel) {
   if (!channel || channel.via !== "approved")
     return null;
-  verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch) });
+  verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch, channel.baseState) });
   const mine = canonicalText(withoutVia(command));
   if (!channel.batch.some((item) => canonicalText(withoutVia(item)) === mine)) {
     throw new WorkflowError("USER_DECISION_REQUIRED", "this decision is not part of what the user approved");
@@ -6794,10 +7437,14 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       for (const id of ids)
         requirementOf(state2, id);
       let next = state2;
+      const undecided = (c) => effectiveReview(state2, c) === "pending";
+      const decided = activeRequirements(state2).filter((r) => ids.includes(r.id) && r.scope === "in").flatMap((r) => r.acceptanceCriteria.filter(undecided).map((c) => subjectKey("criterion", c.id)));
       next = {
         ...next,
-        requirements: next.requirements.map((r) => ids.includes(r.id) && r.scope === "in" && r.status !== "superseded" ? { ...r, status: "approved", acceptanceCriteria: r.acceptanceCriteria.map((c) => c.review.status === "pending" ? { ...c, review: { ...c.review, status: "accepted", at: iso(now), via: command.via } } : c) } : r)
+        requirements: next.requirements.map((r) => ids.includes(r.id) && r.scope === "in" && r.status !== "superseded" ? { ...r, status: "approved", acceptanceCriteria: r.acceptanceCriteria.map((c) => undecided(c) ? { ...c, review: { ...c.review, status: "accepted", at: iso(now), via: command.via } } : c) } : r)
       };
+      if (command.via === "approved")
+        next = clearIntegrity(next, decided);
       const progress = reviewProgress(next);
       if (progress.complete)
         next = recordAcceptance(next, "requirements_review", command.via, now);
@@ -6918,7 +7565,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       if (live.length === 0)
         throw missing("PLAN_EMPTY", "the story plan has no stories");
       const coverage2 = analyzeStoryCoverage(state2);
-      if (state2.mode === "guided" && !coverage2.ok) {
+      if (enforcedMode(state2) === "guided" && !coverage2.ok) {
         throw missing("PLAN_COVERAGE_GAPS", `the plan does not cover what the requirements imply: ${[...coverage2.gaps.map((g) => g.reason), ...coverage2.requirementsWithoutStories.map((id) => `${id} has no story`)].join("; ")}. Add stories or waive a gap with a reason.`, { coverage: coverage2 });
       }
       const rejected = live.filter((e) => e.review.status === "rejected").map((e) => e.id);
@@ -7017,7 +7664,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
           seen.add(id2);
           criteria.push({ ...c, id: id2 });
         }
-      const union4 = (pick4) => [...new Set(originals.flatMap(pick4))];
+      const union4 = (pick5) => [...new Set(originals.flatMap(pick5))];
       const { id, ...patch } = command.into;
       const merged = UserStorySchema.parse({
         ...first,
@@ -7121,7 +7768,7 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       if (!progress.complete)
         throw missing("STORIES_NOT_REVIEWED", `stories are not fully reviewed: ${progress.accepted}/${progress.items} items accepted, ${progress.rejected} rejected, ${progress.pending} pending`, { progress });
       const coverage2 = analyzeStoryCoverage(state2);
-      if (state2.mode === "guided" && !coverage2.ok)
+      if (enforcedMode(state2) === "guided" && !coverage2.ok)
         throw missing("STORIES_COVERAGE_GAPS", `coverage gaps remain: ${[...coverage2.gaps.map((g) => g.reason), ...coverage2.requirementsWithoutStories.map((id) => `${id} has no story`), ...coverage2.storiesOutOfScope.map((id) => `${id} is out of scope`)].join("; ")}`, { coverage: coverage2 });
       const next = recordAcceptance(state2, "stories_review", command.via, now);
       return { state: touch(next, now, "stories accepted by the reviewer"), duplicate: false, result: { accepted: true, progress, coverage: coverage2 } };
@@ -7169,7 +7816,8 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       const kept = previous?.status === "agreed" && !agreedNow && stripped(previous) === stripped(contract);
       const next1 = { ...contract, ...agreedNow || previous?.everAgreed ? { everAgreed: true } : {}, status: agreedNow || kept ? "agreed" : "proposed", ...agreedNow ? { agreement: { at: iso(now), via: command.via === "approved" ? "approved" : "html-review" } } : kept && previous?.agreement ? { agreement: previous.agreement } : {} };
       const contracts = [...state2.contracts.filter((c) => c.id !== contract.id), next1];
-      return { state: touch({ ...state2, contracts }, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
+      const agreedState = agreedNow && verified === "approved" ? clearIntegrity({ ...state2, contracts }, [subjectKey("contract", contract.id)]) : { ...state2, contracts };
+      return { state: touch(agreedState, now, `contract ${contract.id} set`), duplicate: false, result: { contractId: contract.id } };
     }
     case "remove-contract": {
       const doomed = state2.contracts.find((c) => c.id === command.id);
@@ -7201,12 +7849,14 @@ function applyPlanningCommand(state2, rawCommand, options2 = {}) {
       return { state: touch({ ...state2, waivers: [...state2.waivers, waiver] }, now, `waived ${command.kind}${command.requirementId ? ` for ${command.requirementId}` : ""}: ${command.reason}`), duplicate: false, result: { waiverId: waiver.id } };
     }
     case "set-mode": {
-      if (state2.mode === command.mode)
-        return { state: state2, duplicate: true, result: { mode: state2.mode, unchanged: true } };
-      const report = modeSwitchReport(state2, command.mode);
-      const note2 = { at: iso(now), summary: `mode changed from ${state2.mode} to ${command.mode}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep({ ...state2, mode: command.mode }).summary };
-      const next = touch({ ...state2, mode: command.mode, sessionLog: [...state2.sessionLog, note2].slice(-200) }, now, `mode ${state2.mode} -> ${command.mode}`);
-      return { state: next, duplicate: false, result: { from: state2.mode, to: command.mode, report } };
+      const from = enforcedMode(state2);
+      if (from === command.mode)
+        return { state: state2, duplicate: true, result: { mode: from, unchanged: true } };
+      const report = modeSwitchReport({ ...state2, mode: from }, command.mode);
+      const chosen = command.mode === "classic" && verified === "approved" ? clearIntegrity(state2, [subjectKey("mode", "mode")]) : state2;
+      const note2 = { at: iso(now), summary: `mode changed from ${from} to ${command.mode}${command.reason ? `: ${command.reason}` : ""}`, nextAction: nextStep({ ...chosen, mode: command.mode }).summary };
+      const next = touch({ ...chosen, mode: command.mode, sessionLog: [...state2.sessionLog, note2].slice(-200) }, now, `mode ${from} -> ${command.mode}`);
+      return { state: next, duplicate: false, result: { from, to: command.mode, report } };
     }
     case "set-work-item-kind":
       return { state: touch({ ...state2, workItem: { ...state2.workItem, kind: command.kind } }, now, `work item kind: ${command.kind}`), duplicate: state2.workItem.kind === command.kind, result: { kind: command.kind } };
@@ -7263,24 +7913,22 @@ function migrateWorkflowState(state2) {
   const migrated = { ...state2, version: "1.1.0", requirements: requirements2 };
   return { ...migrated, phase: inferPhase(migrated) };
 }
-var import_node_crypto2, iso, hash, activeRequirements, inScope, activeStories, EMPTY_ELEMENT_DEFAULTS, KEYWORDS, MODAL, storyText, Via, ReviewStatus, AcDecision, RequirementDecision, PrototypeInput, PrototypeOperation, PlanOperation, StoryPatch, CriterionOp, NewStoryFromOriginal, PlanningCommandSchemas, PLANNING_ACTIONS, missing, requirementOf, REAL_SECRET, TIME_VALUE, PATCH_ITEM_KEYS, REVIEW_DECISION_ACTION;
+var iso, hash, inScope, effectiveReview, KEYWORDS, MODAL, storyText, Via, ReviewStatus, AcDecision, RequirementDecision, PrototypeInput, PrototypeOperation, PlanOperation, StoryPatch, CriterionOp, NewStoryFromOriginal, PlanningCommandSchemas, PLANNING_ACTIONS, missing, requirementOf, REAL_SECRET, TIME_VALUE, PATCH_ITEM_KEYS, REVIEW_DECISION_ACTION;
 var init_planning = __esm({
   "node_modules/@praxis/contracts/dist/planning.js"() {
-    import_node_crypto2 = require("node:crypto");
     init_zod();
     init_errors2();
     init_human_acts();
+    init_acceptance_integrity();
     init_user_approval();
     init_quality_model();
     init_ids();
     init_planning_schemas();
     init_story();
     iso = (now) => (now ?? /* @__PURE__ */ new Date()).toISOString();
-    hash = (value) => (0, import_node_crypto2.createHash)("sha256").update(JSON.stringify(sorted(value))).digest("hex").slice(0, 16);
-    activeRequirements = (state2) => state2.requirements.filter((r) => r.status !== "superseded");
+    hash = fingerprint16;
     inScope = (state2) => activeRequirements(state2).filter((r) => r.scope === "in");
-    activeStories = (state2) => state2.stories.filter((s) => s.status !== "superseded" && s.status !== "excluded");
-    EMPTY_ELEMENT_DEFAULTS = { options: [], filters: [], detailFields: [], tabs: [], related: [], required: false };
+    effectiveReview = (state2, criterion) => criterion.review.status === "accepted" && !isTrusted(state2, subjectKey("criterion", criterion.id)) ? "pending" : criterion.review.status;
     KEYWORDS = [
       ["view", /\b(view|display|show|see|list|browse|read|open|detail|preview|report)\w*/i],
       ["search", /\b(search|find|lookup|look up|query)\w*/i],
@@ -7450,13 +8098,16 @@ function describeApproval(approval) {
 }
 function approvalSummary(state2) {
   const records = state2.approvals ?? [];
-  const has = (action, type, id) => records.some((r) => r.action === action && r.subjects.some((s) => s.type === type && s.id === id));
-  const unverified = [
+  const annotation = annotationOf(state2);
+  const backed = (r) => !annotation || annotation.records[r.id] === "accepted";
+  const counted = records.filter(backed);
+  const has = (action, type, id) => counted.some((r) => r.action === action && r.subjects.some((s) => s.type === type && s.id === id));
+  const unverified = annotation ? integrityReport(state2).filter((s) => s.status !== "accepted").map((s) => `${s.label}: ${s.status}`) : [
     ...state2.stories.filter((s) => s.confirmedBehavior && s.status !== "superseded" && !has("confirm-story", "story", s.id)).map((s) => `story ${s.id}`),
     ...state2.decisions.filter((d) => d.confirmed && !has("confirm-decision", "decision", d.id)).map((d) => `decision ${d.id}`),
     ...state2.services.filter((s) => (s.status === "approved" || s.status === "completed") && !has("approve-service", "service", s.id)).map((s) => `service ${s.id}`)
   ];
-  const by = (trust) => records.filter((r) => currentTrust(r.trust) === trust).length;
+  const by = (trust) => counted.filter((r) => currentTrust(r.trust) === trust).length;
   return {
     total: records.length,
     clientResponse: by("client-response"),
@@ -7466,13 +8117,17 @@ function approvalSummary(state2) {
     hostAttested: by("host-attested"),
     testOnly: by("test-only"),
     legacyIndependentHumanLabel: records.filter((r) => r.trust === "independent-human").length,
-    unverifiedProvenance: unverified
+    /** Records in the file that no decision-ledger record on this computer carries: they are not counted above. */
+    recordsWithoutLedger: records.length - counted.length,
+    unverifiedProvenance: unverified,
+    ...integritySummary(state2)
   };
 }
 var APPROVAL_TRUST, ApprovalSubjectSchema, ApprovalRecordSchema, currentTrust;
 var init_approval_audit = __esm({
   "node_modules/@praxis/contracts/dist/approval-audit.js"() {
     init_zod();
+    init_acceptance_integrity();
     APPROVAL_TRUST = ["client-response", "independent-human", "review-page", "host-attested", "test-only"];
     ApprovalSubjectSchema = external_exports.object({
       type: external_exports.enum(["story", "decision", "service", "requirement", "criterion", "review", "work-item"]),
@@ -7654,7 +8309,7 @@ function humanActRequest(state2, command) {
       throw new WorkflowError("STORY_REVISION", `story ${command.id} is at revision ${story.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view stories)`);
     if (contentFingerprint2 !== command.contentFingerprint)
       throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view stories)`);
-    const content = humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 });
+    const content = humanActContent("confirm-story", storyActSubject(story));
     return {
       action: "confirm-story",
       targetId: story.id,
@@ -7664,6 +8319,7 @@ function humanActRequest(state2, command) {
       summary: `Confirm Story ${story.id} revision ${story.revision}`,
       description: [
         `Story ${story.id} (revision ${story.revision}) for requirement(s) ${story.requirementIds.join(", ")}.`,
+        story.title ? `Title: ${story.title}` : "",
         `As ${story.actor}: ${story.narrative}`,
         `Objective: ${story.objective}`,
         `User value: ${story.userValue}`,
@@ -7683,8 +8339,9 @@ ${bullet(story.businessRules)}`,
 ${bullet(story.acceptanceCriteria.map((c) => `${c.id}: Given ${c.given}; When ${c.when}; Then ${c.then}`))}`,
         `Expected results:
 ${bullet(story.expectedResults)}`,
+        `What the user can do (capabilities): ${story.capabilities.join(", ") || "(none declared)"}`,
         `Content fingerprint: ${contentFingerprint2}`
-      ].join("\n"),
+      ].filter(Boolean).join("\n"),
       risks: ["Confirming records that you accept this behavior as written. It does not authorize implementation, commits or pushes."]
     };
   }
@@ -7697,7 +8354,7 @@ ${bullet(story.expectedResults)}`,
       throw new WorkflowError("DECISION_REVISION", `decision ${command.id} is at revision ${decision.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view decisions)`);
     if (contentFingerprint2 !== command.contentFingerprint)
       throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view decisions)`);
-    const content = humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 });
+    const content = humanActContent("confirm-decision", decisionActSubject(decision));
     return {
       action: "confirm-decision",
       targetId: decision.id,
@@ -7723,7 +8380,7 @@ ${bullet(story.expectedResults)}`,
       if (!owner || !criterion)
         return null;
       if (criterion.statement.trim() !== edit.statement.trim())
-        rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...criterion.review.comment ? { comment: criterion.review.comment } : {}, from: criterion.statement, to: edit.statement.trim() });
+        rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...criterion.review.comment ? { comment: criterion.review.comment } : {}, from: criterion.statement, to: edit.statement.trim(), contentDigest: contentDigest(criterionContent(owner.id, criterion)) });
     }
     if (rows.length === 0)
       return null;
@@ -7747,7 +8404,7 @@ ${bullet(story.expectedResults)}`,
   if (command.action === "set-service") {
     const approving = command.service.status === "approved" || command.service.status === "completed";
     const previous = state2.services.find((item) => item.id === command.service.id);
-    if (!approving || previous && fingerprintPayload(previous) === fingerprintPayload(command.service))
+    if (!approving || previous && fingerprintPayload(previous) === fingerprintPayload(command.service) && isTrusted(state2, subjectKey("service", previous.id)))
       return null;
     const subject = serviceApprovalSubject(state2, command.service);
     const content = humanActContent("approve-service", subject);
@@ -7775,6 +8432,12 @@ ${bullet(verdicts.map((v) => `${v.id}: ${v.verdict}`))}`
   }
   return null;
 }
+function storyActSubject(story) {
+  return { storyId: story.id, revision: story.revision, contentFingerprint: storyContentFingerprint(story), contentDigest: contentDigest(storyContent(story)) };
+}
+function decisionActSubject(decision) {
+  return { decisionId: decision.id, revision: decision.revision, contentFingerprint: decisionContentFingerprint(decision), contentDigest: contentDigest(decisionContent(decision)) };
+}
 function decisionContentFingerprint(decision) {
   return fingerprintPayload({
     id: decision.id,
@@ -7791,6 +8454,7 @@ function serviceApprovalSubject(state2, service) {
     serviceId: service.id,
     status: service.status,
     serviceDigest: fingerprintPayload(rest),
+    contentDigest: contentDigest(serviceContent(service)),
     implementation: state2.implementationUnits.filter((unit) => unit.serviceId === service.id && !unit.stale).map((unit) => ({ id: unit.id, path: unit.path, summary: unit.summary })).sort((a, b) => a.id.localeCompare(b.id))
   };
 }
@@ -7859,7 +8523,8 @@ function resumeWorkflow(state2) {
     duplicateHandoff: false
   };
 }
-function featureReadiness(state2) {
+function featureReadiness(rawState) {
+  const state2 = trustedView(rawState);
   const serviceStatus = {};
   for (const service of state2.services)
     serviceStatus[service.id] = service.status;
@@ -7944,7 +8609,8 @@ function carryForwardContext(state2, command) {
     ...notes !== void 0 ? { notes } : {}
   };
 }
-function requirementEvidence(state2, requirementId) {
+function requirementEvidence(rawState, requirementId) {
+  const state2 = trustedView(rawState);
   const cov = requirementCoverage(state2, requirementId);
   if (cov.noEvidence)
     return { status: "missing", reasons: ["missing independent evidence", ...cov.reasons.filter((r) => r.includes("older revision"))] };
@@ -8148,7 +8814,8 @@ function applyWorkflowCommandCore(state2, raw, options2) {
     }
     const previous = state2.services.find((service) => service.id === command.service.id);
     const approving = command.service.status === "approved" || command.service.status === "completed";
-    const unchanged = previous !== void 0 && fingerprintPayload(previous) === fingerprintPayload(command.service);
+    const unchanged = previous !== void 0 && fingerprintPayload(previous) === fingerprintPayload(command.service) && (!approving || isTrusted(state2, subjectKey("service", previous.id)));
+    let approved = false;
     if (approving && !unchanged) {
       if (!options2?.userApproval) {
         throw new WorkflowError("SERVICE_APPROVAL_REQUIRED", `service ${command.service.id} cannot be marked ${command.service.status} by an agent; the user's approval (approve-service) is required`);
@@ -8157,12 +8824,14 @@ function applyWorkflowCommandCore(state2, raw, options2) {
         action: "approve-service",
         subject: humanActContent("approve-service", serviceApprovalSubject(state2, command.service))
       });
+      approved = true;
     }
     const services = [
       ...state2.services.filter((service) => service.id !== command.service.id),
       command.service
     ];
-    return { state: { ...state2, services }, duplicate: false, result: featureReadiness({ ...state2, services }) };
+    const next2 = approved ? clearIntegrity({ ...state2, services }, [subjectKey("service", command.service.id)]) : { ...state2, services };
+    return { state: next2, duplicate: false, result: featureReadiness(next2) };
   }
   if (command.action === "clarify") {
     const asked = questionsToAsk(command.questions);
@@ -8203,10 +8872,10 @@ function applyWorkflowCommandCore(state2, raw, options2) {
     }
     verifyUserApproval(options2.userApproval, {
       action: "confirm-decision",
-      subject: humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 })
+      subject: humanActContent("confirm-decision", decisionActSubject(decision))
     });
     const decisions2 = state2.decisions.map((item) => item.id === decision.id ? { ...item, confirmed: true } : item);
-    let confirmed = { ...state2, decisions: decisions2 };
+    let confirmed = clearIntegrity({ ...state2, decisions: decisions2 }, [subjectKey("decision", decision.id)]);
     if (confirmed.stage === "clarification_required" && TRANSITIONS[confirmed.stage].includes("ready")) {
       confirmed = { ...transition(confirmed, "ready", `decision ${command.id} confirmed`), decisions: decisions2 };
     }
@@ -8236,7 +8905,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
     return { state: next2, duplicate: false, result: { decisionId: command.id, confirmed: command.confirmed, revision: recorded.revision, contentFingerprint: decisionContentFingerprint(recorded) } };
   }
   if (command.action === "record-implementation") {
-    if (state2.mode === "guided" && !state2.services.some((s) => s.id === command.serviceId)) {
+    if (enforcedMode(state2) === "guided" && !state2.services.some((s) => s.id === command.serviceId)) {
       throw new WorkflowError("SERVICE_NOT_FOUND", `service ${command.serviceId} is not part of this work item (set-service first): an implementation record needs a service`);
     }
     const implementationUnits = [
@@ -8269,8 +8938,11 @@ function applyWorkflowCommandCore(state2, raw, options2) {
     if (state2.stories.some((story2) => story2.id === command.id && story2.status !== "superseded")) {
       throw new WorkflowError("DUPLICATE_STORY", `story ${command.id} already exists`);
     }
-    if (state2.mode === "guided") {
+    if (enforcedMode(state2) === "guided") {
       const entry2 = state2.storyPlan?.entries.find((item) => item.id === command.id);
+      const planIntegrity = integrityProblem(state2, subjectKey("phase", "story_plan"));
+      if (planIntegrity && acceptanceStatus(state2, "story_plan") !== "stale")
+        throw new WorkflowError(planIntegrity.code, planIntegrity.text, { subject: planIntegrity.subject });
       if (acceptanceStatus(state2, "story_plan") !== "accepted") {
         throw new WorkflowError("STORY_PLAN_NOT_AGREED", "write and agree the story plan first (set-story-plan, then agree-story-plan); detailed stories follow the agreed plan");
       }
@@ -8331,10 +9003,10 @@ function applyWorkflowCommandCore(state2, raw, options2) {
     }
     verifyUserApproval(options2.userApproval, {
       action: "confirm-story",
-      subject: humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 })
+      subject: humanActContent("confirm-story", storyActSubject(story))
     });
     const stories2 = state2.stories.map((item) => item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" } : item);
-    return { state: { ...state2, stories: stories2 }, duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
+    return { state: clearIntegrity({ ...state2, stories: stories2 }, [subjectKey("story", story.id)]), duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
   }
   if (command.action === "verify-stories" || command.action === "prepare-fix") {
     throw new WorkflowError("EXECUTION_REQUIRED", `${command.action} must run in Praxis Runtime so Quality executes the implementation`);
@@ -8447,7 +9119,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
       });
     }
     for (const requirementId of [...new Set(incoming.map((scenario) => scenario.requirementId))]) {
-      const cov = requirementCoverage(next2, requirementId);
+      const cov = requirementCoverage(trustedView(next2), requirementId);
       if (cov.noEvidence)
         continue;
       const evidence2 = requirementEvidence(next2, requirementId);
@@ -8466,7 +9138,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
         requirementIds: [requirementId]
       });
     }
-    const evaluation = evaluateEvidence(next2);
+    const evaluation = evaluateEvidence(trustedView(next2));
     const verdictId2 = `V-STORY-${next2.verdicts.length + 1}`;
     next2 = recordVerdict(next2, {
       id: verdictId2,
@@ -8538,7 +9210,8 @@ function applyWorkflowCommandCore(state2, raw, options2) {
         role: command.sourceRole
       })),
       decisions: state2.decisions.map((d) => d.id),
-      decisionRecords: state2.decisions.map((d) => ({ ...d })),
+      // a confirmation is handed on only when the decision ledger backs it
+      decisionRecords: trustedView(state2).decisions.map((d) => ({ ...d })),
       assumptions: carried.assumptions,
       openQuestions: carried.openQuestions,
       risks: carried.risks,
@@ -8640,7 +9313,8 @@ function effectiveServices(state2) {
     };
   });
 }
-function evaluateFeature(state2) {
+function evaluateFeature(rawState) {
+  const state2 = trustedView(rawState);
   const evidence = evaluateEvidence(state2);
   const readinessGaps = [];
   for (const service of state2.services) {
@@ -8678,6 +9352,7 @@ var init_workflow = __esm({
     init_human_acts();
     init_approval_audit();
     init_user_approval();
+    init_acceptance_integrity();
     init_planning();
     init_story();
     WORKFLOW_CONTRACT_VERSION = "1.1.0";
@@ -9552,6 +10227,8 @@ var init_human_act_testing = __esm({
 
 // node_modules/@praxis/contracts/dist/decision-journal.js
 function readDecisionJournal(repo) {
+  assertSecurityStateOutside(repo);
+  adoptLegacyDecisionLog(repo);
   const path2 = decisionLogPath(repo);
   if (!(0, import_node_fs2.existsSync)(path2))
     return [];
@@ -9662,9 +10339,9 @@ function auditDecisionJournal(lines, options2) {
   }
   return findings;
 }
-function appendDecisionAmendments(repo, findings, by, now = /* @__PURE__ */ new Date()) {
-  const path2 = decisionLogPath(repo);
+function appendDecisionAmendments(repo, findings, by, now = /* @__PURE__ */ new Date(), approvedThrough) {
   const lines = readDecisionJournal(repo);
+  const path2 = decisionLogPath(repo);
   const already = validlyAmended(lines);
   const current = new Map(lines.map((l) => [l.line, l.sha256]));
   let appended = 0;
@@ -9687,7 +10364,8 @@ function appendDecisionAmendments(repo, findings, by, now = /* @__PURE__ */ new 
       rule: finding.rule,
       evidence: finding.evidence ?? {},
       by,
-      repository: (0, import_node_path2.resolve)(repo)
+      ...approvedThrough ? { approvedThrough: { ...approvedThrough, personVerified: false, independentlyVerified: false } } : {},
+      repository: repositoryIdentity(repo).root
     };
     (0, import_node_fs2.appendFileSync)(path2, `${JSON.stringify(amendment)}
 `, { mode: 384 });
@@ -9696,12 +10374,11 @@ function appendDecisionAmendments(repo, findings, by, now = /* @__PURE__ */ new 
   }
   return { appended, skipped, path: path2 };
 }
-var import_node_crypto5, import_node_fs2, import_node_path2, lineHash, ALLOWED, ACT_TOOLS, tripMatches;
+var import_node_crypto5, import_node_fs2, lineHash, ALLOWED, ACT_TOOLS, tripMatches;
 var init_decision_journal = __esm({
   "node_modules/@praxis/contracts/dist/decision-journal.js"() {
     import_node_crypto5 = require("node:crypto");
     import_node_fs2 = require("node:fs");
-    import_node_path2 = require("node:path");
     init_user_approval();
     lineHash = (raw) => `sha256:${(0, import_node_crypto5.createHash)("sha256").update(raw, "utf8").digest("hex")}`;
     ALLOWED = {
@@ -9720,11 +10397,13 @@ function planEntryBase(entry) {
   const text = JSON.stringify([entry.title, entry.implementation, entry.userGets, entry.status, entry.excludedReason ?? "", entry.review.status, entry.review.comment ?? ""]);
   return (0, import_node_crypto6.createHash)("sha256").update(text).digest("hex").slice(0, 24);
 }
-function reviewStamp(state2, view) {
+function reviewStamp(rawState, view) {
+  const state2 = trustedView(rawState);
   const slice = view === "requirements" ? state2.requirements : view === "story-plan" ? state2.storyPlan : view === "contracts" ? state2.contracts : view === "prototype" ? state2.prototype : state2.stories;
   return (0, import_node_crypto6.createHash)("sha256").update(canonicalText({ view, mode: state2.mode, slice })).digest("hex").slice(0, 24);
 }
-function workStateStamp(state2) {
+function workStateStamp(rawState) {
+  const state2 = trustedView(rawState);
   const slice = {
     mode: state2.mode,
     phase: state2.phase,
@@ -9767,7 +10446,8 @@ function fingerprintFor(state2, view) {
       return storiesFingerprint(state2);
   }
 }
-function submissionToCommands(state2, raw) {
+function submissionToCommands(rawState, raw) {
+  const state2 = trustedView(rawState);
   const submission = parseStrict(ReviewSubmissionSchema, raw, { tolerate: false });
   const conflicts = [];
   const commands = [];
@@ -9913,7 +10593,10 @@ function submissionToCommands(state2, raw) {
       else {
         commands.push({ action: "accept-requirements", via });
         summary.push("accept all pending criteria");
-        details.push("ACCEPT every criterion still undecided and record the requirements review as accepted");
+        const undecided = state2.requirements.filter((r) => r.status !== "superseded" && r.scope === "in").flatMap((r) => r.acceptanceCriteria.filter((c) => c.review.status === "pending").map((c) => ({ r, c })));
+        details.push(`ACCEPT every criterion still undecided (${undecided.length}) and record the requirements review as accepted:`);
+        for (const { r, c } of undecided)
+          details.push(`  ${c.id} (${r.id}, revision ${c.revision}): '${c.statement}'`);
       }
     }
   }
@@ -10096,7 +10779,12 @@ function submissionToCommands(state2, raw) {
       else {
         commands.push({ action: "accept-stories", via });
         summary.push("stories accepted");
-        details.push("ACCEPT the stories");
+        details.push(`ACCEPT the stories (${activeStories(state2).length}):`);
+        for (const story of activeStories(state2)) {
+          details.push(`  ${story.id} revision ${story.revision}${story.title ? ` '${story.title}'` : ""}: ${story.narrative}`);
+          for (const c of story.acceptanceCriteria)
+            details.push(`    ${c.id}: Given ${c.given}; When ${c.when}; Then ${c.then}`);
+        }
       }
     }
   }
@@ -10154,6 +10842,7 @@ var init_review_submission = __esm({
     init_ids();
     init_planning();
     init_planning_schemas();
+    init_acceptance_integrity();
     REVIEW_VIEWS = ["requirements", "prototype", "story-plan", "stories", "contracts"];
     ReviewViewSchema = external_exports.enum(REVIEW_VIEWS);
     Mark = external_exports.enum(["pending", "accepted", "rejected"]);
@@ -10986,10 +11675,17 @@ ${body2}
 function marks(name, current, labels = { accepted: "Accept", rejected: "Reject", pending: "Undecided" }) {
   return `<div class="marks tri" role="radiogroup" aria-label="Decision">${["accepted", "rejected", "pending"].map((v) => `<label class="m-${v}"><input type="radio" name="${esc3(name)}" value="${v}"${v === current ? " checked" : ""}><span>${labels[v]}</span></label>`).join("")}</div>`;
 }
+function integrityBanner(rawState, kinds) {
+  const untrusted = outstandingIntegrity(rawState).filter((s) => kinds.includes(s.kind));
+  if (untrusted.length === 0)
+    return "";
+  return `<div class="stale" data-integrity><strong>${untrusted.length} acceptance(s) in this work item are not backed by a Praxis decision record on this computer.</strong> They are shown as undecided: decide them again if you agree. ${untrusted.slice(0, 12).map((s) => `${esc3(s.label)} (${esc3(s.status)})`).join("; ")}${untrusted.length > 12 ? "; ..." : ""}</div>`;
+}
 function staleBanner(state2, phase) {
   return acceptanceStatus(state2, phase) === "stale" ? `<div class="stale"><strong>Changed since you accepted it.</strong> The earlier acceptance no longer applies; review the changes and accept again.</div>` : "";
 }
-function renderRequirementsReview(state2, options2 = {}) {
+function renderRequirementsReview(rawState, options2 = {}) {
+  const state2 = trustedView(rawState);
   const all = state2.requirements.filter((r) => r.status !== "superseded");
   const progress = reviewProgress(state2);
   const decided = progress.accepted + progress.rejected;
@@ -11024,7 +11720,7 @@ ${criteria || `<p class="muted">No acceptance criteria yet.</p>`}
   ];
   const sections = groups.filter(([, , list]) => list.length).map(([, title, list]) => `<h2 class="grouph">${esc3(title)} <span class="meta">${list.length}</span></h2>${list.map(card).join("")}`).join("");
   const chips = all.map((r) => `<a class="chip ${reqState(r)}" href="#req-${esc3(r.id)}">${esc3(r.id)}</a>`).join("");
-  const body2 = `${staleBanner(state2, "requirements_review")}
+  const body2 = `${integrityBanner(rawState, ["criterion", "phase"])}${staleBanner(state2, "requirements_review")}
 <div class="card summary"><div class="row" style="align-items:center"><div class="grow"><div class="bigcount"><strong>${decided}</strong> of ${progress.criteria} criteria decided</div>
 <div class="pbar" role="img" aria-label="${progress.accepted} accepted, ${progress.rejected} rejected, ${progress.pending} undecided"><span class="a" style="width:${pct(progress.accepted)}%"></span><span class="r" style="width:${pct(progress.rejected)}%"></span></div>
 <div class="meta">${progress.accepted} accepted \xB7 ${progress.rejected} rejected \xB7 ${progress.pending} undecided \xB7 ${progress.requirements} requirement(s) in scope \xB7 deferred / out ${progress.deferred} / ${progress.excluded}</div></div>
@@ -11033,12 +11729,13 @@ ${chips ? `<nav class="chips" aria-label="Requirements">${chips}</nav>` : ""}</d
 ${sections || `<p class="muted">No requirements yet.</p>`}`;
   return shell(state2, "requirements", "Requirements review", body2, {}, options2, `<label class="marks"><input type="checkbox" id="accept-all"> Mark the review complete (accept everything still undecided)</label>`);
 }
-function renderPrototypeReview(state2, options2 = {}) {
+function renderPrototypeReview(rawState, options2 = {}) {
+  const state2 = trustedView(rawState);
   const proto = state2.prototype;
   if (!proto) {
     return shell(state2, "prototype", "Prototype review", `<p class="muted">There is no prototype yet. Ask Claude to build one from the accepted requirements.</p>`, {}, options2, "");
   }
-  const { body: body2, clientData } = renderPrototypeBody(state2, proto, staleBanner(state2, "prototype"));
+  const { body: body2, clientData } = renderPrototypeBody(state2, proto, `${integrityBanner(rawState, ["phase"])}${staleBanner(state2, "prototype")}`);
   return shell(state2, "prototype", "Prototype review", body2, clientData, options2, `<label class="marks"><input type="checkbox" id="accept-proto"> Accept this prototype</label>`, proto.kind === "ui");
 }
 function gapsPanel(state2) {
@@ -11055,7 +11752,8 @@ ${rows || missingStories ? `<h2>Gaps that block agreement</h2>${rows}${missingSt
 ${advice ? `<h3>Suggestions from the wording (nothing blocks on these)</h3><ul>${advice}</ul>` : ""}
 ${waived ? `<h3>Waived so far</h3><ul>${waived}</ul>` : ""}</section>`;
 }
-function renderStoryPlanReview(state2, options2 = {}) {
+function renderStoryPlanReview(rawState, options2 = {}) {
+  const state2 = trustedView(rawState);
   const plan = state2.storyPlan;
   if (!plan)
     return shell(state2, "story-plan", "Story plan review", `<p class="muted">There is no story plan yet.</p>`, {}, options2, "");
@@ -11076,13 +11774,14 @@ function renderStoryPlanReview(state2, options2 = {}) {
 ${out ? `<p class="meta">Excluded: ${esc3(e.excludedReason ?? "")}</p><label class="marks"><input type="checkbox" data-f="restore"> Restore this story</label>` : `<label class="meta">Exclude from scope (reason)<input type="text" data-f="exclude"></label>`}
 <label class="meta">Comment<input type="text" data-f="comment" value="${esc3(e.review.comment ?? "")}"></label></section>`;
   }).join("");
-  const body2 = `${staleBanner(state2, "story_plan")}
+  const body2 = `${integrityBanner(rawState, ["phase", "waiver", "mode"])}${staleBanner(state2, "story_plan")}
 <p>${pill(`revision ${plan.revision}`)} ${pill(plan.status, plan.status === "agreed" ? "ok" : "warn")} ${pill(`${plan.entries.length} planned stories`)}</p>
 ${gapsPanel(state2)}
 ${cards}`;
   return shell(state2, "story-plan", "Story plan review", body2, {}, options2, `<label class="marks"><input type="checkbox" id="agree-plan"> Agree this plan</label>`);
 }
-function renderStoriesReview(state2, options2 = {}) {
+function renderStoriesReview(rawState, options2 = {}) {
+  const state2 = trustedView(rawState);
   const stories2 = state2.stories.filter((s) => s.status !== "superseded");
   const progress = storyReviewProgress(state2);
   const cards = stories2.map((story) => {
@@ -11110,14 +11809,15 @@ ${items}
 ${out ? `<p class="meta">Excluded: ${esc3(story.excludedReason ?? "")}</p><label class="marks"><input type="checkbox" data-f="restore"> Restore this story</label>` : `<label class="meta">Exclude this story (reason)<input type="text" data-f="exclude"></label>`}
 </section>`;
   }).join("");
-  const body2 = `${staleBanner(state2, "stories_review")}
+  const body2 = `${integrityBanner(rawState, ["phase", "story", "waiver", "mode"])}${staleBanner(state2, "stories_review")}
 <div class="card"><div class="kv"><span class="muted">Stories</span><span>${progress.stories}</span><span class="muted">Items</span><span>${progress.items}</span><span class="muted">Accepted</span><span>${progress.accepted}</span><span class="muted">Rejected</span><span>${progress.rejected}</span><span class="muted">Undecided</span><span>${progress.pending}</span></div>
 <p class="meta">Editing a story creates a new revision. Items you did not change keep their marks; an item whose text changed starts over, and so does the story's confirmation.</p></div>
 ${gapsPanel(state2)}
 ${cards || `<p class="muted">No stories yet.</p>`}`;
   return shell(state2, "stories", "User stories review", body2, {}, options2, `<label class="marks"><input type="checkbox" id="accept-stories"> Accept the stories</label>`);
 }
-function renderContractsReview(state2, options2 = {}) {
+function renderContractsReview(rawState, options2 = {}) {
+  const state2 = trustedView(rawState);
   const cards = state2.contracts.map((c) => {
     const agreed = c.status === "agreed";
     return `<section class="card" data-contract="${esc3(c.id)}">
@@ -11126,7 +11826,7 @@ function renderContractsReview(state2, options2 = {}) {
 <div class="kv"><span class="muted">Provider</span><span>${esc3(c.providerServiceId)}</span><span class="muted">Consumers</span><span>${esc3(c.consumerServiceIds.join(", ") || "-")}</span><span class="muted">Schema</span><span>${esc3(c.schemaRef ?? "-")}</span><span class="muted">Requirements</span><span>${esc3(c.requirementIds.join(", ") || "-")}</span><span class="muted">Stories</span><span>${esc3(c.storyIds.join(", ") || "-")}</span></div>
 ${agreed ? "" : `<p class="meta">Agreeing lets implementation start in the services that use it. Changing the contract afterwards makes it proposed again.</p>`}</section>`;
   }).join("");
-  return shell(state2, "contracts", "Contracts review", `<p class="meta">A contract is what services promise each other. The architect proposes it; only you agree it.</p>${cards || `<p class="muted">There are no contracts yet.</p>`}`, {}, options2, "");
+  return shell(state2, "contracts", "Contracts review", `${integrityBanner(rawState, ["contract"])}<p class="meta">A contract is what services promise each other. The architect proposes it; only you agree it.</p>${cards || `<p class="muted">There are no contracts yet.</p>`}`, {}, options2, "");
 }
 function renderReview(state2, view, options2 = {}) {
   switch (view) {
@@ -11149,6 +11849,7 @@ var init_review_html = __esm({
     init_prototype_viewer();
     init_review_submission();
     init_planning();
+    init_acceptance_integrity();
     CSS = `
 :root{--bg:#fff;--fg:#1d2330;--muted:#5d6678;--line:#d9dde6;--card:#f7f8fb;--accent:#2457d6;--ok:#17803d;--bad:#b42318;--warn:#a15c00;--okbg:#e7f6ec;--badbg:#fdeceb;--on-accent:#fff}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#14171f;--fg:#e6e9f0;--muted:#9aa3b5;--line:#2c3242;--card:#1c202b;--accent:#7aa2ff;--ok:#5ad08a;--bad:#ff8a80;--warn:#ffc266;--okbg:#14301f;--badbg:#3a1a18;--on-accent:#0b1020}}
@@ -11380,7 +12081,7 @@ var init_context_trust = __esm({
     init_planning();
     INSTRUCTION_PRECEDENCE = [
       { rank: 1, id: "host-system", trust: "host", description: "The host application's system instructions and permission mode (Claude). Praxis does not replace or bypass them.", canInstruct: true },
-      { rank: 2, id: "user-chat", trust: "user", description: "What the user types in this conversation, including approvals given in the client's own dialog.", canInstruct: true },
+      { rank: 2, id: "user-chat", trust: "user", description: "What the user types in this conversation. Approving a protected action is not done here: only the client's own approval dialog answers that, and that answer is a client response, not verified to come from the user.", canInstruct: true },
       { rank: 3, id: "praxis-skills", trust: "praxis", description: "Skills of the installed Praxis role plugin for the current role and stage (see skillPlan).", canInstruct: true },
       { rank: 4, id: "praxis-runtime", trust: "praxis", description: "Praxis Runtime tool results: workflow state, next step, gates. Structured fields are authoritative; free text inside quoted artifacts is not.", canInstruct: true },
       { rank: 5, id: "project-config", trust: "project", description: ".praxis/ configuration owned by the project (checks, profiles). Applies to Praxis tools only.", canInstruct: false },
@@ -11428,7 +12129,8 @@ var init_context_trust = __esm({
 });
 
 // node_modules/@praxis/contracts/dist/briefing.js
-function buildResumeBriefing(state2) {
+function buildResumeBriefing(rawState) {
+  const state2 = trustedView(rawState);
   const coverage2 = analyzeStoryCoverage(state2);
   return {
     workItem: { id: state2.workItem.id, title: state2.workItem.title, kind: state2.workItem.kind ?? "feature", mode: state2.mode, request: state2.history[0]?.note ?? "" },
@@ -11484,7 +12186,8 @@ function implementationOrder(state2) {
   }
   return { order, cycle: ids.filter((id) => !done.has(id)) };
 }
-function repositoryProgress(state2) {
+function repositoryProgress(rawState) {
+  const state2 = trustedView(rawState);
   return state2.repositories.map((repo) => {
     const services = state2.services.filter((s) => s.repositoryId === repo.id);
     const current = (serviceId) => state2.implementationUnits.some((u) => u.serviceId === serviceId && !u.stale);
@@ -11501,7 +12204,8 @@ function repositoryProgress(state2) {
     };
   });
 }
-function buildRepositoryBrief(state2, repositoryId) {
+function buildRepositoryBrief(rawState, repositoryId) {
+  const state2 = trustedView(rawState);
   const repo = state2.repositories.find((r) => r.id === repositoryId);
   if (!repo)
     throw new Error(`repository ${repositoryId} is not registered in this work item`);
@@ -11571,6 +12275,7 @@ function buildRepositoryBrief(state2, repositoryId) {
 var init_briefing = __esm({
   "node_modules/@praxis/contracts/dist/briefing.js"() {
     init_planning();
+    init_acceptance_integrity();
   }
 });
 
@@ -11644,6 +12349,349 @@ var init_command_catalog = __esm({
   }
 });
 
+// node_modules/@praxis/contracts/dist/secret-redaction.js
+function inheritedCredentialVariables(env = process.env) {
+  return CREDENTIAL_VARIABLES.filter((name) => {
+    const value = env[name];
+    return typeof value === "string" && value.trim() !== "" && !PLACEHOLDER.test(value.trim());
+  });
+}
+function formsOf(value) {
+  const forms = /* @__PURE__ */ new Set([value, value.trim()]);
+  forms.add(JSON.stringify(value).slice(1, -1));
+  forms.add(encodeURIComponent(value));
+  forms.add(Buffer.from(value, "utf8").toString("base64"));
+  forms.add(Buffer.from(value, "utf8").toString("base64").replace(/=+$/, ""));
+  return [...forms].filter((form) => form.length >= MIN_SECRET_LENGTH);
+}
+function patterns() {
+  const out = [];
+  const add = (name, value) => {
+    if (!usable(value))
+      return;
+    for (const form of formsOf(value))
+      out.push({ form, label: `[REDACTED:${name}]` });
+  };
+  for (const name of CREDENTIAL_VARIABLES) {
+    add(name, inherited[name]);
+    if (process.env[name] !== inherited[name])
+      add(name, process.env[name]);
+  }
+  for (const token of /* @__PURE__ */ new Set([inherited.PRAXIS_JIRA_TOKEN, process.env.PRAXIS_JIRA_TOKEN])) {
+    for (const email6 of /* @__PURE__ */ new Set([inherited.PRAXIS_JIRA_EMAIL, process.env.PRAXIS_JIRA_EMAIL])) {
+      if (usable(token) && email6?.trim())
+        add("PRAXIS_JIRA_TOKEN", `${email6.trim()}:${token.trim()}`);
+    }
+  }
+  for (const [name, values] of registered)
+    for (const value of values)
+      add(name, value);
+  return out.sort((a, b) => b.form.length - a.form.length);
+}
+function redactCredentials(text) {
+  if (!text)
+    return text;
+  let out = text;
+  for (const { form, label } of patterns())
+    if (out.includes(form))
+      out = out.split(form).join(label);
+  return out;
+}
+function redactCredentialsDeep(value) {
+  const list = patterns();
+  if (list.length === 0)
+    return value;
+  const redact2 = (text) => {
+    let out = text;
+    for (const { form, label } of list)
+      if (out.includes(form))
+        out = out.split(form).join(label);
+    return out;
+  };
+  const seen = /* @__PURE__ */ new WeakMap();
+  const walk5 = (input2) => {
+    if (typeof input2 === "string")
+      return redact2(input2);
+    if (!input2 || typeof input2 !== "object")
+      return input2;
+    if (seen.has(input2))
+      return seen.get(input2);
+    if (input2 instanceof Error) {
+      const copy2 = new Error(redact2(input2.message));
+      copy2.name = input2.name;
+      seen.set(input2, copy2);
+      return copy2;
+    }
+    if (Array.isArray(input2)) {
+      const copy2 = [];
+      seen.set(input2, copy2);
+      for (const item of input2)
+        copy2.push(walk5(item));
+      return copy2;
+    }
+    const proto = Object.getPrototypeOf(input2);
+    if (proto !== Object.prototype && proto !== null)
+      return input2;
+    const copy = {};
+    seen.set(input2, copy);
+    for (const [key, inner] of Object.entries(input2))
+      copy[redact2(key)] = walk5(inner);
+    return copy;
+  };
+  return walk5(value);
+}
+var CREDENTIAL_VARIABLES, MIN_SECRET_LENGTH, PLACEHOLDER, usable, inherited, registered;
+var init_secret_redaction = __esm({
+  "node_modules/@praxis/contracts/dist/secret-redaction.js"() {
+    CREDENTIAL_VARIABLES = [
+      "PRAXIS_JIRA_TOKEN",
+      "PRAXIS_GITHUB_TOKEN",
+      "PRAXIS_GITLAB_TOKEN",
+      "PRAXIS_GIT_TOKEN",
+      "GITHUB_TOKEN",
+      "GH_TOKEN",
+      "GITLAB_TOKEN"
+    ];
+    MIN_SECRET_LENGTH = 8;
+    PLACEHOLDER = /^\$\{[^}]*\}$/;
+    usable = (value) => typeof value === "string" && value.trim().length >= MIN_SECRET_LENGTH && !PLACEHOLDER.test(value.trim());
+    inherited = Object.freeze(Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === "string")));
+    registered = /* @__PURE__ */ new Map();
+  }
+});
+
+// node_modules/@praxis/contracts/dist/child-env.js
+function pick3(source, names, prefixes = []) {
+  const out = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (typeof value !== "string")
+      continue;
+    if (names.includes(name) || prefixes.some((prefix2) => name.startsWith(prefix2)))
+      out[name] = value;
+  }
+  return out;
+}
+function repositoryCodeEnv(extra = {}, source = process.env) {
+  const network = Object.fromEntries(Object.entries(pick3(source, NETWORK)).filter(([, value]) => !carriesUserInfo(value)));
+  const env = { ...pick3(source, BASE, BASE_PREFIXES), ...network };
+  for (const [name, value] of Object.entries(extra))
+    if (typeof value === "string")
+      env[name] = value;
+  return env;
+}
+function gitEnv(extra = {}, source = process.env) {
+  return repositoryCodeEnv({ ...pick3(source, GIT), GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: source.GIT_ASKPASS ?? "", ...extra }, source);
+}
+var BASE, BASE_PREFIXES, NETWORK, GIT, carriesUserInfo;
+var init_child_env = __esm({
+  "node_modules/@praxis/contracts/dist/child-env.js"() {
+    BASE = [
+      "PATH",
+      "HOME",
+      "USER",
+      "LOGNAME",
+      "SHELL",
+      "LANG",
+      "LANGUAGE",
+      "TERM",
+      "TZ",
+      "TMPDIR",
+      "TMP",
+      "TEMP",
+      // Windows
+      "SystemRoot",
+      "SYSTEMROOT",
+      "SystemDrive",
+      "ComSpec",
+      "COMSPEC",
+      "PATHEXT",
+      "WINDIR",
+      "windir",
+      "USERPROFILE",
+      "APPDATA",
+      "LOCALAPPDATA",
+      "ProgramData",
+      "ProgramFiles",
+      "ProgramFiles(x86)",
+      "CommonProgramFiles",
+      "HOMEDRIVE",
+      "HOMEPATH",
+      "NUMBER_OF_PROCESSORS",
+      "PROCESSOR_ARCHITECTURE",
+      "OS"
+    ];
+    BASE_PREFIXES = ["LC_"];
+    NETWORK = ["HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy", "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS"];
+    GIT = [
+      "SSH_AUTH_SOCK",
+      "GIT_SSH",
+      "GIT_SSH_COMMAND",
+      "GIT_ASKPASS",
+      "SSH_ASKPASS",
+      "GIT_CONFIG_GLOBAL",
+      "GIT_CONFIG_SYSTEM",
+      "GIT_CONFIG_NOSYSTEM",
+      "GIT_AUTHOR_NAME",
+      "GIT_AUTHOR_EMAIL",
+      "GIT_AUTHOR_DATE",
+      "GIT_COMMITTER_NAME",
+      "GIT_COMMITTER_EMAIL",
+      "GIT_COMMITTER_DATE"
+    ];
+    carriesUserInfo = (value) => /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*@/i.test(value.trim());
+  }
+});
+
+// node_modules/@praxis/contracts/dist/credential-source.js
+function stripJsonc(text) {
+  let out = "";
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (c === '"') {
+      const start = i;
+      for (i += 1; i < text.length && text[i] !== '"'; i += 1)
+        if (text[i] === "\\")
+          i += 1;
+      out += text.slice(start, i + 1);
+    } else if (c === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n" && text[i] !== "\r")
+        i += 1;
+      out += "\n";
+    } else if (c === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end < 0 ? text.length : end + 1;
+    } else
+      out += c;
+  }
+  return out.replace(/,(\s*[}\]])/g, "$1");
+}
+function readJson(path2) {
+  try {
+    const st = (0, import_node_fs3.statSync)(path2);
+    if (!st.isFile() || st.size > MAX_SETTINGS)
+      return "unreadable";
+  } catch (error64) {
+    return error64.code === "ENOENT" ? void 0 : "unreadable";
+  }
+  try {
+    return JSON.parse(stripJsonc((0, import_node_fs3.readFileSync)(path2, "utf8").replace(/^﻿/, "")));
+  } catch {
+    return "unreadable";
+  }
+}
+function projectFolders(repo) {
+  const folders = /* @__PURE__ */ new Set();
+  for (const start of [process.cwd(), ...repo ? [repo] : []]) {
+    let dir = (0, import_node_path2.resolve)(start);
+    for (let i = 0; i < 64; i += 1) {
+      folders.add(dir);
+      const up = (0, import_node_path2.dirname)(dir);
+      if (up === dir)
+        break;
+      dir = up;
+    }
+  }
+  return [...folders];
+}
+function noteRepositoryDotenv(repo, loaded) {
+  notedRepo = repo ? (0, import_node_path2.resolve)(repo) : void 0;
+  notedDotenv = /* @__PURE__ */ new Map();
+  for (const [name, file2] of loaded)
+    notedDotenv.set(norm(name), [...notedDotenv.get(norm(name)) ?? [], file2]);
+}
+function repositorySourcedVariables(repo = notedRepo) {
+  const variables = /* @__PURE__ */ new Map();
+  const everything = [];
+  const add = (name, file2) => variables.set(norm(name), [.../* @__PURE__ */ new Set([...variables.get(norm(name)) ?? [], file2])]);
+  const userConfig = new Set([...new Set([(0, import_node_os2.homedir)(), (0, import_node_os2.userInfo)().homedir].filter(Boolean))].map((home) => (0, import_node_path2.resolve)(home, ".claude")));
+  if (process.env.CLAUDE_CONFIG_DIR?.trim())
+    userConfig.add((0, import_node_path2.resolve)(process.env.CLAUDE_CONFIG_DIR.trim()));
+  for (const folder of projectFolders(repo)) {
+    const claude = (0, import_node_path2.join)(folder, ".claude");
+    if (!userConfig.has(claude)) {
+      for (const name of ["settings.json", "settings.local.json"]) {
+        const file2 = (0, import_node_path2.join)(claude, name);
+        const parsed = readJson(file2);
+        if (parsed === "unreadable")
+          everything.push(file2);
+        else if (parsed && typeof parsed === "object")
+          for (const key of envKeys(parsed.env))
+            add(key, file2);
+      }
+    }
+    const mcp = (0, import_node_path2.join)(folder, ".mcp.json");
+    const servers = readJson(mcp);
+    if (servers === "unreadable")
+      everything.push(mcp);
+    else if (servers && typeof servers === "object") {
+      const list = servers.mcpServers;
+      if (list && typeof list === "object")
+        for (const server3 of Object.values(list))
+          for (const key of envKeys(server3?.env))
+            add(key, mcp);
+    }
+  }
+  if (!repo || (0, import_node_path2.resolve)(repo) === notedRepo)
+    for (const [name, files] of notedDotenv)
+      for (const file2 of files)
+        add(name, file2);
+  return { variables, everything };
+}
+function assertCredentialSource(provider, repo) {
+  const binding = CREDENTIAL_BINDINGS[provider];
+  const { variables, everything } = repositorySourcedVariables(repo);
+  const found = /* @__PURE__ */ new Map();
+  for (const name of [binding.credential, ...binding.destination]) {
+    const files = [...variables.get(norm(name)) ?? [], ...everything];
+    if (files.length)
+      found.set(name, files);
+  }
+  if (found.size)
+    throw new CredentialSourceError(binding, found);
+}
+function credentialSourceReport(repo) {
+  const out = {};
+  for (const provider of Object.keys(CREDENTIAL_BINDINGS)) {
+    try {
+      assertCredentialSource(provider, repo);
+      out[provider] = { trusted: true, repositoryVariables: [], files: [] };
+    } catch (error64) {
+      const details = error64.details;
+      out[provider] = { trusted: false, repositoryVariables: details?.variables ?? [], files: details?.files ?? [] };
+    }
+  }
+  return out;
+}
+var import_node_fs3, import_node_os2, import_node_path2, CREDENTIAL_BINDINGS, CredentialSourceError, MAX_SETTINGS, caseless, norm, envKeys, notedRepo, notedDotenv;
+var init_credential_source = __esm({
+  "node_modules/@praxis/contracts/dist/credential-source.js"() {
+    import_node_fs3 = require("node:fs");
+    import_node_os2 = require("node:os");
+    import_node_path2 = require("node:path");
+    CREDENTIAL_BINDINGS = {
+      jira: { provider: "jira", credential: "PRAXIS_JIRA_TOKEN", destination: ["PRAXIS_JIRA_BASE_URL", "PRAXIS_JIRA_EMAIL", "PRAXIS_JIRA_MODE", "PRAXIS_JIRA_AUTH"] },
+      github: { provider: "github", credential: "PRAXIS_GITHUB_TOKEN", destination: ["PRAXIS_GITHUB_API_URL"] },
+      gitlab: { provider: "gitlab", credential: "PRAXIS_GITLAB_TOKEN", destination: ["PRAXIS_GITLAB_BASE_URL"] }
+    };
+    CredentialSourceError = class extends Error {
+      code = "CREDENTIAL_SOURCE_UNTRUSTED";
+      details;
+      constructor(binding, found) {
+        const variables = [...found.keys()].sort();
+        const files = [...new Set([...found.values()].flat())].sort();
+        super(`CREDENTIAL_SOURCE_UNTRUSTED: ${binding.credential} was not used: ${variables.join(", ")} ${variables.length === 1 ? "is" : "are"} set by a repository file (${files.join("; ")}). A repository may not choose where a credential is sent, nor supply one. Nothing was sent. Remove ${variables.length === 1 ? "it" : "them"} from the repository file and configure the ${binding.provider} settings together with the token: in the Claude Desktop extension settings, your shell, or your user Claude Code settings.`);
+        this.name = "CredentialSourceError";
+        this.details = { provider: binding.provider, variables, files };
+      }
+    };
+    MAX_SETTINGS = 16 * 1024 * 1024;
+    caseless = process.platform === "win32";
+    norm = (name) => caseless ? name.toUpperCase() : name;
+    envKeys = (value) => value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value) : [];
+    notedDotenv = /* @__PURE__ */ new Map();
+  }
+});
+
 // node_modules/@praxis/contracts/dist/index.js
 var ContractMetaSchema, BaToArchitectHandoffSchema, ArchitectToDeveloperHandoffSchema, ChangeSpecChangeSchema, AcceptanceCheckSchema, ChangeSpecSchema, VerificationCheckSchema, VerificationSchema, DeveloperToQualityHandoffSchema, DeveloperCompletionEvidenceSchema, QualityMrContextSchema, QualityAuditReportSchema, QualityRollbackEventSchema, QualityHotfixEventSchema, QualityReturnEventSchema, QualityNormProposalSchema;
 var init_dist = __esm({
@@ -11661,6 +12709,7 @@ var init_dist = __esm({
     init_decision_journal();
     init_planning_schemas();
     init_planning();
+    init_acceptance_integrity();
     init_ids();
     init_workflow();
     init_story();
@@ -11675,6 +12724,9 @@ var init_dist = __esm({
     init_quality_model();
     init_story();
     init_approval_audit();
+    init_secret_redaction();
+    init_child_env();
+    init_credential_source();
     ContractMetaSchema = external_exports.object({
       contract: external_exports.string().min(1),
       version: external_exports.string().regex(/^\d+\.\d+\.\d+$/)
@@ -15873,10 +16925,10 @@ var require_resolve_block_map = __commonJS({
       let offset = bm.offset;
       let commentEnd = null;
       for (const collItem of bm.items) {
-        const { start, key, sep: sep11, value } = collItem;
+        const { start, key, sep: sep13, value } = collItem;
         const keyProps = resolveProps.resolveProps(start, {
           indicator: "explicit-key-ind",
-          next: key ?? sep11?.[0],
+          next: key ?? sep13?.[0],
           offset,
           onError,
           parentIndent: bm.indent,
@@ -15890,7 +16942,7 @@ var require_resolve_block_map = __commonJS({
             else if ("indent" in key && key.indent !== bm.indent)
               onError(offset, "BAD_INDENT", startColMsg);
           }
-          if (!keyProps.anchor && !keyProps.tag && !sep11) {
+          if (!keyProps.anchor && !keyProps.tag && !sep13) {
             commentEnd = keyProps.end;
             if (keyProps.comment) {
               if (map2.comment)
@@ -15914,7 +16966,7 @@ var require_resolve_block_map = __commonJS({
         ctx.atKey = false;
         if (utilMapIncludes.mapIncludes(ctx, map2.items, keyNode))
           onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-        const valueProps = resolveProps.resolveProps(sep11 ?? [], {
+        const valueProps = resolveProps.resolveProps(sep13 ?? [], {
           indicator: "map-value-ind",
           next: value,
           offset: keyNode.range[2],
@@ -15930,7 +16982,7 @@ var require_resolve_block_map = __commonJS({
             if (ctx.options.strict && keyProps.start < valueProps.found.offset - 1024)
               onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key");
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep11, null, valueProps, onError);
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : composeEmptyNode(ctx, offset, sep13, null, valueProps, onError);
           if (ctx.schema.compat)
             utilFlowIndentCheck.flowIndentCheck(bm.indent, value, onError);
           offset = valueNode.range[2];
@@ -16021,7 +17073,7 @@ var require_resolve_end = __commonJS({
       let comment = "";
       if (end) {
         let hasSpace = false;
-        let sep11 = "";
+        let sep13 = "";
         for (const token of end) {
           const { source, type } = token;
           switch (type) {
@@ -16035,13 +17087,13 @@ var require_resolve_end = __commonJS({
               if (!comment)
                 comment = cb;
               else
-                comment += sep11 + cb;
-              sep11 = "";
+                comment += sep13 + cb;
+              sep13 = "";
               break;
             }
             case "newline":
               if (comment)
-                sep11 += source;
+                sep13 += source;
               hasSpace = true;
               break;
             default:
@@ -16084,18 +17136,18 @@ var require_resolve_flow_collection = __commonJS({
       let offset = fc.offset + fc.start.source.length;
       for (let i = 0; i < fc.items.length; ++i) {
         const collItem = fc.items[i];
-        const { start, key, sep: sep11, value } = collItem;
+        const { start, key, sep: sep13, value } = collItem;
         const props = resolveProps.resolveProps(start, {
           flow: fcName,
           indicator: "explicit-key-ind",
-          next: key ?? sep11?.[0],
+          next: key ?? sep13?.[0],
           offset,
           onError,
           parentIndent: fc.indent,
           startOnNewline: false
         });
         if (!props.found) {
-          if (!props.anchor && !props.tag && !sep11 && !value) {
+          if (!props.anchor && !props.tag && !sep13 && !value) {
             if (i === 0 && props.comma)
               onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
             else if (i < fc.items.length - 1)
@@ -16149,8 +17201,8 @@ var require_resolve_flow_collection = __commonJS({
             }
           }
         }
-        if (!isMap && !sep11 && !props.found) {
-          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep11, null, props, onError);
+        if (!isMap && !sep13 && !props.found) {
+          const valueNode = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, sep13, null, props, onError);
           coll.items.push(valueNode);
           offset = valueNode.range[2];
           if (isBlock(value))
@@ -16162,7 +17214,7 @@ var require_resolve_flow_collection = __commonJS({
           if (isBlock(key))
             onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg);
           ctx.atKey = false;
-          const valueProps = resolveProps.resolveProps(sep11 ?? [], {
+          const valueProps = resolveProps.resolveProps(sep13 ?? [], {
             flow: fcName,
             indicator: "map-value-ind",
             next: value,
@@ -16173,8 +17225,8 @@ var require_resolve_flow_collection = __commonJS({
           });
           if (valueProps.found) {
             if (!isMap && !props.found && ctx.options.strict) {
-              if (sep11)
-                for (const st of sep11) {
+              if (sep13)
+                for (const st of sep13) {
                   if (st === valueProps.found)
                     break;
                   if (st.type === "newline") {
@@ -16191,7 +17243,7 @@ var require_resolve_flow_collection = __commonJS({
             else
               onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`);
           }
-          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep11, null, valueProps, onError) : null;
+          const valueNode = value ? composeNode(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode(ctx, valueProps.end, sep13, null, valueProps, onError) : null;
           if (valueNode) {
             if (isBlock(value))
               onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
@@ -16371,7 +17423,7 @@ var require_resolve_block_scalar = __commonJS({
           chompStart = i + 1;
       }
       let value = "";
-      let sep11 = "";
+      let sep13 = "";
       let prevMoreIndented = false;
       for (let i = 0; i < contentStart; ++i)
         value += lines[i][0].slice(trimIndent) + "\n";
@@ -16388,24 +17440,24 @@ var require_resolve_block_scalar = __commonJS({
           indent = "";
         }
         if (type === Scalar.Scalar.BLOCK_LITERAL) {
-          value += sep11 + indent.slice(trimIndent) + content;
-          sep11 = "\n";
+          value += sep13 + indent.slice(trimIndent) + content;
+          sep13 = "\n";
         } else if (indent.length > trimIndent || content[0] === "	") {
-          if (sep11 === " ")
-            sep11 = "\n";
-          else if (!prevMoreIndented && sep11 === "\n")
-            sep11 = "\n\n";
-          value += sep11 + indent.slice(trimIndent) + content;
-          sep11 = "\n";
+          if (sep13 === " ")
+            sep13 = "\n";
+          else if (!prevMoreIndented && sep13 === "\n")
+            sep13 = "\n\n";
+          value += sep13 + indent.slice(trimIndent) + content;
+          sep13 = "\n";
           prevMoreIndented = true;
         } else if (content === "") {
-          if (sep11 === "\n")
+          if (sep13 === "\n")
             value += "\n";
           else
-            sep11 = "\n";
+            sep13 = "\n";
         } else {
-          value += sep11 + content;
-          sep11 = " ";
+          value += sep13 + content;
+          sep13 = " ";
           prevMoreIndented = false;
         }
       }
@@ -16584,25 +17636,25 @@ var require_resolve_flow_scalar = __commonJS({
         trimBoth = /^[ \t]+|[ \t]+$/g;
       }
       let res = match[1].replace(trimEnd, "");
-      let sep11 = " ";
+      let sep13 = " ";
       let pos = line.lastIndex;
       while (match = line.exec(source)) {
         const lm = match[1].replace(trimBoth, "");
         if (lm === "") {
-          if (sep11 === "\n")
-            res += sep11;
+          if (sep13 === "\n")
+            res += sep13;
           else
-            sep11 = "\n";
+            sep13 = "\n";
         } else {
-          res += sep11 + lm;
-          sep11 = " ";
+          res += sep13 + lm;
+          sep13 = " ";
         }
         pos = line.lastIndex;
       }
       const last = /[ \t]*(.*)/sy;
       last.lastIndex = pos;
       match = last.exec(source);
-      return res + sep11 + (match?.[1] ?? "");
+      return res + sep13 + (match?.[1] ?? "");
     }
     function doubleQuotedValue(source, onError) {
       let res = "";
@@ -17412,14 +18464,14 @@ var require_cst_stringify = __commonJS({
         }
       }
     }
-    function stringifyItem({ start, key, sep: sep11, value }) {
+    function stringifyItem({ start, key, sep: sep13, value }) {
       let res = "";
       for (const st of start)
         res += st.source;
       if (key)
         res += stringifyToken(key);
-      if (sep11)
-        for (const st of sep11)
+      if (sep13)
+        for (const st of sep13)
           res += st.source;
       if (value)
         res += stringifyToken(value);
@@ -18579,18 +19631,18 @@ var require_parser = __commonJS({
         if (this.type === "map-value-ind") {
           const prev = getPrevProps(this.peek(2));
           const start = getFirstKeyStartProps(prev);
-          let sep11;
+          let sep13;
           if (scalar.end) {
-            sep11 = scalar.end;
-            sep11.push(this.sourceToken);
+            sep13 = scalar.end;
+            sep13.push(this.sourceToken);
             delete scalar.end;
           } else
-            sep11 = [this.sourceToken];
+            sep13 = [this.sourceToken];
           const map2 = {
             type: "block-map",
             offset: scalar.offset,
             indent: scalar.indent,
-            items: [{ start, key: scalar, sep: sep11 }]
+            items: [{ start, key: scalar, sep: sep13 }]
           };
           this.onKeyLine = true;
           this.stack[this.stack.length - 1] = map2;
@@ -18742,15 +19794,15 @@ var require_parser = __commonJS({
                 } else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
                   const start2 = getFirstKeyStartProps(it.start);
                   const key = it.key;
-                  const sep11 = it.sep;
-                  sep11.push(this.sourceToken);
+                  const sep13 = it.sep;
+                  sep13.push(this.sourceToken);
                   delete it.key;
                   delete it.sep;
                   this.stack.push({
                     type: "block-map",
                     offset: this.offset,
                     indent: this.indent,
-                    items: [{ start: start2, key, sep: sep11 }]
+                    items: [{ start: start2, key, sep: sep13 }]
                   });
                 } else if (start.length > 0) {
                   it.sep = it.sep.concat(start, this.sourceToken);
@@ -18944,13 +19996,13 @@ var require_parser = __commonJS({
             const prev = getPrevProps(parent);
             const start = getFirstKeyStartProps(prev);
             fixFlowSeqItems(fc);
-            const sep11 = fc.end.splice(1, fc.end.length);
-            sep11.push(this.sourceToken);
+            const sep13 = fc.end.splice(1, fc.end.length);
+            sep13.push(this.sourceToken);
             const map2 = {
               type: "block-map",
               offset: fc.offset,
               indent: fc.indent,
-              items: [{ start, key: fc, sep: sep11 }]
+              items: [{ start, key: fc, sep: sep13 }]
             };
             this.onKeyLine = true;
             this.stack[this.stack.length - 1] = map2;
@@ -19127,7 +20179,7 @@ var require_public_api = __commonJS({
       }
       return doc;
     }
-    function parse6(src, reviver, options2) {
+    function parse7(src, reviver, options2) {
       let _reviver = void 0;
       if (typeof reviver === "function") {
         _reviver = reviver;
@@ -19168,7 +20220,7 @@ var require_public_api = __commonJS({
         return value.toString(options2);
       return new Document.Document(value, _replacer, options2).toString(options2);
     }
-    exports2.parse = parse6;
+    exports2.parse = parse7;
     exports2.parseAllDocuments = parseAllDocuments;
     exports2.parseDocument = parseDocument;
     exports2.stringify = stringify;
@@ -19242,11 +20294,11 @@ function unsetFields(config4) {
 }
 function loadProjectConfig(repoRoot) {
   for (const name of PROJECT_FILE_NAMES) {
-    const path2 = (0, import_node_path14.join)(repoRoot, name);
-    if (!(0, import_node_fs16.existsSync)(path2))
+    const path2 = (0, import_node_path15.join)(repoRoot, name);
+    if (!(0, import_node_fs18.existsSync)(path2))
       continue;
     try {
-      const raw = (0, import_node_fs16.readFileSync)(path2, "utf8");
+      const raw = (0, import_node_fs18.readFileSync)(path2, "utf8");
       const data = (0, import_yaml.parse)(raw) ?? {};
       const config4 = ProjectConfigSchema.parse(data);
       return { status: "loaded", path: path2, config: config4, unset: unsetFields(config4) };
@@ -19265,14 +20317,14 @@ function loadProjectConfig(repoRoot) {
     status: "missing",
     config: DEFAULTS,
     unset: unsetFields(DEFAULTS),
-    suggestedPath: (0, import_node_path14.join)(repoRoot, ".project")
+    suggestedPath: (0, import_node_path15.join)(repoRoot, ".project")
   };
 }
-function readJson4(path2) {
-  if (!(0, import_node_fs16.existsSync)(path2))
+function readJson5(path2) {
+  if (!(0, import_node_fs18.existsSync)(path2))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs16.readFileSync)(path2, "utf8"));
+    return JSON.parse((0, import_node_fs18.readFileSync)(path2, "utf8"));
   } catch {
     return void 0;
   }
@@ -19280,7 +20332,7 @@ function readJson4(path2) {
 function inferProjectConfig(repoRoot) {
   const existing = loadProjectConfig(repoRoot);
   const notes = [];
-  const pkg = readJson4((0, import_node_path14.join)(repoRoot, "package.json"));
+  const pkg = readJson5((0, import_node_path15.join)(repoRoot, "package.json"));
   const scripts = pkg && typeof pkg.scripts === "object" && pkg.scripts ? pkg.scripts : {};
   const stack = [];
   if (pkg) {
@@ -19307,19 +20359,19 @@ function inferProjectConfig(repoRoot) {
 }
 function writeProjectConfig(repoRoot, yamlOrConfig) {
   requireMutationLease();
-  const path2 = (0, import_node_path14.join)(repoRoot, ".project");
+  const path2 = (0, import_node_path15.join)(repoRoot, ".project");
   const yaml2 = typeof yamlOrConfig === "string" ? yamlOrConfig.endsWith("\n") ? yamlOrConfig : `${yamlOrConfig}
 ` : `${(0, import_yaml.stringify)(yamlOrConfig).trimEnd()}
 `;
-  (0, import_node_fs16.writeFileSync)(path2, yaml2);
+  (0, import_node_fs18.writeFileSync)(path2, yaml2);
   return path2;
 }
-var import_node_fs16, import_node_path14, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
+var import_node_fs18, import_node_path15, import_yaml, ProjectConfigSchema, PROJECT_FILE_NAMES, DEFAULTS;
 var init_dist2 = __esm({
   "node_modules/@praxis/project-config/dist/index.js"() {
     init_dist();
-    import_node_fs16 = require("node:fs");
-    import_node_path14 = require("node:path");
+    import_node_fs18 = require("node:fs");
+    import_node_path15 = require("node:path");
     import_yaml = __toESM(require_dist2(), 1);
     init_zod();
     ProjectConfigSchema = external_exports.object({
@@ -19428,6 +20480,7 @@ function detectJiraMode(env, baseUrl) {
   return looksCloud ? "cloud" : "datacenter";
 }
 function loadJiraConfig(env = process.env) {
+  assertCredentialSource("jira");
   const baseUrl = (env.PRAXIS_JIRA_BASE_URL ?? "").replace(/\/$/, "");
   const token = env.PRAXIS_JIRA_TOKEN ?? "";
   const projectKey = env.PRAXIS_JIRA_PROJECT_KEY ?? "";
@@ -19483,6 +20536,7 @@ function loadJiraConfig(env = process.env) {
 var JIRA_PAT_MIN_VERSION;
 var init_config = __esm({
   "node_modules/@praxis/jira/dist/config.js"() {
+    init_dist();
     JIRA_PAT_MIN_VERSION = "8.14.0";
   }
 });
@@ -20509,7 +21563,7 @@ var init_dist3 = __esm({
 
 // node_modules/@praxis/jira/dist/mutation-auth.js
 function jiraMutation(repo, spec) {
-  const root = (0, import_node_path15.resolve)(repo);
+  const root = (0, import_node_path16.resolve)(repo);
   return {
     repo: root,
     operation: spec.operation,
@@ -20526,10 +21580,10 @@ function authorizeJira(request, write) {
     return write();
   throw new ApprovalError("APPROVAL_REQUIRED", `${request.action} changes Jira and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was sent.`);
 }
-var import_node_path15;
+var import_node_path16;
 var init_mutation_auth = __esm({
   "node_modules/@praxis/jira/dist/mutation-auth.js"() {
-    import_node_path15 = require("node:path");
+    import_node_path16 = require("node:path");
     init_dist();
   }
 });
@@ -20582,21 +21636,21 @@ var init_role_policy = __esm({
 
 // node_modules/@praxis/jira/dist/atomic-json.js
 function writeJsonAtomic(filePath, value) {
-  (0, import_node_fs17.mkdirSync)((0, import_node_path16.dirname)(filePath), { recursive: true });
+  (0, import_node_fs19.mkdirSync)((0, import_node_path17.dirname)(filePath), { recursive: true });
   const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
-  (0, import_node_fs17.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs19.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs17.renameSync)(tmp, filePath);
+  (0, import_node_fs19.renameSync)(tmp, filePath);
 }
 function readJsonFile(filePath, artifactType) {
-  if (!(0, import_node_fs17.existsSync)(filePath)) {
+  if (!(0, import_node_fs19.existsSync)(filePath)) {
     return {
       ok: false,
       reason: "missing",
       message: `${artifactType} unavailable (${filePath})`
     };
   }
-  const raw = (0, import_node_fs17.readFileSync)(filePath, "utf8");
+  const raw = (0, import_node_fs19.readFileSync)(filePath, "utf8");
   if (!raw.trim()) {
     return {
       ok: false,
@@ -20614,17 +21668,17 @@ function readJsonFile(filePath, artifactType) {
     };
   }
 }
-var import_node_fs17, import_node_path16;
+var import_node_fs19, import_node_path17;
 var init_atomic_json = __esm({
   "node_modules/@praxis/jira/dist/atomic-json.js"() {
-    import_node_fs17 = require("node:fs");
-    import_node_path16 = require("node:path");
+    import_node_fs19 = require("node:fs");
+    import_node_path17 = require("node:path");
   }
 });
 
 // node_modules/@praxis/jira/dist/write-journal.js
 function writeJournalPath(repo) {
-  return (0, import_node_path17.join)(repo, ".praxis-jira", "write-journal.json");
+  return (0, import_node_path18.join)(repo, ".praxis-jira", "write-journal.json");
 }
 function loadWriteJournal(repo) {
   const parsed = readJsonFile(writeJournalPath(repo), "jira-write-journal");
@@ -20666,10 +21720,10 @@ function advanceWriteOp(repo, operationId, patch) {
   };
   return upsertWriteOp(repo, next);
 }
-var import_node_path17;
+var import_node_path18;
 var init_write_journal = __esm({
   "node_modules/@praxis/jira/dist/write-journal.js"() {
-    import_node_path17 = require("node:path");
+    import_node_path18 = require("node:path");
     init_atomic_json();
   }
 });
@@ -20778,19 +21832,19 @@ async function recoverDuplicatesForArtifact(provider, flags, artifactId, repo, o
   if (matches.length === 0)
     return { superseded: [] };
   const journal = findWriteOpByArtifact(repo, artifactId);
-  const canonical = selectCanonicalKey(matches, journal?.jiraIssueKey);
+  const canonical2 = selectCanonicalKey(matches, journal?.jiraIssueKey);
   const superseded = [];
-  if (!canonical)
+  if (!canonical2)
     return { superseded };
   for (const m of matches) {
-    if (m.key === canonical)
+    if (m.key === canonical2)
       continue;
     if (!isSupersededFlags(m) && !opts?.dryRun) {
-      await markSuperseded(provider, m.key, canonical);
+      await markSuperseded(provider, m.key, canonical2);
     }
     superseded.push(m.key);
   }
-  return { canonical, superseded };
+  return { canonical: canonical2, superseded };
 }
 async function lookupByArtifactId(provider, flags, artifactId, repo, epicKey, opts) {
   const recovered = await recoverDuplicatesForArtifact(provider, flags, artifactId, repo, opts);
@@ -20852,18 +21906,18 @@ var init_managed_scope = __esm({
 
 // node_modules/@praxis/jira/dist/work-package-local.js
 function listDirs(abs) {
-  if (!(0, import_node_fs18.existsSync)(abs))
+  if (!(0, import_node_fs20.existsSync)(abs))
     return [];
-  return (0, import_node_fs18.readdirSync)(abs).map((n) => (0, import_node_path18.join)(abs, n)).filter((p) => {
+  return (0, import_node_fs20.readdirSync)(abs).map((n) => (0, import_node_path19.join)(abs, n)).filter((p) => {
     try {
-      return (0, import_node_fs18.statSync)(p).isDirectory();
+      return (0, import_node_fs20.statSync)(p).isDirectory();
     } catch {
       return false;
     }
   });
 }
 function readIf(path2) {
-  return (0, import_node_fs18.existsSync)(path2) ? (0, import_node_fs18.readFileSync)(path2, "utf8") : void 0;
+  return (0, import_node_fs20.existsSync)(path2) ? (0, import_node_fs20.readFileSync)(path2, "utf8") : void 0;
 }
 function extractMermaid(text) {
   const out = [];
@@ -20881,7 +21935,7 @@ function discoverLocalWorkPackages(repo) {
       return;
     const cur = byId.get(id) ?? {
       id,
-      manifestDir: (0, import_node_path18.join)(repo, "work-packages", id),
+      manifestDir: (0, import_node_path19.join)(repo, "work-packages", id),
       mermaid: []
     };
     if (kind === "design")
@@ -20892,24 +21946,24 @@ function discoverLocalWorkPackages(repo) {
       cur.manifestDir = abs;
     byId.set(id, cur);
   };
-  for (const p of listDirs((0, import_node_path18.join)(repo, "design")))
+  for (const p of listDirs((0, import_node_path19.join)(repo, "design")))
     take(p, "design");
-  for (const p of listDirs((0, import_node_path18.join)(repo, "wp")))
+  for (const p of listDirs((0, import_node_path19.join)(repo, "wp")))
     take(p, "canon");
-  for (const p of listDirs((0, import_node_path18.join)(repo, "work-packages")))
+  for (const p of listDirs((0, import_node_path19.join)(repo, "work-packages")))
     take(p, "manifest");
   for (const wp of byId.values()) {
     const root = wp.designDir ?? wp.canonWpDir ?? wp.manifestDir;
-    const spec = (0, import_node_path18.join)(root, "change-spec.json");
-    const handoff4 = (0, import_node_path18.join)(root, "architect-developer.handoff.json");
-    wp.changeSpecPath = (0, import_node_fs18.existsSync)(spec) ? spec : void 0;
-    wp.handoffPath = (0, import_node_fs18.existsSync)(handoff4) ? handoff4 : void 0;
-    wp.indexMd = readIf((0, import_node_path18.join)(root, "index.md"));
+    const spec = (0, import_node_path19.join)(root, "change-spec.json");
+    const handoff4 = (0, import_node_path19.join)(root, "architect-developer.handoff.json");
+    wp.changeSpecPath = (0, import_node_fs20.existsSync)(spec) ? spec : void 0;
+    wp.handoffPath = (0, import_node_fs20.existsSync)(handoff4) ? handoff4 : void 0;
+    wp.indexMd = readIf((0, import_node_path19.join)(root, "index.md"));
     const blob = [
       wp.indexMd ?? "",
-      readIf((0, import_node_path18.join)(root, "decisions.md")) ?? "",
-      readIf((0, import_node_path18.join)(root, "nfr-budgets.md")) ?? "",
-      readIf((0, import_node_path18.join)(root, "contracts.md")) ?? ""
+      readIf((0, import_node_path19.join)(root, "decisions.md")) ?? "",
+      readIf((0, import_node_path19.join)(root, "nfr-budgets.md")) ?? "",
+      readIf((0, import_node_path19.join)(root, "contracts.md")) ?? ""
     ].join("\n");
     wp.mermaid = extractMermaid(blob);
   }
@@ -20929,11 +21983,11 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   if (byId)
     return byId;
   for (const w of all) {
-    const manifestPath = (0, import_node_path18.join)(w.manifestDir, "manifest.json");
-    if (!(0, import_node_fs18.existsSync)(manifestPath))
+    const manifestPath = (0, import_node_path19.join)(w.manifestDir, "manifest.json");
+    if (!(0, import_node_fs20.existsSync)(manifestPath))
       continue;
     try {
-      const m = JSON.parse((0, import_node_fs18.readFileSync)(manifestPath, "utf8"));
+      const m = JSON.parse((0, import_node_fs20.readFileSync)(manifestPath, "utf8"));
       if (m.jiraIssueKey === idOrKey || m.id === idOrKey)
         return w;
     } catch {
@@ -20942,24 +21996,24 @@ function resolveLocalWorkPackage(repo, idOrKey) {
   return void 0;
 }
 function writeWpManifest(repo, wp) {
-  const dir = (0, import_node_path18.join)(repo, "work-packages", wp.id);
-  (0, import_node_fs18.mkdirSync)(dir, { recursive: true });
-  const path2 = (0, import_node_path18.join)(dir, "manifest.json");
-  (0, import_node_fs18.writeFileSync)(path2, `${JSON.stringify(wp, null, 2)}
+  const dir = (0, import_node_path19.join)(repo, "work-packages", wp.id);
+  (0, import_node_fs20.mkdirSync)(dir, { recursive: true });
+  const path2 = (0, import_node_path19.join)(dir, "manifest.json");
+  (0, import_node_fs20.writeFileSync)(path2, `${JSON.stringify(wp, null, 2)}
 `);
   return path2;
 }
 function readWpManifest(repo, id) {
-  const path2 = (0, import_node_path18.join)(repo, "work-packages", id, "manifest.json");
-  if (!(0, import_node_fs18.existsSync)(path2))
+  const path2 = (0, import_node_path19.join)(repo, "work-packages", id, "manifest.json");
+  if (!(0, import_node_fs20.existsSync)(path2))
     return void 0;
-  return JSON.parse((0, import_node_fs18.readFileSync)(path2, "utf8"));
+  return JSON.parse((0, import_node_fs20.readFileSync)(path2, "utf8"));
 }
-var import_node_fs18, import_node_path18, WP_ID_RE;
+var import_node_fs20, import_node_path19, WP_ID_RE;
 var init_work_package_local = __esm({
   "node_modules/@praxis/jira/dist/work-package-local.js"() {
-    import_node_fs18 = require("node:fs");
-    import_node_path18 = require("node:path");
+    import_node_fs20 = require("node:fs");
+    import_node_path19 = require("node:path");
     WP_ID_RE = /^WP-\d{8}-\d+$/;
   }
 });
@@ -21006,11 +22060,11 @@ function firstMarkdownHeading(md) {
   return void 0;
 }
 function readText(path2) {
-  if (!path2 || !(0, import_node_fs19.existsSync)(path2))
+  if (!path2 || !(0, import_node_fs21.existsSync)(path2))
     return void 0;
-  return (0, import_node_fs19.readFileSync)(path2, "utf8");
+  return (0, import_node_fs21.readFileSync)(path2, "utf8");
 }
-function readJson5(path2) {
+function readJson6(path2) {
   const raw = readText(path2);
   if (!raw)
     return void 0;
@@ -21061,11 +22115,11 @@ function jiraWpSummary(id, title) {
   return `[${id}] ${title}`;
 }
 function readNormalizedWorkPackage(repo, local, opts) {
-  const designIndex = local.designDir ? readText((0, import_node_path19.join)(local.designDir, "index.md")) : void 0;
-  const canonIndex = local.canonWpDir ? readText((0, import_node_path19.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path19.join)(repo, "wp", local.id, "index.md"));
-  const manifest = readJson5((0, import_node_path19.join)(local.manifestDir, "manifest.json"));
-  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path19.join)(local.designDir, "change-spec.json") : void 0);
-  const spec = readJson5(specPath);
+  const designIndex = local.designDir ? readText((0, import_node_path20.join)(local.designDir, "index.md")) : void 0;
+  const canonIndex = local.canonWpDir ? readText((0, import_node_path20.join)(local.canonWpDir, "index.md")) : readText((0, import_node_path20.join)(repo, "wp", local.id, "index.md"));
+  const manifest = readJson6((0, import_node_path20.join)(local.manifestDir, "manifest.json"));
+  const specPath = local.changeSpecPath ?? (local.designDir ? (0, import_node_path20.join)(local.designDir, "change-spec.json") : void 0);
+  const spec = readJson6(specPath);
   const fm = {
     ...parseSimpleFrontmatter(splitFrontmatter(designIndex ?? "").frontmatter),
     ...parseSimpleFrontmatter(splitFrontmatter(canonIndex ?? "").frontmatter)
@@ -21142,11 +22196,11 @@ function selectArchitectWorkPackages(opts) {
   }
   return { selected: selected ? [selected] : [], inspected };
 }
-var import_node_fs19, import_node_path19, INVALID_WP_TITLES, WorkPackageScopeError;
+var import_node_fs21, import_node_path20, INVALID_WP_TITLES, WorkPackageScopeError;
 var init_work_package_read = __esm({
   "node_modules/@praxis/jira/dist/work-package-read.js"() {
-    import_node_fs19 = require("node:fs");
-    import_node_path19 = require("node:path");
+    import_node_fs21 = require("node:fs");
+    import_node_path20 = require("node:path");
     init_work_package_local();
     INVALID_WP_TITLES = /* @__PURE__ */ new Set(["", "---", "-", "work package", "untitled"]);
     WorkPackageScopeError = class extends Error {
@@ -21490,8 +22544,8 @@ ${usefulMermaid[0]}
       await opts.provider.writePraxisState(wpKey, {
         lifecycle: "ready-for-development"
       });
-      const handoffPath2 = local.handoffPath ?? (0, import_node_path20.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
-      const prev = (0, import_node_fs20.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs20.readFileSync)(handoffPath2, "utf8")) : {};
+      const handoffPath2 = local.handoffPath ?? (0, import_node_path21.join)(local.designDir ?? local.manifestDir, "architect-developer.handoff.json");
+      const prev = (0, import_node_fs22.existsSync)(handoffPath2) ? JSON.parse((0, import_node_fs22.readFileSync)(handoffPath2, "utf8")) : {};
       writeJsonAtomic(handoffPath2, {
         ...prev,
         contract: prev.contract ?? "architect.developer.handoff",
@@ -21555,11 +22609,11 @@ ${usefulMermaid[0]}
     outOfScopeWorkPackages
   };
 }
-var import_node_fs20, import_node_path20, WP_PROP, ARCH_COMMENT_PROP;
+var import_node_fs22, import_node_path21, WP_PROP, ARCH_COMMENT_PROP;
 var init_architect_apply = __esm({
   "node_modules/@praxis/jira/dist/architect-apply.js"() {
-    import_node_fs20 = require("node:fs");
-    import_node_path20 = require("node:path");
+    import_node_fs22 = require("node:fs");
+    import_node_path21 = require("node:path");
     init_rich_text();
     init_role_policy();
     init_managed_scope();
@@ -21598,7 +22652,7 @@ var init_artifact_id = __esm({
 
 // node_modules/@praxis/jira/dist/ba-write.js
 function contentFingerprint(spec) {
-  return (0, import_node_crypto12.createHash)("sha256").update(JSON.stringify({
+  return (0, import_node_crypto13.createHash)("sha256").update(JSON.stringify({
     summary: spec.summary,
     userStory: spec.userStory,
     acceptanceCriteria: spec.acceptanceCriteria,
@@ -21698,25 +22752,25 @@ async function planAndApplyBaStories(opts) {
       });
       claimed.add(s);
     }
-    let canonical = looked.canonical;
-    if (!canonical) {
+    let canonical2 = looked.canonical;
+    if (!canonical2) {
       const incomplete = findWriteOp(opts.repo, operationId);
       if (incomplete?.jiraIssueKey)
-        canonical = incomplete.jiraIssueKey;
+        canonical2 = incomplete.jiraIssueKey;
     }
-    if (!canonical) {
+    if (!canonical2) {
       const unmatched = unmatchedCanonicalStories(flags, claimed);
       if (unmatched.length === 1 && opts.specs.length === 1) {
-        canonical = unmatched[0].key;
+        canonical2 = unmatched[0].key;
       }
     }
-    if (canonical) {
-      claimed.add(canonical);
-      const existingFp = await opts.provider.getIssueProperty(canonical, "praxis.contentFingerprint");
+    if (canonical2) {
+      claimed.add(canonical2);
+      const existingFp = await opts.provider.getIssueProperty(canonical2, "praxis.contentFingerprint");
       const action = existingFp === fingerprint2 ? "UNCHANGED" : "UPDATE";
-      plan.push({ action, artifactId, jiraIssueKey: canonical, summary: spec.summary });
+      plan.push({ action, artifactId, jiraIssueKey: canonical2, summary: spec.summary });
       if (opts.dryRun) {
-        applied.push({ action, artifactId, jiraIssueKey: canonical, superseded: looked.superseded });
+        applied.push({ action, artifactId, jiraIssueKey: canonical2, superseded: looked.superseded });
         continue;
       }
       const now = (/* @__PURE__ */ new Date()).toISOString();
@@ -21726,29 +22780,29 @@ async function planAndApplyBaStories(opts) {
         operationType: "upsert-story",
         artifactId,
         epicKey: opts.epicKey,
-        jiraIssueKey: canonical,
+        jiraIssueKey: canonical2,
         state: "created",
         provider: opts.provider.flavor,
         projectKey: opts.provider.config.projectKey,
         startedAt: now
       });
       if (action === "UPDATE") {
-        await opts.provider.updateIssue(canonical, {
+        await opts.provider.updateIssue(canonical2, {
           summary: spec.summary,
           description: storyDescription(opts.provider, spec, opts.epicKey)
         });
       }
-      await applyPraxisMetadata(opts.provider, canonical, spec, artifactId, opts.epicKey, fingerprint2);
+      await applyPraxisMetadata(opts.provider, canonical2, spec, artifactId, opts.epicKey, fingerprint2);
       if (opts.hooks?.crashAfterProperty) {
         throw new Error("injected crash: after property");
       }
-      await verifyCreated(opts.provider, canonical, artifactId, opts.epicKey);
+      await verifyCreated(opts.provider, canonical2, artifactId, opts.epicKey);
       advanceWriteOp(opts.repo, operationId, { state: "verified" });
       if (opts.hooks?.crashBeforeCommit) {
         throw new Error("injected crash: before commit");
       }
       advanceWriteOp(opts.repo, operationId, { state: "committed" });
-      applied.push({ action, artifactId, jiraIssueKey: canonical, superseded: looked.superseded });
+      applied.push({ action, artifactId, jiraIssueKey: canonical2, superseded: looked.superseded });
       continue;
     }
     plan.push({
@@ -21827,10 +22881,10 @@ async function planAndApplyBaStories(opts) {
     flags: opts.dryRun ? flags : await loadEpicIssueFlags(opts.provider, opts.epicKey)
   };
 }
-var import_node_crypto12;
+var import_node_crypto13;
 var init_ba_write = __esm({
   "node_modules/@praxis/jira/dist/ba-write.js"() {
-    import_node_crypto12 = require("node:crypto");
+    import_node_crypto13 = require("node:crypto");
     init_artifact_id();
     init_managed_scope();
     init_write_journal();
@@ -21902,13 +22956,13 @@ async function adoptLegacyStories(opts) {
     return issue4 ? looksLikePraxisBaStory(issue4) : false;
   });
   if (handoffKeys.length === 1) {
-    const canonical = handoffKeys[0];
-    const issue4 = byKey.get(canonical);
-    const flagsFor = flagged.get(canonical);
+    const canonical2 = handoffKeys[0];
+    const issue4 = byKey.get(canonical2);
+    const flagsFor = flagged.get(canonical2);
     if (issue4 && looksLikePraxisBaStory(issue4) && (!flagsFor || !isSupersededFlags(flagsFor))) {
       return {
         status: "adopted",
-        canonicalKey: canonical,
+        canonicalKey: canonical2,
         supersededKeys: superseded.map((s) => s.key),
         logicalId: extractLogicalId(opts.epicKey, issue4),
         confidence: "handoff+structure"
@@ -21926,16 +22980,16 @@ async function adoptLegacyStories(opts) {
     }
   }
   if (praxisShaped.length === 1) {
-    const canonical = praxisShaped[0];
-    const issue4 = byKey.get(canonical.key);
+    const canonical2 = praxisShaped[0];
+    const issue4 = byKey.get(canonical2.key);
     const meta5 = typeof issue4.properties?.["praxis.artifactId"] === "string" ? "metadata" : "structure";
     return {
       status: "adopted",
-      canonicalKey: canonical.key,
+      canonicalKey: canonical2.key,
       supersededKeys: [
         .../* @__PURE__ */ new Set([
           ...superseded.map((s) => s.key),
-          ...active.filter((a) => a.key !== canonical.key).filter((a) => parseHistoricalSupersededBy(a.summary) === canonical.key).map((a) => a.key)
+          ...active.filter((a) => a.key !== canonical2.key).filter((a) => parseHistoricalSupersededBy(a.summary) === canonical2.key).map((a) => a.key)
         ])
       ],
       logicalId: extractLogicalId(opts.epicKey, issue4),
@@ -21955,11 +23009,11 @@ var init_legacy_adopt = __esm({
 });
 
 // node_modules/@praxis/jira/dist/developer-complete.js
-function readJson6(path2) {
-  if (!(0, import_node_fs21.existsSync)(path2))
+function readJson7(path2) {
+  if (!(0, import_node_fs23.existsSync)(path2))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs21.readFileSync)(path2, "utf8"));
+    return JSON.parse((0, import_node_fs23.readFileSync)(path2, "utf8"));
   } catch {
     return void 0;
   }
@@ -21967,10 +23021,10 @@ function readJson6(path2) {
 function loadQualityTestCommand(repo) {
   const names = [".project", ".project.yaml", ".project.yml"];
   for (const name of names) {
-    const p = (0, import_node_path21.join)(repo, name);
-    if (!(0, import_node_fs21.existsSync)(p))
+    const p = (0, import_node_path22.join)(repo, name);
+    if (!(0, import_node_fs23.existsSync)(p))
       continue;
-    const raw = (0, import_node_fs21.readFileSync)(p, "utf8");
+    const raw = (0, import_node_fs23.readFileSync)(p, "utf8");
     let inQ = false;
     for (const line of raw.split("\n")) {
       if (/^quality:\s*$/.test(line)) {
@@ -21986,10 +23040,10 @@ function loadQualityTestCommand(repo) {
         return m[1].replace(/^["']|["']$/g, "").trim();
     }
   }
-  const pkgPath = (0, import_node_path21.join)(repo, "package.json");
-  if ((0, import_node_fs21.existsSync)(pkgPath)) {
+  const pkgPath = (0, import_node_path22.join)(repo, "package.json");
+  if ((0, import_node_fs23.existsSync)(pkgPath)) {
     try {
-      const pkg = JSON.parse((0, import_node_fs21.readFileSync)(pkgPath, "utf8"));
+      const pkg = JSON.parse((0, import_node_fs23.readFileSync)(pkgPath, "utf8"));
       if (pkg.scripts?.test)
         return "npm test";
     } catch {
@@ -22026,7 +23080,8 @@ function runProjectVerification(repo) {
     cwd: repo,
     shell: true,
     encoding: "utf8",
-    env: process.env
+    // the repository's own test command: repository code, not handed the Runtime's credentials (hygiene: contracts child-env.ts)
+    env: repositoryCodeEnv()
   });
   const stdout = `${r.stdout ?? ""}${r.stderr ?? ""}`;
   const exitCode = r.status ?? 1;
@@ -22036,19 +23091,19 @@ function runProjectVerification(repo) {
   return { command, exitCode, ok, stdout, timestamp, ...counts };
 }
 function completionPaths(repo, workPackageId) {
-  const design = (0, import_node_path21.join)(repo, "design", workPackageId);
-  const dev = (0, import_node_path21.join)(design, "dev");
+  const design = (0, import_node_path22.join)(repo, "design", workPackageId);
+  const dev = (0, import_node_path22.join)(design, "dev");
   return {
     designDir: design,
-    evidencePath: (0, import_node_path21.join)(dev, "completion-evidence.json"),
-    qualityHandoffPath: (0, import_node_path21.join)(dev, "quality-handoff.json"),
-    changeSpecPath: (0, import_node_path21.join)(design, "change-spec.json"),
-    architectHandoffPath: (0, import_node_path21.join)(design, "architect-developer.handoff.json")
+    evidencePath: (0, import_node_path22.join)(dev, "completion-evidence.json"),
+    qualityHandoffPath: (0, import_node_path22.join)(dev, "quality-handoff.json"),
+    changeSpecPath: (0, import_node_path22.join)(design, "change-spec.json"),
+    architectHandoffPath: (0, import_node_path22.join)(design, "architect-developer.handoff.json")
   };
 }
 function readChangeSpec(repo, id) {
   const p = completionPaths(repo, id).changeSpecPath;
-  return readJson6(p) ?? {};
+  return readJson7(p) ?? {};
 }
 function acceptanceFromSpec(spec) {
   const raw = spec.acceptanceChecks;
@@ -22058,8 +23113,8 @@ function acceptanceFromSpec(spec) {
 }
 function inspectDeveloperCompletion(repo, workPackageId) {
   const paths = completionPaths(repo, workPackageId);
-  const evidence = readJson6(paths.evidencePath);
-  const handoff4 = readJson6(paths.qualityHandoffPath);
+  const evidence = readJson7(paths.evidencePath);
+  const handoff4 = readJson7(paths.qualityHandoffPath);
   const local = readWpManifest(repo, workPackageId);
   return {
     evidencePath: paths.evidencePath,
@@ -22088,10 +23143,10 @@ function persistLocalComplete(opts) {
     qualityState: "pending",
     claim: opts.claim ? { ...opts.claim, state: "active", expectedState: "ready-for-qa" } : prev.claim ?? null
   });
-  const claimFile = (0, import_node_path21.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
+  const claimFile = (0, import_node_path22.join)(opts.repo, ".praxis-jira", "claims", `${opts.wpKey}.json`);
   if (opts.claim) {
-    (0, import_node_fs21.mkdirSync)((0, import_node_path21.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-    (0, import_node_fs21.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
+    (0, import_node_fs23.mkdirSync)((0, import_node_path22.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+    (0, import_node_fs23.writeFileSync)(claimFile, `${JSON.stringify({ ...opts.claim, state: "active" }, null, 2)}
 `);
   }
   void opts.verification;
@@ -22141,10 +23196,10 @@ async function developerCompleteWp(opts) {
     ...Array.isArray(spec.files) ? spec.files : [],
     ...Array.isArray(spec.changes) ? spec.changes.map((c) => c.file).filter((f) => Boolean(f)) : []
   ];
-  const arch = readJson6(paths.architectHandoffPath) ?? {};
+  const arch = readJson7(paths.architectHandoffPath) ?? {};
   const features = Array.isArray(spec.features) ? spec.features : Array.isArray(arch.features) ? arch.features : [];
   const acceptanceChecks = acceptanceFromSpec(spec);
-  (0, import_node_fs21.mkdirSync)((0, import_node_path21.join)(paths.designDir, "dev"), { recursive: true });
+  (0, import_node_fs23.mkdirSync)((0, import_node_path22.join)(paths.designDir, "dev"), { recursive: true });
   let evidence;
   let handoff4;
   try {
@@ -22260,7 +23315,7 @@ ${paths.qualityHandoffPath}`
   };
 }
 function fingerprint(value) {
-  return `sha256:${(0, import_node_crypto13.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto14.createHash)("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 async function previewDeveloperCompleteRecovery(opts) {
   const wpKey = resolveRemoteWpKey(opts.repo, opts.wpKey);
@@ -22344,8 +23399,8 @@ async function applyDeveloperCompleteRecovery(opts) {
 }
 function discoverQualityInputs(repo, workPackageId) {
   const inspection = inspectDeveloperCompletion(repo, workPackageId);
-  const handoff4 = readJson6(inspection.qualityHandoffPath);
-  const evidence = readJson6(inspection.evidencePath);
+  const handoff4 = readJson7(inspection.qualityHandoffPath);
+  const evidence = readJson7(inspection.evidencePath);
   return {
     workPackageId,
     jiraWorkPackageKey: evidence?.jiraWorkPackageKey ?? handoff4?.jiraWorkPackageKey,
@@ -22361,12 +23416,12 @@ function discoverQualityInputs(repo, workPackageId) {
     qualityHandoffPath: inspection.qualityHandoffPath
   };
 }
-var import_node_crypto13, import_node_fs21, import_node_path21, import_node_child_process7, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
+var import_node_crypto14, import_node_fs23, import_node_path22, import_node_child_process7, COMPLETE_COMMENT_MARK, DeveloperCompleteError;
 var init_developer_complete = __esm({
   "node_modules/@praxis/jira/dist/developer-complete.js"() {
-    import_node_crypto13 = require("node:crypto");
-    import_node_fs21 = require("node:fs");
-    import_node_path21 = require("node:path");
+    import_node_crypto14 = require("node:crypto");
+    import_node_fs23 = require("node:fs");
+    import_node_path22 = require("node:path");
     import_node_child_process7 = require("node:child_process");
     init_dist();
     init_mutation_auth();
@@ -22391,10 +23446,10 @@ var init_developer_complete = __esm({
 
 // node_modules/@praxis/jira/dist/quality-apply.js
 function digest(value) {
-  return (0, import_node_crypto14.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
+  return (0, import_node_crypto15.createHash)("sha256").update(JSON.stringify(value)).digest("hex");
 }
 function sha256Text(text) {
-  return (0, import_node_crypto14.createHash)("sha256").update(text).digest("hex");
+  return (0, import_node_crypto15.createHash)("sha256").update(text).digest("hex");
 }
 function qualityApplyFingerprint(plan) {
   return `sha256:${digest({
@@ -22426,47 +23481,47 @@ function qualityApplyFingerprint(plan) {
   })}`;
 }
 function qualityEvidencePath(repo, workPackageId) {
-  return (0, import_node_path22.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  return (0, import_node_path23.join)(repo, "design", workPackageId, "qa", "quality-review.json");
 }
 function qualityEvidenceSidecarPath(repo, workPackageId) {
-  return (0, import_node_path22.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  return (0, import_node_path23.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
 }
 function qualityApplyPreviewPath(repo, workPackageId) {
-  return (0, import_node_path22.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
+  return (0, import_node_path23.join)(repo, "design", workPackageId, "qa", "quality-apply-preview.json");
 }
 function qualityApplyResultPath(repo, workPackageId) {
-  return (0, import_node_path22.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
+  return (0, import_node_path23.join)(repo, "design", workPackageId, "qa", "quality-apply.json");
 }
 function readQualityEvidence(repo, workPackageId) {
   const p = qualityEvidencePath(repo, workPackageId);
   const alt = qualityEvidenceSidecarPath(repo, workPackageId);
-  const file2 = (0, import_node_fs22.existsSync)(p) ? p : (0, import_node_fs22.existsSync)(alt) ? alt : void 0;
+  const file2 = (0, import_node_fs24.existsSync)(p) ? p : (0, import_node_fs24.existsSync)(alt) ? alt : void 0;
   if (!file2)
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs22.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs24.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeQualityEvidence(repo, evidence) {
   const p = qualityEvidencePath(repo, evidence.workPackageId);
-  (0, import_node_fs22.mkdirSync)((0, import_node_path22.join)(p, ".."), { recursive: true });
-  (0, import_node_fs22.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs24.mkdirSync)((0, import_node_path23.join)(p, ".."), { recursive: true });
+  (0, import_node_fs24.writeFileSync)(p, `${JSON.stringify(evidence, null, 2)}
 `);
   const side = qualityEvidenceSidecarPath(repo, evidence.workPackageId);
-  (0, import_node_fs22.mkdirSync)((0, import_node_path22.join)(side, ".."), { recursive: true });
-  (0, import_node_fs22.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
+  (0, import_node_fs24.mkdirSync)((0, import_node_path23.join)(side, ".."), { recursive: true });
+  (0, import_node_fs24.writeFileSync)(side, `${JSON.stringify(evidence, null, 2)}
 `);
   return p;
 }
 function liveSnapshotDigest(repo, files) {
   const uniq = [...new Set((files ?? []).map((f) => f.path).filter(Boolean))].sort();
   const entries = uniq.map((rel2) => {
-    const abs = (0, import_node_path22.join)(repo, rel2);
-    if (!(0, import_node_fs22.existsSync)(abs))
+    const abs = (0, import_node_path23.join)(repo, rel2);
+    if (!(0, import_node_fs24.existsSync)(abs))
       return { path: rel2, missing: true };
-    return { path: rel2, sha256: sha256Text((0, import_node_fs22.readFileSync)(abs, "utf8")) };
+    return { path: rel2, sha256: sha256Text((0, import_node_fs24.readFileSync)(abs, "utf8")) };
   });
   return sha256Text(JSON.stringify(entries));
 }
@@ -22474,8 +23529,8 @@ function commentBody(evidence) {
   return `${QUALITY_COMMENT_MARK} ${evidence.verdict} reviewId=${evidence.reviewId}`;
 }
 function writeJson(path2, value) {
-  (0, import_node_fs22.mkdirSync)((0, import_node_path22.join)(path2, ".."), { recursive: true });
-  (0, import_node_fs22.writeFileSync)(path2, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs24.mkdirSync)((0, import_node_path23.join)(path2, ".."), { recursive: true });
+  (0, import_node_fs24.writeFileSync)(path2, `${JSON.stringify(value, null, 2)}
 `);
 }
 function propertyAction(wpKey, propertyKey, intendedValue) {
@@ -22655,10 +23710,10 @@ async function existingBugKey(provider, fingerprint2) {
 }
 function readQualityApplyResult(repo, workPackageId) {
   const p = qualityApplyResultPath(repo, workPackageId);
-  if (!(0, import_node_fs22.existsSync)(p))
+  if (!(0, import_node_fs24.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs22.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs24.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
@@ -22742,10 +23797,10 @@ async function applyQualityReview(opts) {
     throw new QualityApplyError("QUALITY_REVIEW_STALE", "implementation snapshot changed; run a new Quality Review");
   }
   const previewFile = qualityApplyPreviewPath(opts.repo, opts.workPackageId);
-  if (!(0, import_node_fs22.existsSync)(previewFile)) {
+  if (!(0, import_node_fs24.existsSync)(previewFile)) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "no saved apply preview; re-run apply preview");
   }
-  const saved = JSON.parse((0, import_node_fs22.readFileSync)(previewFile, "utf8"));
+  const saved = JSON.parse((0, import_node_fs24.readFileSync)(previewFile, "utf8"));
   if (saved.previewFingerprint !== opts.previewFingerprint) {
     throw new QualityApplyError("QUALITY_FINGERPRINT_MISMATCH", "previewFingerprint is stale; re-run apply preview");
   }
@@ -22922,8 +23977,8 @@ async function applyQualityReview(opts) {
       if (action.kind === "manifest") {
         lifecycle = "reconciling";
         const local = resolveLocalWorkPackage(opts.repo, evidence.workPackageId);
-        const manifestFile = local ? (0, import_node_path22.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path22.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
-        if (!local || !(0, import_node_fs22.existsSync)(manifestFile)) {
+        const manifestFile = local ? (0, import_node_path23.join)(opts.repo, "work-packages", local.id, "manifest.json") : (0, import_node_path23.join)(opts.repo, "work-packages", evidence.workPackageId, "manifest.json");
+        if (!local || !(0, import_node_fs24.existsSync)(manifestFile)) {
           errors.push(`QUALITY_MANIFEST_MISSING: cannot update ${evidence.workPackageId}`);
           return persistPartial({ code: "QUALITY_MANIFEST_MISSING" });
         }
@@ -23068,12 +24123,12 @@ async function applyQualityReview(opts) {
   writeJson(qualityApplyResultPath(opts.repo, evidence.workPackageId), result);
   return result;
 }
-var import_node_crypto14, import_node_fs22, import_node_path22, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
+var import_node_crypto15, import_node_fs24, import_node_path23, QUALITY_COMMENT_MARK, QUALITY_COMMENT_PROP, QUALITY_APPLIED_REVIEW_PROP, QualityApplyError;
 var init_quality_apply = __esm({
   "node_modules/@praxis/jira/dist/quality-apply.js"() {
-    import_node_crypto14 = require("node:crypto");
-    import_node_fs22 = require("node:fs");
-    import_node_path22 = require("node:path");
+    import_node_crypto15 = require("node:crypto");
+    import_node_fs24 = require("node:fs");
+    import_node_path23 = require("node:path");
     init_mutation_auth();
     init_managed_scope();
     init_rich_text();
@@ -23278,7 +24333,7 @@ var init_quality_lifecycle_status = __esm({
 
 // node_modules/@praxis/jira/dist/workflows.js
 function loadJournal(repo) {
-  const parsed = readJsonFile((0, import_node_path23.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
+  const parsed = readJsonFile((0, import_node_path24.join)(repo, ".praxis-jira", "journal.json"), "jira-operation-journal");
   if (!parsed.ok) {
     if (parsed.reason === "missing")
       return [];
@@ -23287,7 +24342,7 @@ function loadJournal(repo) {
   return parsed.value;
 }
 function saveJournal(repo, journal) {
-  writeJsonAtomic((0, import_node_path23.join)(repo, ".praxis-jira", "journal.json"), journal);
+  writeJsonAtomic((0, import_node_path24.join)(repo, ".praxis-jira", "journal.json"), journal);
 }
 function record4(repo, entry) {
   const journal = loadJournal(repo);
@@ -23298,7 +24353,7 @@ function record4(repo, entry) {
   saveJournal(repo, journal);
 }
 function proposalPath(repo, epicKey) {
-  return (0, import_node_path23.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
+  return (0, import_node_path24.join)(repo, ".praxis-jira", "proposals", `${epicKey}.json`);
 }
 function loadBaProposal(repo, epicKey) {
   const parsed = readJsonFile(proposalPath(repo, epicKey), "jira.ba.proposal");
@@ -23360,17 +24415,17 @@ function emptyHandoff(epicKey, extra = {}) {
     ...extra
   });
 }
-async function ensureBaHandoffComment(provider, epicKey, canonical) {
+async function ensureBaHandoffComment(provider, epicKey, canonical2) {
   const comments = await provider.getComments(epicKey);
   const exists = comments.some((c) => HANDOFF_COMMENT.test(JSON.stringify(c.body ?? "")));
   if (exists)
     return;
-  await provider.addComment(epicKey, provider.renderDescription(textDocument(`Praxis BA handoff ready. Stories: ${canonical.join(", ") || "none"}`)));
+  await provider.addComment(epicKey, provider.renderDescription(textDocument(`Praxis BA handoff ready. Stories: ${canonical2.join(", ") || "none"}`)));
 }
 async function persistPreview(repo, epicKey, payload, planText) {
-  const dir = (0, import_node_path23.join)(repo, ".praxis-jira", "previews");
-  writeJsonAtomic((0, import_node_path23.join)(dir, `${epicKey}.json`), payload);
-  (0, import_node_fs23.writeFileSync)((0, import_node_path23.join)(dir, `${epicKey}.plan.txt`), `${planText}
+  const dir = (0, import_node_path24.join)(repo, ".praxis-jira", "previews");
+  writeJsonAtomic((0, import_node_path24.join)(dir, `${epicKey}.json`), payload);
+  (0, import_node_fs25.writeFileSync)((0, import_node_path24.join)(dir, `${epicKey}.plan.txt`), `${planText}
 `);
 }
 async function baAnalyzeEpic(opts) {
@@ -23475,7 +24530,7 @@ CREATE:
     hooks: opts.hooks,
     flags
   }));
-  const canonical = result.applied.filter((a) => a.action !== "SUPERSEDED" && a.jiraIssueKey).map((a) => a.jiraIssueKey).filter((k, i, arr) => arr.indexOf(k) === i);
+  const canonical2 = result.applied.filter((a) => a.action !== "SUPERSEDED" && a.jiraIssueKey).map((a) => a.jiraIssueKey).filter((k, i, arr) => arr.indexOf(k) === i);
   const created2 = result.applied.filter((a) => a.action === "CREATE" && a.jiraIssueKey).map((a) => a.jiraIssueKey);
   const superseded = [
     ...result.plan.filter((p) => p.action === "SUPERSEDED" && p.jiraIssueKey).map((p) => p.jiraIssueKey),
@@ -23483,17 +24538,17 @@ CREATE:
   ].filter((k, i, arr) => arr.indexOf(k) === i);
   const blocking = false;
   const pending = result.applied.length === 0 && !opts.dryRun;
-  const remoteReady = !opts.dryRun && canonical.length > 0 && !blocking && !pending;
+  const remoteReady = !opts.dryRun && canonical2.length > 0 && !blocking && !pending;
   const readyForArchitecture = opts.dryRun ? remoteHandoff?.readyForArchitecture === true : remoteReady;
   const handoff4 = JiraBaHandoffSchema.parse({
     contract: "jira.ba.architect.handoff",
     version: "1.0.0",
     epicKey: opts.epicKey,
-    storyKeys: canonical,
-    canonicalStoryKeys: canonical,
+    storyKeys: canonical2,
+    canonicalStoryKeys: canonical2,
     supersededStoryKeys: superseded,
     requirementIds: specs.flatMap((s) => s.requirementIds),
-    baArtifacts: [(0, import_node_path23.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
+    baArtifacts: [(0, import_node_path24.join)(".praxis-jira", "handoffs", `${opts.epicKey}.json`)],
     openQuestions: [],
     nfrs: [],
     businessRules: [],
@@ -23508,19 +24563,19 @@ CREATE:
       proposalReady,
       readyForArchitecture: false,
       remoteReadyForArchitecture: false,
-      canonicalStoryKeys: canonical,
+      canonicalStoryKeys: canonical2,
       supersededStoryKeys: superseded,
       plan: result.plan
     }, result.planText);
-    (0, import_node_fs23.mkdirSync)((0, import_node_path23.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
-    (0, import_node_fs23.writeFileSync)((0, import_node_path23.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
+    (0, import_node_fs25.mkdirSync)((0, import_node_path24.join)(opts.repo, ".praxis-jira", "handoffs"), { recursive: true });
+    (0, import_node_fs25.writeFileSync)((0, import_node_path24.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.plan.txt`), `${result.planText}
 `);
   }
   if (opts.dryRun) {
     return {
       ok: true,
       handoff: handoff4,
-      storyKeys: canonical,
+      storyKeys: canonical2,
       created: created2,
       plan: result.plan,
       planText: result.planText,
@@ -23528,10 +24583,10 @@ CREATE:
       migration: adoption.status === "adopted" ? "required" : "none"
     };
   }
-  const handoffPath2 = (0, import_node_path23.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
+  const handoffPath2 = (0, import_node_path24.join)(opts.repo, ".praxis-jira", "handoffs", `${opts.epicKey}.json`);
   assertRole("ba", "ba-handoff");
   await opts.provider.setIssueProperty(opts.epicKey, "praxis.baHandoff", handoff4);
-  await ensureBaHandoffComment(opts.provider, opts.epicKey, canonical);
+  await ensureBaHandoffComment(opts.provider, opts.epicKey, canonical2);
   await opts.provider.writePraxisState(opts.epicKey, { lifecycle: "architecture" });
   const remote = await opts.provider.getIssueProperty(opts.epicKey, "praxis.baHandoff");
   if (!remote || remote.readyForArchitecture !== true) {
@@ -23554,7 +24609,7 @@ CREATE:
   return {
     ok: true,
     handoff: handoff4,
-    storyKeys: canonical,
+    storyKeys: canonical2,
     created: created2,
     plan: result.plan,
     planText: result.planText,
@@ -23597,7 +24652,7 @@ async function claimWorkPackage(opts) {
       workItemId: opts.wpKey
     }), () => claimWorkPackage(opts));
   }
-  const token = (0, import_node_crypto15.randomUUID)();
+  const token = (0, import_node_crypto16.randomUUID)();
   const manifest = await opts.provider.getIssueProperty(wpKey, "praxis.workPackageManifest") ?? null;
   const member = await assertCanonicalMembers(opts.provider, [
     ...manifest?.storyKeys ?? [],
@@ -23667,8 +24722,8 @@ async function claimWorkPackage(opts) {
       claim: claim4
     });
   }
-  (0, import_node_fs23.mkdirSync)((0, import_node_path23.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
-  (0, import_node_fs23.writeFileSync)((0, import_node_path23.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
+  (0, import_node_fs25.mkdirSync)((0, import_node_path24.join)(opts.repo, ".praxis-jira", "claims"), { recursive: true });
+  (0, import_node_fs25.writeFileSync)((0, import_node_path24.join)(opts.repo, ".praxis-jira", "claims", `${wpKey}.json`), `${JSON.stringify(claim4, null, 2)}
 `);
   await opts.provider.addComment(wpKey, opts.provider.renderDescription(textDocument(`Work Package claimed by ${opts.actor}`)));
   await opts.provider.writePraxisState(wpKey, { lifecycle: "claimed" });
@@ -23740,12 +24795,12 @@ async function collectEpicStatus(provider, epicKey) {
     }
   };
 }
-var import_node_crypto15, import_node_fs23, import_node_path23, WorkPackageClaimError, HANDOFF_COMMENT;
+var import_node_crypto16, import_node_fs25, import_node_path24, WorkPackageClaimError, HANDOFF_COMMENT;
 var init_workflows = __esm({
   "node_modules/@praxis/jira/dist/workflows.js"() {
-    import_node_crypto15 = require("node:crypto");
-    import_node_fs23 = require("node:fs");
-    import_node_path23 = require("node:path");
+    import_node_crypto16 = require("node:crypto");
+    import_node_fs25 = require("node:fs");
+    import_node_path24 = require("node:path");
     init_dist();
     init_mutation_auth();
     init_role_policy();
@@ -23786,16 +24841,16 @@ var init_workflows = __esm({
 
 // node_modules/@praxis/cli/dist/identity.js
 function workItemIds(repo) {
-  const dir = (0, import_node_path24.join)(repo, ".praxis", "workflow");
+  const dir = (0, import_node_path25.join)(repo, ".praxis", "workflow");
   const ids = /* @__PURE__ */ new Set();
   try {
-    for (const name of (0, import_node_fs24.readdirSync)((0, import_node_path24.join)(dir, "items")))
+    for (const name of (0, import_node_fs26.readdirSync)((0, import_node_path25.join)(dir, "items")))
       if (name.endsWith(".json"))
         ids.add(name.slice(0, -5));
   } catch {
   }
   try {
-    const legacy = JSON.parse((0, import_node_fs24.readFileSync)((0, import_node_path24.join)(dir, "state.json"), "utf8"));
+    const legacy = JSON.parse((0, import_node_fs26.readFileSync)((0, import_node_path25.join)(dir, "state.json"), "utf8"));
     if (typeof legacy.workItem?.id === "string")
       ids.add(legacy.workItem.id);
   } catch {
@@ -23803,7 +24858,7 @@ function workItemIds(repo) {
   return [...ids];
 }
 function isWorkItemId(repo, value) {
-  return (0, import_node_fs24.existsSync)((0, import_node_path24.join)(repo, ".praxis", "workflow")) && workItemIds(repo).includes(value);
+  return (0, import_node_fs26.existsSync)((0, import_node_path25.join)(repo, ".praxis", "workflow")) && workItemIds(repo).includes(value);
 }
 function resolveWorkPackageRef(repo, value) {
   const local = resolveLocalWorkPackage(repo, value);
@@ -23824,17 +24879,17 @@ function resolveWorkPackageRef(repo, value) {
 }
 function readManifestKey(manifestDir) {
   try {
-    const manifest = JSON.parse((0, import_node_fs24.readFileSync)((0, import_node_path24.join)(manifestDir, "manifest.json"), "utf8"));
+    const manifest = JSON.parse((0, import_node_fs26.readFileSync)((0, import_node_path25.join)(manifestDir, "manifest.json"), "utf8"));
     return typeof manifest.jiraIssueKey === "string" && manifest.jiraIssueKey.length > 0 ? manifest.jiraIssueKey : null;
   } catch {
     return null;
   }
 }
-var import_node_fs24, import_node_path24, JIRA_KEY_RE;
+var import_node_fs26, import_node_path25, JIRA_KEY_RE;
 var init_identity = __esm({
   "node_modules/@praxis/cli/dist/identity.js"() {
-    import_node_fs24 = require("node:fs");
-    import_node_path24 = require("node:path");
+    import_node_fs26 = require("node:fs");
+    import_node_path25 = require("node:path");
     init_workflows();
     JIRA_KEY_RE = /^[A-Z][A-Z0-9]+-\d+$/;
   }
@@ -23920,7 +24975,29 @@ function providerDiagnostics(env, githubApiUrl) {
 }
 function approvalDiagnostics(_env, repo) {
   const report = approvalModeReport();
-  return { mode: report.mode, note: report.note, decisionLog: repo ? decisionLogPath(repo) : "~/.praxis/decisions/<repository id>.jsonl" };
+  let decisionLog = "<account home>/.praxis/decisions/<repository key>.jsonl";
+  let inside2;
+  try {
+    if (repo) {
+      decisionLog = decisionLogPath(repo);
+      inside2 = securityStateInsideRepository(repo);
+    }
+  } catch (error64) {
+    decisionLog = `unavailable: ${error64 instanceof Error ? error64.message : String(error64)}`;
+  }
+  return { mode: report.mode, note: report.note, decisionLog, personVerified: false, independentlyVerified: false, ...inside2 ? { stateInsideRepository: inside2 } : {} };
+}
+function credentialExposure(names) {
+  const jira = names.includes("PRAXIS_JIRA_TOKEN");
+  return {
+    inheritedCredentialVariables: [...names].sort(),
+    note: names.length ? `This server inherited ${[...names].sort().join(", ")} from the process that started it. Any process started the same way, an agent's shell included, can read these variables; Praxis cannot remove them from an environment that was already inherited. What Praxis does: it replaces their values with [REDACTED:<NAME>] in everything it outputs, and it does not hand them to the repository code it starts (tests, quality checks, git hooks), so they are not in that code's own environment or in what it logs from it. That is hygiene, not a boundary: any program running as you, repository code Praxis starts included, can read this server's own environment (ps -E on macOS, /proc/<pid>/environ on Linux), and that includes a token the Claude Desktop extension settings gave only to this server. In a terminal client the token usually also comes from the shell that started everything.` : "No credential variable is in the environment this server inherited.",
+    jira: {
+      credentialInInheritedEnvironment: jira,
+      independentlyApproved: false,
+      reason: jira ? "PRAXIS_JIRA_TOKEN is in the environment this server inherited: any process started the same way, the agent's shell included, can read it and call Jira directly, without Praxis or its approval dialog. A Jira write through Praxis is approved only in the client's dialog, which is not independent of the agent." : "No independent approval authority exists in this release: a Jira write through Praxis is approved only in the client's dialog, which is not independent of the agent."
+    }
+  };
 }
 function doctorNextSteps(input2) {
   const steps = [];
@@ -23955,6 +25032,9 @@ function doctorNextSteps(input2) {
     if (report.state === "partial") {
       steps.push(`${name}: partially configured; missing ${report.missing.join(", ")}. Complete it or clear the other ${name} settings.`);
     }
+  }
+  if (input2.approval.stateInsideRepository) {
+    steps.push(`Praxis's security state (the decision journal and ledger) would be inside this repository (${input2.approval.stateInsideRepository}), where the repository's contents can edit it. It is neither read nor written there, and protected actions are refused. Operate on a repository that does not contain your account's .praxis folder.`);
   }
   if (input2.approval.mode === "no-dialog") {
     steps.push("This MCP client cannot show an approval dialog (no elicitation support, or it answers without showing one, as the Claude Desktop Code tab does). Read-only tools, previews and reviews work, but protected actions (Git, Jira, accepting requirements or stories, confirming a Story or decision, Quality fixes) are NOT executed: nothing the agent says, and no page or setting, counts as your approval. Apply them from the Claude Code CLI in a terminal, which shows the dialog.");
@@ -24036,7 +25116,8 @@ var init_errors3 = __esm({
       GIT_COMMIT_DIVERGED: "GIT_COMMIT_DIVERGED",
       GIT_TRANSPORT_FAILED: "GIT_TRANSPORT_FAILED",
       GIT_SECRETS_DETECTED: "GIT_SECRETS_DETECTED",
-      GIT_REPRODUCIBILITY_BLOCKED: "GIT_REPRODUCIBILITY_BLOCKED"
+      GIT_REPRODUCIBILITY_BLOCKED: "GIT_REPRODUCIBILITY_BLOCKED",
+      CREDENTIAL_SOURCE_UNTRUSTED: "CREDENTIAL_SOURCE_UNTRUSTED"
     };
     VcsError = class extends Error {
       code;
@@ -24154,20 +25235,15 @@ var init_git_url = __esm({
 });
 
 // node_modules/@praxis/vcs/dist/git-local.js
-function gitEnv(extra) {
-  return {
-    ...process.env,
-    ...extra,
-    GIT_TERMINAL_PROMPT: "0",
-    GIT_ASKPASS: process.env.GIT_ASKPASS ?? ""
-  };
+function gitEnv2(extra) {
+  return gitEnv({ ...extra, GIT_TERMINAL_PROMPT: "0" });
 }
 function runGit(repo, args, opts) {
   const r = (0, import_node_child_process8.spawnSync)("git", args, {
     cwd: repo,
     encoding: "utf8",
     timeout: opts?.timeoutMs ?? 3e4,
-    env: gitEnv(opts?.env)
+    env: gitEnv2(opts?.env)
   });
   return {
     status: r.status ?? 1,
@@ -24280,16 +25356,16 @@ function splitNames(stdout) {
   return stdout.split("\n").map((s) => s.trim()).filter(Boolean);
 }
 function fileSha256(repo, rel2) {
-  const abs = (0, import_node_path25.join)(repo, rel2);
-  if (!(0, import_node_fs25.existsSync)(abs) || !(0, import_node_fs25.statSync)(abs).isFile())
+  const abs = (0, import_node_path26.join)(repo, rel2);
+  if (!(0, import_node_fs27.existsSync)(abs) || !(0, import_node_fs27.statSync)(abs).isFile())
     return null;
-  return (0, import_node_crypto16.createHash)("sha256").update((0, import_node_fs25.readFileSync)(abs, "utf8")).digest("hex");
+  return (0, import_node_crypto17.createHash)("sha256").update((0, import_node_fs27.readFileSync)(abs, "utf8")).digest("hex");
 }
 function committedFileSha256(repo, rev, rel2) {
   const r = runGit(repo, ["show", `${rev}:${rel2}`]);
   if (r.status !== 0)
     return null;
-  return (0, import_node_crypto16.createHash)("sha256").update(r.stdout).digest("hex");
+  return (0, import_node_crypto17.createHash)("sha256").update(r.stdout).digest("hex");
 }
 function listCommitFiles(repo, rev) {
   const r = runGit(repo, ["diff-tree", "--no-commit-id", "--name-only", "-r", rev]);
@@ -24298,16 +25374,16 @@ function listCommitFiles(repo, rev) {
   return splitNames(r.stdout);
 }
 function listHooks(repo) {
-  const dir = (0, import_node_path25.join)(repo, ".git", "hooks");
-  if (!(0, import_node_fs25.existsSync)(dir))
+  const dir = (0, import_node_path26.join)(repo, ".git", "hooks");
+  if (!(0, import_node_fs27.existsSync)(dir))
     return [];
   const out = [];
-  for (const name of (0, import_node_fs25.readdirSync)(dir)) {
+  for (const name of (0, import_node_fs27.readdirSync)(dir)) {
     if (name.endsWith(".sample"))
       continue;
-    const p = (0, import_node_path25.join)(dir, name);
+    const p = (0, import_node_path26.join)(dir, name);
     try {
-      const st = (0, import_node_fs25.statSync)(p);
+      const st = (0, import_node_fs27.statSync)(p);
       if (!st.isFile())
         continue;
       const executable = (st.mode & 73) !== 0;
@@ -24450,12 +25526,12 @@ function commitCount(repo, rev = "HEAD") {
 function hasGithubWorkflows(repo, rev = "HEAD") {
   return committedPaths(repo, rev).some((p) => p.startsWith(".github/workflows/") && (p.endsWith(".yml") || p.endsWith(".yaml")));
 }
-var import_node_crypto16, import_node_fs25, import_node_path25, import_node_child_process8;
+var import_node_crypto17, import_node_fs27, import_node_path26, import_node_child_process8;
 var init_git_local = __esm({
   "node_modules/@praxis/vcs/dist/git-local.js"() {
-    import_node_crypto16 = require("node:crypto");
-    import_node_fs25 = require("node:fs");
-    import_node_path25 = require("node:path");
+    import_node_crypto17 = require("node:crypto");
+    import_node_fs27 = require("node:fs");
+    import_node_path26 = require("node:path");
     import_node_child_process8 = require("node:child_process");
     init_redact();
     init_git_url();
@@ -24529,9 +25605,9 @@ var init_staging_policy = __esm({
 
 // node_modules/@praxis/vcs/dist/gitignore-policy.js
 function previewGitignore(repo) {
-  const path2 = (0, import_node_path26.join)(repo, ".gitignore");
-  const exists = (0, import_node_fs26.existsSync)(path2);
-  const current = exists ? (0, import_node_fs26.readFileSync)(path2, "utf8") : "";
+  const path2 = (0, import_node_path27.join)(repo, ".gitignore");
+  const exists = (0, import_node_fs28.existsSync)(path2);
+  const current = exists ? (0, import_node_fs28.readFileSync)(path2, "utf8") : "";
   const lines = current.split(/\r?\n/);
   const missingLines = RECOMMENDED_GITIGNORE.filter((rule) => !lines.some((l) => l.trim() === rule));
   let proposed = null;
@@ -24544,11 +25620,11 @@ ${extra}
   }
   return { path: ".gitignore", exists, current, missingLines, proposed, writes: false };
 }
-var import_node_fs26, import_node_path26, RECOMMENDED_GITIGNORE;
+var import_node_fs28, import_node_path27, RECOMMENDED_GITIGNORE;
 var init_gitignore_policy = __esm({
   "node_modules/@praxis/vcs/dist/gitignore-policy.js"() {
-    import_node_fs26 = require("node:fs");
-    import_node_path26 = require("node:path");
+    import_node_fs28 = require("node:fs");
+    import_node_path27 = require("node:path");
     RECOMMENDED_GITIGNORE = [
       ".praxis-jira/",
       ".praxis-quality/",
@@ -24561,20 +25637,20 @@ var init_gitignore_policy = __esm({
 });
 
 // node_modules/@praxis/vcs/dist/quality-snapshot.js
-function readJson7(path2) {
-  if (!(0, import_node_fs27.existsSync)(path2))
+function readJson8(path2) {
+  if (!(0, import_node_fs29.existsSync)(path2))
     return null;
   try {
-    return JSON.parse((0, import_node_fs27.readFileSync)(path2, "utf8"));
+    return JSON.parse((0, import_node_fs29.readFileSync)(path2, "utf8"));
   } catch {
     return null;
   }
 }
 function readQualitySnapshot(repo, workPackageId) {
-  const primary = (0, import_node_path27.join)(repo, "design", workPackageId, "qa", "quality-review.json");
-  const sidecar = (0, import_node_path27.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
-  const raw = readJson7(primary) ?? readJson7(sidecar);
-  const source = raw ? (0, import_node_fs27.existsSync)(primary) ? primary : sidecar : null;
+  const primary = (0, import_node_path28.join)(repo, "design", workPackageId, "qa", "quality-review.json");
+  const sidecar = (0, import_node_path28.join)(repo, ".praxis-jira", "quality", `${workPackageId}.review.json`);
+  const raw = readJson8(primary) ?? readJson8(sidecar);
+  const source = raw ? (0, import_node_fs29.existsSync)(primary) ? primary : sidecar : null;
   const snapshot2 = raw?.snapshot && typeof raw.snapshot === "object" ? raw.snapshot : {};
   const files = Array.isArray(snapshot2.files) ? snapshot2.files : [];
   return {
@@ -24604,7 +25680,7 @@ function compareToQualitySnapshot(repo, selected, snapshot2) {
       consistency = "mismatch";
     return { path: path2, liveSha256, snapshotSha256, consistency };
   });
-  const liveDigest = (0, import_node_crypto17.createHash)("sha256").update(JSON.stringify(selected.map((path2) => {
+  const liveDigest = (0, import_node_crypto18.createHash)("sha256").update(JSON.stringify(selected.map((path2) => {
     const live = liveFileHash(repo, path2);
     return live ? { path: path2, sha256: live } : { path: path2, missing: true };
   }))).digest("hex");
@@ -24614,12 +25690,12 @@ function compareToQualitySnapshot(repo, selected, snapshot2) {
     liveDigest
   };
 }
-var import_node_fs27, import_node_path27, import_node_crypto17;
+var import_node_fs29, import_node_path28, import_node_crypto18;
 var init_quality_snapshot = __esm({
   "node_modules/@praxis/vcs/dist/quality-snapshot.js"() {
-    import_node_fs27 = require("node:fs");
-    import_node_path27 = require("node:path");
-    import_node_crypto17 = require("node:crypto");
+    import_node_fs29 = require("node:fs");
+    import_node_path28 = require("node:path");
+    import_node_crypto18 = require("node:crypto");
     init_git_local();
   }
 });
@@ -24684,7 +25760,17 @@ function validateGithubApiUrl(raw) {
     };
   }
 }
+function githubCredentialSource() {
+  try {
+    assertCredentialSource("github");
+  } catch (error64) {
+    if (error64 instanceof CredentialSourceError)
+      throw new VcsError(VCS_CODES.CREDENTIAL_SOURCE_UNTRUSTED, error64.message, error64.details);
+    throw error64;
+  }
+}
 function loadGithubConfig(env = process.env) {
+  githubCredentialSource();
   const token = env.PRAXIS_GITHUB_TOKEN?.trim() ?? "";
   if (!tokenConfigured(token)) {
     throw new VcsError(VCS_CODES.GITHUB_TOKEN_UNAVAILABLE, "GITHUB_TOKEN_UNAVAILABLE: configure github_token in Praxis Runtime settings or PRAXIS_GITHUB_TOKEN for CLI/CI. Do not paste the token into chat. This is a GitHub PAT, not OAuth.");
@@ -24709,6 +25795,8 @@ function githubTokenFlags(env = process.env) {
   };
 }
 function createGithubProvider(opts) {
+  if (!opts?.config)
+    githubCredentialSource();
   const config4 = opts?.config ?? (opts?.fetchImpl ? {
     token: opts.env?.PRAXIS_GITHUB_TOKEN?.trim() || "fetch-impl",
     apiUrl: validateGithubApiUrl(opts.env?.PRAXIS_GITHUB_API_URL).normalized
@@ -24850,7 +25938,17 @@ var init_github_provider = __esm({
 });
 
 // node_modules/@praxis/vcs/dist/gitlab-provider.js
+function gitlabCredentialSource() {
+  try {
+    assertCredentialSource("gitlab");
+  } catch (error64) {
+    if (error64 instanceof CredentialSourceError)
+      throw new VcsError(VCS_CODES.CREDENTIAL_SOURCE_UNTRUSTED, error64.message, error64.details);
+    throw error64;
+  }
+}
 function loadGitlabConfig(env = process.env) {
+  gitlabCredentialSource();
   const token = env.PRAXIS_GITLAB_TOKEN?.trim() ?? "";
   if (!tokenConfigured(token)) {
     throw new VcsError(VCS_CODES.GITLAB_TOKEN_UNAVAILABLE, "GITLAB_TOKEN_UNAVAILABLE: configure gitlab_token in Praxis Runtime settings or PRAXIS_GITLAB_TOKEN for CLI/CI. Do not paste the token into chat. This is a GitLab PAT, not OAuth.");
@@ -24867,6 +25965,8 @@ function gitlabTokenFlags(env = process.env) {
   };
 }
 function createGitlabProvider(opts) {
+  if (!opts?.config)
+    gitlabCredentialSource();
   const config4 = opts?.config ?? (opts?.fetchImpl ? {
     token: opts.env?.PRAXIS_GITLAB_TOKEN?.trim() || "fetch-impl",
     baseUrl: (opts.env?.PRAXIS_GITLAB_BASE_URL?.trim() || "https://gitlab.com").replace(/\/$/, "")
@@ -24990,17 +26090,17 @@ var init_gitlab_provider = __esm({
 
 // node_modules/@praxis/vcs/dist/journal.js
 function journalPath(repo, workPackageId) {
-  return (0, import_node_path28.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
+  return (0, import_node_path29.join)(repo, ".praxis-git", `${workPackageId}.delivery.json`);
 }
 function handoffPath(repo, workPackageId) {
-  return (0, import_node_path28.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
+  return (0, import_node_path29.join)(repo, "design", workPackageId, "dev", "git-delivery.json");
 }
 function readJournal(repo, workPackageId) {
   const p = journalPath(repo, workPackageId);
-  if (!(0, import_node_fs28.existsSync)(p))
+  if (!(0, import_node_fs30.existsSync)(p))
     return null;
   try {
-    const v = JSON.parse((0, import_node_fs28.readFileSync)(p, "utf8"));
+    const v = JSON.parse((0, import_node_fs30.readFileSync)(p, "utf8"));
     return { ...v, forcePush: false, merged: false };
   } catch {
     return null;
@@ -25015,31 +26115,31 @@ function writeJournal(repo, entry) {
     merged: false
   };
   const p = journalPath(repo, entry.workPackageId);
-  (0, import_node_fs28.mkdirSync)((0, import_node_path28.join)(p, ".."), { recursive: true });
-  (0, import_node_fs28.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs30.mkdirSync)((0, import_node_path29.join)(p, ".."), { recursive: true });
+  (0, import_node_fs30.writeFileSync)(p, `${JSON.stringify(safe, null, 2)}
 `);
   const handoff4 = handoffPath(repo, entry.workPackageId);
-  (0, import_node_fs28.mkdirSync)((0, import_node_path28.join)(handoff4, ".."), { recursive: true });
-  (0, import_node_fs28.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
+  (0, import_node_fs30.mkdirSync)((0, import_node_path29.join)(handoff4, ".."), { recursive: true });
+  (0, import_node_fs30.writeFileSync)(handoff4, `${JSON.stringify(safe, null, 2)}
 `);
 }
-var import_node_path28, import_node_fs28;
+var import_node_path29, import_node_fs30;
 var init_journal = __esm({
   "node_modules/@praxis/vcs/dist/journal.js"() {
     init_dist();
-    import_node_path28 = require("node:path");
-    import_node_fs28 = require("node:fs");
+    import_node_path29 = require("node:path");
+    import_node_fs30 = require("node:fs");
   }
 });
 
 // node_modules/@praxis/vcs/dist/fingerprint.js
 function deliveryFingerprint(value) {
-  return `sha256:${(0, import_node_crypto18.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto19.createHash)("sha256").update(JSON.stringify(value ?? null)).digest("hex")}`;
 }
-var import_node_crypto18;
+var import_node_crypto19;
 var init_fingerprint = __esm({
   "node_modules/@praxis/vcs/dist/fingerprint.js"() {
-    import_node_crypto18 = require("node:crypto");
+    import_node_crypto19 = require("node:crypto");
   }
 });
 
@@ -25086,7 +26186,7 @@ var init_secret_scan = __esm({
 
 // node_modules/@praxis/vcs/dist/mutation-auth.js
 function localMutation(repo, spec) {
-  const root = (0, import_node_path29.resolve)(repo);
+  const root = (0, import_node_path30.resolve)(repo);
   return {
     repo: root,
     operation: spec.operation,
@@ -25102,10 +26202,10 @@ function authorizeLocal(request, write) {
     return write();
   throw new ApprovalError("APPROVAL_REQUIRED", `${request.action} changes the repository and needs the user's approval: run it through its Praxis apply tool (preview, then approve). Nothing was changed.`);
 }
-var import_node_path29;
+var import_node_path30;
 var init_mutation_auth2 = __esm({
   "node_modules/@praxis/vcs/dist/mutation-auth.js"() {
-    import_node_path29 = require("node:path");
+    import_node_path30 = require("node:path");
     init_dist();
   }
 });
@@ -26131,6 +27231,7 @@ var init_delivery = __esm({
 // node_modules/@praxis/vcs/dist/reproducibility.js
 var init_reproducibility = __esm({
   "node_modules/@praxis/vcs/dist/reproducibility.js"() {
+    init_dist();
     init_git_local();
   }
 });
@@ -26253,6 +27354,7 @@ __export(quality_ensure_exports, {
   qualityDbPath: () => qualityDbPath,
   qualityLogPath: () => qualityLogPath,
   qualityPidPath: () => qualityPidPath,
+  qualityServiceEnv: () => qualityServiceEnv,
   qualityStatePath: () => qualityStatePath,
   resetQualityEnsureForTests: () => resetQualityEnsureForTests,
   resolveQualityChildRuntime: () => resolveQualityChildRuntime,
@@ -26266,22 +27368,22 @@ function qlog(msg) {
 `);
 }
 function safeErrorMessage(raw) {
-  const text = raw instanceof Error ? raw.message : String(raw ?? "");
+  const text = redactCredentials(raw instanceof Error ? raw.message : String(raw ?? ""));
   return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(0, 240);
 }
 function safeLogTail(logFile) {
-  if (!(0, import_node_fs29.existsSync)(logFile))
+  if (!(0, import_node_fs31.existsSync)(logFile))
     return "";
-  return (0, import_node_fs29.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
+  return (0, import_node_fs31.readFileSync)(logFile, "utf8").replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>").slice(-1500);
 }
 function looksLikeElectronBinary(execPath, electronVersion) {
   if (electronVersion)
     return true;
-  const base = (0, import_node_path30.basename)(execPath).toLowerCase();
+  const base = (0, import_node_path31.basename)(execPath).toLowerCase();
   return base.includes("electron") || base.includes("claude") || /claude\.app\/contents\/macos\//i.test(execPath);
 }
 function isNodeCliExecutable(execPath) {
-  const base = (0, import_node_path30.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
+  const base = (0, import_node_path31.basename)(execPath).replace(/\.exe$/i, "").toLowerCase();
   return base === "node" || base === "nodejs";
 }
 function isElectronHelperExecutable(execPath) {
@@ -26294,6 +27396,10 @@ function isElectronHelperExecutable(execPath) {
     return true;
   }
   return false;
+}
+function qualityServiceEnv(extra = {}) {
+  const own4 = Object.fromEntries(Object.entries(process.env).filter((entry) => typeof entry[1] === "string" && /^PRAXIS_(QUALITY_[A-Z0-9_]+|SQL_WASM)$/.test(entry[0])));
+  return repositoryCodeEnv({ ...own4, ...extra });
 }
 function parentExecPath() {
   const simulated = process.env.PRAXIS_QUALITY_SIMULATED_EXEC_PATH;
@@ -26323,7 +27429,7 @@ function classifySpawnFailure(err) {
   return QUALITY_CODES.QUALITY_SPAWN_FAILED;
 }
 function waitForChildStart(child, timeoutMs = 1500) {
-  return new Promise((resolve20) => {
+  return new Promise((resolve21) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -26333,7 +27439,7 @@ function waitForChildStart(child, timeoutMs = 1500) {
       child.off("spawn", onSpawn);
       child.off("error", onError);
       child.off("exit", onExit);
-      resolve20(result);
+      resolve21(result);
     };
     const onSpawn = () => finish({ spawned: true, pid: child.pid });
     const onError = (err) => finish({ spawned: false, pid: child.pid, error: err });
@@ -26366,27 +27472,27 @@ function waitForChildStart(child, timeoutMs = 1500) {
   });
 }
 function repoKey(repo) {
-  const abs = (0, import_node_path30.resolve)(repo);
+  const abs = (0, import_node_path31.resolve)(repo);
   try {
-    return (0, import_node_fs29.realpathSync)(abs);
+    return (0, import_node_fs31.realpathSync)(abs);
   } catch {
     return abs;
   }
 }
 function qualityDir(repo) {
-  return (0, import_node_path30.join)(repoKey(repo), ".praxis-quality");
+  return (0, import_node_path31.join)(repoKey(repo), ".praxis-quality");
 }
 function qualityStatePath(repo) {
-  return (0, import_node_path30.join)(qualityDir(repo), "quality.json");
+  return (0, import_node_path31.join)(qualityDir(repo), "quality.json");
 }
 function qualityPidPath(repo) {
-  return (0, import_node_path30.join)(qualityDir(repo), "quality.pid");
+  return (0, import_node_path31.join)(qualityDir(repo), "quality.pid");
 }
 function qualityDbPath(repo) {
-  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path30.join)(qualityDir(repo), "quality.sqlite");
+  return process.env.PRAXIS_QUALITY_DB ?? (0, import_node_path31.join)(qualityDir(repo), "quality.sqlite");
 }
 function qualityLogPath(repo) {
-  return (0, import_node_path30.join)(qualityDir(repo), "quality.log");
+  return (0, import_node_path31.join)(qualityDir(repo), "quality.log");
 }
 function startupTimeoutMs() {
   const raw = Number(process.env.PRAXIS_QUALITY_STARTUP_TIMEOUT_MS);
@@ -26417,20 +27523,20 @@ function urlForPort(port3) {
 }
 function readState(repo) {
   const p = qualityStatePath(repo);
-  if (!(0, import_node_fs29.existsSync)(p))
+  if (!(0, import_node_fs31.existsSync)(p))
     return void 0;
   try {
-    return JSON.parse((0, import_node_fs29.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs31.readFileSync)(p, "utf8"));
   } catch {
     return void 0;
   }
 }
 function writeState(repo, state2) {
-  (0, import_node_fs29.mkdirSync)(qualityDir(repo), { recursive: true });
-  (0, import_node_fs29.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
+  (0, import_node_fs31.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs31.writeFileSync)(qualityStatePath(repo), `${JSON.stringify(state2, null, 2)}
 `);
   if (state2.pid)
-    (0, import_node_fs29.writeFileSync)(qualityPidPath(repo), `${state2.pid}
+    (0, import_node_fs31.writeFileSync)(qualityPidPath(repo), `${state2.pid}
 `);
 }
 function patchState(repo, patch) {
@@ -26440,8 +27546,8 @@ function patchState(repo, patch) {
 function appendSupervisorLog(repo, line) {
   try {
     const p = qualityLogPath(repo);
-    (0, import_node_fs29.mkdirSync)((0, import_node_path30.dirname)(p), { recursive: true });
-    (0, import_node_fs29.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
+    (0, import_node_fs31.mkdirSync)((0, import_node_path31.dirname)(p), { recursive: true });
+    (0, import_node_fs31.writeFileSync)(p, `[praxis-quality-supervisor] ${(/* @__PURE__ */ new Date()).toISOString()} ${line}
 `, { flag: "a" });
   } catch {
   }
@@ -26549,32 +27655,32 @@ function rootsMatch(a, b) {
 function resolveQualityExecutable() {
   const override = process.env.PRAXIS_QUALITY_ENTRY;
   if (override)
-    return (0, import_node_path30.isAbsolute)(override) ? override : (0, import_node_path30.resolve)(override);
-  const argvDir = process.argv[1] ? (0, import_node_path30.dirname)((0, import_node_path30.resolve)(process.argv[1])) : void 0;
+    return (0, import_node_path31.isAbsolute)(override) ? override : (0, import_node_path31.resolve)(override);
+  const argvDir = process.argv[1] ? (0, import_node_path31.dirname)((0, import_node_path31.resolve)(process.argv[1])) : void 0;
   if (argvDir) {
-    const sibling = (0, import_node_path30.join)(argvDir, "praxis-quality.cjs");
-    if ((0, import_node_fs29.existsSync)(sibling))
+    const sibling = (0, import_node_path31.join)(argvDir, "praxis-quality.cjs");
+    if ((0, import_node_fs31.existsSync)(sibling))
       return sibling;
   }
   try {
-    const here = (0, import_node_path30.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
-    const bundled = (0, import_node_path30.join)(here, "praxis-quality.cjs");
-    if ((0, import_node_fs29.existsSync)(bundled))
+    const here = (0, import_node_path31.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
+    const bundled = (0, import_node_path31.join)(here, "praxis-quality.cjs");
+    if ((0, import_node_fs31.existsSync)(bundled))
       return bundled;
   } catch {
   }
   try {
     const req = (0, import_node_module.createRequire)(import_meta.url);
     const pkg = req.resolve("@praxis/quality-service/package.json");
-    const entry = (0, import_node_path30.join)((0, import_node_path30.dirname)(pkg), "dist", "main.js");
-    if ((0, import_node_fs29.existsSync)(entry))
+    const entry = (0, import_node_path31.join)((0, import_node_path31.dirname)(pkg), "dist", "main.js");
+    if ((0, import_node_fs31.existsSync)(entry))
       return entry;
   } catch {
   }
   try {
-    const here = (0, import_node_path30.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
-    const monorepo = (0, import_node_path30.resolve)(here, "../../../apps/quality-service/dist/main.js");
-    if ((0, import_node_fs29.existsSync)(monorepo))
+    const here = (0, import_node_path31.dirname)((0, import_node_url.fileURLToPath)(import_meta.url));
+    const monorepo = (0, import_node_path31.resolve)(here, "../../../apps/quality-service/dist/main.js");
+    if ((0, import_node_fs31.existsSync)(monorepo))
       return monorepo;
   } catch {
   }
@@ -26623,7 +27729,7 @@ function probeSqliteWithExecutable(execPath, extraEnv = {}, extraArgs = []) {
   const r = (0, import_node_child_process9.spawnSync)(execPath, [...extraArgs, "-e", SQLITE_PROBE_SOURCE], {
     encoding: "utf8",
     timeout: 5e3,
-    env: { ...process.env, ...extraEnv }
+    env: qualityServiceEnv(extraEnv)
   });
   const parsed = parseProbeJson(r.stdout);
   const spawnError = r.error ? safeErrorMessage(r.error.message) : void 0;
@@ -26671,7 +27777,7 @@ function resolveQualityChildRuntime() {
     return { mode: "process", execPath: override, extraArgs, extraEnv, parent, child: child2 };
   }
   if (isElectronHelperExecutable(observedParent)) {
-    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path30.basename)(observedParent)}`);
+    qlog(`quality.node.resolve helper-execPath detected; using worker in the current MCP runtime instead of spawning ${(0, import_node_path31.basename)(observedParent)}`);
     return {
       mode: "worker",
       execPath: process.execPath,
@@ -26711,7 +27817,7 @@ function portListening(port3) {
   });
 }
 function waitForWorkerStart(worker, timeoutMs = 1500) {
-  return new Promise((resolve20) => {
+  return new Promise((resolve21) => {
     let settled = false;
     const finish = (result) => {
       if (settled)
@@ -26721,7 +27827,7 @@ function waitForWorkerStart(worker, timeoutMs = 1500) {
       worker.off("online", onOnline);
       worker.off("error", onError);
       worker.off("exit", onExit);
-      resolve20(result);
+      resolve21(result);
     };
     const onOnline = () => finish({ spawned: true, pid: process.pid });
     const onError = (err) => finish({ spawned: false, pid: process.pid, error: err });
@@ -26745,8 +27851,8 @@ function startQualityWorker(opts) {
     }
     workers.delete(key);
   }
-  (0, import_node_fs29.mkdirSync)((0, import_node_path30.dirname)(opts.logPath), { recursive: true });
-  const log = (0, import_node_fs29.createWriteStream)(opts.logPath, { flags: "a" });
+  (0, import_node_fs31.mkdirSync)((0, import_node_path31.dirname)(opts.logPath), { recursive: true });
+  const log = (0, import_node_fs31.createWriteStream)(opts.logPath, { flags: "a" });
   const env = {};
   for (const [key2, val] of Object.entries(opts.env)) {
     if (val !== void 0)
@@ -26802,11 +27908,11 @@ function fail(code, message, stage, t0, details) {
 }
 async function probeQuality(opts) {
   const repo = repoKey(opts.repo);
-  const state2 = (0, import_node_fs29.existsSync)(opts.repo) ? readState(repo) : void 0;
+  const state2 = (0, import_node_fs31.existsSync)(opts.repo) ? readState(repo) : void 0;
   const port3 = state2?.port ?? configuredPort();
   const url4 = state2?.url ?? urlForPort(port3);
-  const db = state2?.db ?? ((0, import_node_fs29.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
-  const logPath = (0, import_node_fs29.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
+  const db = state2?.db ?? ((0, import_node_fs31.existsSync)(opts.repo) ? qualityDbPath(repo) : void 0);
+  const logPath = (0, import_node_fs31.existsSync)(opts.repo) ? qualityLogPath(repo) : void 0;
   const extras = {
     lastKnownPid: state2?.lastKnownPid ?? state2?.pid,
     lastHealthyAt: state2?.lastHealthyAt,
@@ -26911,7 +28017,7 @@ async function ensureQualityOnce(opts) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, "Quality service executable is not packaged with Praxis Runtime", "quality.entry.resolve", t0, { healthUrl: probe.url, logPath });
   }
   qlog(`quality.entry.resolve path=${executable}`);
-  if (!(0, import_node_fs29.existsSync)(executable)) {
+  if (!(0, import_node_fs31.existsSync)(executable)) {
     fail(QUALITY_CODES.QUALITY_PACKAGE_MISSING, `Quality service executable missing: ${executable}`, "quality.entry.resolve", t0, { executable, healthUrl: probe.url, logPath });
   }
   const runtime = resolveQualityChildRuntime();
@@ -26967,7 +28073,7 @@ async function ensureQualityOnce(opts) {
     }
     fail(QUALITY_CODES.QUALITY_PORT_UNAVAILABLE, `Quality port ${port3} is already in use by another process`, "port", t0, { ...diagnosticDetails, healthUrl: url4, port: port3 });
   }
-  (0, import_node_fs29.mkdirSync)(qualityDir(repo), { recursive: true });
+  (0, import_node_fs31.mkdirSync)(qualityDir(repo), { recursive: true });
   qlog(`cwd resolved path=${repo}`);
   qlog(`db path resolved path=${db}`);
   let pid;
@@ -26976,7 +28082,7 @@ async function ensureQualityOnce(opts) {
   let runtimeMode = runtime.mode;
   if (runtime.mode === "worker") {
     qlog("quality.spawn skipped; starting Quality worker in the MCP runtime");
-    const workerEnv = { ...process.env, ...runtime.extraEnv };
+    const workerEnv = qualityServiceEnv(runtime.extraEnv);
     delete workerEnv.PORT;
     workerEnv.PRAXIS_QUALITY_PORT = String(port3);
     workerEnv.PRAXIS_QUALITY_DB = db;
@@ -27020,13 +28126,13 @@ async function ensureQualityOnce(opts) {
       exitCode = code;
     });
   } else {
-    const env = { ...process.env, ...runtime.extraEnv };
+    const env = qualityServiceEnv(runtime.extraEnv);
     delete env.PORT;
     env.PRAXIS_QUALITY_PORT = String(port3);
     env.PRAXIS_QUALITY_DB = db;
     env.PRAXIS_QUALITY_ALLOWED_ROOT = repo;
     env.PRAXIS_QUALITY_HOST = "127.0.0.1";
-    const logFd = (0, import_node_fs29.openSync)(logPath, "a");
+    const logFd = (0, import_node_fs31.openSync)(logPath, "a");
     qlog("quality.spawn");
     let child;
     try {
@@ -27037,7 +28143,7 @@ async function ensureQualityOnce(opts) {
         stdio: ["ignore", logFd, logFd]
       });
     } catch (err) {
-      (0, import_node_fs29.closeSync)(logFd);
+      (0, import_node_fs31.closeSync)(logFd);
       const errno = err;
       fail(classifySpawnFailure(errno), errno instanceof Error ? errno.message : String(err), "quality.spawn", t0, {
         ...diagnosticDetails,
@@ -27048,7 +28154,7 @@ async function ensureQualityOnce(opts) {
       });
     }
     const started = await waitForChildStart(child, 1500);
-    (0, import_node_fs29.closeSync)(logFd);
+    (0, import_node_fs31.closeSync)(logFd);
     pid = started.pid;
     qlog(`quality.child.start spawned=${started.spawned} pid=${pid ?? "none"} exitCode=${started.exitCode ?? "none"} spawnError=${started.error?.code ?? "none"}`);
     if (!started.spawned || started.error || started.exitCode !== void 0 || started.exitSignal) {
@@ -27163,21 +28269,22 @@ function resetQualityEnsureForTests(repo) {
   if (repo) {
     const dir = qualityDir(repo);
     stopQuality(repo);
-    (0, import_node_fs29.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs31.rmSync)(dir, { recursive: true, force: true });
     inFlight.delete(repoKey(repo));
     return;
   }
   inFlight.clear();
 }
-var import_node_child_process9, import_node_worker_threads, import_node_fs29, import_node_net, import_node_module, import_node_path30, import_node_url, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
+var import_node_child_process9, import_node_worker_threads, import_node_fs31, import_node_net, import_node_module, import_node_path31, import_node_url, import_meta, DEFAULT_QUALITY_PORT, QUALITY_STARTUP_BUDGET_MS, QUALITY_CODES, inFlight, workers, QualityStartupError, supervisorHooksInstalled, SQLITE_PROBE_SOURCE;
 var init_quality_ensure = __esm({
   "node_modules/@praxis/cli/dist/quality-ensure.js"() {
     import_node_child_process9 = require("node:child_process");
     import_node_worker_threads = require("node:worker_threads");
-    import_node_fs29 = require("node:fs");
+    import_node_fs31 = require("node:fs");
     import_node_net = __toESM(require("node:net"), 1);
+    init_dist();
     import_node_module = require("node:module");
-    import_node_path30 = require("node:path");
+    import_node_path31 = require("node:path");
     import_node_url = require("node:url");
     import_meta = {};
     DEFAULT_QUALITY_PORT = 8792;
@@ -27294,7 +28401,7 @@ async function runQualityWorkPackageReview(opts) {
   const { status, json: json4 } = await postJson(`${url4}/reviews/work-package`, {
     projectId: opts.workPackageId,
     workPackageId: opts.workPackageId,
-    path: (0, import_node_path31.resolve)(opts.repo),
+    path: (0, import_node_path32.resolve)(opts.repo),
     runtimeVersion: opts.runtimeVersion
   });
   if (status >= 400) {
@@ -27426,10 +28533,10 @@ function qualityReviewStatus(repo, workPackageId) {
     approvalApplied: evidence.approvalApplied === true
   };
 }
-var import_node_path31, QualityReviewTransportError;
+var import_node_path32, QualityReviewTransportError;
 var init_quality_lifecycle = __esm({
   "node_modules/@praxis/cli/dist/quality-lifecycle.js"() {
-    import_node_path31 = require("node:path");
+    import_node_path32 = require("node:path");
     init_workflows();
     init_quality_ensure();
     QualityReviewTransportError = class extends Error {
@@ -27508,10 +28615,10 @@ __export(operations_exports, {
   workPackageShowOp: () => workPackageShowOp
 });
 function previewFingerprint(plan) {
-  return `sha256:${(0, import_node_crypto19.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
+  return `sha256:${(0, import_node_crypto20.createHash)("sha256").update(JSON.stringify(plan ?? null)).digest("hex")}`;
 }
 function redact(text) {
-  return text.replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
+  return redactCredentials(text).replace(/PRAXIS_JIRA_TOKEN=\S+/g, "PRAXIS_JIRA_TOKEN=<redacted>").replace(/PRAXIS_GITHUB_TOKEN=\S+/g, "PRAXIS_GITHUB_TOKEN=<redacted>").replace(/PRAXIS_GITLAB_TOKEN=\S+/g, "PRAXIS_GITLAB_TOKEN=<redacted>").replace(/Authorization:\s*\S+/gi, "Authorization=<redacted>").replace(/Bearer\s+\S+/g, "Bearer <redacted>");
 }
 function scrubUnexpandedPlaceholders(env = process.env) {
   const removed = [];
@@ -27567,20 +28674,22 @@ function loadPraxisDotenv(repo) {
     if (process.env[key] === value)
       delete process.env[key];
   fileSourced.clear();
+  fileSourcedFrom.clear();
   dotenvRefusals = [];
+  const resolved = (0, import_node_path33.resolve)(repo);
+  noteRepositoryDotenv(resolved, []);
   if (process.env.PRAXIS_SKIP_DOTENV === "1")
     return;
-  const resolved = (0, import_node_path32.resolve)(repo);
-  if (!(0, import_node_fs30.existsSync)(resolved))
+  if (!(0, import_node_fs32.existsSync)(resolved))
     return;
   for (const f of [".env.praxis", ".env", ".env.praxis.local"]) {
-    const p = (0, import_node_path32.join)(resolved, f);
+    const p = (0, import_node_path33.join)(resolved, f);
     let text;
     try {
-      const st = (0, import_node_fs30.lstatSync)(p);
+      const st = (0, import_node_fs32.lstatSync)(p);
       if (!st.isFile() || st.size > DOTENV_MAX_BYTES)
         continue;
-      text = (0, import_node_fs30.readFileSync)(p, "utf8");
+      text = (0, import_node_fs32.readFileSync)(p, "utf8");
     } catch {
       continue;
     }
@@ -27601,14 +28710,17 @@ function loadPraxisDotenv(repo) {
         continue;
       process.env[key] = value;
       fileSourced.set(key, value);
+      fileSourcedFrom.set(key, p);
     }
   }
+  noteRepositoryDotenv(resolved, fileSourcedFrom);
 }
 function gitRoot(cwd) {
   const r = (0, import_node_child_process10.spawnSync)("git", ["rev-parse", "--show-toplevel"], {
     cwd,
     encoding: "utf8",
-    timeout: 2e3
+    timeout: 2e3,
+    env: gitEnv()
   });
   if ((r.status ?? 1) !== 0)
     return void 0;
@@ -27616,8 +28728,8 @@ function gitRoot(cwd) {
 }
 function requireRepo(repo) {
   loadPraxisDotenv(repo);
-  const resolved = (0, import_node_path32.resolve)(repo);
-  if (!(0, import_node_fs30.existsSync)(resolved)) {
+  const resolved = (0, import_node_path33.resolve)(repo);
+  if (!(0, import_node_fs32.existsSync)(resolved)) {
     throw new PraxisOpError(OP_CODES.REPOSITORY_UNAVAILABLE, `REPOSITORY_UNAVAILABLE: ${resolved}`);
   }
   return resolved;
@@ -27704,6 +28816,8 @@ async function withProvider(ctx, fn) {
     const msg = redact(e instanceof Error ? e.message : String(e));
     if (e instanceof PraxisOpError)
       throw e;
+    if (e instanceof CredentialSourceError)
+      throw new PraxisOpError(OP_CODES.CREDENTIAL_SOURCE_UNTRUSTED, msg, { details: e.details });
     if (/timeout|aborted/i.test(msg)) {
       throw new PraxisOpError(OP_CODES.JIRA_READ_TIMEOUT, `JIRA_READ_TIMEOUT: ${msg}`);
     }
@@ -27779,7 +28893,7 @@ async function guardWrite(ctx, spec, write) {
     requireConfirm(ctx.confirmation, spec.what);
   if (hasMutationLease())
     return write();
-  const repo = (0, import_node_path32.resolve)(spec.repository);
+  const repo = (0, import_node_path33.resolve)(spec.repository);
   try {
     const described = await (spec.git?.describe ?? spec.describe)?.();
     if (described?.previewFingerprint && ctx.previewFingerprint && described.previewFingerprint !== ctx.previewFingerprint) {
@@ -27840,8 +28954,8 @@ async function tracedFingerprint(trace, plan) {
 }
 async function doctorOp(ctx, version4) {
   loadPraxisDotenv(ctx.repo);
-  const resolved = (0, import_node_path32.resolve)(ctx.repo);
-  const repoExists = (0, import_node_fs30.existsSync)(resolved);
+  const resolved = (0, import_node_path33.resolve)(ctx.repo);
+  const repoExists = (0, import_node_fs32.existsSync)(resolved);
   const git3 = repoExists ? gitRoot(resolved) : void 0;
   const project = repoExists ? loadProjectConfig(git3 ?? resolved) : { status: "missing", suggestedPath: resolved };
   const jiraFlags = jiraConfigFlags();
@@ -27870,6 +28984,7 @@ async function doctorOp(ctx, version4) {
     issue: github.apiUrlIssue
   });
   const approval = approvalDiagnostics(process.env, git3 ?? resolved);
+  const credentialSource = credentialSourceReport(repoExists ? git3 ?? resolved : void 0);
   const capabilities = {
     praxisRuntime: "ok",
     repository: repoExists ? git3 ? "ok" : "no-git" : "unavailable",
@@ -27896,6 +29011,8 @@ async function doctorOp(ctx, version4) {
     dotenvLoaded: dotenvLoadedKeys(),
     providers,
     approval,
+    credentialExposure: credentialExposure(inheritedCredentialVariables()),
+    credentialSource,
     nextSteps: [
       ...doctorNextSteps({
         repoExists,
@@ -27907,7 +29024,8 @@ async function doctorOp(ctx, version4) {
         dotenvRejected,
         dotenvRefused: dotenvRefusals,
         dotenvLoaded: dotenvLoadedKeys()
-      })
+      }),
+      ...Object.entries(credentialSource).filter(([, report]) => !report.trusted).map(([provider, report]) => `${provider}: ${report.repositoryVariables.join(", ")} ${report.repositoryVariables.length === 1 ? "is" : "are"} set by a repository file (${report.files.join("; ")}), so its credential is not used. Remove ${report.repositoryVariables.length === 1 ? "it" : "them"} from the repository and configure ${provider} together with its token in the operator environment.`)
     ],
     codes: {
       repository: capabilities.repository === "unavailable" ? OP_CODES.REPOSITORY_UNAVAILABLE : void 0,
@@ -27949,14 +29067,14 @@ async function projectInitApplyOp(ctx) {
     requireYes: true,
     // what the user approves is the file this will write, in full
     describe: () => ({
-      summary: inferred.existing.status === "loaded" ? "Project config already exists: nothing will be written" : `Write ${(0, import_node_path32.join)(repo, ".project")}`,
+      summary: inferred.existing.status === "loaded" ? "Project config already exists: nothing will be written" : `Write ${(0, import_node_path33.join)(repo, ".project")}`,
       description: [
-        inferred.existing.status === "loaded" ? `${inferred.existing.path} already exists; applying changes nothing.` : `Creates ${(0, import_node_path32.join)(repo, ".project")} with exactly this content:`,
+        inferred.existing.status === "loaded" ? `${inferred.existing.path} already exists; applying changes nothing.` : `Creates ${(0, import_node_path33.join)(repo, ".project")} with exactly this content:`,
         "",
         inferred.yaml
       ].join("\n"),
       previewFingerprint: previewFingerprint({ yaml: inferred.yaml, existing: inferred.existing.status }),
-      targets: [(0, import_node_path32.join)(repo, ".project")]
+      targets: [(0, import_node_path33.join)(repo, ".project")]
     })
   }, async () => {
     if (inferred.existing.status === "loaded") {
@@ -28539,7 +29657,7 @@ async function qualityReviewOp(ctx) {
       const reviewed = await runQualityWorkPackageReview2({
         repo,
         workPackageId,
-        runtimeVersion: "0.1.0-alpha.49.2"
+        runtimeVersion: "0.1.0-alpha.49.3"
       });
       const qualityInputs = discoverQualityInputs(repo, workPackageId);
       return {
@@ -28913,13 +30031,13 @@ ${preview.proposedComment}`,
     };
   }));
 }
-var import_node_crypto19, import_node_child_process10, import_node_fs30, import_node_path32, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
+var import_node_crypto20, import_node_child_process10, import_node_fs32, import_node_path33, OP_CODES, PREVIEW_DEADLINE_MS, PraxisOpError, HOST_PLACEHOLDER_RE, hostPlaceholdersIgnored, DOTENV_ALLOWED_KEYS, DOTENV_ALLOWED_PREFIXES, DOTENV_VALUE_SHAPES, dotenvRejected, dotenvRefusals, fileSourced, fileSourcedFrom, DOTENV_MAX_BYTES, describeConnect, describeIdentity, describeCommit, describePublish, describeMergeRequest;
 var init_operations = __esm({
   "node_modules/@praxis/cli/dist/operations.js"() {
-    import_node_crypto19 = require("node:crypto");
+    import_node_crypto20 = require("node:crypto");
     import_node_child_process10 = require("node:child_process");
-    import_node_fs30 = require("node:fs");
-    import_node_path32 = require("node:path");
+    import_node_fs32 = require("node:fs");
+    import_node_path33 = require("node:path");
     init_dist2();
     init_dist3();
     init_workflows();
@@ -29021,7 +30139,9 @@ var init_operations = __esm({
       GIT_COMMIT_DIVERGED: "GIT_COMMIT_DIVERGED",
       GIT_CONFIRMATION_REQUIRED: "GIT_CONFIRMATION_REQUIRED",
       GIT_SECRETS_DETECTED: "GIT_SECRETS_DETECTED",
-      GIT_REPRODUCIBILITY_BLOCKED: "GIT_REPRODUCIBILITY_BLOCKED"
+      GIT_REPRODUCIBILITY_BLOCKED: "GIT_REPRODUCIBILITY_BLOCKED",
+      CREDENTIAL_SOURCE_UNTRUSTED: "CREDENTIAL_SOURCE_UNTRUSTED",
+      DECISION_LEDGER_UNAVAILABLE: "DECISION_LEDGER_UNAVAILABLE"
     };
     PREVIEW_DEADLINE_MS = 15e3;
     PraxisOpError = class extends Error {
@@ -29069,6 +30189,7 @@ var init_operations = __esm({
     dotenvRejected = [];
     dotenvRefusals = [];
     fileSourced = /* @__PURE__ */ new Map();
+    fileSourcedFrom = /* @__PURE__ */ new Map();
     DOTENV_MAX_BYTES = 64 * 1024;
     describeConnect = (ctx) => async () => {
       const p = gitConnectPreviewData(gitCtx(ctx));
@@ -32457,11 +33578,11 @@ var require_excerpt = __commonJS({
       if (typeof opts.excerpt === "function") {
         return opts.excerpt(file2, opts);
       }
-      const sep11 = file2.data.excerpt_separator || opts.excerpt_separator;
-      if (sep11 == null && (opts.excerpt === false || opts.excerpt == null)) {
+      const sep13 = file2.data.excerpt_separator || opts.excerpt_separator;
+      if (sep13 == null && (opts.excerpt === false || opts.excerpt == null)) {
         return file2;
       }
-      const delimiter = typeof opts.excerpt === "string" ? opts.excerpt : sep11 || opts.delimiters[0];
+      const delimiter = typeof opts.excerpt === "string" ? opts.excerpt : sep13 || opts.delimiters[0];
       const idx = file2.content.indexOf(delimiter);
       if (idx !== -1) {
         file2.excerpt = file2.content.slice(0, idx);
@@ -32533,7 +33654,7 @@ var require_gray_matter = __commonJS({
     var excerpt = require_excerpt();
     var engines2 = require_engines();
     var toFile = require_to_file();
-    var parse6 = require_parse();
+    var parse7 = require_parse();
     var utils = require_utils2();
     function matter2(input2, options2) {
       if (input2 === "") {
@@ -32585,7 +33706,7 @@ var require_gray_matter = __commonJS({
         file2.empty = file2.content;
         file2.data = {};
       } else {
-        file2.data = parse6(file2.language, file2.matter, opts);
+        file2.data = parse7(file2.language, file2.matter, opts);
       }
       if (closeIndex === len) {
         file2.content = "";
@@ -33878,17 +34999,17 @@ var validateAsync = async (schema, value, _ctx) => {
   return result.issues.length === 0;
 };
 var _encode = (_Err) => {
-  const parse6 = _parse(_Err);
+  const parse7 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
     const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-    return parse6(schema, value, ctx, finalizeParams(fn, _params));
+    return parse7(schema, value, ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
 var _decode = (_Err) => {
-  const parse6 = _parse(_Err);
+  const parse7 = _parse(_Err);
   const fn = (schema, value, _ctx, _params) => {
-    return parse6(schema, value, _ctx, finalizeParams(fn, _params));
+    return parse7(schema, value, _ctx, finalizeParams(fn, _params));
   };
   return fn;
 };
@@ -35351,8 +36472,8 @@ var $ZodUnion = /* @__PURE__ */ $constructor("$ZodUnion", (inst, def) => {
   });
   defineLazyInternal(inst, "pattern", (zod) => {
     if (zod.def.options.every((o) => o._zod.pattern)) {
-      const patterns = zod.def.options.map((o) => o._zod.pattern);
-      return new RegExp(`^(${patterns.map((p) => cleanRegex(p.source)).join("|")})$`);
+      const patterns2 = zod.def.options.map((o) => o._zod.pattern);
+      return new RegExp(`^(${patterns2.map((p) => cleanRegex(p.source)).join("|")})$`);
     }
     return void 0;
   });
@@ -36077,7 +37198,7 @@ var recursive = /* @__PURE__ */ new WeakMap();
 var NONE = 0;
 var ASSUMED = 1;
 var PROVEN = 2;
-function isRecursive(inst, stack, resolve20) {
+function isRecursive(inst, stack, resolve21) {
   const cached4 = recursive.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN : NONE;
@@ -36087,7 +37208,7 @@ function isRecursive(inst, stack, resolve20) {
   let result = NONE;
   const check2 = (child) => {
     if (result !== PROVEN && child?._zod) {
-      const answer = isRecursive(child, stack, resolve20);
+      const answer = isRecursive(child, stack, resolve21);
       if (answer > result)
         result = answer;
     }
@@ -36098,7 +37219,7 @@ function isRecursive(inst, stack, resolve20) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve20) : NONE;
+      const child = desc.get ? ASSUMED : desc.value?._zod ? isRecursive(desc.value, stack, resolve21) : NONE;
       if (child > answer)
         answer = child;
     }
@@ -36161,7 +37282,7 @@ function isRecursive(inst, stack, resolve20) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve20 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve21 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive(inner, stack, false) : ASSUMED);
       break;
     }
@@ -37690,7 +38811,7 @@ var exactPattern = (p) => exactPatterns.get(p) ?? p;
 var stringProcessor = (schema, ctx, _json, _params) => {
   const json4 = _json;
   json4.type = "string";
-  const { minimum, maximum, format, patterns, contentEncoding, laxFormat } = aggregateChecks(schema);
+  const { minimum, maximum, format, patterns: patterns2, contentEncoding, laxFormat } = aggregateChecks(schema);
   if (typeof minimum === "number")
     json4.minLength = minimum;
   if (typeof maximum === "number")
@@ -37705,8 +38826,8 @@ var stringProcessor = (schema, ctx, _json, _params) => {
   }
   if (contentEncoding)
     json4.contentEncoding = contentEncoding;
-  if (patterns && patterns.size > 0) {
-    const patternList = [...patterns].map(exactPattern);
+  if (patterns2 && patterns2.size > 0) {
+    const patternList = [...patterns2].map(exactPattern);
     if (patternList.length === 1)
       json4.pattern = patternList[0].source;
     else if (patternList.length > 1) {
@@ -38006,14 +39127,14 @@ var recordProcessor = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   json4.type = "object";
   const keyType = def.keyType;
-  const patterns = aggregateChecks(keyType).patterns;
-  if (def.mode === "loose" && patterns && patterns.size > 0) {
+  const patterns2 = aggregateChecks(keyType).patterns;
+  if (def.mode === "loose" && patterns2 && patterns2.size > 0) {
     const valueSchema = processSchema(def.valueType, ctx, {
       ...params,
       path: [...params.path, "patternProperties", "*"]
     });
     json4.patternProperties = {};
-    for (const pattern of patterns) {
+    for (const pattern of patterns2) {
       assignProp(json4.patternProperties, exactPattern(pattern).source, valueSchema);
     }
   } else {
@@ -41413,17 +42534,17 @@ var validateAsync3 = async (schema, value, _ctx) => {
   return result.issues.length === 0;
 };
 var _encode3 = (_Err) => {
-  const parse6 = _parse3(_Err);
+  const parse7 = _parse3(_Err);
   const fn = (schema, value, _ctx, _params) => {
     const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-    return parse6(schema, value, ctx, finalizeParams2(fn, _params));
+    return parse7(schema, value, ctx, finalizeParams2(fn, _params));
   };
   return fn;
 };
 var _decode3 = (_Err) => {
-  const parse6 = _parse3(_Err);
+  const parse7 = _parse3(_Err);
   const fn = (schema, value, _ctx, _params) => {
-    return parse6(schema, value, _ctx, finalizeParams2(fn, _params));
+    return parse7(schema, value, _ctx, finalizeParams2(fn, _params));
   };
   return fn;
 };
@@ -42837,8 +43958,8 @@ var $ZodUnion2 = /* @__PURE__ */ $constructor2("$ZodUnion", (inst, def) => {
   });
   defineLazyInternal2(inst, "pattern", (zod) => {
     if (zod.def.options.every((o) => o._zod.pattern)) {
-      const patterns = zod.def.options.map((o) => o._zod.pattern);
-      return new RegExp(`^(${patterns.map((p) => cleanRegex2(p.source)).join("|")})$`);
+      const patterns2 = zod.def.options.map((o) => o._zod.pattern);
+      return new RegExp(`^(${patterns2.map((p) => cleanRegex2(p.source)).join("|")})$`);
     }
     return void 0;
   });
@@ -43563,7 +44684,7 @@ var recursive2 = /* @__PURE__ */ new WeakMap();
 var NONE2 = 0;
 var ASSUMED2 = 1;
 var PROVEN2 = 2;
-function isRecursive2(inst, stack, resolve20) {
+function isRecursive2(inst, stack, resolve21) {
   const cached4 = recursive2.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN2 : NONE2;
@@ -43573,7 +44694,7 @@ function isRecursive2(inst, stack, resolve20) {
   let result = NONE2;
   const check2 = (child) => {
     if (result !== PROVEN2 && child?._zod) {
-      const answer = isRecursive2(child, stack, resolve20);
+      const answer = isRecursive2(child, stack, resolve21);
       if (answer > result)
         result = answer;
     }
@@ -43584,7 +44705,7 @@ function isRecursive2(inst, stack, resolve20) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve20) : NONE2;
+      const child = desc.get ? ASSUMED2 : desc.value?._zod ? isRecursive2(desc.value, stack, resolve21) : NONE2;
       if (child > answer)
         answer = child;
     }
@@ -43647,7 +44768,7 @@ function isRecursive2(inst, stack, resolve20) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve20 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve21 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive2(inner, stack, false) : ASSUMED2);
       break;
     }
@@ -45138,7 +46259,7 @@ var exactPattern2 = (p) => exactPatterns2.get(p) ?? p;
 var stringProcessor2 = (schema, ctx, _json, _params) => {
   const json4 = _json;
   json4.type = "string";
-  const { minimum, maximum, format, patterns, contentEncoding, laxFormat } = aggregateChecks2(schema);
+  const { minimum, maximum, format, patterns: patterns2, contentEncoding, laxFormat } = aggregateChecks2(schema);
   if (typeof minimum === "number")
     json4.minLength = minimum;
   if (typeof maximum === "number")
@@ -45153,8 +46274,8 @@ var stringProcessor2 = (schema, ctx, _json, _params) => {
   }
   if (contentEncoding)
     json4.contentEncoding = contentEncoding;
-  if (patterns && patterns.size > 0) {
-    const patternList = [...patterns].map(exactPattern2);
+  if (patterns2 && patterns2.size > 0) {
+    const patternList = [...patterns2].map(exactPattern2);
     if (patternList.length === 1)
       json4.pattern = patternList[0].source;
     else if (patternList.length > 1) {
@@ -45569,14 +46690,14 @@ var recordProcessor2 = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   json4.type = "object";
   const keyType = def.keyType;
-  const patterns = aggregateChecks2(keyType).patterns;
-  if (def.mode === "loose" && patterns && patterns.size > 0) {
+  const patterns2 = aggregateChecks2(keyType).patterns;
+  if (def.mode === "loose" && patterns2 && patterns2.size > 0) {
     const valueSchema = processSchema2(def.valueType, ctx, {
       ...params,
       path: [...params.path, "patternProperties", "*"]
     });
     json4.patternProperties = {};
-    for (const pattern of patterns) {
+    for (const pattern of patterns2) {
       assignProp2(json4.patternProperties, exactPattern2(pattern).source, valueSchema);
     }
   } else {
@@ -50252,14 +51373,14 @@ function inputRequiredRoundsExceededMessage(method, maxRounds) {
   return `Multi-round-trip request '${method}' still required input after ${maxRounds} rounds (inputRequired.maxRounds)`;
 }
 function sleep(ms, signal) {
-  return new Promise((resolve20, reject) => {
+  return new Promise((resolve21, reject) => {
     if (signal?.aborted) {
       reject(signal.reason instanceof SdkError ? signal.reason : new SdkError(SdkErrorCode.RequestTimeout, String(signal.reason)));
       return;
     }
     const timer = setTimeout(() => {
       signal?.removeEventListener("abort", onAbort);
-      resolve20();
+      resolve21();
     }, ms);
     const onAbort = () => {
       clearTimeout(timer);
@@ -51053,7 +52174,7 @@ var Protocol = class {
     const flowStartedAt = Date.now();
     let onAbort;
     let cleanupMessageId;
-    return new Promise((resolve20, reject) => {
+    return new Promise((resolve21, reject) => {
       const earlyReject = (error64) => {
         reject(error64);
       };
@@ -51121,7 +52242,7 @@ var Protocol = class {
         }
         if (decoded.kind === "invalid") return reject(decoded.error);
         if (decoded.kind === "input_required") {
-          if (options2?.allowInputRequired === true) return resolve20(manualInputRequiredValue(decoded));
+          if (options2?.allowInputRequired === true) return resolve21(manualInputRequiredValue(decoded));
           const flow = {
             codec: codec2,
             request,
@@ -51133,11 +52254,11 @@ var Protocol = class {
               params
             }, resultSchema, legOptions)
           };
-          return resolve20(this._resolveNonCompleteResult(decoded, flow));
+          return resolve21(this._resolveNonCompleteResult(decoded, flow));
         }
         const result = decoded.result;
         validateStandardSchema(resultSchema, result).then((parseResult) => {
-          if (parseResult.success) resolve20(parseResult.data);
+          if (parseResult.success) resolve21(parseResult.data);
           else reject(new SdkError(SdkErrorCode.InvalidResult, `Invalid result for ${request.method}: ${parseResult.error}`));
         }, reject);
       });
@@ -51332,8 +52453,8 @@ var require_content_type = /* @__PURE__ */ __commonJSMin((exports2) => {
   var PARAM_REGEXP = /; *([!#$%&'*+.^_`|~0-9A-Za-z-]+) *= *("(?:[\u000b\u0020\u0021\u0023-\u005b\u005d-\u007e\u0080-\u00ff]|\\[\u000b\u0020-\u00ff])*"|[!#$%&'*+.^_`|~0-9A-Za-z-]+) */g;
   var QESC_REGEXP = /\\([\u000b\u0020-\u00ff])/g;
   var TYPE_REGEXP = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+\/[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
-  exports2.parse = parse6;
-  function parse6(string9) {
+  exports2.parse = parse7;
+  function parse7(string9) {
     if (!string9) throw new TypeError("argument string is required");
     var header = typeof string9 === "object" ? getcontenttype(string9) : string9;
     if (typeof header !== "string") throw new TypeError("argument string is required to be a string");
@@ -54049,7 +55170,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
     ref = (0, resolve_1.resolveUrl)(this.opts.uriResolver, baseId, ref);
     const schOrFunc = root.refs[ref];
     if (schOrFunc) return schOrFunc;
-    let _sch = resolve20.call(this, root, ref);
+    let _sch = resolve21.call(this, root, ref);
     if (_sch === void 0) {
       const schema = (_a7 = root.localRefs) === null || _a7 === void 0 ? void 0 : _a7[ref];
       const { schemaId } = this.opts;
@@ -54075,7 +55196,7 @@ var require_compile = /* @__PURE__ */ __commonJSMin((exports2) => {
   function sameSchemaEnv(s1, s2) {
     return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
   }
-  function resolve20(root, ref) {
+  function resolve21(root, ref) {
     let sch;
     while (typeof (sch = this.refs[ref]) == "string") ref = sch;
     return sch || this.schemas[ref] || resolveSchema.call(this, root, ref);
@@ -54521,21 +55642,21 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
   const { normalizeIPv6, removeDotSegments, recomposeAuthority, normalizeComponentEncoding, isIPv4, nonSimpleDomain } = require_utils();
   const { SCHEMES, getSchemeHandler } = require_schemes();
   function normalize(uri, options2) {
-    if (typeof uri === "string") uri = serialize(parse6(uri, options2), options2);
-    else if (typeof uri === "object") uri = parse6(serialize(uri, options2), options2);
+    if (typeof uri === "string") uri = serialize(parse7(uri, options2), options2);
+    else if (typeof uri === "object") uri = parse7(serialize(uri, options2), options2);
     return uri;
   }
-  function resolve20(baseURI, relativeURI, options2) {
+  function resolve21(baseURI, relativeURI, options2) {
     const schemelessOptions = options2 ? Object.assign({ scheme: "null" }, options2) : { scheme: "null" };
-    const resolved = resolveComponent(parse6(baseURI, schemelessOptions), parse6(relativeURI, schemelessOptions), schemelessOptions, true);
+    const resolved = resolveComponent(parse7(baseURI, schemelessOptions), parse7(relativeURI, schemelessOptions), schemelessOptions, true);
     schemelessOptions.skipEscape = true;
     return serialize(resolved, schemelessOptions);
   }
   function resolveComponent(base, relative7, options2, skipNormalization) {
     const target = {};
     if (!skipNormalization) {
-      base = parse6(serialize(base, options2), options2);
-      relative7 = parse6(serialize(relative7, options2), options2);
+      base = parse7(serialize(base, options2), options2);
+      relative7 = parse7(serialize(relative7, options2), options2);
     }
     options2 = options2 || {};
     if (!options2.tolerant && relative7.scheme) {
@@ -54579,7 +55700,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
   function equal(uriA, uriB, options2) {
     if (typeof uriA === "string") {
       uriA = unescape(uriA);
-      uriA = serialize(normalizeComponentEncoding(parse6(uriA, options2), true), {
+      uriA = serialize(normalizeComponentEncoding(parse7(uriA, options2), true), {
         ...options2,
         skipEscape: true
       });
@@ -54589,7 +55710,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     });
     if (typeof uriB === "string") {
       uriB = unescape(uriB);
-      uriB = serialize(normalizeComponentEncoding(parse6(uriB, options2), true), {
+      uriB = serialize(normalizeComponentEncoding(parse7(uriB, options2), true), {
         ...options2,
         skipEscape: true
       });
@@ -54642,7 +55763,7 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
     return uriTokens.join("");
   }
   const URI_PARSE = /^(?:([^#/:?]+):)?(?:\/\/((?:([^#/?@]*)@)?(\[[^#/?\]]+\]|[^#/:?]*)(?::(\d*))?))?([^#?]*)(?:\?([^#]*))?(?:#((?:.|[\n\r])*))?/u;
-  function parse6(uri, opts) {
+  function parse7(uri, opts) {
     const options2 = Object.assign({}, opts);
     const parsed = {
       scheme: void 0,
@@ -54699,11 +55820,11 @@ var require_fast_uri = /* @__PURE__ */ __commonJSMin((exports2, module2) => {
   const fastUri = {
     SCHEMES,
     normalize,
-    resolve: resolve20,
+    resolve: resolve21,
     resolveComponent,
     equal,
     serialize,
-    parse: parse6
+    parse: parse7
   };
   module2.exports = fastUri;
   module2.exports.default = fastUri;
@@ -56307,16 +57428,16 @@ var require_patternProperties = /* @__PURE__ */ __commonJSMin((exports2) => {
     code(cxt) {
       const { gen, schema, data, parentSchema, it } = cxt;
       const { opts } = it;
-      const patterns = (0, code_1.allSchemaProperties)(schema);
-      const alwaysValidPatterns = patterns.filter((p) => (0, util_1.alwaysValidSchema)(it, schema[p]));
-      if (patterns.length === 0 || alwaysValidPatterns.length === patterns.length && (!it.opts.unevaluated || it.props === true)) return;
+      const patterns2 = (0, code_1.allSchemaProperties)(schema);
+      const alwaysValidPatterns = patterns2.filter((p) => (0, util_1.alwaysValidSchema)(it, schema[p]));
+      if (patterns2.length === 0 || alwaysValidPatterns.length === patterns2.length && (!it.opts.unevaluated || it.props === true)) return;
       const checkProperties = opts.strictSchema && !opts.allowMatchingProperties && parentSchema.properties;
       const valid = gen.name("valid");
       if (it.props !== true && !(it.props instanceof codegen_1.Name)) it.props = (0, util_2.evaluatedPropsToName)(gen, it.props);
       const { props } = it;
       validatePatternProperties();
       function validatePatternProperties() {
-        for (const pat of patterns) {
+        for (const pat of patterns2) {
           if (checkProperties) checkMatchingProperties(pat);
           if (it.allErrors) validateProperties(pat);
           else {
@@ -60075,7 +61196,7 @@ var StdioServerTransport = class {
   }
   send(message) {
     if (this._closed) return Promise.reject(/* @__PURE__ */ new Error("StdioServerTransport is closed"));
-    return new Promise((resolve20, reject) => {
+    return new Promise((resolve21, reject) => {
       const json4 = serializeMessage(message);
       let settled = false;
       const onError = (error64) => {
@@ -60090,14 +61211,14 @@ var StdioServerTransport = class {
         settled = true;
         this._stdout.off("error", onError);
         this._stdout.off("drain", onDrain);
-        resolve20();
+        resolve21();
       };
       this._stdout.once("error", onError);
       if (this._stdout.write(json4)) {
         if (settled) return;
         settled = true;
         this._stdout.off("error", onError);
-        resolve20();
+        resolve21();
       } else if (!settled) this._stdout.once("drain", onDrain);
     });
   }
@@ -60151,14 +61272,14 @@ var StdioConnectionChannel = class {
   */
   async whenRequestsAnswered(timeoutMs) {
     if (this._closed || this._pendingRequests.size === 0) return true;
-    return await new Promise((resolve20) => {
+    return await new Promise((resolve21) => {
       const waiter = () => {
         clearTimeout(timer);
-        resolve20(true);
+        resolve21(true);
       };
       const timer = setTimeout(() => {
         this._drainWaiters = this._drainWaiters.filter((pending) => pending !== waiter);
-        resolve20(false);
+        resolve21(false);
       }, timeoutMs);
       this._drainWaiters.push(waiter);
     });
@@ -60507,7 +61628,7 @@ var wpProp = {
 var confirmProp = {
   type: "string",
   enum: ["YES", "NO"],
-  description: "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user itself in the client's own approval dialog and runs the action only if they approve. A client that cannot show the dialog gets APPROVAL_CLIENT_UI_REQUIRED and nothing runs. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection."
+  description: "YES means: apply what was previewed. It is not an approval: Praxis then asks in the client's own approval dialog and runs the action only if that dialog answers approve. A client that cannot show the dialog gets APPROVAL_CLIENT_UI_REQUIRED and nothing runs. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection."
 };
 var fingerprintProp = {
   type: "string",
@@ -61247,7 +62368,7 @@ var TOOLS = [
   },
   {
     name: "praxis_canon_init_apply",
-    description: "Create the BA canon root listed by praxis_canon_init_preview. Only ever creates: an existing file or folder is left untouched. The user approves exactly the listed paths in the client's own dialog before anything is written. Does not create a first epic or the documentation layer (praxis-ba epic add and the ba-scaffold skill do).",
+    description: "Create the BA canon root listed by praxis_canon_init_preview. Only ever creates: an existing file or folder is left untouched. The client's own approval dialog must approve exactly the listed paths before anything is written. Does not create a first epic or the documentation layer (praxis-ba epic add and the ba-scaffold skill do).",
     inputSchema: {
       type: "object",
       properties: { repo: repoProp, product: { type: "string", description: "Product name for the heading of the draft vision (optional)." }, confirmation: confirmProp },
@@ -61426,12 +62547,12 @@ var TOOLS = [
   },
   {
     name: "praxis_approval_journal",
-    description: "Audits the Praxis decision journal for this repository (kept in the user's Praxis home, not the repository): what was approved, rejected, withdrawn or could not be asked, and which entries attribute a decision to the user without evidence (the agent's confirmation=NO recorded as a rejection, or a client that answered the approval dialog by itself in milliseconds). amend=false (default) only reads. amend=true with confirmation=YES appends one traceable correction per such entry after the user approves exactly that list; existing lines are never changed or removed.",
+    description: "Audits the Praxis decision journal for this repository (kept in the user's Praxis home, not the repository): what was approved, rejected, withdrawn or could not be asked, and which entries attribute a decision to the user without evidence (the agent's confirmation=NO recorded as a rejection, or a client that answered the approval dialog by itself in milliseconds). amend=false (default) only reads. amend=true with confirmation=YES appends one traceable correction per such entry after the client's approval dialog approves exactly that list; existing lines are never changed or removed. Corrections can only take a claimed decision of the user back; nothing can add or upgrade an approval, and nothing in Praxis reads the journal as evidence.",
     inputSchema: {
       type: "object",
       properties: {
         repo: repoProp,
-        amend: { type: "boolean", description: "Append the corrections the audit lists (needs confirmation=YES and the user's approval). Default false: read only." },
+        amend: { type: "boolean", description: "Append the corrections the audit lists (needs confirmation=YES and approval in the client's dialog). Default false: read only." },
         confirmation: confirmProp
       },
       additionalProperties: false
@@ -61461,13 +62582,13 @@ for (const tool of TOOLS) {
     continue;
   tool.inputSchema.properties.instanceId = {
     type: "string",
-    description: "External instance (Jira base URL). Defaults to the configured one."
+    description: "Ignored, kept for compatibility: the Jira instance comes only from the operator's configuration, never from a tool argument."
   };
   tool.inputSchema.properties.planText = {
     type: "string",
     description: "Retired in 0.1.0-alpha.49.2 and ignored: no text you pass approves anything."
   };
-  tool.description += " The user approves this exact action before it runs, in the client's own approval dialog (a client response: Praxis cannot authenticate the person). Nothing else counts as approval: not confirmation=YES, not a page, not a setting; a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the user said no), APPROVAL_DISMISSED (closed without deciding), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask, or the dialog is set up to be answered automatically: not a rejection, nothing ran).";
+  tool.description += " It runs only after the client's own approval dialog answers approve for this exact action. That answer is a client response: Praxis cannot tell whether a person or automation gave it, and every result says so (authorization: channel, decidedBy, personVerified false, independentlyVerified false). Nothing else counts as approval: not confirmation=YES, not a page, not a setting; a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the dialog answered reject), APPROVAL_DISMISSED (closed without deciding), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask, or the dialog is set up to be answered automatically: not a rejection, nothing ran), DECISION_LEDGER_UNAVAILABLE (Praxis's security state would be inside the repository: nothing ran).";
 }
 function toolsForRole(role) {
   if (role === "runtime")
@@ -61498,16 +62619,16 @@ function parseRoleArgv(argv) {
 init_dist();
 
 // packages/mcp/dist/dialog-observations.js
-var import_node_fs3 = require("node:fs");
-var import_node_os2 = require("node:os");
+var import_node_fs4 = require("node:fs");
+var import_node_os3 = require("node:os");
 var import_node_path3 = require("node:path");
-var path = () => (0, import_node_path3.join)(process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path3.join)((0, import_node_os2.homedir)(), ".praxis"), "clients", "approval-dialogs.json");
+var path = () => (0, import_node_path3.join)(process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path3.join)((0, import_node_os3.homedir)(), ".praxis"), "clients", "approval-dialogs.json");
 var cache;
 function load() {
   if (cache)
     return cache;
   try {
-    const parsed = JSON.parse((0, import_node_fs3.readFileSync)(path(), "utf8"));
+    const parsed = JSON.parse((0, import_node_fs4.readFileSync)(path(), "utf8"));
     cache = parsed.observations && typeof parsed.observations === "object" ? parsed.observations : {};
   } catch {
     cache = {};
@@ -61532,10 +62653,10 @@ function noteAutoAnswer(key, automatic, latencyMs) {
   all[key] = { client: key, automatic, latencyMs, at: (/* @__PURE__ */ new Date()).toISOString(), count: (previous?.count ?? 0) + 1 };
   try {
     const file2 = path();
-    (0, import_node_fs3.mkdirSync)((0, import_node_path3.dirname)(file2), { recursive: true, mode: 448 });
-    (0, import_node_fs3.writeFileSync)(`${file2}.tmp`, `${JSON.stringify({ about: "Clients seen answering Praxis's approval dialog without showing it; Praxis does not ask them again.", observations: all }, null, 2)}
+    (0, import_node_fs4.mkdirSync)((0, import_node_path3.dirname)(file2), { recursive: true, mode: 448 });
+    (0, import_node_fs4.writeFileSync)(`${file2}.tmp`, `${JSON.stringify({ about: "Clients seen answering Praxis's approval dialog without showing it; Praxis does not ask them again.", observations: all }, null, 2)}
 `, { mode: 384 });
-    (0, import_node_fs3.renameSync)(`${file2}.tmp`, file2);
+    (0, import_node_fs4.renameSync)(`${file2}.tmp`, file2);
   } catch {
   }
 }
@@ -61574,9 +62695,10 @@ function approvalSettings() {
 
 // packages/mcp/dist/dialog-automation.js
 var import_node_child_process = require("node:child_process");
-var import_node_fs4 = require("node:fs");
-var import_node_os3 = require("node:os");
+var import_node_fs5 = require("node:fs");
+var import_node_os4 = require("node:os");
 var import_node_path4 = require("node:path");
+init_dist();
 var SETTINGS_NAMES = ["settings.json", "settings.local.json"];
 var MAX_JSON = 16 * 1024 * 1024;
 var MAX_GLOBAL_JSON = 64 * 1024 * 1024;
@@ -61595,7 +62717,7 @@ var namesElicitation = (key) => fold(key).includes("elicitation");
 function readFile(path2, max) {
   let stat;
   try {
-    stat = (0, import_node_fs4.statSync)(path2);
+    stat = (0, import_node_fs5.statSync)(path2);
   } catch (error64) {
     if (error64.code === "ENOENT" && !isLink(path2))
       return void 0;
@@ -61606,19 +62728,19 @@ function readFile(path2, max) {
   if (stat.size > max)
     return { finding: { file: path2, why: `is larger than ${max} bytes, too large to check`, kind: "unverifiable" } };
   try {
-    return { value: (0, import_node_fs4.readFileSync)(path2, "utf8").replace(/^\uFEFF/, "") };
+    return { value: (0, import_node_fs5.readFileSync)(path2, "utf8").replace(/^\uFEFF/, "") };
   } catch {
     return { finding: { file: path2, why: "exists but cannot be read, so it cannot be checked", kind: "unverifiable" } };
   }
 }
 function isLink(path2) {
   try {
-    return (0, import_node_fs4.lstatSync)(path2).isSymbolicLink();
+    return (0, import_node_fs5.lstatSync)(path2).isSymbolicLink();
   } catch {
     return false;
   }
 }
-function stripJsonc(text) {
+function stripJsonc2(text) {
   let out = "";
   for (let i = 0; i < text.length; i += 1) {
     const c = text[i];
@@ -61640,12 +62762,12 @@ function stripJsonc(text) {
   }
   return out.replace(/,(\s*[}\]])/g, "$1");
 }
-function readJson(path2, max = MAX_JSON) {
+function readJson2(path2, max = MAX_JSON) {
   const text = readFile(path2, max);
   if (!text || "finding" in text)
     return text;
   try {
-    return { value: JSON.parse(stripJsonc(text.value)) };
+    return { value: JSON.parse(stripJsonc2(text.value)) };
   } catch {
     return { finding: { file: path2, why: "is not valid JSON, so it cannot be checked", kind: "unverifiable" } };
   }
@@ -61732,7 +62854,7 @@ function walk2(dir, budget) {
     const current = stack.pop();
     let real = current;
     try {
-      real = (0, import_node_fs4.realpathSync)(current);
+      real = (0, import_node_fs5.realpathSync)(current);
     } catch {
     }
     if (visited.has(real))
@@ -61740,9 +62862,9 @@ function walk2(dir, budget) {
     visited.add(real);
     let entries;
     try {
-      entries = (0, import_node_fs4.readdirSync)(current, { withFileTypes: true });
+      entries = (0, import_node_fs5.readdirSync)(current, { withFileTypes: true });
     } catch {
-      if (current !== dir && (0, import_node_fs4.existsSync)(current))
+      if (current !== dir && (0, import_node_fs5.existsSync)(current))
         budget.finding ??= { file: current, why: "a folder Praxis cannot list", kind: "unverifiable" };
       continue;
     }
@@ -61755,7 +62877,7 @@ function walk2(dir, budget) {
       let folder = entry.isDirectory();
       if (entry.isSymbolicLink()) {
         try {
-          folder = (0, import_node_fs4.statSync)(path2).isDirectory();
+          folder = (0, import_node_fs5.statSync)(path2).isDirectory();
         } catch {
           folder = false;
         }
@@ -61811,7 +62933,7 @@ function checkPluginTree(root, budget, seen) {
       continue;
     seen.add(file2);
     const strict = isHookJson(file2);
-    const parsed = readJson(file2);
+    const parsed = readJson2(file2);
     if (!parsed)
       continue;
     if ("finding" in parsed) {
@@ -61827,7 +62949,7 @@ function checkPluginTree(root, budget, seen) {
     for (const ref of hookRefs(parsed.value)) {
       const clean = ref.replace(/^\$\{CLAUDE_PLUGIN_ROOT\}[\\/]?/, "");
       const targets = (0, import_node_path4.isAbsolute)(clean) ? [clean] : bases.map((base) => (0, import_node_path4.resolve)(base, clean));
-      const found = targets.filter((t) => (0, import_node_fs4.existsSync)(t) || isLink(t));
+      const found = targets.filter((t) => (0, import_node_fs5.existsSync)(t) || isLink(t));
       if (!found.length) {
         out.push({ file: file2, why: `names a hook file (${ref}) Praxis cannot find, so it cannot be checked`, kind: "unverifiable" });
         continue;
@@ -61836,7 +62958,7 @@ function checkPluginTree(root, budget, seen) {
         if (seen.has(target))
           continue;
         seen.add(target);
-        const hooked = readJson(target);
+        const hooked = readJson2(target);
         if (hooked && "finding" in hooked)
           out.push(hooked.finding);
         else if (hooked)
@@ -61850,7 +62972,7 @@ function pluginRoots(pluginsDir) {
   const roots = [];
   const findings = [];
   for (const name of ["installed_plugins.json", "known_marketplaces.json"]) {
-    const parsed = readJson((0, import_node_path4.join)(pluginsDir, name));
+    const parsed = readJson2((0, import_node_path4.join)(pluginsDir, name));
     if (!parsed)
       continue;
     if ("finding" in parsed) {
@@ -61866,9 +62988,9 @@ function pluginRoots(pluginsDir) {
 }
 function processOf(pid) {
   if (process.platform === "linux") {
-    const stat = (0, import_node_fs4.readFileSync)(`/proc/${pid}/stat`, "utf8");
+    const stat = (0, import_node_fs5.readFileSync)(`/proc/${pid}/stat`, "utf8");
     const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-    return { pid, ppid, args: (0, import_node_fs4.readFileSync)(`/proc/${pid}/cmdline`, "utf8") };
+    return { pid, ppid, args: (0, import_node_fs5.readFileSync)(`/proc/${pid}/cmdline`, "utf8") };
   }
   if (process.platform === "win32") {
     const ps = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -61927,18 +63049,18 @@ function checkLaunch(read) {
   }
   return out;
 }
-var within = (child, parent) => child === parent || child.startsWith(`${parent}${import_node_path4.sep}`);
+var within2 = (child, parent) => child === parent || child.startsWith(`${parent}${import_node_path4.sep}`);
 function dialogAutomation(input2 = {}) {
   const limit = input2.maxWalkEntries ?? MAX_WALK_ENTRIES;
   const findings = [];
   const seen = /* @__PURE__ */ new Set();
-  const homes = [...new Set([(0, import_node_os3.homedir)(), (0, import_node_os3.userInfo)().homedir].filter(Boolean).map((h) => (0, import_node_path4.resolve)(h)))];
+  const homes = [...new Set([(0, import_node_os4.homedir)(), (0, import_node_os4.userInfo)().homedir].filter(Boolean).map((h) => (0, import_node_path4.resolve)(h)))];
   const configDirs = [.../* @__PURE__ */ new Set([...homes.map((h) => (0, import_node_path4.join)(h, ".claude")), ...process.env.CLAUDE_CONFIG_DIR?.trim() ? [(0, import_node_path4.resolve)(process.env.CLAUDE_CONFIG_DIR.trim())] : []])];
   const settingsAt = (path2, project, max = MAX_JSON) => {
     if (seen.has(path2))
       return;
     seen.add(path2);
-    const parsed = readJson(path2, max);
+    const parsed = readJson2(path2, max);
     if (parsed && "finding" in parsed)
       findings.push(parsed.finding);
     else if (parsed)
@@ -61964,7 +63086,7 @@ function dialogAutomation(input2 = {}) {
       continue;
     for (const sub of ["agents", "skills", "commands", "output-styles"]) {
       const dir = (0, import_node_path4.join)(claude, sub);
-      if (!(0, import_node_fs4.existsSync)(dir))
+      if (!(0, import_node_fs5.existsSync)(dir))
         continue;
       const budget = { left: limit, limit };
       for (const file2 of walk2(dir, budget))
@@ -61982,20 +63104,20 @@ function dialogAutomation(input2 = {}) {
       settingsAt((0, import_node_path4.join)(dir, name), false);
     for (const sub of ["agents", "skills", "commands", "output-styles"]) {
       const defs = (0, import_node_path4.join)(dir, sub);
-      if (!(0, import_node_fs4.existsSync)(defs))
+      if (!(0, import_node_fs5.existsSync)(defs))
         continue;
       for (const file2 of walk2(defs, pluginBudget))
         if (file2.endsWith(".md") && !seen.has(file2))
           seen.add(file2), findings.push(...checkMarkdown(file2, false));
     }
     for (const plugins of [(0, import_node_path4.join)(dir, "plugins"), (0, import_node_path4.join)(dir, "cowork_plugins")]) {
-      if (!(0, import_node_fs4.existsSync)(plugins))
+      if (!(0, import_node_fs5.existsSync)(plugins))
         continue;
       const { roots, findings: recordFindings } = pluginRoots(plugins);
       findings.push(...recordFindings);
       findings.push(...checkPluginTree(plugins, pluginBudget, seen));
       for (const root of roots)
-        if (!within((0, import_node_path4.resolve)(root), plugins) && (0, import_node_fs4.existsSync)(root))
+        if (!within2((0, import_node_path4.resolve)(root), plugins) && (0, import_node_fs5.existsSync)(root))
           findings.push(...checkPluginTree((0, import_node_path4.resolve)(root), pluginBudget, seen));
     }
   }
@@ -62005,15 +63127,20 @@ function dialogAutomation(input2 = {}) {
   for (const dir of managed) {
     settingsAt((0, import_node_path4.join)(dir, "managed-settings.json"), false);
     const dropIns = (0, import_node_path4.join)(dir, "managed-settings.d");
-    if ((0, import_node_fs4.existsSync)(dropIns)) {
+    if ((0, import_node_fs5.existsSync)(dropIns)) {
       for (const file2 of walk2(dropIns, pluginBudget))
         if (file2.endsWith(".json"))
           settingsAt(file2, false);
     }
   }
-  const stateHome = process.env.PRAXIS_STATE_HOME?.trim();
-  if (stateHome && input2.repo && within((0, import_node_path4.resolve)(stateHome), (0, import_node_path4.resolve)(input2.repo))) {
-    findings.push({ file: (0, import_node_path4.resolve)(stateHome), why: "the Praxis state home (the decision journal) is inside the repository", kind: "state-home" });
+  if (input2.repo) {
+    const security = securityStateInsideRepository(input2.repo);
+    if (security)
+      findings.push({ file: security, why: "Praxis's security state (the decision journal and ledger) is inside the repository", kind: "state-home" });
+    const stateHome = process.env.PRAXIS_STATE_HOME?.trim();
+    if (stateHome && within2((0, import_node_path4.resolve)(stateHome), (0, import_node_path4.resolve)(input2.repo)) && !security) {
+      findings.push({ file: (0, import_node_path4.resolve)(stateHome), why: "PRAXIS_STATE_HOME (the Praxis logs, and the decision journal in the test source) is inside the repository", kind: "state-home" });
+    }
   }
   findings.push(...checkClientEnvironment());
   findings.push(...checkLaunch(input2.ancestry ?? ancestry));
@@ -62209,7 +63336,7 @@ var PRAXIS_MCP_SDK = {
   ]
 };
 function bundleVersion() {
-  return "0.1.0-alpha.49.2";
+  return "0.1.0-alpha.49.3";
 }
 
 // packages/mcp/node_modules/zod/v4/classic/external.js
@@ -62853,7 +63980,7 @@ __export(util_exports3, {
   own: () => own3,
   parsedType: () => parsedType3,
   partial: () => partial3,
-  pick: () => pick3,
+  pick: () => pick4,
   prefixIssues: () => prefixIssues3,
   primitiveTypes: () => primitiveTypes3,
   promiseAllObject: () => promiseAllObject3,
@@ -63248,7 +64375,7 @@ var BIGINT_FORMAT_RANGES3 = {
   int64: [/* @__PURE__ */ BigInt("-9223372036854775808"), /* @__PURE__ */ BigInt("9223372036854775807")],
   uint64: [/* @__PURE__ */ BigInt(0), /* @__PURE__ */ BigInt("18446744073709551615")]
 };
-function pick3(schema, mask) {
+function pick4(schema, mask) {
   const currDef = schema._zod.def;
   const checks = currDef.checks;
   const hasChecks = checks && checks.length > 0;
@@ -64057,18 +65184,18 @@ var validateAsync5 = async (schema, value, _ctx) => {
   return result.issues.length === 0;
 };
 var _encode5 = (_Err) => {
-  const parse6 = _parse5(_Err);
+  const parse7 = _parse5(_Err);
   const fn = (schema, value, _ctx, _params) => {
     const ctx = _ctx ? { ..._ctx, direction: "backward" } : { direction: "backward" };
-    return parse6(schema, value, ctx, finalizeParams3(fn, _params));
+    return parse7(schema, value, ctx, finalizeParams3(fn, _params));
   };
   return fn;
 };
 var encode3 = /* @__PURE__ */ _encode5($ZodRealError3);
 var _decode5 = (_Err) => {
-  const parse6 = _parse5(_Err);
+  const parse7 = _parse5(_Err);
   const fn = (schema, value, _ctx, _params) => {
-    return parse6(schema, value, _ctx, finalizeParams3(fn, _params));
+    return parse7(schema, value, _ctx, finalizeParams3(fn, _params));
   };
   return fn;
 };
@@ -65940,8 +67067,8 @@ var $ZodUnion3 = /* @__PURE__ */ $constructor3("$ZodUnion", (inst, def) => {
   });
   defineLazyInternal3(inst, "pattern", (zod) => {
     if (zod.def.options.every((o) => o._zod.pattern)) {
-      const patterns = zod.def.options.map((o) => o._zod.pattern);
-      return new RegExp(`^(${patterns.map((p) => cleanRegex3(p.source)).join("|")})$`);
+      const patterns2 = zod.def.options.map((o) => o._zod.pattern);
+      return new RegExp(`^(${patterns2.map((p) => cleanRegex3(p.source)).join("|")})$`);
     }
     return void 0;
   });
@@ -67238,7 +68365,7 @@ var recursive3 = /* @__PURE__ */ new WeakMap();
 var NONE3 = 0;
 var ASSUMED3 = 1;
 var PROVEN3 = 2;
-function isRecursive3(inst, stack, resolve20) {
+function isRecursive3(inst, stack, resolve21) {
   const cached4 = recursive3.get(inst);
   if (cached4 !== void 0)
     return cached4 ? PROVEN3 : NONE3;
@@ -67248,7 +68375,7 @@ function isRecursive3(inst, stack, resolve20) {
   let result = NONE3;
   const check2 = (child) => {
     if (result !== PROVEN3 && child?._zod) {
-      const answer = isRecursive3(child, stack, resolve20);
+      const answer = isRecursive3(child, stack, resolve21);
       if (answer > result)
         result = answer;
     }
@@ -67259,7 +68386,7 @@ function isRecursive3(inst, stack, resolve20) {
       const desc = Object.getOwnPropertyDescriptor(sh, key);
       if (spread && !desc.enumerable)
         continue;
-      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve20) : NONE3;
+      const child = desc.get ? ASSUMED3 : desc.value?._zod ? isRecursive3(desc.value, stack, resolve21) : NONE3;
       if (child > answer)
         answer = child;
     }
@@ -67322,7 +68449,7 @@ function isRecursive3(inst, stack, resolve20) {
       check2(def.output);
       break;
     case "lazy": {
-      const inner = def._cachedInner ?? (resolve20 ? inst._zod.innerType : void 0);
+      const inner = def._cachedInner ?? (resolve21 ? inst._zod.innerType : void 0);
       merge4(inner ? isRecursive3(inner, stack, false) : ASSUMED3);
       break;
     }
@@ -77617,13 +78744,13 @@ function _promise(Class4, innerType) {
 }
 // @__NO_SIDE_EFFECTS__
 function _custom3(Class4, fn, _params) {
-  const norm = normalizeParams3(_params);
-  norm.abort ?? (norm.abort = true);
+  const norm2 = normalizeParams3(_params);
+  norm2.abort ?? (norm2.abort = true);
   const schema = new Class4({
     type: "custom",
     check: "custom",
     fn,
-    ...norm
+    ...norm2
   });
   return schema;
 }
@@ -78400,7 +79527,7 @@ var exactPattern3 = (p) => exactPatterns3.get(p) ?? p;
 var stringProcessor3 = (schema, ctx, _json, _params) => {
   const json4 = _json;
   json4.type = "string";
-  const { minimum, maximum, format, patterns, contentEncoding, laxFormat } = aggregateChecks3(schema);
+  const { minimum, maximum, format, patterns: patterns2, contentEncoding, laxFormat } = aggregateChecks3(schema);
   if (typeof minimum === "number")
     json4.minLength = minimum;
   if (typeof maximum === "number")
@@ -78415,8 +79542,8 @@ var stringProcessor3 = (schema, ctx, _json, _params) => {
   }
   if (contentEncoding)
     json4.contentEncoding = contentEncoding;
-  if (patterns && patterns.size > 0) {
-    const patternList = [...patterns].map(exactPattern3);
+  if (patterns2 && patterns2.size > 0) {
+    const patternList = [...patterns2].map(exactPattern3);
     if (patternList.length === 1)
       json4.pattern = patternList[0].source;
     else if (patternList.length > 1) {
@@ -78831,14 +79958,14 @@ var recordProcessor3 = (schema, ctx, _json, params) => {
   const def = schema._zod.def;
   json4.type = "object";
   const keyType = def.keyType;
-  const patterns = aggregateChecks3(keyType).patterns;
-  if (def.mode === "loose" && patterns && patterns.size > 0) {
+  const patterns2 = aggregateChecks3(keyType).patterns;
+  if (def.mode === "loose" && patterns2 && patterns2.size > 0) {
     const valueSchema = processSchema3(def.valueType, ctx, {
       ...params,
       path: [...params.path, "patternProperties", "*"]
     });
     json4.patternProperties = {};
-    for (const pattern of patterns) {
+    for (const pattern of patterns2) {
       assignProp3(json4.patternProperties, exactPattern3(pattern).source, valueSchema);
     }
   } else {
@@ -81442,7 +82569,7 @@ function convertBaseSchema(schema, ctx) {
         }
         if (schema.additionalProperties === false) {
           const propertyKeys = Object.keys(shape);
-          const patterns = patternKeys.map((p) => new RegExp(p));
+          const patterns2 = patternKeys.map((p) => new RegExp(p));
           const basePatternSchema = zodSchema;
           zodSchema = zodSchema.check((payload) => {
             if (!isPlainObject4(payload.value))
@@ -81451,7 +82578,7 @@ function convertBaseSchema(schema, ctx) {
             for (const key of Object.keys(payload.value)) {
               if (propertyKeys.includes(key))
                 continue;
-              if (patterns.some((regex) => regex.test(key)))
+              if (patterns2.some((regex) => regex.test(key)))
                 continue;
               unrecognized.push(key);
             }
@@ -81899,39 +83026,40 @@ function jsonSchemaToZod(schema) {
 }
 
 // packages/mcp/dist/diagnostics-log.js
-var import_node_fs5 = require("node:fs");
-var import_node_os4 = require("node:os");
+var import_node_fs6 = require("node:fs");
+var import_node_os5 = require("node:os");
 var import_node_path5 = require("node:path");
+init_dist();
 var MAX_BYTES = 1e6;
-var diagnosticsPath = () => (0, import_node_path5.join)(process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path5.join)((0, import_node_os4.homedir)(), ".praxis"), "diagnostics", "mcp.jsonl");
+var diagnosticsPath = () => (0, import_node_path5.join)(process.env.PRAXIS_STATE_HOME?.trim() || (0, import_node_path5.join)((0, import_node_os5.homedir)(), ".praxis"), "diagnostics", "mcp.jsonl");
 function recordDiagnostic(entry) {
   try {
     const file2 = diagnosticsPath();
-    (0, import_node_fs5.mkdirSync)((0, import_node_path5.join)(file2, ".."), { recursive: true });
+    (0, import_node_fs6.mkdirSync)((0, import_node_path5.join)(file2, ".."), { recursive: true });
     try {
-      if ((0, import_node_fs5.statSync)(file2).size > MAX_BYTES)
-        (0, import_node_fs5.renameSync)(file2, `${file2}.1`);
+      if ((0, import_node_fs6.statSync)(file2).size > MAX_BYTES)
+        (0, import_node_fs6.renameSync)(file2, `${file2}.1`);
     } catch {
     }
-    (0, import_node_fs5.appendFileSync)(file2, `${JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), pid: process.pid, ...entry })}
+    (0, import_node_fs6.appendFileSync)(file2, `${redactCredentials(JSON.stringify({ at: (/* @__PURE__ */ new Date()).toISOString(), pid: process.pid, ...entry }))}
 `);
   } catch {
   }
 }
 
 // packages/mcp/dist/tools.js
-var import_node_crypto21 = require("node:crypto");
-var import_node_fs38 = require("node:fs");
-var import_node_path42 = require("node:path");
+var import_node_crypto22 = require("node:crypto");
+var import_node_fs40 = require("node:fs");
+var import_node_path43 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/build-info.js
 var import_node_crypto7 = require("node:crypto");
-var import_node_fs6 = require("node:fs");
+var import_node_fs7 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.2","sourceDigest":"9c64025465ae9d9d53d0a86b48d88472c74ba0dd251d43681b83d836fd123c11","coreBaseline":"984d4f4058fbc0194def498bcb68bd0d852cbfba","inputs":40}';
+    const raw = '{"version":"0.1.0-alpha.49.3","sourceDigest":"49b5f28d1f6d48f4e73e8277f96cb3b454640ec5af74233b33fa3162253a822a","coreBaseline":"e5617a285bf61b8516516c0598d64aa9e34c8e8b","inputs":42}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -81942,7 +83070,7 @@ function runtimeBuildInfo(version4) {
   const entry = process.argv[1];
   if (embedded && entry && /\.cjs$/.test(entry)) {
     try {
-      bundleSha256 = (0, import_node_crypto7.createHash)("sha256").update((0, import_node_fs6.readFileSync)(entry)).digest("hex");
+      bundleSha256 = (0, import_node_crypto7.createHash)("sha256").update((0, import_node_fs7.readFileSync)(entry)).digest("hex");
       bundlePath = entry;
     } catch {
       bundleSha256 = null;
@@ -81964,27 +83092,27 @@ function toolOrigin(role) {
 }
 
 // packages/mcp/dist/path-guard.js
-var import_node_fs7 = require("node:fs");
+var import_node_fs8 = require("node:fs");
 var import_node_path6 = require("node:path");
-var within2 = (root, path2) => path2 === root || path2.startsWith(`${root}${import_node_path6.sep}`);
+var within3 = (root, path2) => path2 === root || path2.startsWith(`${root}${import_node_path6.sep}`);
 function containedPath(root, relative7) {
   if (typeof relative7 !== "string" || relative7.length === 0 || relative7.includes("\0") || (0, import_node_path6.isAbsolute)(relative7) || relative7.split(/[/\\]/).includes("..")) {
     throw new Error("UNSAFE_PATH");
   }
   let realRoot;
   try {
-    realRoot = (0, import_node_fs7.realpathSync)((0, import_node_path6.resolve)(root));
+    realRoot = (0, import_node_fs8.realpathSync)((0, import_node_path6.resolve)(root));
   } catch {
     throw new Error("UNSAFE_PATH");
   }
   const lexical = (0, import_node_path6.resolve)(realRoot, relative7);
-  if (!within2(realRoot, lexical))
+  if (!within3(realRoot, lexical))
     throw new Error("UNSAFE_PATH");
   let existing = lexical;
   const rest = [];
   for (; ; ) {
     try {
-      (0, import_node_fs7.lstatSync)(existing);
+      (0, import_node_fs8.lstatSync)(existing);
       break;
     } catch {
       const parent = (0, import_node_path6.dirname)(existing);
@@ -81996,12 +83124,12 @@ function containedPath(root, relative7) {
   }
   let realExisting;
   try {
-    realExisting = (0, import_node_fs7.realpathSync)(existing);
+    realExisting = (0, import_node_fs8.realpathSync)(existing);
   } catch {
     throw new Error("UNSAFE_PATH");
   }
   const real = (0, import_node_path6.resolve)(realExisting, ...rest);
-  if (!within2(realRoot, real))
+  if (!within3(realRoot, real))
     throw new Error("UNSAFE_PATH");
   return real;
 }
@@ -82009,9 +83137,9 @@ function containedPath(root, relative7) {
 // packages/mcp/dist/approval-page.js
 var import_node_child_process2 = require("node:child_process");
 var import_node_crypto8 = require("node:crypto");
-var import_node_fs8 = require("node:fs");
+var import_node_fs9 = require("node:fs");
 var import_node_http = require("node:http");
-var import_node_os5 = require("node:os");
+var import_node_os6 = require("node:os");
 var import_node_path7 = require("node:path");
 init_dist();
 var REQUEST_TTL_MS = 10 * 60 * 1e3;
@@ -82257,16 +83385,16 @@ var openApprovalPage = async (secretUrl) => {
     return false;
   if ((process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1" || process.env.PRAXIS_TEST_APPROVALS === "1") && !browser)
     return false;
-  const dir = (0, import_node_fs8.mkdtempSync)((0, import_node_path7.join)((0, import_node_os5.tmpdir)(), "praxis-approve-"));
-  (0, import_node_fs8.chmodSync)(dir, 448);
+  const dir = (0, import_node_fs9.mkdtempSync)((0, import_node_path7.join)((0, import_node_os6.tmpdir)(), "praxis-approve-"));
+  (0, import_node_fs9.chmodSync)(dir, 448);
   const page = (0, import_node_path7.join)(dir, "open-approval.html");
   const safe = secretUrl.replace(/"/g, "&quot;");
-  (0, import_node_fs8.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Opening Praxis approval</title><meta http-equiv="refresh" content="0;url=${safe}"><p>Opening the approval page... <a href="${safe}">continue</a></p>`, { mode: 384 });
-  setTimeout(() => (0, import_node_fs8.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
+  (0, import_node_fs9.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><meta name="referrer" content="no-referrer"><title>Opening Praxis approval</title><meta http-equiv="refresh" content="0;url=${safe}"><p>Opening the approval page... <a href="${safe}">continue</a></p>`, { mode: 384 });
+  setTimeout(() => (0, import_node_fs9.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
   let command;
   let args;
   if (browser && (0, import_node_path7.isAbsolute)(browser)) {
-    if (!(0, import_node_fs8.existsSync)(browser) || !(0, import_node_fs8.statSync)(browser).isFile())
+    if (!(0, import_node_fs9.existsSync)(browser) || !(0, import_node_fs9.statSync)(browser).isFile())
       return false;
     [command, args] = [browser, [page]];
   } else if (process.platform === "darwin") {
@@ -82409,14 +83537,14 @@ function approvalPageChannel(input2) {
 }
 
 // packages/mcp/dist/approval-journal.js
-var import_node_fs9 = require("node:fs");
+var import_node_fs10 = require("node:fs");
 init_dist();
 function readDiagnostics() {
   const rows = [];
   for (const file2 of [`${diagnosticsPath()}.1`, diagnosticsPath()]) {
-    if (!(0, import_node_fs9.existsSync)(file2))
+    if (!(0, import_node_fs10.existsSync)(file2))
       continue;
-    for (const line of (0, import_node_fs9.readFileSync)(file2, "utf8").split("\n")) {
+    for (const line of (0, import_node_fs10.readFileSync)(file2, "utf8").split("\n")) {
       if (!line.trim())
         continue;
       try {
@@ -82458,7 +83586,7 @@ async function amendJournal(repo, confirmation, version4) {
   const audit = journalAudit(repo);
   if (audit.toAmend.length === 0)
     return { ...audit, appended: 0, note: "Nothing to amend: no entry claims a decision of the user that the evidence contradicts." };
-  await obtainUserApproval({
+  const approval = await obtainUserApproval({
     action: "amend-decision-journal",
     kind: "development_action",
     summary: `Append ${audit.toAmend.length} correction(s) to the Praxis decision journal`,
@@ -82470,7 +83598,7 @@ async function amendJournal(repo, confirmation, version4) {
     ].join("\n"),
     subject: canonicalText(audit.toAmend.map((f) => ({ line: f.line, sha256: f.sha256, rule: f.rule, corrected: f.corrected })))
   }, { confirmation, repo });
-  const result = appendDecisionAmendments(repo, audit.toAmend, `praxis-runtime ${version4} (approval-journal audit)`);
+  const result = appendDecisionAmendments(repo, audit.toAmend, `praxis-runtime ${version4} (approval-journal audit)`, /* @__PURE__ */ new Date(), approvalLabels(approval.channel, approval.decidedBy));
   return { ...journalAudit(repo), appended: result.appended, skipped: result.skipped };
 }
 
@@ -82491,18 +83619,48 @@ function mcpEnvelope(opts) {
   return env;
 }
 
+// packages/mcp/dist/secret-redaction.js
+init_dist();
+var redactEnvelope = (envelope) => redactCredentialsDeep(envelope);
+function redactError(error64) {
+  const message = redactCredentials(error64 instanceof Error ? error64.message : String(error64));
+  const out = new Error(message);
+  if (error64 instanceof Error)
+    out.name = error64.name;
+  return out;
+}
+var installed = false;
+function installOutputRedaction(streams = [process.stdout, process.stderr]) {
+  if (installed)
+    return;
+  installed = true;
+  for (const stream of streams) {
+    const write = stream.write.bind(stream);
+    stream.write = (chunk, ...rest) => {
+      if (typeof chunk === "string")
+        return write(redactCredentials(chunk), ...rest);
+      if (chunk instanceof Uint8Array) {
+        const text = Buffer.from(chunk).toString("utf8");
+        const redacted = redactCredentials(text);
+        return write(redacted === text ? chunk : Buffer.from(redacted, "utf8"), ...rest);
+      }
+      return write(chunk, ...rest);
+    };
+  }
+}
+
 // packages/mcp/dist/story-engine.js
 var import_node_child_process6 = require("node:child_process");
-var import_node_crypto11 = require("node:crypto");
-var import_node_fs15 = require("node:fs");
-var import_node_path13 = require("node:path");
+var import_node_crypto12 = require("node:crypto");
+var import_node_fs17 = require("node:fs");
+var import_node_path14 = require("node:path");
 init_dist();
-var import_node_os9 = require("node:os");
+var import_node_os10 = require("node:os");
 
 // packages/mcp/dist/project-code-runner.js
 var import_node_child_process3 = require("node:child_process");
-var import_node_fs10 = require("node:fs");
-var import_node_os6 = require("node:os");
+var import_node_fs11 = require("node:fs");
+var import_node_os7 = require("node:os");
 var import_node_path8 = require("node:path");
 var RUNNER = String.raw`
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -82557,7 +83715,7 @@ function scrubbedEnv(home) {
   return { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home, TMPDIR: home, LANG: process.env.LANG ?? "C", NODE_ENV: "test", CI: "1" };
 }
 async function runIsolated(input2) {
-  const home = (0, import_node_fs10.mkdtempSync)((0, import_node_path8.join)((0, import_node_os6.tmpdir)(), "praxis-project-code-"));
+  const home = (0, import_node_fs11.mkdtempSync)((0, import_node_path8.join)((0, import_node_os7.tmpdir)(), "praxis-project-code-"));
   try {
     return await new Promise((done, fail2) => {
       const child = (0, import_node_child_process3.spawn)(process.execPath, ["--input-type=module", "-e", RUNNER], { cwd: input2.cwd, env: scrubbedEnv(home), stdio: ["pipe", "pipe", "pipe"] });
@@ -82597,21 +83755,21 @@ async function runIsolated(input2) {
       child.stdin.end(JSON.stringify({ ...input2, timeoutMs: void 0 }));
     });
   } finally {
-    (0, import_node_fs10.rmSync)(home, { recursive: true, force: true });
+    (0, import_node_fs11.rmSync)(home, { recursive: true, force: true });
   }
 }
 
 // packages/mcp/dist/generic-verification.js
-var import_node_os8 = require("node:os");
+var import_node_os9 = require("node:os");
 var import_node_child_process5 = require("node:child_process");
-var import_node_fs12 = require("node:fs");
+var import_node_fs13 = require("node:fs");
 var import_node_path10 = require("node:path");
 
 // packages/mcp/dist/browser-verification.js
 var import_node_child_process4 = require("node:child_process");
 var import_node_crypto9 = require("node:crypto");
-var import_node_fs11 = require("node:fs");
-var import_node_os7 = require("node:os");
+var import_node_fs12 = require("node:fs");
+var import_node_os8 = require("node:os");
 var import_node_path9 = require("node:path");
 var ACTIONS = ["goto", "click", "fill", "select", "press", "back", "forward", "reload", "viewport"];
 var ASSERTIONS = ["expectUrl", "expectCount", "expectVisible", "expectHidden", "expectText", "expectValue", "expectFocus"];
@@ -82892,11 +84050,11 @@ function bundleDigest(root) {
     const entries = [];
     let bytes = 0;
     const visit2 = (dir) => {
-      for (const name of (0, import_node_fs11.readdirSync)(dir).sort()) {
+      for (const name of (0, import_node_fs12.readdirSync)(dir).sort()) {
         if (name.startsWith("."))
           continue;
         const p = (0, import_node_path9.join)(dir, name);
-        const st = (0, import_node_fs11.lstatSync)(p);
+        const st = (0, import_node_fs12.lstatSync)(p);
         if (st.isSymbolicLink())
           continue;
         if (st.isDirectory()) {
@@ -82908,7 +84066,7 @@ function bundleDigest(root) {
         bytes += st.size;
         if (entries.length >= 5e3 || bytes > 200 * 1024 * 1024)
           throw new Error("BUNDLE_TOO_LARGE");
-        entries.push(`${(0, import_node_path9.relative)(root, p).split(import_node_path9.sep).join("/")}\0${(0, import_node_crypto9.createHash)("sha256").update((0, import_node_fs11.readFileSync)(p)).digest("hex")}`);
+        entries.push(`${(0, import_node_path9.relative)(root, p).split(import_node_path9.sep).join("/")}\0${(0, import_node_crypto9.createHash)("sha256").update((0, import_node_fs12.readFileSync)(p)).digest("hex")}`);
       }
     };
     visit2(root);
@@ -82935,9 +84093,9 @@ function sweepProcesses(home) {
   }
 }
 async function runBrowserChecks(input2) {
-  const home = (0, import_node_fs11.mkdtempSync)((0, import_node_path9.join)((0, import_node_os7.tmpdir)(), "praxis-browser-"));
-  const { existsSync: existsSync30 } = await import("node:fs");
-  const executable = process.env.PRAXIS_BROWSER_EXECUTABLE || DEFAULT_EXECUTABLES.find((p) => existsSync30(p));
+  const home = (0, import_node_fs12.mkdtempSync)((0, import_node_path9.join)((0, import_node_os8.tmpdir)(), "praxis-browser-"));
+  const { existsSync: existsSync32 } = await import("node:fs");
+  const executable = process.env.PRAXIS_BROWSER_EXECUTABLE || DEFAULT_EXECUTABLES.find((p) => existsSync32(p));
   const playwrightDirs = process.env.PRAXIS_PLAYWRIGHT_DIR ? [process.env.PRAXIS_PLAYWRIGHT_DIR] : [];
   try {
     return await new Promise((done) => {
@@ -83004,7 +84162,7 @@ async function runBrowserChecks(input2) {
   } finally {
     sweepProcesses(home);
     try {
-      (0, import_node_fs11.rmSync)(home, { recursive: true, force: true, maxRetries: 3 });
+      (0, import_node_fs12.rmSync)(home, { recursive: true, force: true, maxRetries: 3 });
     } catch {
     }
   }
@@ -83028,13 +84186,13 @@ print(json.dumps(result))
 `;
 async function runSteps(root, modulePath, steps) {
   const file2 = safeFile(root, modulePath);
-  if (!(0, import_node_fs12.existsSync)(file2))
+  if (!(0, import_node_fs13.existsSync)(file2))
     throw new Error(`MODULE_MISSING:${modulePath}`);
   if (file2.endsWith(".py")) {
     const result = (0, import_node_child_process5.spawnSync)("python3", ["-c", PYTHON, file2, JSON.stringify(steps)], {
       cwd: root,
       encoding: "utf8",
-      env: scrubbedEnv((0, import_node_os8.tmpdir)())
+      env: scrubbedEnv((0, import_node_os9.tmpdir)())
     });
     if ((result.status ?? 1) !== 0) {
       throw new Error((result.stderr || result.stdout || "python check failed").trim());
@@ -83045,10 +84203,10 @@ async function runSteps(root, modulePath, steps) {
 }
 function readChecks(workflowRepo, workItemId) {
   const scoped = workItemId ? (0, import_node_path10.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
-  const file2 = scoped && (0, import_node_fs12.existsSync)(scoped) ? scoped : (0, import_node_path10.join)(workflowRepo, ".praxis", "quality", "checks.json");
-  if (!(0, import_node_fs12.existsSync)(file2))
+  const file2 = scoped && (0, import_node_fs13.existsSync)(scoped) ? scoped : (0, import_node_path10.join)(workflowRepo, ".praxis", "quality", "checks.json");
+  if (!(0, import_node_fs13.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs12.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs13.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.checks) || parsed.checks.length === 0)
     throw new Error("CHECKS_INVALID");
   const browser = parsed.browser === void 0 ? void 0 : validateBrowserConfig(parsed.browser);
@@ -83060,8 +84218,8 @@ function readChecks(workflowRepo, workItemId) {
 function browserServeRoot(workflowRepo, workItemId) {
   try {
     const scoped = workItemId ? (0, import_node_path10.join)(workflowRepo, ".praxis", "quality", workItemId, "checks.json") : void 0;
-    const file2 = scoped && (0, import_node_fs12.existsSync)(scoped) ? scoped : (0, import_node_path10.join)(workflowRepo, ".praxis", "quality", "checks.json");
-    const root = JSON.parse((0, import_node_fs12.readFileSync)(file2, "utf8")).browser?.serve?.root;
+    const file2 = scoped && (0, import_node_fs13.existsSync)(scoped) ? scoped : (0, import_node_path10.join)(workflowRepo, ".praxis", "quality", "checks.json");
+    const root = JSON.parse((0, import_node_fs13.readFileSync)(file2, "utf8")).browser?.serve?.root;
     return typeof root === "string" ? root : void 0;
   } catch {
     return void 0;
@@ -83322,7 +84480,7 @@ function inspectionPlan(input2) {
 }
 
 // packages/mcp/dist/project-profile.js
-var import_node_fs13 = require("node:fs");
+var import_node_fs14 = require("node:fs");
 var import_node_path11 = require("node:path");
 var SKIP = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", "__pycache__", ".venv", "venv", "coverage"]);
 function walk3(root, dir, out, depth) {
@@ -83330,7 +84488,7 @@ function walk3(root, dir, out, depth) {
     return;
   let entries = [];
   try {
-    entries = (0, import_node_fs13.readdirSync)(dir);
+    entries = (0, import_node_fs14.readdirSync)(dir);
   } catch {
     return;
   }
@@ -83340,7 +84498,7 @@ function walk3(root, dir, out, depth) {
     const absolute = (0, import_node_path11.join)(dir, name);
     let info;
     try {
-      info = (0, import_node_fs13.statSync)(absolute);
+      info = (0, import_node_fs14.statSync)(absolute);
     } catch {
       continue;
     }
@@ -83350,16 +84508,16 @@ function walk3(root, dir, out, depth) {
       out.push(absolute.slice(root.length + 1));
   }
 }
-function readJson2(file2) {
+function readJson3(file2) {
   try {
-    return JSON.parse((0, import_node_fs13.readFileSync)(file2, "utf8"));
+    return JSON.parse((0, import_node_fs14.readFileSync)(file2, "utf8"));
   } catch {
     return void 0;
   }
 }
 function inspectService(service) {
   const repository = service.repository ?? service.id;
-  if (!service.localPath || !(0, import_node_fs13.existsSync)(service.localPath)) {
+  if (!service.localPath || !(0, import_node_fs14.existsSync)(service.localPath)) {
     return {
       serviceId: service.id,
       repository,
@@ -83379,7 +84537,7 @@ function inspectService(service) {
   const languages = [];
   const frameworks = [];
   const testRunners = [];
-  const packageJson = names.has("package.json") ? readJson2((0, import_node_path11.join)(service.localPath, "package.json")) : void 0;
+  const packageJson = names.has("package.json") ? readJson3((0, import_node_path11.join)(service.localPath, "package.json")) : void 0;
   const deps = {
     ...packageJson?.dependencies,
     ...packageJson?.devDependencies
@@ -83409,7 +84567,7 @@ function inspectService(service) {
   for (const file2 of pythonTests.slice(0, 20)) {
     let text = "";
     try {
-      text = (0, import_node_fs13.readFileSync)((0, import_node_path11.join)(service.localPath, file2), "utf8");
+      text = (0, import_node_fs14.readFileSync)((0, import_node_path11.join)(service.localPath, file2), "utf8");
     } catch {
       continue;
     }
@@ -83435,17 +84593,17 @@ function inspectService(service) {
   }
   if (files.some((file2) => /openapi|swagger/i.test(file2)))
     available.push("contract");
-  const unavailable = ["service-integration", "api", "contract", "e2e", "browser"].filter((level) => !available.includes(level));
+  const unavailable2 = ["service-integration", "api", "contract", "e2e", "browser"].filter((level) => !available.includes(level));
   if (testRunners.includes("playwright") || testRunners.includes("cypress")) {
     available.push("browser");
-    const index = unavailable.indexOf("browser");
+    const index = unavailable2.indexOf("browser");
     if (index >= 0)
-      unavailable.splice(index, 1);
+      unavailable2.splice(index, 1);
     if (!available.includes("e2e"))
       available.push("e2e");
-    const e2e = unavailable.indexOf("e2e");
+    const e2e = unavailable2.indexOf("e2e");
     if (e2e >= 0)
-      unavailable.splice(e2e, 1);
+      unavailable2.splice(e2e, 1);
   }
   return {
     serviceId: service.id,
@@ -83457,14 +84615,14 @@ function inspectService(service) {
     testRunners: [...new Set(testRunners)],
     sourceFiles: files.filter((file2) => /\.(py|js|mjs|cjs|ts|tsx|go|java|rs)$/.test(file2)).slice(0, 40),
     availableLevels: available,
-    unavailableLevels: unavailable
+    unavailableLevels: unavailable2
   };
 }
 
 // packages/mcp/dist/workflow-store.js
-var import_node_fs14 = require("node:fs");
-var import_node_path12 = require("node:path");
-var import_node_crypto10 = require("node:crypto");
+var import_node_fs16 = require("node:fs");
+var import_node_path13 = require("node:path");
+var import_node_crypto11 = require("node:crypto");
 
 // packages/mcp/dist/human-approval.js
 init_dist();
@@ -83490,6 +84648,260 @@ async function requireUserApproval(repo, state2, command, confirmation) {
   if (!request)
     return void 0;
   return obtainUserApproval(humanActApprovalRequest(request), { confirmation, repo });
+}
+
+// packages/mcp/dist/decision-ledger.js
+var import_node_crypto10 = require("node:crypto");
+var import_node_fs15 = require("node:fs");
+var import_node_path12 = require("node:path");
+init_dist();
+var WORK_ITEM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+var LOCK_STALE_MS = 3e4;
+var LOCK_WAIT_MS = 1e4;
+var unavailable = (why) => new WorkflowError(DECISION_LEDGER_UNAVAILABLE, `the decision ledger cannot be used (${why}); nothing was recorded and the work item is unchanged. Acceptances are recorded only where the repository and the agent's workspace cannot write.`, { executed: false, reason: why });
+var sha256 = (text) => (0, import_node_crypto10.createHash)("sha256").update(text, "utf8").digest("hex");
+function ledgerRoot() {
+  return (0, import_node_path12.join)(securityStateHome(), "ledger");
+}
+function repositoryKey2(repo) {
+  const root = (0, import_node_fs15.realpathSync)((0, import_node_path12.resolve)(repo));
+  const identity = repositoryIdentity(root);
+  return { key: identity.key, source: identity.kind === "git" ? "git-common-dir" : "project-root", basis: identity.basis, root, roots: [.../* @__PURE__ */ new Set([root, ...identity.roots])] };
+}
+function realTarget(target) {
+  const rest = [];
+  let dir = (0, import_node_path12.resolve)(target);
+  while (!(0, import_node_fs15.existsSync)(dir)) {
+    const parent = (0, import_node_path12.dirname)(dir);
+    if (parent === dir)
+      break;
+    rest.unshift((0, import_node_path12.basename)(dir));
+    dir = parent;
+  }
+  return (0, import_node_path12.join)((0, import_node_fs15.realpathSync)(dir), ...rest);
+}
+var inside = (path2, root) => path2 === root || path2.startsWith(`${root}${import_node_path12.sep}`);
+function locate2(repo, workItemId) {
+  if (!WORK_ITEM_ID_RE.test(workItemId) || workItemId.includes(".."))
+    throw unavailable("the work item id is not a plain name");
+  let key;
+  try {
+    key = repositoryKey2(repo);
+  } catch (error64) {
+    throw unavailable(`the repository could not be resolved: ${error64 instanceof Error ? error64.message : String(error64)}`);
+  }
+  let root;
+  try {
+    root = ledgerRoot();
+  } catch (error64) {
+    throw unavailable(`the account's home directory could not be read: ${error64 instanceof Error ? error64.message : String(error64)}`);
+  }
+  const dir = (0, import_node_path12.join)(root, key.key);
+  const real = realTarget(dir);
+  if (key.roots.some((g) => inside(real, g)))
+    throw unavailable(`it would be inside the repository (${real})`);
+  return { dir, file: (0, import_node_path12.join)(dir, `${workItemId}.jsonl`), key };
+}
+function assertPrivate(path2) {
+  const st = (0, import_node_fs15.statSync)(path2);
+  const uid = typeof process.getuid === "function" ? process.getuid() : void 0;
+  if (uid !== void 0 && st.uid !== uid)
+    throw unavailable(`${path2} is owned by another account`);
+  if (process.platform !== "win32" && (st.mode & 18) !== 0)
+    throw unavailable(`${path2} is writable by other accounts`);
+}
+function checkEntry(raw, workItemId, seq, prev) {
+  const e = raw;
+  if (!e || typeof e !== "object")
+    return "not an object";
+  if (e.v !== 1)
+    return "unknown format";
+  if (e.seq !== seq)
+    return `sequence ${String(e.seq)}, expected ${seq}`;
+  if (e.prev !== prev)
+    return "the hash chain is broken (a line was changed, removed or inserted)";
+  if (e.workItemId !== workItemId)
+    return `it belongs to work item ${String(e.workItemId)}`;
+  if (!e.subject || !SUBJECT_KINDS.includes(String(e.subject.kind)) || typeof e.subject.id !== "string")
+    return "no valid subject";
+  if (!LEDGER_DECISIONS.includes(String(e.decision)))
+    return "no valid decision";
+  if (typeof e.actionId !== "string" || typeof e.contentDigest !== "string" || typeof e.batchId !== "string")
+    return "missing ids";
+  return null;
+}
+function parse6(text, workItemId) {
+  const lines = text.split("\n");
+  lines.pop();
+  const entries = [];
+  let prev = GENESIS;
+  for (let i = 0; i < lines.length; i += 1) {
+    let raw;
+    try {
+      raw = JSON.parse(lines[i]);
+    } catch {
+      return { status: "corrupt", reason: `line ${i + 1} is not JSON` };
+    }
+    const problem = checkEntry(raw, workItemId, i + 1, prev);
+    if (problem)
+      return { status: "corrupt", reason: `line ${i + 1}: ${problem}` };
+    entries.push(raw);
+    prev = sha256(lines[i]);
+  }
+  return { status: "available", entries };
+}
+function readDecisionLedger(repo, workItemId) {
+  try {
+    const { file: file2 } = locate2(repo, workItemId);
+    if (!(0, import_node_fs15.existsSync)(file2))
+      return { status: "available", entries: [] };
+    assertPrivate((0, import_node_path12.dirname)(file2));
+    assertPrivate(file2);
+    return parse6((0, import_node_fs15.readFileSync)(file2, "utf8"), workItemId);
+  } catch (error64) {
+    const reason = error64 instanceof WorkflowError && typeof error64.details?.reason === "string" ? error64.details.reason : error64 instanceof Error ? error64.message : String(error64);
+    return { status: "unavailable", reason: reason.slice(0, 300) };
+  }
+}
+function withLedgerLock(dir, workItemId, fn) {
+  const lock = (0, import_node_path12.join)(dir, `${workItemId}.lock`);
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  for (; ; ) {
+    try {
+      (0, import_node_fs15.mkdirSync)(lock, { mode: 448 });
+      (0, import_node_fs15.writeFileSync)((0, import_node_path12.join)(lock, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }), { mode: 384 });
+      break;
+    } catch (error64) {
+      if (error64.code !== "EEXIST")
+        throw error64;
+      let stale = false;
+      try {
+        const owner = JSON.parse((0, import_node_fs15.readFileSync)((0, import_node_path12.join)(lock, "owner"), "utf8"));
+        if (typeof owner.at === "number" && Date.now() - owner.at > LOCK_STALE_MS)
+          stale = true;
+        else if (typeof owner.pid === "number") {
+          try {
+            process.kill(owner.pid, 0);
+          } catch (e) {
+            stale = e.code === "ESRCH";
+          }
+        }
+      } catch {
+        try {
+          stale = Date.now() - (0, import_node_fs15.statSync)(lock).mtimeMs > LOCK_STALE_MS;
+        } catch {
+          stale = false;
+        }
+      }
+      if (stale) {
+        (0, import_node_fs15.rmSync)(lock, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() > deadline)
+        throw unavailable("another process is writing this ledger");
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    (0, import_node_fs15.rmSync)(lock, { recursive: true, force: true });
+  }
+}
+var decidedByOf = (channel) => channel === "client-elicitation" ? "client-dialog" : channel === "terminal-prompt" ? "terminal-prompt" : channel === "test" ? "test-harness" : channel;
+function ledgerApproval(approval) {
+  return { action: approval.action, subjectDigest: approval.subjectDigest, channel: approval.channel, decidedBy: decidedByOf(approval.channel), decidedAt: approval.decidedAt, personVerified: false, independentlyVerified: false };
+}
+var batches = /* @__PURE__ */ new WeakMap();
+function batchIdFor(approval) {
+  if (!approval)
+    return (0, import_node_crypto10.randomUUID)();
+  let id = batches.get(approval);
+  if (!id) {
+    id = (0, import_node_crypto10.randomUUID)();
+    batches.set(approval, id);
+  }
+  return id;
+}
+function appendDecisions(repo, workItemId, planned, approval) {
+  if (planned.length === 0)
+    return [];
+  const { dir, file: file2 } = locate2(repo, workItemId);
+  try {
+    (0, import_node_fs15.mkdirSync)(dir, { recursive: true, mode: 448 });
+    assertPrivate((0, import_node_path12.dirname)(dir));
+    assertPrivate(dir);
+  } catch (error64) {
+    if (error64 instanceof WorkflowError)
+      throw error64;
+    throw unavailable(`${error64.code ?? "error"} creating ${dir}`);
+  }
+  try {
+    return withLedgerLock(dir, workItemId, () => {
+      let text = "";
+      if ((0, import_node_fs15.existsSync)(file2)) {
+        assertPrivate(file2);
+        text = (0, import_node_fs15.readFileSync)(file2, "utf8");
+      }
+      const complete = text.lastIndexOf("\n") + 1;
+      if (complete < text.length) {
+        (0, import_node_fs15.truncateSync)(file2, Buffer.byteLength(text.slice(0, complete), "utf8"));
+        text = text.slice(0, complete);
+      }
+      const current = parse6(text, workItemId);
+      if (current.status !== "available")
+        throw unavailable(`it is corrupt (${current.reason}); move it aside to start a new one (every acceptance then has to be given again)`);
+      const lines = text.split("\n").slice(0, -1);
+      let prev = lines.length ? sha256(lines[lines.length - 1]) : GENESIS;
+      let seq = current.entries.length;
+      const at = (/* @__PURE__ */ new Date()).toISOString();
+      const batchId = batchIdFor(approval);
+      const written = [];
+      let out = "";
+      for (const item of planned) {
+        seq += 1;
+        const entry = {
+          v: 1,
+          seq,
+          prev,
+          at,
+          workItemId,
+          subject: item.subject,
+          contentDigest: item.contentDigest,
+          decision: item.decision,
+          actionId: (0, import_node_crypto10.randomUUID)(),
+          batchId,
+          approval: approval ? ledgerApproval(approval) : null,
+          assurance: approval ? "client-response" : "none"
+        };
+        const line = JSON.stringify(entry);
+        prev = sha256(line);
+        out += `${line}
+`;
+        written.push(entry);
+      }
+      const fd = (0, import_node_fs15.openSync)(file2, "a", 384);
+      try {
+        (0, import_node_fs15.writeSync)(fd, out);
+        (0, import_node_fs15.fsyncSync)(fd);
+      } finally {
+        (0, import_node_fs15.closeSync)(fd);
+      }
+      return written;
+    });
+  } catch (error64) {
+    if (error64 instanceof WorkflowError)
+      throw error64;
+    throw unavailable(`${error64.code ?? "error"} writing ${file2}`);
+  }
+}
+function ledgerLocation(repo, workItemId) {
+  try {
+    const { file: file2, key } = locate2(repo, workItemId);
+    return { file: file2, repositoryKey: key };
+  } catch (error64) {
+    return { error: error64 instanceof Error ? error64.message : String(error64) };
+  }
 }
 
 // packages/mcp/dist/workflow-store.js
@@ -83558,10 +84970,10 @@ var PRAXIS_CAPABILITIES = [
 ];
 var INDEX_CONTRACT = "praxis.workflow.index";
 var MIGRATED_CONTRACT = "praxis.workflow.migrated";
-var LOCK_STALE_MS = 3e4;
+var LOCK_STALE_MS2 = 3e4;
 var WORKFLOW_STATE_VERSION = "1.1.0";
-var LOCK_WAIT_MS = 1e4;
-var WORK_ITEM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+var LOCK_WAIT_MS2 = 1e4;
+var WORK_ITEM_ID_RE2 = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 var WorkItemError = class extends Error {
   code;
   constructor(code, message) {
@@ -83571,21 +84983,21 @@ var WorkItemError = class extends Error {
   }
 };
 function workflowDir(repo) {
-  return (0, import_node_path12.join)(repo, ".praxis", "workflow");
+  return (0, import_node_path13.join)(repo, ".praxis", "workflow");
 }
-var legacyPath = (repo) => (0, import_node_path12.join)(workflowDir(repo), "state.json");
-var indexPath = (repo) => (0, import_node_path12.join)(workflowDir(repo), "index.json");
+var legacyPath = (repo) => (0, import_node_path13.join)(workflowDir(repo), "state.json");
+var indexPath = (repo) => (0, import_node_path13.join)(workflowDir(repo), "index.json");
 function assertWorkItemId(id) {
-  if (!WORK_ITEM_ID_RE.test(id) || id.includes("..")) {
+  if (!WORK_ITEM_ID_RE2.test(id) || id.includes("..")) {
     throw new WorkItemError("WORK_ITEM_INVALID", "work item ids use letters, digits, '.', '_' and '-' only");
   }
   return id;
 }
 function itemPath(repo, id) {
-  return (0, import_node_path12.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
+  return (0, import_node_path13.join)(workflowDir(repo), "items", `${assertWorkItemId(id)}.json`);
 }
-function readJson3(path2) {
-  return JSON.parse((0, import_node_fs14.readFileSync)(path2, "utf8"));
+function readJson4(path2) {
+  return JSON.parse((0, import_node_fs16.readFileSync)(path2, "utf8"));
 }
 function summarize(state2) {
   return {
@@ -83596,7 +85008,8 @@ function summarize(state2) {
     ...state2.workItem.jiraIssueKey ? { jiraIssueKey: state2.workItem.jiraIssueKey } : {},
     stage: state2.stage,
     phase: state2.phase,
-    mode: state2.mode,
+    // the mode in force: a classic mode the decision ledger does not back is guided (acceptance-integrity.ts)
+    mode: enforcedMode(state2),
     kind: state2.workItem.kind,
     revision: state2.workItem.revision,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -83604,31 +85017,31 @@ function summarize(state2) {
   };
 }
 function toPortable(repo, state2) {
-  const root = (0, import_node_path12.resolve)(repo);
+  const root = (0, import_node_path13.resolve)(repo);
   return {
     ...state2,
     services: state2.services.map((service) => {
-      if (!service.localPath || !(0, import_node_path12.isAbsolute)(service.localPath))
+      if (!service.localPath || !(0, import_node_path13.isAbsolute)(service.localPath))
         return service;
-      const rel2 = (0, import_node_path12.relative)(root, service.localPath);
-      const ups = rel2.split(import_node_path12.sep).filter((part) => part === "..").length;
+      const rel2 = (0, import_node_path13.relative)(root, service.localPath);
+      const ups = rel2.split(import_node_path13.sep).filter((part) => part === "..").length;
       if (ups > 2)
         return service;
-      return { ...service, localPath: (rel2 === "" ? "." : rel2).split(import_node_path12.sep).join("/") };
+      return { ...service, localPath: (rel2 === "" ? "." : rel2).split(import_node_path13.sep).join("/") };
     })
   };
 }
 function toAbsolute(repo, state2) {
-  const root = (0, import_node_path12.resolve)(repo);
+  const root = (0, import_node_path13.resolve)(repo);
   return {
     ...state2,
-    services: state2.services.map((service) => service.localPath && !(0, import_node_path12.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path12.resolve)(root, service.localPath) } : service)
+    services: state2.services.map((service) => service.localPath && !(0, import_node_path13.isAbsolute)(service.localPath) ? { ...service, localPath: (0, import_node_path13.resolve)(root, service.localPath) } : service)
   };
 }
 function readLegacy(repo) {
   let raw;
   try {
-    raw = readJson3(legacyPath(repo));
+    raw = readJson4(legacyPath(repo));
   } catch (err) {
     if (err.code === "ENOENT")
       return null;
@@ -83639,15 +85052,18 @@ function readLegacy(repo) {
   return toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(raw)));
 }
 function itemFiles(repo) {
-  const dir = (0, import_node_path12.join)(workflowDir(repo), "items");
+  const dir = (0, import_node_path13.join)(workflowDir(repo), "items");
   try {
-    return (0, import_node_fs14.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
+    return (0, import_node_fs16.readdirSync)(dir).filter((name) => name.endsWith(".json")).sort();
   } catch {
     return [];
   }
 }
 function rebuildIndex(repo, files) {
-  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson3((0, import_node_path12.join)(workflowDir(repo), "items", name))))));
+  const items = files.map((name) => {
+    const state2 = toAbsolute(repo, WorkflowStateSchema.parse(readJson4((0, import_node_path13.join)(workflowDir(repo), "items", name))));
+    return summarize(annotateAcceptance(repo, state2));
+  });
   return {
     legacy: false,
     index: {
@@ -83662,7 +85078,7 @@ function rebuildIndex(repo, files) {
 function readLayout(repo) {
   let raw;
   try {
-    raw = readJson3(indexPath(repo));
+    raw = readJson4(indexPath(repo));
   } catch (err) {
     if (err.code !== "ENOENT")
       throw err;
@@ -83679,7 +85095,7 @@ function readLayout(repo) {
     }
     if (files.length > 0)
       return rebuildIndex(repo, files);
-    if ((0, import_node_fs14.existsSync)(legacyPath(repo))) {
+    if ((0, import_node_fs16.existsSync)(legacyPath(repo))) {
       throw new WorkItemError("WORKFLOW_INDEX_MISSING", "state.json is migrated but there are no items to rebuild the index from");
     }
     return null;
@@ -83700,14 +85116,15 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 function fingerprintFor2(repo, command, workItemId) {
-  let token;
-  if (command.action === "open" || command.action === "select-work-item") {
-    token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
-  } else {
-    const state2 = loadWorkflow(repo, workItemId);
-    token = state2 ? `state:${(0, import_node_crypto10.createHash)("sha256").update(canonicalJson(withoutDrift(state2))).digest("hex")}` : "state:none";
-  }
+  const indexOnly = command.action === "open" || command.action === "select-work-item";
+  return fingerprintAgainst(command, indexOnly ? readLayout(repo) : null, indexOnly ? null : loadWorkflow(repo, workItemId));
+}
+function fingerprintAgainst(command, layout, state2) {
+  const token = command.action === "open" || command.action === "select-work-item" ? `epoch:${layout?.index.epoch ?? 0}` : state2 ? `state:${persistedDigest(state2)}` : "state:none";
   return commandFingerprint({ ...command, previewedAgainst: token });
+}
+function persistedDigest(state2) {
+  return (0, import_node_crypto11.createHash)("sha256").update(canonicalJson(persistable(state2))).digest("hex");
 }
 function resolveId(layout, explicit) {
   if (explicit !== void 0) {
@@ -83724,8 +85141,11 @@ function resolveId(layout, explicit) {
 }
 function readItem(repo, layout, id) {
   if (layout.legacy)
-    return readLegacy(repo);
-  return markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson3(itemPath(repo, id))))));
+    return annotateAcceptance(repo, readLegacy(repo));
+  return annotateAcceptance(repo, markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson4(itemPath(repo, id)))))));
+}
+function annotateAcceptance(repo, state2) {
+  return withIntegrity(state2, evaluateIntegrity(state2, readDecisionLedger(repo, state2.workItem.id)));
 }
 function markSubjectDrift(repo, state2) {
   const recorded = state2.coverage.filter((e) => e.source?.kind === "browser" && e.source.subjectDigest);
@@ -83735,7 +85155,7 @@ function markSubjectDrift(repo, state2) {
   const services = effectiveServices(state2);
   for (const entry of recorded) {
     const base = services.find((s) => s.id === entry.serviceId)?.localPath || repo;
-    const root = serve === void 0 ? void 0 : (0, import_node_path12.resolve)(base, serve);
+    const root = serve === void 0 ? void 0 : (0, import_node_path13.resolve)(base, serve);
     let current;
     if (root) {
       current = bundleDigest(root);
@@ -83744,6 +85164,9 @@ function markSubjectDrift(repo, state2) {
       entry.source = { ...entry.source, drifted: true };
   }
   return state2;
+}
+function persistable(state2) {
+  return withoutDrift(stripIntegrity(state2));
 }
 function withoutDrift(state2) {
   if (!state2.coverage.some((e) => e.source?.drifted))
@@ -83807,22 +85230,43 @@ function workflowStatus(repo, workItemId) {
     suggested: routed.suggested.map((item) => item.id),
     executed: routed.executed,
     phase: state2.phase,
-    mode: state2.mode,
+    // the mode in force, and how much the stored mode can be trusted: classic counts only when the decision ledger backs it
+    mode: enforcedMode(state2),
+    modeIntegrity: modeIntegrity(state2),
     next: nextStep(state2),
     briefing: buildResumeBriefing(state2),
-    ...state2.mode === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {},
+    acceptance: acceptanceView(repo, state2),
+    ...enforcedMode(state2) === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {},
+    ...state2.mode === "classic" && enforcedMode(state2) !== "classic" ? { modeNote: `the work item file says classic mode, but that choice is not backed by a Praxis decision record on this computer (${modeIntegrity(state2)}): the gates are enforced as in guided mode. The user can choose classic again in the review (mode change), where the dialog asks them.` } : {},
     ...items.length > 1 ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} "${item.title}" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` } : {}
+  };
+}
+function modeIntegrity(state2) {
+  if (state2.mode !== "classic")
+    return "proposed";
+  return annotationOf(state2)?.subjects[subjectKey("mode", "mode")]?.status ?? "accepted";
+}
+function acceptanceView(repo, state2) {
+  const annotation = annotationOf(state2);
+  const where = ledgerLocation(repo, state2.workItem.id);
+  return {
+    ...integritySummary(state2),
+    ledger: annotation?.ledger ?? "available",
+    ...annotation?.ledgerReason ? { ledgerReason: annotation.ledgerReason } : {},
+    ..."repositoryKey" in where ? { repositoryKey: { source: where.repositoryKey.source, key: where.repositoryKey.key.slice(0, 16) } } : {},
+    subjects: integrityReport(state2).map(({ key, label, status, reason }) => ({ subject: key, label, integrity: status, reason })),
+    note: ACCEPTANCE_INTEGRITY_NOTE
   };
 }
 function pause(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 function lockIsStale(dir) {
-  if (!(0, import_node_fs14.existsSync)(dir))
+  if (!(0, import_node_fs16.existsSync)(dir))
     return false;
   try {
-    const owner = readJson3((0, import_node_path12.join)(dir, "owner"));
-    if (typeof owner.at === "number" && Date.now() - owner.at > LOCK_STALE_MS)
+    const owner = readJson4((0, import_node_path13.join)(dir, "owner"));
+    if (typeof owner.at === "number" && Date.now() - owner.at > LOCK_STALE_MS2)
       return true;
     if (typeof owner.pid === "number") {
       try {
@@ -83834,20 +85278,20 @@ function lockIsStale(dir) {
     return false;
   } catch {
     try {
-      return Date.now() - (0, import_node_fs14.statSync)(dir).mtimeMs > LOCK_STALE_MS;
+      return Date.now() - (0, import_node_fs16.statSync)(dir).mtimeMs > LOCK_STALE_MS2;
     } catch {
       return false;
     }
   }
 }
 function withWorkflowLock(repo, fn) {
-  (0, import_node_fs14.mkdirSync)(workflowDir(repo), { recursive: true });
-  const dir = (0, import_node_path12.join)(workflowDir(repo), ".lock");
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  (0, import_node_fs16.mkdirSync)(workflowDir(repo), { recursive: true });
+  const dir = (0, import_node_path13.join)(workflowDir(repo), ".lock");
+  const deadline = Date.now() + LOCK_WAIT_MS2;
   for (; ; ) {
     try {
-      (0, import_node_fs14.mkdirSync)(dir);
-      (0, import_node_fs14.writeFileSync)((0, import_node_path12.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
+      (0, import_node_fs16.mkdirSync)(dir);
+      (0, import_node_fs16.writeFileSync)((0, import_node_path13.join)(dir, "owner"), JSON.stringify({ pid: process.pid, at: Date.now() }));
       break;
     } catch (err) {
       if (err.code !== "EEXIST")
@@ -83855,8 +85299,8 @@ function withWorkflowLock(repo, fn) {
       if (lockIsStale(dir)) {
         const claimed = `${dir}.stale-${process.pid}-${Date.now()}`;
         try {
-          (0, import_node_fs14.renameSync)(dir, claimed);
-          (0, import_node_fs14.rmSync)(claimed, { recursive: true, force: true });
+          (0, import_node_fs16.renameSync)(dir, claimed);
+          (0, import_node_fs16.rmSync)(claimed, { recursive: true, force: true });
         } catch {
         }
         continue;
@@ -83870,15 +85314,15 @@ function withWorkflowLock(repo, fn) {
   try {
     return fn();
   } finally {
-    (0, import_node_fs14.rmSync)(dir, { recursive: true, force: true });
+    (0, import_node_fs16.rmSync)(dir, { recursive: true, force: true });
   }
 }
 function writeAtomic(path2, value) {
-  (0, import_node_fs14.mkdirSync)((0, import_node_path12.dirname)(path2), { recursive: true });
+  (0, import_node_fs16.mkdirSync)((0, import_node_path13.dirname)(path2), { recursive: true });
   const tmp = `${path2}.${process.pid}.tmp`;
-  (0, import_node_fs14.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
+  (0, import_node_fs16.writeFileSync)(tmp, `${JSON.stringify(value, null, 2)}
 `);
-  (0, import_node_fs14.renameSync)(tmp, path2);
+  (0, import_node_fs16.renameSync)(tmp, path2);
 }
 function writeIndex(repo, index) {
   requireMutationLease();
@@ -83886,10 +85330,10 @@ function writeIndex(repo, index) {
 }
 function keepPreviousVersion(path2) {
   try {
-    const previous = readJson3(path2);
+    const previous = readJson4(path2);
     const backup = `${path2}.v${previous.version ?? "unknown"}.bak`;
-    if (previous.version && previous.version !== WORKFLOW_STATE_VERSION && !(0, import_node_fs14.existsSync)(backup))
-      (0, import_node_fs14.writeFileSync)(backup, (0, import_node_fs14.readFileSync)(path2));
+    if (previous.version && previous.version !== WORKFLOW_STATE_VERSION && !(0, import_node_fs16.existsSync)(backup))
+      (0, import_node_fs16.writeFileSync)(backup, (0, import_node_fs16.readFileSync)(path2));
   } catch {
   }
 }
@@ -83897,7 +85341,7 @@ function writeItem(repo, state2) {
   requireMutationLease();
   const path2 = itemPath(repo, state2.workItem.id);
   keepPreviousVersion(path2);
-  writeAtomic(path2, redactState(toPortable(repo, withoutDrift(state2))));
+  writeAtomic(path2, redactState(toPortable(repo, persistable(state2))));
   return path2;
 }
 function ensureMigrated(repo) {
@@ -83987,17 +85431,23 @@ function previewWorkflow(repo, raw, workItemId, evidenceSource, evidenceSources)
     currentWorkItemId: command.action === "open" ? applied.state.workItem.id : workItemId ?? current
   };
 }
-function writeCommand(repo, planned, final, workItemId, userApproval, channel, evidenceSource, evidenceSources) {
+function writeCommand(repo, planned, final, workItemId, userApproval, channel, evidenceSource, evidenceSources, expectedFingerprint) {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
     const finalCommand = parseWorkflowCommand(final);
+    const before = readLayout(repo);
     const resolved = resolveCommand(repo, finalCommand, workItemId);
+    if (expectedFingerprint !== void 0) {
+      const expected = fingerprintAgainst(planned, before, resolved.reopen ?? resolved.state);
+      if (expected !== expectedFingerprint)
+        throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
+    }
     const layout = readLayout(repo);
     const previousCurrent = layout?.index.current ?? null;
     const select = (id) => {
-      const index2 = readLayout(repo).index;
-      if (index2.current !== id)
-        writeIndex(repo, { ...index2, current: id, epoch: (index2.epoch ?? 0) + 1 });
+      const index = readLayout(repo).index;
+      if (index.current !== id)
+        writeIndex(repo, { ...index, current: id, epoch: (index.epoch ?? 0) + 1 });
     };
     if (resolved.select) {
       select(resolved.select);
@@ -84023,14 +85473,9 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel, e
       };
     }
     const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...userApproval ? { userApproval } : {}, ...channel ? { channel } : {}, ...evidenceSource ? { evidenceSource } : {}, ...evidenceSources ? { evidenceSources } : {} });
-    const path2 = writeItem(repo, applied.state);
-    const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1, current: null, items: [] };
-    const entry = summarize(applied.state);
-    const exists = index.items.some((item) => item.workItemId === entry.workItemId);
-    const items = exists ? index.items.map((item) => item.workItemId === entry.workItemId ? entry : item) : [...index.items, entry];
-    const current = planned.action === "open" ? entry.workItemId : index.current ?? entry.workItemId;
-    const selectionChanged = !exists || current !== index.current;
-    writeIndex(repo, { ...index, current, items, ...selectionChanged ? { epoch: (index.epoch ?? 0) + 1 } : {} });
+    const recorded = recordDecisions(repo, resolved.state, applied.state, resolved.command, userApproval, channel);
+    const path2 = writeItem(repo, recorded);
+    const { entry, current } = indexAfterWrite(repo, recorded, planned.action === "open");
     return {
       path: path2,
       duplicate: applied.duplicate,
@@ -84041,13 +85486,42 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel, e
     };
   });
 }
+function indexAfterWrite(repo, state2, opened) {
+  const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1, current: null, items: [] };
+  const entry = summarize(state2);
+  const exists = index.items.some((item) => item.workItemId === entry.workItemId);
+  const items = exists ? index.items.map((item) => item.workItemId === entry.workItemId ? entry : item) : [...index.items, entry];
+  const current = opened ? entry.workItemId : index.current ?? entry.workItemId;
+  const selectionChanged = !exists || current !== index.current;
+  writeIndex(repo, { ...index, current, items, ...selectionChanged ? { epoch: (index.epoch ?? 0) + 1 } : {} });
+  return { entry, current };
+}
+function approvalCoverage(command, pre, userApproval, channel) {
+  const given = approvalsGivenInThisCall();
+  if (userApproval && given.includes(userApproval))
+    return { approval: userApproval, coverage: humanActCoverage(userApproval.action, command) };
+  if (channel?.via === "approved" && given.includes(channel.approval))
+    return { approval: channel.approval, coverage: batchCoverage(channel.batch, pre) };
+  return null;
+}
+function recordDecisions(repo, pre, post, command, userApproval, channel) {
+  const approved = approvalCoverage(command, pre, userApproval, channel);
+  const planned = planLedgerEntries(pre, post, approved?.coverage ?? null);
+  const written = planned.length ? appendDecisions(repo, post.workItem.id, planned, approved?.approval ?? null) : [];
+  const claimed = new Set(acceptanceSubjects(post).filter((s) => s.claimed).map((s) => s.key));
+  const actions = {};
+  for (const [key, id] of Object.entries(post.acceptanceActions ?? {}))
+    if (claimed.has(key))
+      actions[key] = id;
+  for (const entry of written)
+    if (entry.decision === "accept")
+      actions[subjectKey(entry.subject.kind, entry.subject.id)] = entry.actionId;
+  const { acceptanceActions: _previous, ...rest } = post;
+  return Object.keys(actions).length ? { ...rest, acceptanceActions: actions } : rest;
+}
 function guarded(repo, fingerprint2, planned, final, workItemId, userApproval, channel, evidenceSource, evidenceSources) {
   const command = parseWorkflowCommand(planned);
-  const expected = fingerprintFor2(repo, command, workItemId);
-  if (fingerprint2 !== expected) {
-    throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
-  }
-  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource, evidenceSources));
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource, evidenceSources, fingerprint2));
 }
 function applyResolved(repo, fingerprint2, planned, final, workItemId) {
   return guarded(repo, fingerprint2, planned, final, workItemId);
@@ -84092,6 +85566,37 @@ function capabilityRoute(input2) {
     capabilities: PRAXIS_CAPABILITIES
   });
 }
+function applyApprovedBatch(repo, workItemId, commands, channel, check2) {
+  return runWorkflowRecordWrite(() => withWorkflowLock(repo, () => {
+    ensureMigrated(repo);
+    let state2 = loadWorkflow(repo, workItemId);
+    if (!state2)
+      throw new Error("WORKFLOW_MISSING: open a work item first");
+    if (persistedDigest(state2) !== channel.baseState) {
+      throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
+    }
+    check2(state2);
+    let applied = 0;
+    const conflicts = [];
+    for (const command of commands) {
+      let parsed;
+      let next;
+      try {
+        parsed = parseWorkflowCommand(command);
+        next = applyWorkflowCommand(state2, parsed, { channel }).state;
+      } catch (error64) {
+        conflicts.push({ item: String(command.action), reason: error64 instanceof Error ? error64.message.replace(/^[A-Z_]+: /, "") : String(error64) });
+        continue;
+      }
+      const recorded = recordDecisions(repo, state2, next, parsed, void 0, channel);
+      writeItem(repo, recorded);
+      indexAfterWrite(repo, recorded, false);
+      state2 = annotateAcceptance(repo, stripIntegrity(recorded));
+      applied += 1;
+    }
+    return { applied, conflicts };
+  }));
+}
 function applyRuntimeCommand(repo, command, workItemId, channel) {
   const parsed = parseWorkflowCommand(command);
   return runWorkflowRecordWrite(() => writeCommand(repo, parsed, parsed, workItemId, void 0, channel));
@@ -84100,7 +85605,7 @@ function applyRuntimeCommand(repo, command, workItemId, channel) {
 // packages/mcp/dist/story-engine.js
 var PROTECTED = /* @__PURE__ */ new Set(["main", "master"]);
 function git(repo, args, input2) {
-  const result = (0, import_node_child_process6.spawnSync)("git", args, { cwd: repo, encoding: "utf8", input: input2 });
+  const result = (0, import_node_child_process6.spawnSync)("git", args, { cwd: repo, encoding: "utf8", input: input2, env: gitEnv() });
   if ((result.status ?? 1) !== 0) {
     throw new Error((result.stderr || result.stdout || "git failed").trim());
   }
@@ -84110,36 +85615,36 @@ function safeFile2(root, relative7) {
   return containedPath(root, relative7);
 }
 function adapterFile(workflowRepo) {
-  const file2 = (0, import_node_path13.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
-  return (0, import_node_fs15.existsSync)(file2) ? file2 : void 0;
+  const file2 = (0, import_node_path14.join)(workflowRepo, ".praxis", "quality", "adapter.mjs");
+  return (0, import_node_fs17.existsSync)(file2) ? file2 : void 0;
 }
 function testsAreGreen(services) {
   let saw = false;
   for (const service of services) {
-    if (!service.localPath || !(0, import_node_fs15.existsSync)(service.localPath))
+    if (!service.localPath || !(0, import_node_fs17.existsSync)(service.localPath))
       continue;
-    const src = (0, import_node_path13.join)(service.localPath, "src");
-    if ((0, import_node_fs15.existsSync)(src)) {
-      const tests = (0, import_node_fs15.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
+    const src = (0, import_node_path14.join)(service.localPath, "src");
+    if ((0, import_node_fs17.existsSync)(src)) {
+      const tests = (0, import_node_fs17.readdirSync)(src).filter((name) => /\.test\.(js|mjs|cjs)$/.test(name));
       if (tests.length) {
         saw = true;
-        const result = (0, import_node_child_process6.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path13.join)("src", name))], {
+        const result = (0, import_node_child_process6.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path14.join)("src", name))], {
           cwd: service.localPath,
           encoding: "utf8",
-          env: scrubbedEnv((0, import_node_os9.tmpdir)())
+          env: scrubbedEnv((0, import_node_os10.tmpdir)())
         });
         if ((result.status ?? 1) !== 0)
           return false;
       }
     }
-    const testsDir = (0, import_node_path13.join)(service.localPath, "tests");
-    const pytests = (0, import_node_fs15.existsSync)(testsDir) ? (0, import_node_fs15.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
+    const testsDir = (0, import_node_path14.join)(service.localPath, "tests");
+    const pytests = (0, import_node_fs17.existsSync)(testsDir) ? (0, import_node_fs17.readdirSync)(testsDir).filter((name) => name.startsWith("test_") && name.endsWith(".py")) : [];
     if (pytests.length) {
       saw = true;
       const result = (0, import_node_child_process6.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
         cwd: service.localPath,
         encoding: "utf8",
-        env: scrubbedEnv((0, import_node_os9.tmpdir)())
+        env: scrubbedEnv((0, import_node_os10.tmpdir)())
       });
       if ((result.status ?? 1) !== 0)
         return false;
@@ -84164,13 +85669,13 @@ function readHostProposal(workflowRepo, serviceId) {
     throw new Error("UNSAFE_PATH");
   let file2;
   try {
-    file2 = containedPath(workflowRepo, (0, import_node_path13.join)(".praxis", "quality", "proposals", `${serviceId}.json`));
+    file2 = containedPath(workflowRepo, (0, import_node_path14.join)(".praxis", "quality", "proposals", `${serviceId}.json`));
   } catch {
     return void 0;
   }
-  if (!(0, import_node_fs15.existsSync)(file2))
+  if (!(0, import_node_fs17.existsSync)(file2))
     return void 0;
-  const parsed = JSON.parse((0, import_node_fs15.readFileSync)(file2, "utf8"));
+  const parsed = JSON.parse((0, import_node_fs17.readFileSync)(file2, "utf8"));
   if (!Array.isArray(parsed.files) || parsed.files.length === 0)
     throw new Error("PROPOSAL_INVALID");
   return parsed;
@@ -84259,7 +85764,7 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
     meta: meta5,
     // a browser check that could not run (no browser, no serve root) is still browser-level evidence: BLOCKED, not "executed"
     evidenceSources: Object.fromEntries([
-      ...scenarios.filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId))).map((sc) => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${(0, import_node_crypto11.randomUUID)()}`, artifacts: [] }]),
+      ...scenarios.filter((sc) => sc.evidence.some((line) => line === "level:browser" || line === "level:e2e") && !browser.some((run) => run.scenarioIds.includes(sc.scenarioId))).map((sc) => [sc.scenarioId, { kind: "browser", runner: "praxis-runtime:browser-driver (not run)", runId: `run-${(0, import_node_crypto12.randomUUID)()}`, artifacts: [] }]),
       ...browser.flatMap((run) => run.scenarioIds.map((id) => {
         const shot = run.artifacts[id];
         return [
@@ -84268,11 +85773,11 @@ async function buildStoryVerification(repo, independentRerun, workItemId, artifa
             kind: "browser",
             runner: `${run.runner}@${run.browserVersion}`,
             // the same id as the artifacts directory, so a result can be matched to the screenshots of its run
-            runId: artifactsDir ? (0, import_node_path13.basename)(artifactsDir) : `run-${(0, import_node_crypto11.randomUUID)()}`,
+            runId: artifactsDir ? (0, import_node_path14.basename)(artifactsDir) : `run-${(0, import_node_crypto12.randomUUID)()}`,
             startedAt: run.startedAt,
             finishedAt: run.finishedAt,
             subjectDigest: run.subjectDigest,
-            artifacts: shot ? [{ path: shot.path && artifactsDir ? (0, import_node_path13.relative)(repo, (0, import_node_path13.join)(artifactsDir, shot.path)).split(import_node_path13.sep).join("/") : `(not stored in a preview) ${id}.png`, sha256: shot.sha256, bytes: shot.bytes }] : []
+            artifacts: shot ? [{ path: shot.path && artifactsDir ? (0, import_node_path14.relative)(repo, (0, import_node_path14.join)(artifactsDir, shot.path)).split(import_node_path14.sep).join("/") : `(not stored in a preview) ${id}.png`, sha256: shot.sha256, bytes: shot.bytes }] : []
           }
         ];
       }))
@@ -84300,7 +85805,7 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
     assertDiffTouchesOnly(service.localPath, file2);
   }
   const findings = state2.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
-  const branchRef = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
+  const branchRef = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8", env: gitEnv() });
   const baseSha = (branchRef.status ?? 1) === 0 ? branchRef.stdout.trim() : git(service.localPath, ["rev-parse", "HEAD"]);
   return {
     action: "record-change",
@@ -84323,7 +85828,7 @@ async function planServiceFix(repo, serviceId, existingBranch, workItemId) {
   };
 }
 function diffPaths(diff, root) {
-  const out = (0, import_node_child_process6.spawnSync)("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
+  const out = (0, import_node_child_process6.spawnSync)("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8", env: gitEnv() });
   if ((out.status ?? 1) !== 0)
     throw new Error(`PROPOSAL_INVALID: git cannot read the diff (${(out.stderr || "").trim().slice(0, 160)})`);
   const tokens = out.stdout.split("\0");
@@ -84347,17 +85852,17 @@ function assertDiffTouchesOnly(root, file2) {
   if (!file2.diff)
     return;
   const allowedReal = containedPath(root, file2.path);
-  const realRoot = (0, import_node_fs15.realpathSync)((0, import_node_path13.resolve)(root));
-  const allowedLexical = (0, import_node_path13.resolve)(realRoot, file2.path);
-  const top = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
-  const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? (0, import_node_fs15.realpathSync)(top.stdout.trim()) : realRoot;
+  const realRoot = (0, import_node_fs17.realpathSync)((0, import_node_path14.resolve)(root));
+  const allowedLexical = (0, import_node_path14.resolve)(realRoot, file2.path);
+  const top = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8", env: gitEnv() });
+  const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? (0, import_node_fs17.realpathSync)(top.stdout.trim()) : realRoot;
   const touched = diffPaths(file2.diff, root);
   if (touched.length === 0)
     throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes nothing`);
   for (const path2 of touched) {
-    const absolute = (0, import_node_path13.resolve)(topLevel, path2);
-    const relative7 = (0, import_node_path13.relative)(realRoot, absolute);
-    if (relative7 === "" || relative7.startsWith("..") || (0, import_node_path13.isAbsolute)(relative7))
+    const absolute = (0, import_node_path14.resolve)(topLevel, path2);
+    const relative7 = (0, import_node_path14.relative)(realRoot, absolute);
+    if (relative7 === "" || relative7.startsWith("..") || (0, import_node_path14.isAbsolute)(relative7))
       throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path2}, outside the checkout`);
     let real;
     try {
@@ -84368,7 +85873,7 @@ function assertDiffTouchesOnly(root, file2) {
     if (absolute !== allowedLexical || real !== allowedReal)
       throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} also changes ${path2}`);
     try {
-      if ((0, import_node_fs15.lstatSync)(absolute).isSymbolicLink())
+      if ((0, import_node_fs17.lstatSync)(absolute).isSymbolicLink())
         throw new Error(`PROPOSAL_INVALID: the diff for ${file2.path} changes ${path2}, which is a link`);
     } catch (error64) {
       if (error64 instanceof Error && error64.message.startsWith("PROPOSAL_INVALID"))
@@ -84386,8 +85891,8 @@ function applyProposal(root, proposal) {
     }
     if (typeof file2.after !== "string")
       throw new Error("PROPOSAL_INVALID");
-    (0, import_node_fs15.mkdirSync)((0, import_node_path13.dirname)(absolute), { recursive: true });
-    (0, import_node_fs15.writeFileSync)(absolute, file2.after);
+    (0, import_node_fs17.mkdirSync)((0, import_node_path14.dirname)(absolute), { recursive: true });
+    (0, import_node_fs17.writeFileSync)(absolute, file2.after);
   }
 }
 function serviceFixCommitRequest(planned, repository, workItemId) {
@@ -84423,7 +85928,7 @@ async function commitServiceFix(workflowRepo, planned, workflowItemId, confirmat
   const root = service?.localPath;
   if (!root)
     throw new Error("REPOSITORY_LOCATION_MISSING");
-  const repository = (0, import_node_path13.resolve)(root);
+  const repository = (0, import_node_path14.resolve)(root);
   const workItemId = change.storyIds[0] ?? change.serviceId;
   const { patchDigest, request: commitRequest } = serviceFixCommitRequest(planned, repository, workItemId);
   const commitApproval = await obtainUserApproval(commitRequest, { confirmation, repo: workflowRepo });
@@ -84456,7 +85961,7 @@ function commitServiceFixBody(root, planned) {
   applyProposal(root, planned.proposal);
   const current = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (current !== change.branch) {
-    const exists = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--verify", change.branch], { cwd: root, encoding: "utf8" });
+    const exists = (0, import_node_child_process6.spawnSync)("git", ["rev-parse", "--verify", change.branch], { cwd: root, encoding: "utf8", env: gitEnv() });
     if ((exists.status ?? 1) === 0)
       git(root, ["checkout", change.branch]);
     else
@@ -84490,12 +85995,13 @@ function pushServiceFix(root, committed) {
   const change = committed.change;
   let mrStatus = "opened";
   let changeRequest;
-  const remotes = (0, import_node_child_process6.spawnSync)("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
+  const remotes = (0, import_node_child_process6.spawnSync)("git", ["remote"], { cwd: root, encoding: "utf8", env: gitEnv() }).stdout ?? "";
   if (!remotes.split(/\s+/).includes("origin"))
     git(root, ["remote", "add", "origin", change.remote]);
   const pushed = (0, import_node_child_process6.spawnSync)("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
     cwd: root,
-    encoding: "utf8"
+    encoding: "utf8",
+    env: gitEnv()
   });
   if ((pushed.status ?? 1) !== 0)
     mrStatus = "blocked";
@@ -84512,8 +86018,13 @@ function pushServiceFix(root, committed) {
 }
 
 // packages/mcp/dist/workflow-inspect.js
-var import_node_path33 = require("node:path");
+var import_node_path34 = require("node:path");
 init_dist();
+function integrityOf(state2, kind, id, claimed) {
+  if (!claimed)
+    return "proposed";
+  return annotationOf(state2)?.subjects[subjectKey(kind, id)]?.status ?? "accepted";
+}
 var INSPECT_SCHEMA = "praxis.workflow.inspect.v1";
 var INSPECT_VIEWS = [
   "overview",
@@ -84530,7 +86041,7 @@ var INSPECT_VIEWS = [
 ];
 var SECRET_VALUE = /(?:sk-[A-Za-z0-9]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|AKIA[0-9A-Z]{16}|xox[abpr]-[A-Za-z0-9-]{10,}|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)|\b(?:bearer\s+[A-Za-z0-9._~+/=-]{12,}|(?:token|secret|password|api[_-]?key)\s*[=:]\s*\S+)/gi;
 function scrub(repo, value) {
-  const root = (0, import_node_path33.resolve)(repo);
+  const root = (0, import_node_path34.resolve)(repo);
   const clean = (input2) => {
     if (typeof input2 === "string") {
       return input2.split(`${root}/`).join("").split(root).join(".").replace(SECRET_VALUE, "[redacted]");
@@ -84544,10 +86055,10 @@ function scrub(repo, value) {
   };
   return clean(redactPersistent(value));
 }
-function storyConfirmation(story) {
+function storyConfirmation(state2, story) {
   if (story.status === "superseded")
     return "superseded";
-  return story.status === "confirmed" && story.confirmedBehavior ? "confirmed" : "unconfirmed";
+  return story.status === "confirmed" && story.confirmedBehavior && integrityOf(state2, "story", story.id, true) === "accepted" ? "confirmed" : "unconfirmed";
 }
 function overview(state2, repo) {
   const { current, items } = listWorkItems(repo);
@@ -84572,11 +86083,11 @@ function overview(state2, repo) {
       requirements: state2.requirements.filter((item) => item.status !== "superseded").length,
       stories: {
         total: live.length,
-        confirmed: live.filter((story) => storyConfirmation(story) === "confirmed").length,
-        unconfirmed: live.filter((story) => storyConfirmation(story) === "unconfirmed").length,
+        confirmed: live.filter((story) => storyConfirmation(state2, story) === "confirmed").length,
+        unconfirmed: live.filter((story) => storyConfirmation(state2, story) === "unconfirmed").length,
         stale: live.filter((story) => story.stale).length
       },
-      decisions: { total: state2.decisions.length, confirmed: state2.decisions.filter((item) => item.confirmed).length },
+      decisions: { total: state2.decisions.length, confirmed: trustedView(state2).decisions.filter((item) => item.confirmed).length },
       services: state2.services.length,
       implementationUnits: state2.implementationUnits.length,
       handoffs: state2.handoffs.length,
@@ -84591,6 +86102,7 @@ function overview(state2, repo) {
       coverageEntries: state2.coverage.length
     },
     feature: { verdict: feature.verdict, gaps: feature.gaps, readiness: featureReadiness(state2) },
+    acceptance: acceptanceView(repo, state2),
     history: state2.history,
     workItems: items.map((item) => ({
       workItemId: item.workItemId,
@@ -84613,7 +86125,8 @@ function reviewOf(review) {
     previous: review.previous ?? null
   };
 }
-function requirementReview(state2) {
+function requirementReview(raw) {
+  const state2 = trustedView(raw);
   const rows = state2.requirements.filter((req) => req.status !== "superseded" && req.scope === "in").flatMap((req) => req.acceptanceCriteria.map((c) => ({
     requirementId: req.id,
     scope: req.scope,
@@ -84629,6 +86142,7 @@ function requirementReview(state2) {
     rejected: rows.filter((r) => r.status === "rejected"),
     commented: rows.filter((r) => r.comment !== null),
     pending: rows.filter((r) => r.status === "pending").map((r) => r.criterionId),
+    unverified: raw.requirements.filter((req) => req.status !== "superseded" && req.scope === "in").flatMap((req) => req.acceptanceCriteria.filter((c) => c.review.status === "accepted" && integrityOf(raw, "criterion", c.id, true) !== "accepted").map((c) => ({ criterionId: c.id, integrity: integrityOf(raw, "criterion", c.id, true) }))),
     requirementComments: state2.requirements.filter((req) => req.status !== "superseded" && req.scope === "in" && req.comment).map((req) => ({ requirementId: req.id, comment: req.comment }))
   };
 }
@@ -84643,7 +86157,7 @@ function requirements(state2) {
       scope: req.scope,
       scopeNote: req.scopeNote ?? null,
       comment: req.comment ?? null,
-      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision, review: reviewOf(c.review) })),
+      acceptanceCriteria: req.acceptanceCriteria.map((c) => ({ id: c.id, statement: c.statement, revision: c.revision, review: reviewOf(c.review), integrity: integrityOf(state2, "criterion", c.id, c.review.status === "accepted") })),
       serviceIds: req.serviceIds,
       assumptions: state2.assumptions.filter((a) => req.assumptionIds.includes(a.id) || a.requirementIds.includes(req.id)),
       storyIds: state2.stories.filter((s) => s.requirementIds.includes(req.id)).map((s) => s.id),
@@ -84656,7 +86170,8 @@ function stories(state2) {
     ...story,
     /** What confirm-story must carry: the digest of exactly this revision. The user is shown this content before approving. */
     contentFingerprint: storyContentFingerprint(story),
-    confirmation: storyConfirmation(story),
+    confirmation: storyConfirmation(state2, story),
+    integrity: integrityOf(state2, "story", story.id, story.status !== "superseded" && (story.confirmedBehavior || story.status === "confirmed")),
     coverage: state2.coverage.filter((entry) => entry.storyId === story.id).map((entry) => ({
       scenarioId: entry.scenarioId,
       storyRevision: entry.storyRevision ?? null,
@@ -84670,7 +86185,7 @@ function stories(state2) {
 }
 function decisions(state2) {
   return {
-    decisions: state2.decisions.map((decision) => ({ ...decision, contentFingerprint: decisionContentFingerprint(decision) })),
+    decisions: state2.decisions.map((decision) => ({ ...decision, contentFingerprint: decisionContentFingerprint(decision), integrity: integrityOf(state2, "decision", decision.id, decision.confirmed) })),
     assumptions: state2.assumptions,
     openQuestions: state2.openQuestions,
     unresolvedByStory: state2.stories.filter((story) => story.status !== "superseded" && story.unresolvedDecisionIds.length > 0).map((story) => ({ storyId: story.id, decisionIds: story.unresolvedDecisionIds }))
@@ -84694,7 +86209,8 @@ async function workPackages(repo) {
 }
 async function work(state2, repo) {
   return {
-    services: state2.services,
+    services: state2.services.map((service) => ({ ...service, integrity: integrityOf(state2, "service", service.id, service.status === "approved" || service.status === "completed") })),
+    contracts: state2.contracts.map((contract) => ({ id: contract.id, name: contract.name, status: contract.status, integrity: integrityOf(state2, "contract", contract.id, contract.status === "agreed") })),
     implementationUnits: state2.implementationUnits,
     changes: state2.changes,
     readiness: featureReadiness(state2),
@@ -84728,8 +86244,9 @@ function openItems(state2) {
     } : null
   };
 }
-function approvals(state2) {
-  return { summary: approvalSummary(state2), records: state2.approvals ?? [], note: "trust: client-response = the client's approval dialog answered (not independently authenticated); test-only = the test harness. Earlier records: independent-human = the same as client-response; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode (both removed in 0.1.0-alpha.49.2). No client identifies the person: actor stays empty." };
+function approvals(state2, repo) {
+  const records = annotationOf(state2)?.records ?? {};
+  return { summary: approvalSummary(state2), acceptance: acceptanceView(repo, state2), records: (state2.approvals ?? []).map((record5) => ({ ...record5, ledger: records[record5.id] ?? "accepted" })), note: "trust: client-response = the client's approval dialog answered (not independently authenticated); test-only = the test harness. Earlier records: independent-human = the same as client-response; review-page = a Save in the served page; host-attested = the host's permission or Trusted Client mode (both removed in 0.1.0-alpha.49.2). No client identifies the person: actor stays empty. ledger: accepted = a decision-ledger record on this computer (outside the repository) carries this approval; unverified = none does, so the record is only a line in the repository file and is not counted." };
 }
 function quality(state2) {
   const feature = evaluateFeature(state2);
@@ -84744,7 +86261,7 @@ function quality(state2) {
   };
 }
 function isLocalRepository(repo, name) {
-  return name === "." || name === (0, import_node_path33.basename)((0, import_node_path33.resolve)(repo)) || (0, import_node_path33.resolve)(name) === (0, import_node_path33.resolve)(repo);
+  return name === "." || name === (0, import_node_path34.basename)((0, import_node_path34.resolve)(repo)) || (0, import_node_path34.resolve)(name) === (0, import_node_path34.resolve)(repo);
 }
 function links(state2, repo) {
   const { items } = listWorkItems(repo);
@@ -84804,7 +86321,7 @@ async function inspectWorkflow(repo, args) {
       case "links":
         return links(state2, repo);
       case "approvals":
-        return approvals(state2);
+        return approvals(state2, repo);
     }
   };
   const body2 = {};
@@ -84850,7 +86367,7 @@ function developerWorkItemStatus(repo, workItemId) {
     revision: state2.workItem.revision,
     nextRole: resume.nextRole,
     requirementIds: resume.requirementIds,
-    services: state2.services.map((s) => ({ id: s.id, name: s.name, status: s.status, requirementIds: s.requirementIds, dependsOn: s.dependsOn })),
+    services: state2.services.map((s) => ({ id: s.id, name: s.name, status: s.status, integrity: integrityOf(state2, "service", s.id, s.status === "approved" || s.status === "completed"), requirementIds: s.requirementIds, dependsOn: s.dependsOn })),
     implementationUnits: state2.implementationUnits.map((u) => ({
       id: u.id,
       serviceId: u.serviceId,
@@ -84864,13 +86381,13 @@ function developerWorkItemStatus(repo, workItemId) {
 }
 
 // packages/mcp/dist/session-start.js
-var import_node_path35 = require("node:path");
-var import_node_fs32 = require("node:fs");
 var import_node_path36 = require("node:path");
+var import_node_fs34 = require("node:fs");
+var import_node_path37 = require("node:path");
 
 // node_modules/@praxis/knowledge/dist/index.js
-var import_node_fs31 = require("node:fs");
-var import_node_path34 = require("node:path");
+var import_node_fs33 = require("node:fs");
+var import_node_path35 = require("node:path");
 var import_gray_matter = __toESM(require_gray_matter(), 1);
 init_zod();
 var ObsoleteToolBindingSchema = external_exports.object({
@@ -84907,15 +86424,15 @@ var LEVEL_DIRS = [
   { level: "service", dir: "service" }
 ];
 function walkMarkdown(root) {
-  if (!(0, import_node_fs31.existsSync)(root))
+  if (!(0, import_node_fs33.existsSync)(root))
     return [];
   const out = [];
   const stack = [root];
   while (stack.length) {
     const cur = stack.pop();
-    for (const name of (0, import_node_fs31.readdirSync)(cur)) {
-      const p = (0, import_node_path34.join)(cur, name);
-      const st = (0, import_node_fs31.statSync)(p);
+    for (const name of (0, import_node_fs33.readdirSync)(cur)) {
+      const p = (0, import_node_path35.join)(cur, name);
+      const st = (0, import_node_fs33.statSync)(p);
       if (st.isDirectory())
         stack.push(p);
       else if (name.endsWith(".md"))
@@ -84925,7 +86442,7 @@ function walkMarkdown(root) {
   return out;
 }
 function parseRuleFile(path2, level) {
-  const raw = (0, import_node_fs31.readFileSync)(path2, "utf8");
+  const raw = (0, import_node_fs33.readFileSync)(path2, "utf8");
   const parsed = (0, import_gray_matter.default)(raw);
   const fm = RuleFrontmatterSchema.safeParse(parsed.data);
   if (!fm.success) {
@@ -84964,17 +86481,17 @@ function loadApplicableSlice(opts) {
   const byId = /* @__PURE__ */ new Map();
   const precedentsById = /* @__PURE__ */ new Map();
   for (const { level, dir } of LEVEL_DIRS) {
-    let base = (0, import_node_path34.join)(knowledgeRoot, dir);
+    let base = (0, import_node_path35.join)(knowledgeRoot, dir);
     if (level === "product" && product)
-      base = (0, import_node_path34.join)(base, product);
+      base = (0, import_node_path35.join)(base, product);
     if (level === "service" && service)
-      base = (0, import_node_path34.join)(base, service);
-    if (level !== "company" && !(0, import_node_fs31.existsSync)(base))
+      base = (0, import_node_path35.join)(base, service);
+    if (level !== "company" && !(0, import_node_fs33.existsSync)(base))
       continue;
-    for (const file2 of walkMarkdown((0, import_node_path34.join)(base, "rules"))) {
+    for (const file2 of walkMarkdown((0, import_node_path35.join)(base, "rules"))) {
       const result = parseRuleFile(file2, level);
       if ("error" in result) {
-        errors.push(`${(0, import_node_path34.relative)(knowledgeRoot, file2)}: ${result.error}`);
+        errors.push(`${(0, import_node_path35.relative)(knowledgeRoot, file2)}: ${result.error}`);
         continue;
       }
       const { roles, stages, id } = result.frontmatter;
@@ -84987,10 +86504,10 @@ function loadApplicableSlice(opts) {
       }
       byId.set(id, result);
     }
-    for (const file2 of walkMarkdown((0, import_node_path34.join)(base, "precedents"))) {
+    for (const file2 of walkMarkdown((0, import_node_path35.join)(base, "precedents"))) {
       const result = parseScopedPrecedentFile(file2, level);
       if ("error" in result) {
-        errors.push(`${(0, import_node_path34.relative)(knowledgeRoot, file2)}: ${result.error}`);
+        errors.push(`${(0, import_node_path35.relative)(knowledgeRoot, file2)}: ${result.error}`);
         continue;
       }
       const { roles, stages, id } = result.frontmatter;
@@ -85014,7 +86531,7 @@ function loadApplicableSlice(opts) {
   };
 }
 function parseScopedPrecedentFile(path2, level) {
-  const raw = (0, import_node_fs31.readFileSync)(path2, "utf8");
+  const raw = (0, import_node_fs33.readFileSync)(path2, "utf8");
   const parsed = (0, import_gray_matter.default)(raw);
   const fm = PrecedentFrontmatterSchema.safeParse(parsed.data);
   if (!fm.success) {
@@ -85047,8 +86564,8 @@ var DEFAULT_STAGE = {
 };
 var KNOWLEDGE_ROLE = { ba: "ba", architect: "architect", developer: "developer", quality: "qa" };
 var rel = (root, path2) => {
-  const r = (0, import_node_path35.relative)(root, path2);
-  return r === "" ? "." : r.split(import_node_path35.sep).join("/");
+  const r = (0, import_node_path36.relative)(root, path2);
+  return r === "" ? "." : r.split(import_node_path36.sep).join("/");
 };
 function sessionStart(repo, args, version4) {
   if (!SESSION_ROLES.includes(args.role ?? "")) {
@@ -85056,15 +86573,15 @@ function sessionStart(repo, args, version4) {
   }
   const role = args.role;
   const stage = role === "quality" ? DEFAULT_STAGE.quality : args.stage ?? DEFAULT_STAGE[role];
-  const root = (0, import_node_path35.resolve)(repo);
+  const root = (0, import_node_path36.resolve)(repo);
   const project = loadProjectConfig(root);
   let knowledge;
   if (!project.config.knowledge.path) {
     knowledge = { status: "skipped", message: "knowledge.path unset; rules not applied" };
   } else {
     try {
-      const knowledgeRoot = (0, import_node_path36.isAbsolute)(project.config.knowledge.path) ? project.config.knowledge.path : (0, import_node_path35.resolve)(root, project.config.knowledge.path);
-      if (!(0, import_node_fs32.existsSync)(knowledgeRoot))
+      const knowledgeRoot = (0, import_node_path37.isAbsolute)(project.config.knowledge.path) ? project.config.knowledge.path : (0, import_node_path36.resolve)(root, project.config.knowledge.path);
+      if (!(0, import_node_fs34.existsSync)(knowledgeRoot))
         throw new Error("path does not exist");
       const slice = loadApplicableSlice({
         knowledgeRoot,
@@ -85104,7 +86621,9 @@ function sessionStart(repo, args, version4) {
       resume = {
         workItemId: state2.workItem.id,
         phase: state2.phase,
-        mode: state2.mode,
+        // the mode in force: classic counts only when the decision ledger backs that choice (acceptance-integrity.ts)
+        mode: enforcedMode(state2),
+        modeIntegrity: modeIntegrity(state2),
         next: step,
         skills: skillPlan(state2.phase, state2.workItem.kind !== "feature"),
         briefing: buildResumeBriefing(state2),
@@ -85148,8 +86667,8 @@ function sessionStart(repo, args, version4) {
 }
 
 // packages/mcp/dist/canon-init.js
-var import_node_fs33 = require("node:fs");
-var import_node_path37 = require("node:path");
+var import_node_fs35 = require("node:fs");
+var import_node_path38 = require("node:path");
 var CANON_FOLDERS = ["epics", "br", "cr", "wp", "bugs", "baselines"];
 var CONFIG = `canon_roots:
   - vision.md
@@ -85181,10 +86700,10 @@ frontmatter status is machine-checked.
 var MAX_PRODUCT_LENGTH = 120;
 var MAX_EXISTING_BYTES = 64 * 1024;
 function checkExistingYaml(abs, rel2) {
-  const st = (0, import_node_fs33.lstatSync)(abs);
+  const st = (0, import_node_fs35.lstatSync)(abs);
   if (st.size > MAX_EXISTING_BYTES)
     throw new Error(`INVALID_INPUT: ${rel2} is unexpectedly large; fix or remove it, init does not repair it`);
-  const text = (0, import_node_fs33.readFileSync)(abs, "utf8");
+  const text = (0, import_node_fs35.readFileSync)(abs, "utf8");
   const problem = rel2.endsWith("config.yaml") ? configProblem(text) : countersProblem(text);
   if (problem)
     throw new Error(`INVALID_INPUT: ${rel2} is not a valid canon file (${problem}); fix or remove it, init does not repair it`);
@@ -85221,7 +86740,7 @@ ${heading}${VISION_BODY}`;
 function kindOf(abs, rel2) {
   let st;
   try {
-    st = (0, import_node_fs33.lstatSync)(abs);
+    st = (0, import_node_fs35.lstatSync)(abs);
   } catch (error64) {
     if (error64.code === "ENOENT")
       return "missing";
@@ -85240,15 +86759,15 @@ function planCanonInit(repoInput, options2 = {}) {
     throw new Error("INVALID_INPUT: product must not be empty");
   if (options2.product !== void 0 && options2.product.trim().length > MAX_PRODUCT_LENGTH)
     throw new Error(`INVALID_INPUT: product is longer than ${MAX_PRODUCT_LENGTH} characters`);
-  if (!(0, import_node_fs33.existsSync)(repoInput))
+  if (!(0, import_node_fs35.existsSync)(repoInput))
     throw new Error(`INVALID_INPUT: ${repoInput} does not exist`);
-  const repo = (0, import_node_fs33.realpathSync)((0, import_node_path37.resolve)(repoInput));
-  if (!(0, import_node_fs33.lstatSync)(repo).isDirectory())
+  const repo = (0, import_node_fs35.realpathSync)((0, import_node_path38.resolve)(repoInput));
+  if (!(0, import_node_fs35.lstatSync)(repo).isDirectory())
     throw new Error(`INVALID_INPUT: ${repo} is not a directory`);
   const create = [];
   const skipped = [];
   const dir = (rel2, mustBeDir = true) => {
-    const k = kindOf((0, import_node_path37.join)(repo, rel2), rel2);
+    const k = kindOf((0, import_node_path38.join)(repo, rel2), rel2);
     if (k === "file" && mustBeDir)
       throw new Error(`INVALID_INPUT: ${rel2} exists but is a file, expected a directory`);
     if (k === "dir")
@@ -85258,12 +86777,12 @@ function planCanonInit(repoInput, options2 = {}) {
     return k;
   };
   const file2 = (rel2, content) => {
-    const k = kindOf((0, import_node_path37.join)(repo, rel2), rel2);
+    const k = kindOf((0, import_node_path38.join)(repo, rel2), rel2);
     if (k === "dir")
       throw new Error(`INVALID_INPUT: ${rel2} exists but is a directory, expected a file`);
     if (k === "file") {
       if (rel2.startsWith(".ba/"))
-        checkExistingYaml((0, import_node_path37.join)(repo, rel2), rel2);
+        checkExistingYaml((0, import_node_path38.join)(repo, rel2), rel2);
       skipped.push(rel2);
     } else
       create.push({ path: rel2, kind: "file", content });
@@ -85289,22 +86808,22 @@ function applyCanonInit(plan) {
   const undo = [];
   try {
     for (const item of plan.create) {
-      const abs = (0, import_node_path37.join)(plan.repo, item.path);
+      const abs = (0, import_node_path38.join)(plan.repo, item.path);
       if (item.kind === "dir") {
-        (0, import_node_fs33.mkdirSync)(abs, { recursive: false });
-        undo.push(() => (0, import_node_fs33.rmSync)(abs, { recursive: true, force: true }));
+        (0, import_node_fs35.mkdirSync)(abs, { recursive: false });
+        undo.push(() => (0, import_node_fs35.rmSync)(abs, { recursive: true, force: true }));
       } else {
-        if ((0, import_node_fs33.existsSync)(abs))
+        if ((0, import_node_fs35.existsSync)(abs))
           throw new Error(`INVALID_INPUT: ${item.path} appeared since planning; refusing to overwrite`);
         const tmp = `${abs}.praxis-tmp-${process.pid}`;
-        (0, import_node_fs33.writeFileSync)(tmp, item.content ?? "", { encoding: "utf8", flag: "wx" });
+        (0, import_node_fs35.writeFileSync)(tmp, item.content ?? "", { encoding: "utf8", flag: "wx" });
         try {
-          (0, import_node_fs33.renameSync)(tmp, abs);
+          (0, import_node_fs35.renameSync)(tmp, abs);
         } catch (error64) {
-          (0, import_node_fs33.rmSync)(tmp, { force: true });
+          (0, import_node_fs35.rmSync)(tmp, { force: true });
           throw error64;
         }
-        undo.push(() => (0, import_node_fs33.rmSync)(abs, { force: true }));
+        undo.push(() => (0, import_node_fs35.rmSync)(abs, { force: true }));
       }
       written.push(item.path);
     }
@@ -85321,13 +86840,13 @@ function applyCanonInit(plan) {
 }
 
 // packages/mcp/dist/context-tool.js
-var import_node_fs35 = require("node:fs");
-var import_node_path39 = require("node:path");
+var import_node_fs37 = require("node:fs");
+var import_node_path40 = require("node:path");
 init_dist();
 
 // packages/mcp/dist/frontend-discover.js
-var import_node_fs34 = require("node:fs");
-var import_node_path38 = require("node:path");
+var import_node_fs36 = require("node:fs");
+var import_node_path39 = require("node:path");
 init_dist();
 var SKIP_DIRS = /* @__PURE__ */ new Set(["node_modules", ".git", "dist", "build", ".next", ".nuxt", "out", "coverage", ".turbo", ".cache", "vendor", "Pods", "DerivedData", ".gradle", "target", "__pycache__", ".venv", "venv"]);
 var MAX_FILES = 5e3;
@@ -85363,7 +86882,7 @@ function walk4(root) {
       return;
     let entries;
     try {
-      entries = (0, import_node_fs34.readdirSync)(dir).sort();
+      entries = (0, import_node_fs36.readdirSync)(dir).sort();
     } catch {
       return;
     }
@@ -85372,16 +86891,16 @@ function walk4(root) {
         truncated = true;
         return;
       }
-      const abs = (0, import_node_path38.join)(dir, name);
+      const abs = (0, import_node_path39.join)(dir, name);
       let stat;
       try {
-        stat = (0, import_node_fs34.lstatSync)(abs);
+        stat = (0, import_node_fs36.lstatSync)(abs);
         if (stat.isSymbolicLink())
           continue;
       } catch {
         continue;
       }
-      const rel2 = (0, import_node_path38.relative)(root, abs).split(import_node_path38.sep).join("/");
+      const rel2 = (0, import_node_path39.relative)(root, abs).split(import_node_path39.sep).join("/");
       if (stat.isDirectory()) {
         if (SKIP_DIRS.has(name) || depth >= MAX_DEPTH)
           continue;
@@ -85397,9 +86916,9 @@ function walk4(root) {
 }
 function readSmall(path2) {
   try {
-    if ((0, import_node_fs34.statSync)(path2).size > MAX_FILE_BYTES)
+    if ((0, import_node_fs36.statSync)(path2).size > MAX_FILE_BYTES)
       return void 0;
-    return (0, import_node_fs34.readFileSync)(path2, "utf8");
+    return (0, import_node_fs36.readFileSync)(path2, "utf8");
   } catch {
     return void 0;
   }
@@ -85477,8 +86996,8 @@ function tokensFromScript(text, file2, tokens) {
   return found;
 }
 function discoverFrontend(repoPath) {
-  const root = (0, import_node_fs34.existsSync)(repoPath) ? (0, import_node_fs34.realpathSync)((0, import_node_path38.resolve)(repoPath)) : (0, import_node_path38.resolve)(repoPath);
-  if (!(0, import_node_fs34.existsSync)(root) || !(0, import_node_fs34.statSync)(root).isDirectory())
+  const root = (0, import_node_fs36.existsSync)(repoPath) ? (0, import_node_fs36.realpathSync)((0, import_node_path39.resolve)(repoPath)) : (0, import_node_path39.resolve)(repoPath);
+  if (!(0, import_node_fs36.existsSync)(root) || !(0, import_node_fs36.statSync)(root).isDirectory())
     throw new Error(`INSPECT_PATH_INVALID: ${repoPath} is not a directory`);
   const { files, truncated } = walk4(root);
   const names = /* @__PURE__ */ new Set();
@@ -85511,14 +87030,14 @@ function discoverFrontend(repoPath) {
   const tokens = { colors: {}, fonts: {}, sources: [] };
   const ranked = [...styleFiles].sort((a, b) => Number(/(^|\/)(global|globals|index|app|main|variables|theme|tokens|root)[\w.-]*\./i.test(b)) - Number(/(^|\/)(global|globals|index|app|main|variables|theme|tokens|root)[\w.-]*\./i.test(a)));
   for (const file2 of ranked.slice(0, 40)) {
-    const text = readSmall((0, import_node_path38.join)(root, file2));
+    const text = readSmall((0, import_node_path39.join)(root, file2));
     if (text)
       tokensFromCss(text, file2, tokens);
     if (Object.keys(tokens.colors).length >= 6 && tokens.fonts.body && tokens.radius)
       break;
   }
   for (const file2 of themeFiles.slice(0, 20)) {
-    const text = readSmall((0, import_node_path38.join)(root, file2));
+    const text = readSmall((0, import_node_path39.join)(root, file2));
     if (text)
       (file2.endsWith(".json") || /\.(c|m)?[jt]s$/.test(file2)) && tokensFromScript(text, file2, tokens);
   }
@@ -85545,15 +87064,15 @@ function discoverFrontend(repoPath) {
 
 // packages/mcp/dist/context-tool.js
 function diagnoseContextTool(repo, input2) {
-  const root = (0, import_node_path39.resolve)(repo);
+  const root = (0, import_node_path40.resolve)(repo);
   const state2 = loadWorkflow(root, input2.workItemId);
   const files = discoverFrontend(root).instructionFiles;
   const scanned = files.slice(0, 20).map((file2) => {
     let findings = [];
     try {
-      const path2 = (0, import_node_path39.join)(root, file2);
-      if ((0, import_node_fs35.statSync)(path2).size < 2e5)
-        findings = scanUntrustedInstructions((0, import_node_fs35.readFileSync)(path2, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
+      const path2 = (0, import_node_path40.join)(root, file2);
+      if ((0, import_node_fs37.statSync)(path2).size < 2e5)
+        findings = scanUntrustedInstructions((0, import_node_fs37.readFileSync)(path2, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
     } catch {
     }
     return { file: file2, findings };
@@ -85561,13 +87080,13 @@ function diagnoseContextTool(repo, input2) {
   for (const repository of state2?.repositories ?? []) {
     if (!repository.localPath)
       continue;
-    const base = (0, import_node_path39.resolve)(root, repository.localPath);
+    const base = (0, import_node_path40.resolve)(root, repository.localPath);
     for (const file2 of (repository.inspection?.instructionFiles ?? []).slice(0, 20)) {
       let findings = [];
       try {
-        const path2 = (0, import_node_path39.join)(base, file2);
-        if ((0, import_node_fs35.statSync)(path2).size < 2e5)
-          findings = scanUntrustedInstructions((0, import_node_fs35.readFileSync)(path2, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
+        const path2 = (0, import_node_path40.join)(base, file2);
+        if ((0, import_node_fs37.statSync)(path2).size < 2e5)
+          findings = scanUntrustedInstructions((0, import_node_fs37.readFileSync)(path2, "utf8")).map(({ rule, severity, line }) => ({ rule, severity, line }));
       } catch {
       }
       scanned.push({ file: `${repository.id}:${file2}`, findings });
@@ -85593,8 +87112,8 @@ function diagnoseContextTool(repo, input2) {
 
 // packages/mcp/dist/repository-tools.js
 var import_node_child_process11 = require("node:child_process");
-var import_node_fs36 = require("node:fs");
-var import_node_path40 = require("node:path");
+var import_node_fs38 = require("node:fs");
+var import_node_path41 = require("node:path");
 init_dist();
 function requireState(repo, workItemId) {
   const state2 = loadWorkflow(repo, workItemId);
@@ -85604,7 +87123,7 @@ function requireState(repo, workItemId) {
 }
 function git2(path2, args) {
   try {
-    return (0, import_node_child_process11.execFileSync)("git", ["-C", path2, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1e4 }).trim() || void 0;
+    return (0, import_node_child_process11.execFileSync)("git", ["-C", path2, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 1e4, env: gitEnv() }).trim() || void 0;
   } catch {
     return void 0;
   }
@@ -85631,10 +87150,10 @@ function inspectRepository(repo, input2) {
     throw new Error(`INVALID_INPUT: repository ${input2.repositoryId} is not registered; record it first with the register-repository command`);
   if (!entry.localPath)
     throw new Error(`INSPECT_PATH_INVALID: repository ${entry.id} has no localPath; register it with a local checkout to inspect it`);
-  const path2 = (0, import_node_path40.isAbsolute)(entry.localPath) ? entry.localPath : (0, import_node_path40.resolve)(repo, entry.localPath);
-  if (!(0, import_node_fs36.existsSync)(path2) || !(0, import_node_fs36.statSync)(path2).isDirectory())
+  const path2 = (0, import_node_path41.isAbsolute)(entry.localPath) ? entry.localPath : (0, import_node_path41.resolve)(repo, entry.localPath);
+  if (!(0, import_node_fs38.existsSync)(path2) || !(0, import_node_fs38.statSync)(path2).isDirectory())
     throw new Error(`INSPECT_PATH_INVALID: ${path2} is not a directory`);
-  const top = (0, import_node_fs36.readdirSync)(path2).filter((n) => n !== ".git").sort();
+  const top = (0, import_node_fs38.readdirSync)(path2).filter((n) => n !== ".git").sort();
   const frameworks = /* @__PURE__ */ new Set();
   const entries = [];
   for (const name of top.slice(0, 60)) {
@@ -85643,7 +87162,7 @@ function inspectRepository(repo, input2) {
       frameworks.add(manifest[1]);
     const isDir = (() => {
       try {
-        return (0, import_node_fs36.statSync)((0, import_node_path40.join)(path2, name)).isDirectory();
+        return (0, import_node_fs38.statSync)((0, import_node_path41.join)(path2, name)).isDirectory();
       } catch {
         return false;
       }
@@ -85691,10 +87210,10 @@ function repositoryBrief(repo, input2) {
 // packages/mcp/dist/review-service.js
 var import_node_child_process12 = require("node:child_process");
 var import_node_http2 = require("node:http");
-var import_node_crypto20 = require("node:crypto");
-var import_node_fs37 = require("node:fs");
-var import_node_os10 = require("node:os");
-var import_node_path41 = require("node:path");
+var import_node_crypto21 = require("node:crypto");
+var import_node_fs39 = require("node:fs");
+var import_node_os11 = require("node:os");
+var import_node_path42 = require("node:path");
 init_dist();
 var IDLE_MS = 4 * 60 * 60 * 1e3;
 var MAX_BODY = 1e6;
@@ -85704,7 +87223,7 @@ var server2;
 var port2 = 0;
 var isReviewView = (value) => typeof value === "string" && REVIEW_VIEWS.includes(value);
 function reviewDir(repo, workItemId) {
-  return (0, import_node_path41.join)(repo, ".praxis", "workflow", "reviews", workItemId);
+  return (0, import_node_path42.join)(repo, ".praxis", "workflow", "reviews", workItemId);
 }
 function requireState2(repo, workItemId) {
   const state2 = loadWorkflow(repo, workItemId);
@@ -85727,7 +87246,7 @@ function progressFor(state2, view) {
 function safeEqual2(a, b) {
   const x = Buffer.from(a);
   const y = Buffer.from(b);
-  return x.length === y.length && (0, import_node_crypto20.timingSafeEqual)(x, y);
+  return x.length === y.length && (0, import_node_crypto21.timingSafeEqual)(x, y);
 }
 function outcome(repo, workItemId, view, applied, conflicts, stale, summary) {
   const state2 = requireState2(repo, workItemId);
@@ -85741,11 +87260,11 @@ function note(repo, workItemId, view, how, summary) {
   }
 }
 var handedOver = /* @__PURE__ */ new Map();
-var handoverKey = (repo, workItemId, view) => `${(0, import_node_path41.resolve)(repo)}
+var handoverKey = (repo, workItemId, view) => `${(0, import_node_path42.resolve)(repo)}
 ${workItemId}
 ${view}`;
 function takeHandover(repo, workItemId, view) {
-  const entries = [...handedOver.entries()].filter(([key2]) => key2.startsWith(`${(0, import_node_path41.resolve)(repo)}
+  const entries = [...handedOver.entries()].filter(([key2]) => key2.startsWith(`${(0, import_node_path42.resolve)(repo)}
 ${workItemId ?? ""}`) && (!view || key2.endsWith(`
 ${view}`)));
   const latest = entries.sort((a, b) => b[1].at - a[1].at)[0];
@@ -85765,25 +87284,33 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
   const commands = plan.commands.map((c) => parseWorkflowCommand(c));
   const gated = plan.affectsStories || commands.some((c) => needsApprovalWhenHandedOver(c));
   const batch = gated ? commands : [];
+  const baseState = persistedDigest(state2);
   let approval;
   if (gated) {
-    const request = reviewApprovalRequest(batch, `Record your ${submission.view} review decisions and changes (${plan.details.length} item(s))`);
+    const request = reviewApprovalRequest(batch, `Record your ${submission.view} review decisions and changes (${plan.details.length} item(s))`, baseState);
     approval = await obtainUserApproval({ ...request, description: plan.details.map((s) => `- ${s}`).join("\n") }, { confirmation, repo });
-  }
-  if (approval) {
-    const fresh = submissionToCommands(requireState2(repo, id), submission);
-    if (canonicalText(fresh.commands) !== canonicalText(plan.commands) || canonicalText(fresh.details) !== canonicalText(plan.details) || fresh.conflicts.length !== plan.conflicts.length) {
-      throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
-    }
   }
   const conflicts = [...plan.conflicts];
   let applied = 0;
-  for (const command of commands) {
-    try {
-      applyRuntimeCommand(repo, command, id, approval ? { via: "approved", approval, batch } : void 0);
-      applied += 1;
-    } catch (error64) {
-      conflicts.push({ item: String(command.action), reason: error64 instanceof Error ? error64.message.replace(/^[A-Z_]+: /, "") : String(error64) });
+  if (approval) {
+    const done = applyApprovedBatch(repo, id, commands, { via: "approved", approval, batch, baseState }, (fresh) => {
+      const again = submissionToCommands(fresh, submission);
+      if (canonicalText(again.commands) !== canonicalText(plan.commands) || canonicalText(again.details) !== canonicalText(plan.details) || again.conflicts.length !== plan.conflicts.length) {
+        throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
+      }
+    });
+    applied = done.applied;
+    conflicts.push(...done.conflicts);
+  } else {
+    for (const command of commands) {
+      try {
+        applyRuntimeCommand(repo, command, id);
+        applied += 1;
+      } catch (error64) {
+        if (error64 instanceof WorkflowError && error64.code === DECISION_LEDGER_UNAVAILABLE)
+          throw error64;
+        conflicts.push({ item: String(command.action), reason: error64 instanceof Error ? error64.message.replace(/^[A-Z_]+: /, "") : String(error64) });
+      }
     }
   }
   if (applied > 0)
@@ -85791,16 +87318,16 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
   return outcome(repo, id, submission.view, applied, conflicts, plan.stale, plan.summary);
 }
 function readSubmissionFile(repo, file2) {
-  const root = (0, import_node_fs37.realpathSync)((0, import_node_path41.resolve)(repo));
-  const downloads = (0, import_node_path41.join)((0, import_node_os10.homedir)(), "Downloads");
-  const path2 = (0, import_node_fs37.realpathSync)((0, import_node_path41.resolve)(root, file2));
-  const inside = path2 === root || path2.startsWith(`${root}${import_node_path41.sep}`);
-  const inDownloads = (0, import_node_fs37.existsSync)(downloads) && path2.startsWith(`${(0, import_node_fs37.realpathSync)(downloads)}${import_node_path41.sep}`);
-  if (!inside && !inDownloads)
+  const root = (0, import_node_fs39.realpathSync)((0, import_node_path42.resolve)(repo));
+  const downloads = (0, import_node_path42.join)((0, import_node_os11.homedir)(), "Downloads");
+  const path2 = (0, import_node_fs39.realpathSync)((0, import_node_path42.resolve)(root, file2));
+  const inside2 = path2 === root || path2.startsWith(`${root}${import_node_path42.sep}`);
+  const inDownloads = (0, import_node_fs39.existsSync)(downloads) && path2.startsWith(`${(0, import_node_fs39.realpathSync)(downloads)}${import_node_path42.sep}`);
+  if (!inside2 && !inDownloads)
     throw new Error("INVALID_INPUT: the decisions file must be inside the repository or in Downloads");
-  if ((0, import_node_fs37.statSync)(path2).size > MAX_BODY)
+  if ((0, import_node_fs39.statSync)(path2).size > MAX_BODY)
     throw new Error("INVALID_INPUT: the decisions file is too large");
-  return JSON.parse((0, import_node_fs37.readFileSync)(path2, "utf8"));
+  return JSON.parse((0, import_node_fs39.readFileSync)(path2, "utf8"));
 }
 function json3(res, status, body2) {
   res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" });
@@ -85844,7 +87371,7 @@ async function handle2(req, res) {
     }
     try {
       const state2 = requireState2(session.repo, session.workItemId);
-      const saveToken = (0, import_node_crypto20.randomBytes)(24).toString("hex");
+      const saveToken = (0, import_node_crypto21.randomBytes)(24).toString("hex");
       session.saveTokens.add(saveToken);
       if (session.saveTokens.size > 20)
         session.saveTokens.delete(session.saveTokens.values().next().value);
@@ -85905,11 +87432,11 @@ async function openInBrowser(url4) {
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
   return new Promise((done) => {
     try {
-      const dir = (0, import_node_fs37.mkdtempSync)((0, import_node_path41.join)((0, import_node_os10.tmpdir)(), "praxis-open-"));
-      (0, import_node_fs37.chmodSync)(dir, 448);
-      const page = (0, import_node_path41.join)(dir, "open-review.html");
-      (0, import_node_fs37.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><title>Opening review</title><meta http-equiv="refresh" content="0;url=${url4.replace(/"/g, "&quot;")}"><p>Opening the review... <a href="${url4.replace(/"/g, "&quot;")}">continue</a></p>`, { mode: 384 });
-      setTimeout(() => (0, import_node_fs37.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
+      const dir = (0, import_node_fs39.mkdtempSync)((0, import_node_path42.join)((0, import_node_os11.tmpdir)(), "praxis-open-"));
+      (0, import_node_fs39.chmodSync)(dir, 448);
+      const page = (0, import_node_path42.join)(dir, "open-review.html");
+      (0, import_node_fs39.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><title>Opening review</title><meta http-equiv="refresh" content="0;url=${url4.replace(/"/g, "&quot;")}"><p>Opening the review... <a href="${url4.replace(/"/g, "&quot;")}">continue</a></p>`, { mode: 384 });
+      setTimeout(() => (0, import_node_fs39.rmSync)(dir, { recursive: true, force: true }), 15e3).unref();
       const child = (0, import_node_child_process12.spawn)(opener, [page], { detached: true, stdio: "ignore" });
       const timer = setTimeout(() => {
         child.unref();
@@ -85934,9 +87461,9 @@ async function renderReviewTool(repo, input2) {
   const view = input2.view;
   const state2 = requireState2(repo, input2.workItemId);
   const dir = reviewDir(repo, state2.workItem.id);
-  (0, import_node_fs37.mkdirSync)(dir, { recursive: true });
-  const file2 = (0, import_node_path41.join)(dir, `${view}.html`);
-  (0, import_node_fs37.writeFileSync)(file2, renderReview(state2, view, { reviewId: `${view}-${state2.workItem.id}`, generatedAt: (/* @__PURE__ */ new Date()).toISOString() }));
+  (0, import_node_fs39.mkdirSync)(dir, { recursive: true });
+  const file2 = (0, import_node_path42.join)(dir, `${view}.html`);
+  (0, import_node_fs39.writeFileSync)(file2, renderReview(state2, view, { reviewId: `${view}-${state2.workItem.id}`, generatedAt: (/* @__PURE__ */ new Date()).toISOString() }));
   let url4;
   let opened = false;
   if (input2.serve !== false) {
@@ -85945,8 +87472,8 @@ async function renderReviewTool(repo, input2) {
     if (live && !input2.reopen) {
       return { view, workItemId: state2.workItem.id, file: file2, url: `http://127.0.0.1:${p}/r/${live.id}`, openedInBrowser: true, reused: true, fingerprint: live.shown?.fingerprint ?? null, baseState: live.shown?.baseState ?? null, progress: progressFor(state2, view), how: "This review is already open in the user's browser (opened less than ten minutes ago); it shows the state at the time it was opened. The url in this result is NOT a working link (the working link is secret and only the tab Praxis opened has it): tell the user to use that tab, or call again with reopen true to open a fresh page, which is needed whenever the content changed or the tab was closed.", note: "The page is a view. The workflow state stays the source of truth; an agent cannot record the user's acceptance on their behalf." };
     }
-    const id = (0, import_node_crypto20.randomBytes)(8).toString("hex");
-    const loadToken = (0, import_node_crypto20.randomBytes)(24).toString("hex");
+    const id = (0, import_node_crypto21.randomBytes)(8).toString("hex");
+    const loadToken = (0, import_node_crypto21.randomBytes)(24).toString("hex");
     sessions.set(id, { id, loadToken, loadUntil: Date.now() + LOAD_TOKEN_MS, saveTokens: /* @__PURE__ */ new Set(), repo, workItemId: state2.workItem.id, view, lastUsed: Date.now(), shown: { fingerprint: fingerprintFor(state2, view), baseState: workStateStamp(state2) } });
     const secretUrl = `http://127.0.0.1:${p}/r/${id}?t=${loadToken}`;
     opened = await openInBrowser(secretUrl);
@@ -85954,7 +87481,7 @@ async function renderReviewTool(repo, input2) {
     if (created2 && opened)
       created2.openedAt = Date.now();
     if (!opened && !isShippedBundle() && process.env.PRAXIS_TEST_REVIEW_NO_BROWSER === "1")
-      (0, import_node_fs37.writeFileSync)((0, import_node_path41.join)(dir, `${view}.url`), secretUrl);
+      (0, import_node_fs39.writeFileSync)((0, import_node_path42.join)(dir, `${view}.url`), secretUrl);
     url4 = `http://127.0.0.1:${p}/r/${id}`;
   }
   return {
@@ -86051,7 +87578,7 @@ async function approvalPlan(args, ctx, opts) {
     ...request.subject ? { subjectDigest: subjectDigest(request.subject) } : {},
     note: "This is what the user is asked to approve. It runs nothing."
   });
-  if (typeof targetArgs.repo === "string" && (0, import_node_path42.resolve)(targetArgs.repo) !== (0, import_node_path42.resolve)(ctx.repo)) {
+  if (typeof targetArgs.repo === "string" && (0, import_node_path43.resolve)(targetArgs.repo) !== (0, import_node_path43.resolve)(ctx.repo)) {
     throw new Error(`INVALID_INPUT: toolArguments.repo (${targetArgs.repo}) is not the repository this plan is for (${ctx.repo}); pass that repository as repo`);
   }
   const targetDef = TOOLS.find((t) => t.name === target);
@@ -86114,8 +87641,47 @@ function withClientReport(data, client) {
   return data;
 }
 function approvalView(item) {
-  const decidedBy = item.channel === "client-elicitation" ? "client-dialog" : item.channel === "host-permission" ? "host-prompt" : item.channel;
-  return { action: item.action, channel: item.channel, assurance: item.assurance, decidedBy, personVerified: false, decidedAt: item.decidedAt };
+  const decidedBy = item.decidedBy ?? (item.channel === "client-elicitation" ? "client-dialog" : item.channel === "host-permission" ? "host-prompt" : item.channel);
+  return { action: item.action, ...approvalLabels(item.channel, decidedBy), assurance: item.assurance, decidedAt: item.decidedAt };
+}
+var JIRA_WRITERS = /* @__PURE__ */ new Set([
+  "praxis_ba_apply",
+  "praxis_architect_apply",
+  "praxis_developer_claim",
+  "praxis_developer_release",
+  "praxis_developer_complete",
+  "praxis_developer_complete_recovery_apply",
+  "praxis_quality_apply",
+  "praxis_developer_git_link_jira_apply"
+]);
+var labelled = (name, args) => PROTECTED_TOOLS.has(name) || name === "praxis_review_apply" || name === "praxis_approval_journal" && args.amend === true;
+function withAuthorization(name, args, envelope) {
+  if (!labelled(name, args))
+    return envelope;
+  const given = approvalsGivenInThisCall().map(approvalView);
+  const data = envelope.data && typeof envelope.data === "object" && !Array.isArray(envelope.data) ? envelope.data : { result: envelope.data };
+  const last = given[given.length - 1];
+  const fromError = typeof data.decidedBy === "string" ? approvalLabels(typeof data.channel === "string" ? data.channel : "none", data.decidedBy) : void 0;
+  const labels = last ? approvalLabels(last.channel, last.decidedBy) : fromError ?? approvalLabels("none", envelope.ok ? "agent" : "nobody");
+  const jira = JIRA_WRITERS.has(name) ? (() => {
+    const reachable = inheritedCredentialVariables().includes("PRAXIS_JIRA_TOKEN");
+    return {
+      independentlyApproved: false,
+      independentlyApprovedReason: reachable ? "PRAXIS_JIRA_TOKEN is in the environment this server inherited: any process started the same way, the agent's shell included, can read it and call Jira directly, without Praxis or its dialog." : "no approval authority independent of this computer exists in this release; the client's dialog is not independent of the agent."
+    };
+  })() : {};
+  return {
+    ...envelope,
+    data: {
+      ...data,
+      authorization: {
+        ...labels,
+        approvals: given,
+        ...given.length ? {} : { note: envelope.ok ? "No approval was asked in this call: nothing in it needed one (an agent-authored record, or nothing to change)." : "Nothing was approved in this call." },
+        ...jira
+      }
+    }
+  };
 }
 function withApprovalNote(name, data) {
   if (!PROTECTED_TOOLS.has(name))
@@ -86145,7 +87711,7 @@ function preflight(name, args, ctx, version4) {
       operation: name,
       version: version4,
       code: "APPROVAL_WITHDRAWN",
-      data: { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false },
+      data: { executed: false, outcome: "withdrawn", ...approvalLabels("none", "agent"), rejected: false },
       errors: [`${name} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision.`]
     });
   }
@@ -86167,7 +87733,8 @@ async function callTool(name, rawArgs, opts) {
   const page = approvalPageEnabled() ? approvalPageChannel({ repo, ...label ? { client: label } : {}, ...opts.extra?.signal ? { signal: opts.extra.signal } : {} }) : void 0;
   const dialog = opts.approvalChannel ? automationGuarded(opts.approvalChannel, repo) : void 0;
   const channel = dialog ? dialogWithPageFallback(dialog, page, { ...clientKey(opts.client) ? { clientKey: clientKey(opts.client) } : {}, repo }) : page;
-  return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
+  const envelope = await withApprovalChannel(channel, async () => withAuthorization(name, args, await callToolInner(name, rawArgs, opts)));
+  return redactEnvelope(envelope);
 }
 async function callToolInner(name, rawArgs, opts) {
   const ops = await loadOperations();
@@ -86190,7 +87757,6 @@ async function callToolInner(name, rawArgs, opts) {
   const ctx = ctxFromArgs(args, {
     ...opts.extra
   });
-  ctx.instanceId = str3(args.instanceId) ?? process.env.PRAXIS_JIRA_BASE_URL;
   ops.loadPraxisDotenv(ctx.repo);
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
@@ -86221,7 +87787,7 @@ async function callToolInner(name, rawArgs, opts) {
         version: opts.version,
         data: {
           ...audit,
-          note: audit.toAmend.length ? `${audit.toAmend.length} entr${audit.toAmend.length === 1 ? "y attributes" : "ies attribute"} a rejection to the user that the evidence shows was not theirs. Show the user this list; to record the corrections, call again with amend=true and confirmation=YES (the user approves exactly these corrections). Existing lines are never changed.` : "No entry claims a decision of the user that the evidence contradicts."
+          note: audit.toAmend.length ? `${audit.toAmend.length} entr${audit.toAmend.length === 1 ? "y attributes" : "ies attribute"} a rejection to the user that the evidence shows was not theirs. Show the user this list; to record the corrections, call again with amend=true and confirmation=YES (the client's approval dialog shows exactly these corrections). Existing lines are never changed.` : "No entry claims a decision of the user that the evidence contradicts."
         }
       });
     }
@@ -86274,7 +87840,7 @@ async function callToolInner(name, rawArgs, opts) {
     const message = ops.redact(explainCommandError(err) ?? (err instanceof Error ? err.message : String(err)));
     const coded = err;
     const prefixed = explainCommandError(err) ? "INVALID_INPUT" : message.match(/^(INVALID_INPUT|WORKFLOW_MISSING|INSPECT_PATH_INVALID|REVIEW_MISMATCH|REVIEW_CHANGED):/)?.[1];
-    const code = err instanceof WorkflowError ? err.code : typeof prefixed === "string" && prefixed ? prefixed : err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
+    const code = err instanceof WorkflowError ? err.code : typeof prefixed === "string" && prefixed ? prefixed : err instanceof ops.PraxisOpError ? err.code : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT)|DECISION_LEDGER_UNAVAILABLE$|CREDENTIAL_SOURCE_UNTRUSTED$|ACCEPTANCE_(UNVERIFIED|INVALID)$|INDEPENDENT_AUTHORITY_UNAVAILABLE$)/.test(coded.code) ? coded.code : message.startsWith("FINGERPRINT_MISMATCH") ? "FINGERPRINT_MISMATCH" : name.startsWith("praxis_workflow") ? "INVALID_INPUT" : "EXTERNAL_SERVICE_ERROR";
     const details = err instanceof WorkflowError ? { ...err.details ?? {} } : err instanceof ops.PraxisOpError ? {
       ...err.stage ? { stage: err.stage } : {},
       ...typeof err.durationMs === "number" ? { durationMs: err.durationMs } : {},
@@ -86301,7 +87867,7 @@ function hydrateWorkflowCommand(repo, raw) {
   let real;
   try {
     real = containedPath(repo, relative7);
-    const info = (0, import_node_fs38.statSync)(real);
+    const info = (0, import_node_fs40.statSync)(real);
     if (!info.isFile())
       throw new Error("UNSAFE_PATH");
     if (info.size > MAX_IMPLEMENTATION_BYTES)
@@ -86311,7 +87877,7 @@ function hydrateWorkflowCommand(repo, raw) {
       throw error64;
     throw new Error("INVALID_INPUT: implementation path escapes the repository or is not a regular file inside it");
   }
-  command.implementationSource = (0, import_node_fs38.readFileSync)(real, "utf8");
+  command.implementationSource = (0, import_node_fs40.readFileSync)(real, "utf8");
   delete command.implementationPath;
   return command;
 }
@@ -86320,7 +87886,7 @@ async function runPlanningTool(name, args, repo, role) {
   switch (name) {
     case "praxis_canon_init_preview": {
       const plan = planCanonInit(repo, { product: str3(args.product) });
-      return { dryRun: true, repo: plan.repo, willCreate: plan.create.map((c) => c.path), alreadyThere: plan.skipped, next: plan.next, note: "Nothing was written. praxis_canon_init_apply creates these paths after the user approves them." };
+      return { dryRun: true, repo: plan.repo, willCreate: plan.create.map((c) => c.path), alreadyThere: plan.skipped, next: plan.next, note: "Nothing was written. praxis_canon_init_apply creates these paths after the client's approval dialog approves them." };
     }
     case "praxis_canon_init_apply": {
       const plan = planCanonInit(repo, { product: str3(args.product) });
@@ -86365,14 +87931,14 @@ Left untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
       return applied;
     }
     case "praxis_frontend_discover": {
-      const registered = str3(args.repositoryId);
+      const registered2 = str3(args.repositoryId);
       let target = str3(args.path) ?? repo;
-      if (registered) {
+      if (registered2) {
         const state2 = loadWorkflow(repo, workItemId);
-        const entry = state2?.repositories.find((r) => r.id === registered);
+        const entry = state2?.repositories.find((r) => r.id === registered2);
         if (!entry?.localPath)
-          throw new Error(`INVALID_INPUT: repository ${registered} is not registered with a local path`);
-        target = (0, import_node_path42.resolve)(repo, entry.localPath);
+          throw new Error(`INVALID_INPUT: repository ${registered2} is not registered with a local path`);
+        target = (0, import_node_path43.resolve)(repo, entry.localPath);
       }
       return discoverFrontend(target);
     }
@@ -86386,22 +87952,22 @@ Left untouched (already there): ${plan.skipped.join(", ") || "nothing"}.`,
 }
 function assertImplementationPath(repo, command, workItemId) {
   const state2 = loadWorkflow(repo, workItemId);
-  if (!state2 || state2.mode !== "guided")
+  if (!state2 || enforcedMode(state2) !== "guided")
     return;
   const service = state2.services.find((s) => s.id === command.serviceId);
   if (!service)
     return;
-  const registered = state2.repositories.find((r) => r.id === service.repositoryId);
-  const root = (0, import_node_fs38.realpathSync)((0, import_node_path42.resolve)(repo, service.localPath ?? registered?.localPath ?? "."));
+  const registered2 = state2.repositories.find((r) => r.id === service.repositoryId);
+  const root = (0, import_node_fs40.realpathSync)((0, import_node_path43.resolve)(repo, service.localPath ?? registered2?.localPath ?? "."));
   let target;
   try {
-    target = (0, import_node_fs38.realpathSync)((0, import_node_path42.resolve)(root, String(command.path ?? "")));
-    if (!(0, import_node_fs38.statSync)(target).isFile())
+    target = (0, import_node_fs40.realpathSync)((0, import_node_path43.resolve)(root, String(command.path ?? "")));
+    if (!(0, import_node_fs40.statSync)(target).isFile())
       throw new Error("not a file");
   } catch {
     throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is not an existing file in ${service.id}'s checkout (${root}); record real work only`);
   }
-  if (target !== root && !target.startsWith(`${root}${import_node_path42.sep}`))
+  if (target !== root && !target.startsWith(`${root}${import_node_path43.sep}`))
     throw new Error(`INVALID_INPUT: implementation path ${String(command.path)} is outside ${service.id}'s checkout`);
 }
 var MAX_COMMAND_FILE = 4 * 1024 * 1024;
@@ -86413,10 +87979,10 @@ function withCommandFile(args, repo) {
   if (typeof args.commandFile !== "string")
     throw new Error("INVALID_INPUT: commandFile must be a path inside the repository");
   const file2 = containedPath(repo, args.commandFile);
-  if (!(0, import_node_fs38.statSync)(file2).isFile() || (0, import_node_fs38.statSync)(file2).size > MAX_COMMAND_FILE)
+  if (!(0, import_node_fs40.statSync)(file2).isFile() || (0, import_node_fs40.statSync)(file2).size > MAX_COMMAND_FILE)
     throw new Error("INVALID_INPUT: commandFile must be a regular file of at most 4 MB");
   const { commandFile: _file4, ...rest } = args;
-  return { ...rest, command: (0, import_node_fs38.readFileSync)(file2, "utf8") };
+  return { ...rest, command: (0, import_node_fs40.readFileSync)(file2, "utf8") };
 }
 function compactPreview(preview, verbose) {
   if (verbose || !preview || typeof preview !== "object")
@@ -86454,10 +88020,10 @@ async function runWorkflowTool(name, rawArgs, repo, version4) {
   }
   if (parsed.action === "verify-stories") {
     const startedAt = (/* @__PURE__ */ new Date()).toISOString();
-    const runId = `run-${(0, import_node_crypto21.randomUUID)()}`;
+    const runId = `run-${(0, import_node_crypto22.randomUUID)()}`;
     const isPreview = name === "praxis_workflow_preview";
     const current = loadWorkflow(repo, workItemId);
-    const artifactsDir = !isPreview && current ? (0, import_node_path42.resolve)(repo, ".praxis", "quality", current.workItem.id, "artifacts", runId) : void 0;
+    const artifactsDir = !isPreview && current ? (0, import_node_path43.resolve)(repo, ".praxis", "quality", current.workItem.id, "artifacts", runId) : void 0;
     const recorded = await buildStoryVerification(repo, parsed.independentRerun === true, workItemId, artifactsDir);
     const { meta: meta5, evidenceSources, ...command } = recorded;
     const source = { kind: "executed", runner: "praxis-runtime:verify-stories", runId, startedAt, finishedAt: (/* @__PURE__ */ new Date()).toISOString(), artifacts: [] };
@@ -86677,10 +88243,10 @@ function createPraxisMcpServer(opts) {
           recordDiagnostic({ event: "input_required", callId, tool: tool.name, ms: Date.now() - started });
           const key = approvalKey(error64.request);
           noteDialogAsked(key);
-          return inputRequired({ inputRequests: { [key]: inputRequired.elicit(elicitParams(error64.request)) } });
+          return inputRequired({ inputRequests: { [key]: inputRequired.elicit(redactEnvelope(elicitParams(error64.request))) } });
         }
         recordDiagnostic({ event: "tool_failed", callId, tool: tool.name, ms: Date.now() - started, error: error64 instanceof Error ? error64.name : "unknown" });
-        throw error64;
+        throw redactError(error64);
       }
       recordDiagnostic({
         event: "tool_finished",
@@ -86690,10 +88256,11 @@ function createPraxisMcpServer(opts) {
         ok: envelope.ok,
         code: envelope.code ?? null
       });
+      const safe = redactEnvelope(envelope);
       return {
-        content: [{ type: "text", text: JSON.stringify(envelope) }],
-        structuredContent: envelope,
-        isError: !envelope.ok
+        content: [{ type: "text", text: JSON.stringify(safe) }],
+        structuredContent: safe,
+        isError: !safe.ok
       };
     });
   }
@@ -86712,6 +88279,7 @@ function startStdioServer(opts) {
   } catch (err) {
     failStart("PRAXIS_MCP_ROLE_INVALID", err instanceof PraxisMcpRoleError ? err : err);
   }
+  installOutputRedaction();
   logStderr("[praxis-mcp] starting");
   logStderr(`[praxis-mcp] version=${version4}`);
   logStderr(`[praxis-mcp] role=${role}`);

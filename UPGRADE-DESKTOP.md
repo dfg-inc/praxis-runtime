@@ -1,6 +1,6 @@
 # Upgrading the Claude Desktop extension (local build)
 
-This procedure installs `claude-extensions/praxis-runtime.mcpb` (0.1.0-alpha.49.2) over an older
+This procedure installs `claude-extensions/praxis-runtime.mcpb` (0.1.0-alpha.49.3) over an older
 Praxis Runtime in Claude Desktop **Chat** (Code, Cowork and the Claude CLI use the marketplace plugin instead). It has **not** been
 executed through Claude Desktop yet: the sections marked *check* are how you confirm it worked.
 Nothing here publishes, tags or bumps a version.
@@ -19,6 +19,8 @@ If Desktop treats the file as the same version, uninstall first rather than rely
 | `praxis_doctor` | Flags only | `providers`, `approval`, `nextSteps` |
 
 Approvals happen only in the client's own approval dialog (MCP elicitation): before a commit, push, merge request, Jira write, Story confirmation or recorded review decision runs, Praxis shows the exact action there and runs it only if it is approved. As of 0.1.0-alpha.49.2 there are no approval settings: the *Approval mode* extension setting and Trusted Client are removed, because a setting an agent or a repository can write cannot stand in for your approval. Claude Desktop Chat shows no approval dialog, so protected actions are **not executed** there (`praxis_doctor` → `approval.mode: no-dialog`): Praxis returns the preview, says nobody rejected it, and you apply it from the Claude Code CLI in a terminal. Read-only tools, previews and reviews keep working. Nothing else needs installing: no service, no system account, no administrator rights. See `praxis-core/docs/desktop-approvals.md` and `docs/user-approval.md`. If you ever started installing the removed native Approval Service, see `praxis-core/docs/cleanup-native-approval-service.md`.
+
+As of 0.1.0-alpha.49.3, an acceptance in a Work Item counts only when Praxis's decision ledger outside the repository backs it (`praxis-core/docs/acceptance-integrity.md`). Acceptances recorded by an earlier version read `unverified` until you accept them again in the review, from the Claude Code CLI. Results label every approval `personVerified: false`, `independentlyVerified: false`, and `praxis_doctor` → `credentialExposure` names (never shows) the credential variables the Runtime inherited.
 
 ## 1. Verify the artifact
 
@@ -119,8 +121,8 @@ There are no approval settings. In Claude Desktop (Chat, Cowork and the Code tab
 Expected after install (Desktop → ask Praxis Doctor, then list tools):
 
 - **62 MCP tools**, the same set as the Claude Code plugin; `praxis_doctor` → `build.tools.count` says the same.
-- Role plugins: install the four `praxis-<role>.zip` files from the `v0.1.0-alpha.49.2` Releases of `dfg-inc/praxis-ba`, `-architect`, `-developer` and `-quality`. Their `session-start` skills call `praxis_session_start`.
-- `.mcpb` sha256 `bb87dcc80571e717e3d45c450382a5dbba5b91518710d06a4b2c97ff1437c44e` (the file attached to the `v0.1.0-alpha.49.2` Release of `dfg-inc/praxis-runtime`).
+- Role plugins: install the four `praxis-<role>.zip` files from the `v0.1.0-alpha.49.3` Releases of `dfg-inc/praxis-ba`, `-architect`, `-developer` and `-quality`. Their `session-start` skills call `praxis_session_start`.
+- `.mcpb` sha256 `50115175b15d87908e3cb0e5487b0fad16e00ca99697642019608f2fd1293778` (the file attached to the `v0.1.0-alpha.49.3` Release of `dfg-inc/praxis-runtime`).
 
 Desktop acceptance is **not** claimed for this build until it has been installed and re-tested on the real Desktop host.
 

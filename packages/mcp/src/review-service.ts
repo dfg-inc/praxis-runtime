@@ -26,8 +26,10 @@ import {
   type ReviewView,
   type WorkflowState,
   describeApproval,
+  DECISION_LEDGER_UNAVAILABLE,
+  WorkflowError,
 } from "@praxis/contracts";
-import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
+import { applyApprovedBatch, applyRuntimeCommand, loadWorkflow, persistedDigest } from "./workflow-store.js";
 import { isShippedBundle } from "./approval-settings.js";
 
 /**
@@ -137,27 +139,38 @@ export async function applyHandedOver(repo: string, workItemId: string | undefin
   const commands = plan.commands.map((c) => parseWorkflowCommand(c) as unknown as Record<string, unknown>);
   const gated = plan.affectsStories || commands.some((c) => needsApprovalWhenHandedOver(c as never));
   const batch = gated ? commands : [];
+  // the stored state the dialog is built from: the approval binds it, and the batch is applied only to exactly that state
+  const baseState = persistedDigest(state);
   let approval;
   if (gated) {
-    const request = reviewApprovalRequest(batch, `Record your ${submission.view} review decisions and changes (${plan.details.length} item(s))`);
+    const request = reviewApprovalRequest(batch, `Record your ${submission.view} review decisions and changes (${plan.details.length} item(s))`, baseState);
     approval = await obtainUserApproval({ ...request, description: plan.details.map((s) => `- ${s}`).join("\n") }, { confirmation, repo });
-  }
-  if (approval) {
-    // The dialog can stay open for minutes. What the user approved was computed from the state at that moment; if the work item
-    // moved meanwhile, nothing is recorded and the user decides again on what is there now.
-    const fresh = submissionToCommands(requireState(repo, id), submission);
-    if (canonicalText(fresh.commands) !== canonicalText(plan.commands) || canonicalText(fresh.details) !== canonicalText(plan.details) || fresh.conflicts.length !== plan.conflicts.length) {
-      throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
-    }
   }
   const conflicts = [...plan.conflicts];
   let applied = 0;
-  for (const command of commands) {
-    try {
-      applyRuntimeCommand(repo, command, id, approval ? { via: "approved", approval, batch } : undefined);
-      applied += 1;
-    } catch (error) {
-      conflicts.push({ item: String(command.action), reason: error instanceof Error ? error.message.replace(/^[A-Z_]+: /, "") : String(error) });
+  if (approval) {
+    // The dialog can stay open for minutes. What the user approved was computed from the state at that moment. Under the workflow
+    // lock the store reads the item once, refuses anything but that exact state (and this same plan), and applies every command
+    // to it in memory: each decision goes to the decision ledger (one record per criterion or subject, one batch id) before the
+    // item is written. If the work item moved meanwhile, nothing is recorded and the user decides again on what is there now.
+    const done = applyApprovedBatch(repo, id, commands, { via: "approved", approval, batch, baseState }, (fresh) => {
+      const again = submissionToCommands(fresh, submission);
+      if (canonicalText(again.commands) !== canonicalText(plan.commands) || canonicalText(again.details) !== canonicalText(plan.details) || again.conflicts.length !== plan.conflicts.length) {
+        throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
+      }
+    });
+    applied = done.applied;
+    conflicts.push(...done.conflicts);
+  } else {
+    for (const command of commands) {
+      try {
+        // edits only: the agent's records, no decision of a person
+        applyRuntimeCommand(repo, command, id);
+        applied += 1;
+      } catch (error) {
+        if (error instanceof WorkflowError && error.code === DECISION_LEDGER_UNAVAILABLE) throw error;
+        conflicts.push({ item: String(command.action), reason: error instanceof Error ? error.message.replace(/^[A-Z_]+: /, "") : String(error) });
+      }
     }
   }
   if (applied > 0) note(repo, id, submission.view, approval ? describeApproval(approval) : "edits only: no decision of a person is recorded", plan.summary);

@@ -7,6 +7,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { parseNodeTestCounts, runNpmTest } from "./review-engine.js";
 import { spawnSync } from "node:child_process";
+import { repositoryCodeEnv } from "@praxis/contracts";
 
 export type QaVerdict = "PASSED" | "FAILED" | "BLOCKED";
 
@@ -139,7 +140,8 @@ function runConfiguredTest(repo: string, command: string): QualityVerification {
     encoding: "utf8",
     shell: true,
     timeout: 20_000,
-    env: { ...process.env, CI: "1" },
+    // the work package's own test command: repository code, not handed any credential (hygiene, contracts child-env.ts)
+    env: repositoryCodeEnv({ CI: "1" }),
   });
   const combined = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
   const counts = parseNodeTestCounts(combined);

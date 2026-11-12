@@ -6,14 +6,19 @@ import type { OpContext } from "@praxis/cli/operations";
 import {
   ApprovalError,
   ApprovalNeedsInput,
+  approvalLabels,
+  inheritedCredentialVariables,
   obtainUserApproval,
   approvalsGivenInThisCall,
   logDecision,
+  type ApprovalChannelKind,
+  type DecidedBy,
   subjectDigest,
   withApprovalChannel,
   WorkflowError,
   commandCatalog,
   explainCommandError,
+  enforcedMode,
   type EvidenceSource,
   type UserApprovalChannel,
   type WorkflowRole,
@@ -28,6 +33,7 @@ import { approvalSettings } from "./approval-settings.js";
 import { amendJournal, journalAudit } from "./approval-journal.js";
 import { clientKey, knownAutoAnswer } from "./dialog-observations.js";
 import { mcpEnvelope, type McpEnvelope } from "./envelope.js";
+import { redactEnvelope } from "./secret-redaction.js";
 import { TOOLS as CATALOG_TOOLS, toolsForRole, type PraxisRole } from "./catalog.js";
 import { buildStoryVerification, commitServiceFix, planServiceFix } from "./story-engine.js";
 import { developerWorkItemStatus, inspectWorkflow } from "./workflow-inspect.js";
@@ -97,7 +103,7 @@ function ctxFromArgs(args: Record<string, unknown>, extra?: Partial<OpContext>):
 
 /**
  * Tools that change something outside the agent's own notes. Each one needs confirmation=YES (the agent's intent to
- * apply what it previewed) and then the user's approval in the client's own dialog; where there is none, nothing runs.
+ * apply what it previewed) and then approval in the client's own dialog; where there is none, nothing runs.
  * The approval is obtained where the change is made (core guardWrite, the workflow store, the fix
  * committer), never here. confirmation=NO is the agent withdrawing the request: it is recorded as withdrawn, never as the
  * user's rejection, and nothing runs.
@@ -242,15 +248,67 @@ function withClientReport(data: unknown, client: ClientReport | undefined): unkn
 export const isProtectedTool = (name: string): boolean => PROTECTED_TOOLS.has(name);
 
 /**
- * How a result names an approval: the channel that gave it, and that no person was verified (Praxis knows the client's
- * dialog answered, never who or what operated it).
+ * How a result names an approval: the channel that gave it, and that neither a person nor an independent authority verified
+ * it (Praxis knows the client's dialog answered, never who or what operated it).
  */
-function approvalView(item: { action: string; channel: string; assurance: string; decidedAt: string }) {
-  const decidedBy = item.channel === "client-elicitation" ? "client-dialog" : item.channel === "host-permission" ? "host-prompt" : item.channel;
-  return { action: item.action, channel: item.channel, assurance: item.assurance, decidedBy, personVerified: false, decidedAt: item.decidedAt };
+function approvalView(item: { action: string; channel: ApprovalChannelKind; decidedBy?: DecidedBy; assurance: string; decidedAt: string }) {
+  const decidedBy: DecidedBy = item.decidedBy ?? (item.channel === "client-elicitation" ? "client-dialog" : item.channel === "host-permission" ? "host-prompt" : (item.channel as DecidedBy));
+  return { action: item.action, ...approvalLabels(item.channel, decidedBy), assurance: item.assurance, decidedAt: item.decidedAt };
 }
 
-/** Says in the result how the user's approval was obtained: always in the client's own dialog (the agent cannot write that answer). */
+/** Protected tools that write to Jira with the operator's Jira credential. */
+const JIRA_WRITERS = new Set([
+  "praxis_ba_apply",
+  "praxis_architect_apply",
+  "praxis_developer_claim",
+  "praxis_developer_release",
+  "praxis_developer_complete",
+  "praxis_developer_complete_recovery_apply",
+  "praxis_quality_apply",
+  "praxis_developer_git_link_jira_apply",
+]);
+
+/** A protected action: the PROTECTED_TOOLS, the review decisions, and appending corrections to the decision journal. */
+const labelled = (name: string, args: Record<string, unknown>): boolean => PROTECTED_TOOLS.has(name) || name === "praxis_review_apply" || (name === "praxis_approval_journal" && args.amend === true);
+
+/**
+ * Every protected-action result, successful or not, says how it was decided: `authorization` carries channel, decidedBy,
+ * personVerified: false and independentlyVerified: false (a dialog answer is never verified identity), and for a Jira write
+ * that it was not independently approved and why.
+ */
+function withAuthorization(name: string, args: Record<string, unknown>, envelope: McpEnvelope): McpEnvelope {
+  if (!labelled(name, args)) return envelope;
+  const given = approvalsGivenInThisCall().map(approvalView);
+  const data = envelope.data && typeof envelope.data === "object" && !Array.isArray(envelope.data) ? (envelope.data as Record<string, unknown>) : { result: envelope.data };
+  const last = given[given.length - 1];
+  const fromError = typeof data.decidedBy === "string" ? approvalLabels((typeof data.channel === "string" ? data.channel : "none") as ApprovalChannelKind | "none", data.decidedBy as DecidedBy) : undefined;
+  const labels = last ? approvalLabels(last.channel, last.decidedBy) : fromError ?? approvalLabels("none", envelope.ok ? "agent" : "nobody");
+  const jira = JIRA_WRITERS.has(name)
+    ? (() => {
+        const reachable = inheritedCredentialVariables().includes("PRAXIS_JIRA_TOKEN");
+        return {
+          independentlyApproved: false as const,
+          independentlyApprovedReason: reachable
+            ? "PRAXIS_JIRA_TOKEN is in the environment this server inherited: any process started the same way, the agent's shell included, can read it and call Jira directly, without Praxis or its dialog."
+            : "no approval authority independent of this computer exists in this release; the client's dialog is not independent of the agent.",
+        };
+      })()
+    : {};
+  return {
+    ...envelope,
+    data: {
+      ...data,
+      authorization: {
+        ...labels,
+        approvals: given,
+        ...(given.length ? {} : { note: envelope.ok ? "No approval was asked in this call: nothing in it needed one (an agent-authored record, or nothing to change)." : "Nothing was approved in this call." }),
+        ...jira,
+      },
+    },
+  };
+}
+
+/** Says in the result how each approval was obtained: always in the client's own dialog (the agent cannot write that answer through Praxis's tools). */
 function withApprovalNote(name: string, data: unknown): { data: unknown } {
   if (!PROTECTED_TOOLS.has(name)) return { data };
   const given = approvalsGivenInThisCall();
@@ -278,7 +336,7 @@ function preflight(name: string, args: Record<string, unknown>, ctx: OpContext, 
       operation: name,
       version,
       code: "APPROVAL_WITHDRAWN",
-      data: { executed: false, outcome: "withdrawn", decidedBy: "agent", rejected: false },
+      data: { executed: false, outcome: "withdrawn", ...approvalLabels("none", "agent"), rejected: false },
       errors: [`${name} was withdrawn by the agent (confirmation=NO). Nothing was changed. This is not recorded as the user's decision.`],
     });
   }
@@ -315,7 +373,9 @@ export async function callTool(
   const page = approvalPageEnabled() ? approvalPageChannel({ repo, ...(label ? { client: label } : {}), ...(opts.extra?.signal ? { signal: opts.extra.signal } : {}) }) : undefined;
   const dialog = opts.approvalChannel ? automationGuarded(opts.approvalChannel, repo) : undefined;
   const channel: UserApprovalChannel | undefined = dialog ? dialogWithPageFallback(dialog, page, { ...(clientKey(opts.client) ? { clientKey: clientKey(opts.client) } : {}), repo }) : page;
-  return withApprovalChannel(channel, () => callToolInner(name, rawArgs, opts));
+  const envelope = await withApprovalChannel(channel, async () => withAuthorization(name, args, await callToolInner(name, rawArgs, opts)));
+  // the choke point for tool results and errors: no credential value this process holds leaves in an envelope
+  return redactEnvelope(envelope);
 }
 
 async function callToolInner(
@@ -344,7 +404,8 @@ async function callToolInner(
   const ctx = ctxFromArgs(args, {
     ...opts.extra,
   });
-  ctx.instanceId = str(args.instanceId) ?? process.env.PRAXIS_JIRA_BASE_URL;
+  // `instanceId` is accepted for compatibility and ignored: where a Jira credential is sent comes only from the operator's
+  // configuration (contracts credential-source.ts), never from a tool argument
   ops.loadPraxisDotenv(ctx.repo);
   if (name === "praxis_ba_apply" || name === "praxis_architect_apply") {
     ctx.requirePreviewFingerprint = true;
@@ -375,7 +436,7 @@ async function callToolInner(
         data: {
           ...audit,
           note: audit.toAmend.length
-            ? `${audit.toAmend.length} entr${audit.toAmend.length === 1 ? "y attributes" : "ies attribute"} a rejection to the user that the evidence shows was not theirs. Show the user this list; to record the corrections, call again with amend=true and confirmation=YES (the user approves exactly these corrections). Existing lines are never changed.`
+            ? `${audit.toAmend.length} entr${audit.toAmend.length === 1 ? "y attributes" : "ies attribute"} a rejection to the user that the evidence shows was not theirs. Show the user this list; to record the corrections, call again with amend=true and confirmation=YES (the client's approval dialog shows exactly these corrections). Existing lines are never changed.`
             : "No entry claims a decision of the user that the evidence contradicts.",
         },
       });
@@ -460,7 +521,7 @@ async function callToolInner(
           ? prefixed
           : err instanceof ops.PraxisOpError
         ? err.code
-        : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT))/.test(coded.code)
+        : typeof coded.code === "string" && /^(APPROVAL_|WORK_ITEM_|INSPECT_|SESSION_|IDENTITY_|WORKFLOW_(LOCKED|INDEX|CONFLICT)|DECISION_LEDGER_UNAVAILABLE$|CREDENTIAL_SOURCE_UNTRUSTED$|ACCEPTANCE_(UNVERIFIED|INVALID)$|INDEPENDENT_AUTHORITY_UNAVAILABLE$)/.test(coded.code)
           ? coded.code
           : message.startsWith("FINGERPRINT_MISMATCH")
             ? "FINGERPRINT_MISMATCH"
@@ -517,7 +578,7 @@ async function runPlanningTool(name: string, args: Record<string, unknown>, repo
   switch (name) {
     case "praxis_canon_init_preview": {
       const plan = planCanonInit(repo, { product: str(args.product) });
-      return { dryRun: true, repo: plan.repo, willCreate: plan.create.map((c) => c.path), alreadyThere: plan.skipped, next: plan.next, note: "Nothing was written. praxis_canon_init_apply creates these paths after the user approves them." };
+      return { dryRun: true, repo: plan.repo, willCreate: plan.create.map((c) => c.path), alreadyThere: plan.skipped, next: plan.next, note: "Nothing was written. praxis_canon_init_apply creates these paths after the client's approval dialog approves them." };
     }
     case "praxis_canon_init_apply": {
       const plan = planCanonInit(repo, { product: str(args.product) });
@@ -588,7 +649,8 @@ async function runPlanningTool(name: string, args: Record<string, unknown>, repo
  */
 function assertImplementationPath(repo: string, command: Record<string, unknown>, workItemId: string | undefined): void {
   const state = loadWorkflow(repo, workItemId);
-  if (!state || state.mode !== "guided") return;
+  // a classic mode the decision ledger does not back is guided here too: a forged "classic" must not skip this check
+  if (!state || enforcedMode(state) !== "guided") return;
   const service = state.services.find((s) => s.id === command.serviceId);
   if (!service) return; // the reducer reports the unknown service
   const registered = state.repositories.find((r) => r.id === service.repositoryId);

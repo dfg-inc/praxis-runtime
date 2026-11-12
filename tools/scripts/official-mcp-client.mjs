@@ -5,8 +5,10 @@
  */
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { accountState } from "./account-state.mjs";
 import { createRequire } from "node:module";
 import { withTestBrowser } from "./test-browser.mjs";
 
@@ -40,6 +42,18 @@ export function mcpSdkReport() {
     legacyRevisions: ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05", "2024-10-07"],
     clientDefaultNegotiation: "legacy",
   };
+}
+
+const temporaryRoots = [tmpdir(), realpathSync(tmpdir()), "/tmp", "/private/tmp"];
+let accountTracker;
+/** Only repositories in the temporary folder: a script that names a real checkout never has its account state removed. */
+function trackTemporaryRepository(repo) {
+  if (typeof repo !== "string" || !temporaryRoots.some((root) => repo.startsWith(`${root}/`))) return;
+  if (!accountTracker) {
+    accountTracker = accountState();
+    process.on("exit", () => accountTracker.remove());
+  }
+  accountTracker.track(repo);
 }
 
 export function hostedCleanEnv(home) {
@@ -144,6 +158,13 @@ export async function connectOfficialMcp({
     error.startupMs = Date.now() - started;
     throw error;
   }
+  // a shipped Runtime (0.1.0-alpha.49.3) keeps its journal and ledger under the OS account's home whatever HOME says: what it
+  // keeps for the temporary repositories a script works on is removed when the script exits (account-state.mjs)
+  const callTool = client.callTool.bind(client);
+  client.callTool = (params, ...rest) => {
+    trackTemporaryRepository(params?.arguments?.repo);
+    return callTool(params, ...rest);
+  };
   const session = {
     client,
     transport,

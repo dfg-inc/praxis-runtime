@@ -17,6 +17,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { accountState } from "./account-state.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const fail = (message) => {
@@ -53,6 +54,8 @@ if (!claude) {
 const bundle = join(root, "plugins/runtime/server/praxis-mcp.cjs");
 if (!existsSync(bundle)) fail(`missing ${bundle}`);
 const work = mkdtempSync(join(tmpdir(), "praxis-cc-"));
+// a production bundle keeps the journal under the OS account's home (0.1.0-alpha.49.3), whatever PRAXIS_STATE_HOME says
+const account = accountState();
 const home = join(work, "home");
 mkdirSync(home);
 const hook = join(work, "elicit-hook.sh");
@@ -81,13 +84,10 @@ const project = (name) => {
   const dir = join(work, name);
   mkdirSync(dir);
   writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name, scripts: { test: "node --test" } })}\n`);
-  return dir;
+  return account.track(dir);
 };
 const applyPrompt = (dir) => `Call the tool mcp__praxis__praxis_project_init_apply exactly once with repo ${dir} and confirmation YES. Do not call any other tool. Reply with one short line.`;
-const journal = () => {
-  const dir = join(work, "state", "decisions");
-  return existsSync(dir) ? readdirSync(dir).flatMap((f) => readFileSync(join(dir, f), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))) : [];
-};
+const journal = () => account.journal();
 
 try {
   // 1. what the real client declares, reported by the doctor
@@ -155,5 +155,6 @@ try {
   for (const line of proven) console.log(`  ok ${line}`);
   console.log("NOT PROVEN: that a person answered; the approve path of the real dialog (driven in the interactive CLI); Claude Desktop behaviour.");
 } finally {
+  account.remove();
   rmSync(work, { recursive: true, force: true });
 }

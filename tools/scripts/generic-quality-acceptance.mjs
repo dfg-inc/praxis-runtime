@@ -3,6 +3,7 @@
  * Quality acceptance for a desk-booking project.
  * The defect, modules, and patch live in this fixture. Runtime only executes checks and applies the host patch.
  */
+import "./isolated-state-home.mjs";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

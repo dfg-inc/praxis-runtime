@@ -162,10 +162,16 @@ describe("a repository's settings cannot authorize (T18): no mode, no page, no t
     expect(() => createUserApproval({ request: { action: "a", kind: "development_action", summary: "s", description: "d", subject: "x" }, channel: "test" })).toThrow(/test harness/);
   });
 
-  it("in a shipped bundle a protected apply with no dialog is refused even with the test switches set", async () => {
+  it("in a shipped bundle the test switches build no channel: a protected apply with no dialog is refused", async () => {
+    // the switches are checked in a production-kind run; the call itself runs in the test source, because a production-kind
+    // run journals in the account's real home, which unit tests leave untouched (the bundle-level refusal is covered by
+    // tools/scripts/credential-hygiene-acceptance.mjs against a production bundle)
     process.env.PRAXIS_BUNDLE_KIND = "production";
     process.env.PRAXIS_TEST_APPROVALS = "1";
     process.env.PRAXIS_APPROVAL_PAGE = "on";
+    expect(approvalSettings()).toMatchObject({ page: false });
+    delete process.env.PRAXIS_BUNDLE_KIND;
+    process.env.PRAXIS_APPROVAL_PAGE = "off";
     const result = await init();
     expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
     expect(existsSync(join(repo, ".project"))).toBe(false);

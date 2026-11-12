@@ -2,6 +2,7 @@
 /**
  * Quality Apply acceptance. Mocked Jira only — does not mutate live PRX-*.
  */
+import "./isolated-state-home.mjs";
 import {
   existsSync,
   mkdirSync,

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import {
   appendDecisionAmendments,
+  approvalLabels,
   auditDecisionJournal,
   canonicalText,
   decisionLogPath,
@@ -16,8 +17,15 @@ import { diagnosticsPath } from "./diagnostics-log.js";
 /**
  * The decision journal, audited against what the Runtime observed. Entries written before journal v2 could say "rejected"
  * for two things that were not the user's decision: the agent's confirmation=NO, and a client that answered its dialog by
- * itself. The audit finds them; amending appends a correction per entry (after the user approves exactly those
+ * itself. The audit finds them; amending appends a correction per entry (after the client's dialog approves exactly those
  * corrections) and never changes a line that is there.
+ *
+ * What amend can influence: only the journal's own display of past entries, and only downward. The two rules in
+ * contracts decision-journal.ts turn a claimed rejection into "withdrawn" or "auto-answered"; no rule produces or upgrades
+ * an "approved" outcome, and a hand-written amendment line that claims one is ignored by every reader. Nothing downstream
+ * trusts the journal: approvals are the in-memory objects obtainUserApproval issues for the call being served, and no gate,
+ * acceptance or protected action reads a journal line. Reads and writes are refused when the journal would be inside the
+ * repository (DECISION_LEDGER_UNAVAILABLE).
  */
 
 type Diag = { at: string; pid?: number; event: string; callId?: string; tool?: string; client?: string | null };
@@ -72,11 +80,11 @@ export function journalAudit(repo: string) {
 const describeFinding = (f: JournalFinding): string =>
   `- line ${f.line} (${f.at}, ${f.action}): recorded "${f.claimed.decision}" via ${f.claimed.channel}; corrected to "${f.corrected?.decision}" by ${f.corrected?.decidedBy} (${f.rule}: ${f.note})`;
 
-/** Appends the amendments the audit found, after the user approves exactly that list. */
+/** Appends the amendments the audit found, after the client's approval dialog approves exactly that list. */
 export async function amendJournal(repo: string, confirmation: string | undefined, version: string) {
   const audit = journalAudit(repo);
   if (audit.toAmend.length === 0) return { ...audit, appended: 0, note: "Nothing to amend: no entry claims a decision of the user that the evidence contradicts." };
-  await obtainUserApproval(
+  const approval = await obtainUserApproval(
     {
       action: "amend-decision-journal",
       kind: "development_action",
@@ -91,7 +99,7 @@ export async function amendJournal(repo: string, confirmation: string | undefine
     },
     { confirmation, repo },
   );
-  // obtainUserApproval threw unless the user approved exactly this list; the journal is outside the repository and its writers
-  const result = appendDecisionAmendments(repo, audit.toAmend, `praxis-runtime ${version} (approval-journal audit)`);
+  // obtainUserApproval threw unless the client's dialog approved exactly this list; the journal is outside the repository
+  const result = appendDecisionAmendments(repo, audit.toAmend, `praxis-runtime ${version} (approval-journal audit)`, new Date(), approvalLabels(approval.channel, approval.decidedBy));
   return { ...journalAudit(repo), appended: result.appended, skipped: result.skipped };
 }

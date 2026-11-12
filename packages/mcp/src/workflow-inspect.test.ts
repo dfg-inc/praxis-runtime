@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { channelForOpenClassic } from "./test-user-choice.js";
 import { callTool, toolsForRole } from "./tools.js";
+import { ledgerRoot } from "./decision-ledger.js";
 import { readPersistedState, type McpEnvelope } from "./workflow-test-helpers.js";
 
 const VERSION = "test";
@@ -312,7 +313,9 @@ describe("praxis_workflow_inspect through the MCP tool entry point", () => {
   it("never returns approval tokens, key material or secret-looking values", async () => {
     const { repo } = await populated();
     const text = JSON.stringify((await call("praxis_workflow_inspect", repo, "ba", { view: "all" })).data);
-    expect(text).not.toMatch(/-----BEGIN|"token"|signature|authorization|ledger/i);
+    // "ledger" is no longer a secret's name: the decision ledger's integrity is reported here (0.1.0-alpha.49.3); its location is not
+    expect(text).not.toMatch(/-----BEGIN|"token"|signature|authorization/i);
+    expect(text).not.toContain(ledgerRoot());
   });
 });
 

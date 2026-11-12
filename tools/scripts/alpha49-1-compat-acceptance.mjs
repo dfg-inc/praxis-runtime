@@ -5,9 +5,11 @@
  * 1. The alpha.49.1 bundle (from the git tag) creates a work item, a requirement and a story, and confirms the story through a
  *    scripted client dialog. It also leaves the two journal entries that blamed the user: the agent's confirmation=NO, and a
  *    dialog declined at once.
- * 2. This Runtime, on the same repository and Praxis home: the work item, its story confirmation and its approval record are
- *    unchanged; the workflow continues; praxis_approval_journal finds the two entries, amends them after an approval, and
- *    every alpha.49.1 journal line is byte for byte as it was.
+ * 2. This Runtime, on the same repository and Praxis home: the work item file and its approval record are unchanged; the
+ *    story's confirmation is shown as unverified (no decision-ledger record backs a confirmation made before 0.1.0-alpha.49.3,
+ *    exactly as for one written into the file by hand) and counts again once confirmed in this Runtime's dialog; the workflow
+ *    continues; praxis_approval_journal finds the two entries (the old journal, in the account's Praxis home, is adopted under
+ *    the repository's key), amends them after an approval, and every alpha.49.1 journal line is byte for byte as it was.
  * 3. Every alpha.49.1 tool is still registered, and every Praxis tool the alpha.49.1 role skills name exists.
  *
  *   node tools/scripts/alpha49-1-compat-acceptance.mjs [--ref v0.1.0-alpha.49.1]
@@ -17,6 +19,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { accountState } from "./account-state.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const ref = process.argv.includes("--ref") ? process.argv[process.argv.indexOf("--ref") + 1] : "v0.1.0-alpha.49.1";
@@ -46,6 +49,9 @@ const repo = join(work, "repo");
 mkdirSync(repo);
 execFileSync("git", ["init", "-q"], { cwd: repo });
 writeFileSync(join(repo, "package.json"), `${JSON.stringify({ name: "compat", scripts: { test: "node --test" } })}\n`);
+// this Runtime (a production bundle) keeps its journal and ledger under the OS account's home, whatever PRAXIS_STATE_HOME says
+const account = accountState();
+account.track(repo);
 
 const answerAfter = (ms, action, decision) => async () => (await new Promise((r) => setTimeout(r, ms)), { action, ...(decision ? { content: { decision } } : {}) });
 async function open(bundle, elicit) {
@@ -69,7 +75,9 @@ async function apply(session, command, extra = {}) {
   if (!preview.ok) fail(`${command.action} preview: ${preview.code} ${JSON.stringify(preview.errors)}`);
   return call(session, "praxis_workflow_apply", { repo, command: JSON.stringify(command), confirmation: "YES", previewFingerprint: preview.data.fingerprint, ...extra });
 }
-const journalFile = () => join(state, "decisions", readdirSync(join(state, "decisions"))[0]);
+// alpha.49.1 honoured PRAXIS_STATE_HOME; by default its journal is in the account's ~/.praxis/decisions, named after the path
+const oldJournalName = () => readdirSync(join(state, "decisions"))[0];
+const legacyInAccount = () => join(dirname(account.journalFile(repo)), oldJournalName());
 
 try {
   // --- 1. alpha.49.1 writes the state ----------------------------------------------------------------------------
@@ -103,7 +111,11 @@ try {
   }
   const itemFile = join(repo, ".praxis", "workflow", "items", `${workItemId}.json`);
   const itemBefore = readFileSync(itemFile, "utf8");
-  const journalBefore = readFileSync(journalFile(), "utf8");
+  const journalBefore = readFileSync(join(state, "decisions", oldJournalName()), "utf8");
+  // where alpha.49.1 writes it by default (no PRAXIS_STATE_HOME): the account's home
+  if (existsSync(legacyInAccount()) || existsSync(account.journalFile(repo))) fail("an account journal for this temporary repository exists already");
+  mkdirSync(dirname(legacyInAccount()), { recursive: true });
+  writeFileSync(legacyInAccount(), journalBefore, { mode: 0o600 });
   const oldLines = journalBefore.trim().split("\n").map((l) => JSON.parse(l));
   if (oldLines.some((l) => l.v === 2)) fail("alpha.49.1 wrote journal v2 entries");
 
@@ -116,12 +128,20 @@ try {
     if (!status.ok) fail(`status of the alpha.49.1 work item: ${status.code}`);
     const stories = await call(now, "praxis_workflow_inspect", { repo, workItemId, view: "stories" });
     const story = (stories.data.stories ?? stories.data.items ?? []).find((s) => s.id === "US-CMP-001");
-    if (!story?.confirmedBehavior && story?.status !== "confirmed") fail(`the confirmed story is no longer confirmed: ${JSON.stringify(story).slice(0, 300)}`);
+    if (story?.integrity !== "unverified") fail(`the alpha.49.1 confirmation is not shown as unverified: ${JSON.stringify(story).slice(0, 300)}`);
     const persisted = JSON.parse(readFileSync(itemFile, "utf8"));
     const record = (persisted.approvals ?? []).find((a) => a.action === "confirm-story");
     if (!record || record.trust !== "independent-human" || record.assurance !== "client-ui") fail(`the alpha.49.1 approval record changed: ${JSON.stringify(record)}`);
+    if (!persisted.stories.find((s) => s.id === "US-CMP-001")?.confirmedBehavior) fail("the alpha.49.1 confirmation was erased from the file");
     if (readFileSync(itemFile, "utf8") !== itemBefore) fail("reading the alpha.49.1 work item rewrote it");
-    prove("this Runtime reads the alpha.49.1 work item unchanged: the story stays confirmed and its approval record (client-ui, independent-human) is untouched");
+    prove("this Runtime reads the alpha.49.1 work item without rewriting it: the story's confirmation and its approval record stay in the file, and the confirmation is shown as unverified (no decision-ledger record), as one written by hand would be");
+    const reconfirm = await apply(now, { action: "confirm-story", id: "US-CMP-001", revision: story.revision, contentFingerprint: story.contentFingerprint }, { workItemId });
+    if (!reconfirm.ok) fail(`confirming the alpha.49.1 story again in this Runtime's dialog: ${reconfirm.code} ${JSON.stringify(reconfirm.errors)}`);
+    const after = (await call(now, "praxis_workflow_inspect", { repo, workItemId, view: "stories" })).data;
+    const again = (after.stories ?? after.items ?? []).find((s) => s.id === "US-CMP-001");
+    if (again?.integrity !== "accepted" || approvals !== 1) fail(`after confirming again: ${JSON.stringify(again).slice(0, 300)}, asked ${approvals}`);
+    prove("confirmed again in this Runtime's dialog (one approval), the story counts as accepted: a decision-ledger record backs it");
+    approvals = 0;
     const more = await apply(now, { action: "add-requirement", id: "REQ-CMP-002", statement: "And continues.", acceptanceCriteria: ["It continues."] }, { workItemId });
     if (!more.ok) fail(`continuing the alpha.49.1 work item: ${more.code} ${JSON.stringify(more.errors)}`);
     prove("the alpha.49.1 work item continues under this Runtime (a new requirement is recorded)");
@@ -132,8 +152,9 @@ try {
     prove("praxis_approval_journal finds both alpha.49.1 misattributions (agent-reported-decline, client-answered-without-dialog)");
     const amended = await call(now, "praxis_approval_journal", { repo, amend: true, confirmation: "YES" });
     if (!amended.ok || amended.data.appended !== 2 || approvals !== 1) fail(`amend: ${amended.code} appended ${amended.data?.appended}, asked ${approvals}`);
-    const journalAfter = readFileSync(journalFile(), "utf8");
+    const journalAfter = readFileSync(account.journalFile(repo), "utf8");
     if (!journalAfter.startsWith(journalBefore)) fail("an alpha.49.1 journal line changed");
+    if (readFileSync(legacyInAccount(), "utf8") !== journalBefore) fail("the alpha.49.1 journal file itself was changed");
     const effective = await call(now, "praxis_approval_journal", { repo });
     if (effective.data.byDecision["withdrawn/agent"] !== 1 || effective.data.byDecision["auto-answered/client"] !== 1) fail(`after amending: ${JSON.stringify(effective.data.byDecision)}`);
     prove("after one approval the two corrections are appended; every alpha.49.1 journal line is byte for byte as it was");
@@ -177,5 +198,7 @@ try {
   prove(`every Praxis tool the alpha.49.1 role skills name (${skillTools.size}) is registered`);
   console.log(`PASS alpha49-1-compat (${proven.length} checks) against ${ref}`);
 } finally {
+  if (existsSync(join(state, "decisions"))) rmSync(legacyInAccount(), { force: true });
+  account.remove();
   rmSync(work, { recursive: true, force: true });
 }

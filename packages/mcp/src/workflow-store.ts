@@ -4,7 +4,24 @@ import { createHash } from "node:crypto";
 import { bundleDigest } from "./browser-verification.js";
 import { browserServeRoot } from "./generic-verification.js";
 import { humanApprovalView, requireUserApproval } from "./human-approval.js";
+import { appendDecisions, ledgerLocation, readDecisionLedger } from "./decision-ledger.js";
 import {
+  ACCEPTANCE_INTEGRITY_NOTE,
+  acceptanceSubjects,
+  annotationOf,
+  approvalsGivenInThisCall,
+  batchCoverage,
+  enforcedMode,
+  evaluateIntegrity,
+  humanActCoverage,
+  integrityReport,
+  integritySummary,
+  planLedgerEntries,
+  stripIntegrity,
+  subjectKey,
+  withIntegrity,
+  type ApprovalCoverage,
+  type LedgerEntry,
   applyWorkflowCommand,
   effectiveServices,
   buildResumeBriefing,
@@ -183,7 +200,8 @@ function summarize(state: WorkflowState): WorkItemSummary {
     ...(state.workItem.jiraIssueKey ? { jiraIssueKey: state.workItem.jiraIssueKey } : {}),
     stage: state.stage,
     phase: state.phase,
-    mode: state.mode,
+    // the mode in force: a classic mode the decision ledger does not back is guided (acceptance-integrity.ts)
+    mode: enforcedMode(state),
     kind: state.workItem.kind,
     revision: state.workItem.revision,
     updatedAt: new Date().toISOString(),
@@ -251,9 +269,11 @@ function itemFiles(repo: string): string[] {
  * several, current stays null and the operator must choose: the Runtime never guesses.
  */
 function rebuildIndex(repo: string, files: string[]): Layout {
-  const items = files.map((name) =>
-    summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson(join(workflowDir(repo), "items", name))))),
-  );
+  const items = files.map((name) => {
+    const state = toAbsolute(repo, WorkflowStateSchema.parse(readJson(join(workflowDir(repo), "items", name))));
+    // checked against the ledger too, so the rebuilt index reports the mode in force
+    return summarize(annotateAcceptance(repo, state));
+  });
   return {
     legacy: false,
     index: {
@@ -319,14 +339,24 @@ function canonicalJson(value: unknown): string {
  * - a preview made against state that has since changed is rejected as stale.
  */
 function fingerprintFor(repo: string, command: WorkflowCommand, workItemId?: string): string {
-  let token: string;
-  if (command.action === "open" || command.action === "select-work-item") {
-    token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
-  } else {
-    const state = loadWorkflow(repo, workItemId);
-    token = state ? `state:${createHash("sha256").update(canonicalJson(withoutDrift(state))).digest("hex")}` : "state:none";
-  }
+  const indexOnly = command.action === "open" || command.action === "select-work-item";
+  return fingerprintAgainst(command, indexOnly ? readLayout(repo) : null, indexOnly ? null : loadWorkflow(repo, workItemId));
+}
+
+/** The fingerprint of `command` against state already read: the write checks it on the very read it applies to. */
+function fingerprintAgainst(command: WorkflowCommand, layout: Layout | null, state: WorkflowState | null): string {
+  const token =
+    command.action === "open" || command.action === "select-work-item"
+      ? `epoch:${layout?.index.epoch ?? 0}`
+      : state
+        ? `state:${persistedDigest(state)}`
+        : "state:none";
   return commandFingerprint({ ...command, previewedAgainst: token } as unknown as WorkflowCommand);
+}
+
+/** Digest of the work item exactly as it is stored (no in-memory marks): what a preview and a review dialog were built from. */
+export function persistedDigest(state: WorkflowState): string {
+  return createHash("sha256").update(canonicalJson(persistable(state))).digest("hex");
 }
 
 function resolveId(layout: Layout, explicit?: string): string | null {
@@ -347,8 +377,19 @@ function resolveId(layout: Layout, explicit?: string): string | null {
 }
 
 function readItem(repo: string, layout: Layout, id: string): WorkflowState {
-  if (layout.legacy) return readLegacy(repo) as WorkflowState;
-  return markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id))))));
+  if (layout.legacy) return annotateAcceptance(repo, readLegacy(repo) as WorkflowState);
+  return annotateAcceptance(repo, markSubjectDrift(repo, toAbsolute(repo, migrateWorkflowState(WorkflowStateSchema.parse(readJson(itemPath(repo, id)))))));
+}
+
+/**
+ * Every acceptance the file claims is checked against the decision ledger outside the repository (decision-ledger.ts) and
+ * the result is attached in memory only, as markSubjectDrift does for browser evidence: gates, readiness, verdicts and
+ * summaries count a claim only when it is "accepted" (acceptance-integrity.ts in core). The file's own claims are left as
+ * they are; the annotation is stripped before anything is written. This is the only place Work Item files are read for
+ * use (rebuildIndex reads them for the index summary only), so no state reaches a gate without it.
+ */
+function annotateAcceptance(repo: string, state: WorkflowState): WorkflowState {
+  return withIntegrity(state, evaluateIntegrity(state, readDecisionLedger(repo, state.workItem.id)));
 }
 
 /**
@@ -371,6 +412,11 @@ function markSubjectDrift(repo: string, state: WorkflowState): WorkflowState {
     if (current !== entry.source?.subjectDigest) entry.source = { ...(entry.source as EvidenceSource), drifted: true };
   }
   return state;
+}
+
+/** The state as it is written: no drift mark, no integrity annotation. */
+function persistable(state: WorkflowState): WorkflowState {
+  return withoutDrift(stripIntegrity(state));
 }
 
 function withoutDrift(state: WorkflowState): WorkflowState {
@@ -419,6 +465,10 @@ export function workflowStatus(repo: string, workItemId?: string): {
   /** When several work items are candidates: what each one is and where it stands, so the user can choose. */
   choose?: string;
   modeNote?: string;
+  /** "proposed" for guided; for classic, the integrity of that choice (accepted, unverified, invalid ...). */
+  modeIntegrity?: string;
+  /** Which acceptances Praxis can stand behind (acceptance-integrity.ts): only "accepted" counts. */
+  acceptance?: ReturnType<typeof acceptanceView>;
 } {
   const layout = readLayout(repo);
   if (layout && workItemId === undefined && layout.index.current === null && layout.index.items.length > 1) {
@@ -455,13 +505,37 @@ export function workflowStatus(repo: string, workItemId?: string): {
     suggested: routed.suggested.map((item) => item.id),
     executed: routed.executed,
     phase: state.phase,
-    mode: state.mode,
+    // the mode in force, and how much the stored mode can be trusted: classic counts only when the decision ledger backs it
+    mode: enforcedMode(state),
+    modeIntegrity: modeIntegrity(state),
     next: nextStep(state),
     briefing: buildResumeBriefing(state),
-    ...(state.mode === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {}),
+    acceptance: acceptanceView(repo, state),
+    ...(enforcedMode(state) === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {}),
+    ...(state.mode === "classic" && enforcedMode(state) !== "classic" ? { modeNote: `the work item file says classic mode, but that choice is not backed by a Praxis decision record on this computer (${modeIntegrity(state)}): the gates are enforced as in guided mode. The user can choose classic again in the review (mode change), where the dialog asks them.` } : {}),
     ...(items.length > 1
       ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} \"${item.title}\" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` }
       : {}),
+  };
+}
+
+/** The integrity of the stored mode: guided is no claim ("proposed"); classic is the user's choice only when the ledger backs it. */
+export function modeIntegrity(state: WorkflowState): string {
+  if (state.mode !== "classic") return "proposed";
+  return annotationOf(state)?.subjects[subjectKey("mode", "mode")]?.status ?? "accepted";
+}
+
+/** What status and inspect say about acceptance: counts, each claim with its integrity, and what "accepted" means. */
+export function acceptanceView(repo: string, state: WorkflowState) {
+  const annotation = annotationOf(state);
+  const where = ledgerLocation(repo, state.workItem.id);
+  return {
+    ...integritySummary(state),
+    ledger: annotation?.ledger ?? "available",
+    ...(annotation?.ledgerReason ? { ledgerReason: annotation.ledgerReason } : {}),
+    ...("repositoryKey" in where ? { repositoryKey: { source: where.repositoryKey.source, key: where.repositoryKey.key.slice(0, 16) } } : {}),
+    subjects: integrityReport(state).map(({ key, label, status, reason }) => ({ subject: key, label, integrity: status, reason })),
+    note: ACCEPTANCE_INTEGRITY_NOTE,
   };
 }
 
@@ -557,7 +631,7 @@ function writeItem(repo: string, state: WorkflowState): string {
   requireMutationLease();
   const path = itemPath(repo, state.workItem.id);
   keepPreviousVersion(path);
-  writeAtomic(path, redactState(toPortable(repo, withoutDrift(state))));
+  writeAtomic(path, redactState(toPortable(repo, persistable(state))));
   return path;
 }
 
@@ -718,11 +792,19 @@ export type WorkflowApplyResult = {
 };
 
 /** One locked read-modify-write of a single work item (or the index, for select/reopen). */
-function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel, evidenceSource?: EvidenceSource, evidenceSources?: Record<string, EvidenceSource>): WorkflowApplyResult {
+function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel, evidenceSource?: EvidenceSource, evidenceSources?: Record<string, EvidenceSource>, expectedFingerprint?: string): WorkflowApplyResult {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
     const finalCommand = parseWorkflowCommand(final);
+    const before = readLayout(repo);
     const resolved = resolveCommand(repo, finalCommand, workItemId);
+    // The preview's fingerprint is checked under the lock, on the very read the write applies: a file that changed after the
+    // preview (or while the approval dialog was open) is refused here, and nothing is written or recorded. The approval itself
+    // binds the ledger's content digest too (core), so a change between the dialog and this read does not verify either.
+    if (expectedFingerprint !== undefined) {
+      const expected = fingerprintAgainst(planned, before, resolved.reopen ?? resolved.state);
+      if (expected !== expectedFingerprint) throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
+    }
     const layout = readLayout(repo);
     const previousCurrent = layout?.index.current ?? null;
     const select = (id: string) => {
@@ -755,16 +837,10 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
     // A human act carries the user's approval (made by the Runtime, never part of the command); the contract verifies
     // it against the exact content again before it changes anything.
     const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...(userApproval ? { userApproval } : {}), ...(channel ? { channel } : {}), ...(evidenceSource ? { evidenceSource } : {}), ...(evidenceSources ? { evidenceSources } : {}) });
-    const path = writeItem(repo, applied.state);
-    const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1 as const, current: null, items: [] };
-    const entry = summarize(applied.state);
-    const exists = index.items.some((item) => item.workItemId === entry.workItemId);
-    const items = exists
-      ? index.items.map((item) => (item.workItemId === entry.workItemId ? entry : item))
-      : [...index.items, entry];
-    const current = planned.action === "open" ? entry.workItemId : (index.current ?? entry.workItemId);
-    const selectionChanged = !exists || current !== index.current;
-    writeIndex(repo, { ...index, current, items, ...(selectionChanged ? { epoch: (index.epoch ?? 0) + 1 } : {}) });
+    // the decision ledger first: if it cannot be written, nothing is (DECISION_LEDGER_UNAVAILABLE) and the item file stays as it was
+    const recorded = recordDecisions(repo, resolved.state, applied.state, resolved.command, userApproval, channel);
+    const path = writeItem(repo, recorded);
+    const { entry, current } = indexAfterWrite(repo, recorded, planned.action === "open");
     return {
       path,
       duplicate: applied.duplicate,
@@ -779,14 +855,53 @@ function writeCommand(repo: string, planned: WorkflowCommand, final: unknown, wo
   });
 }
 
+/** Updates the index entry of a written item (and selects a new item when it was opened). */
+function indexAfterWrite(repo: string, state: WorkflowState, opened: boolean): { entry: WorkItemSummary; current: string } {
+  const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1 as const, current: null, items: [] };
+  const entry = summarize(state);
+  const exists = index.items.some((item) => item.workItemId === entry.workItemId);
+  const items = exists ? index.items.map((item) => (item.workItemId === entry.workItemId ? entry : item)) : [...index.items, entry];
+  const current = opened ? entry.workItemId : (index.current ?? entry.workItemId);
+  const selectionChanged = !exists || current !== index.current;
+  writeIndex(repo, { ...index, current, items, ...(selectionChanged ? { epoch: (index.epoch ?? 0) + 1 } : {}) });
+  return { entry, current };
+}
+
+/**
+ * What the user's approval in THIS call covers, or null. An approval counts only when the client's dialog gave it while
+ * serving this call (approvalsGivenInThisCall): an approval object kept from an earlier call, made by a test helper or
+ * passed in any other way never produces an acceptance. A human act covers its own target; an approved review batch
+ * covers what its commands name.
+ */
+function approvalCoverage(command: WorkflowCommand, pre: WorkflowState | null, userApproval?: UserApproval, channel?: ReviewChannel): { approval: UserApproval; coverage: ApprovalCoverage } | null {
+  const given = approvalsGivenInThisCall();
+  if (userApproval && given.includes(userApproval)) return { approval: userApproval, coverage: humanActCoverage(userApproval.action, command as unknown as Record<string, unknown>) };
+  if (channel?.via === "approved" && given.includes(channel.approval)) return { approval: channel.approval, coverage: batchCoverage(channel.batch, pre) };
+  return null;
+}
+
+/**
+ * Appends what this write decided to the decision ledger and returns the state to write, with the new records' actionIds next
+ * to the acceptances they back. An agent-authored write (no approval in this call) never produces an acceptance: a claim it
+ * makes stays unverified. Revisions and withdrawals of recorded acceptances are recorded either way, so the latest decision wins.
+ */
+function recordDecisions(repo: string, pre: WorkflowState | null, post: WorkflowState, command: WorkflowCommand, userApproval?: UserApproval, channel?: ReviewChannel): WorkflowState {
+  const approved = approvalCoverage(command, pre, userApproval, channel);
+  const planned = planLedgerEntries(pre, post, approved?.coverage ?? null);
+  const written: LedgerEntry[] = planned.length ? appendDecisions(repo, post.workItem.id, planned, approved?.approval ?? null) : [];
+  const claimed = new Set(acceptanceSubjects(post).filter((s) => s.claimed).map((s) => s.key));
+  const actions: Record<string, string> = {};
+  for (const [key, id] of Object.entries(post.acceptanceActions ?? {})) if (claimed.has(key)) actions[key] = id;
+  for (const entry of written) if (entry.decision === "accept") actions[subjectKey(entry.subject.kind, entry.subject.id)] = entry.actionId;
+  const { acceptanceActions: _previous, ...rest } = post;
+  return (Object.keys(actions).length ? { ...rest, acceptanceActions: actions } : rest) as WorkflowState;
+}
+
 function guarded(repo: string, fingerprint: string, planned: unknown, final: unknown, workItemId?: string, userApproval?: UserApproval, channel?: ReviewChannel, evidenceSource?: EvidenceSource, evidenceSources?: Record<string, EvidenceSource>): WorkflowApplyResult {
   const command = parseWorkflowCommand(planned);
-  const expected = fingerprintFor(repo, command, workItemId);
-  if (fingerprint !== expected) {
-    throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
-  }
-  // Agent-authored records need no approval. Human acts are protected by the user's approval, verified inside the write.
-  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource, evidenceSources));
+  // Agent-authored records need no approval. Human acts are protected by the user's approval, verified inside the write; the
+  // fingerprint is checked there too, under the workflow lock, on the read the write applies to.
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource, evidenceSources, fingerprint));
 }
 
 export function applyResolved(
@@ -856,6 +971,55 @@ export function capabilityRoute(input: {
     stage: input.stage ?? "in_progress",
     capabilities: PRAXIS_CAPABILITIES,
   });
+}
+
+/**
+ * A review batch the user approved in the client's dialog, applied as one locked unit: the work item is read ONCE under the
+ * workflow lock, must be exactly the state the dialog was built from (channel.baseState, which the approval binds), passes the
+ * caller's own freshness check, and each command is then applied to the state in memory, its decisions appended to the ledger
+ * and the item written, without reading the item file again. A writer that changes the file while the dialog is open (or
+ * between two commands) therefore gets REVIEW_CHANGED and nothing recorded, never an acceptance of content the dialog did not
+ * show. A command the reducer refuses is reported as a conflict, as before; a ledger that cannot be written stops the batch.
+ */
+export function applyApprovedBatch(
+  repo: string,
+  workItemId: string | undefined,
+  commands: ReadonlyArray<Record<string, unknown>>,
+  channel: ReviewChannel & { baseState: string },
+  check: (state: WorkflowState) => void,
+): { applied: number; conflicts: Array<{ item: string; reason: string }> } {
+  return runWorkflowRecordWrite(() =>
+    withWorkflowLock(repo, () => {
+      ensureMigrated(repo);
+      let state = loadWorkflow(repo, workItemId);
+      if (!state) throw new Error("WORKFLOW_MISSING: open a work item first");
+      if (persistedDigest(state) !== channel.baseState) {
+        throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
+      }
+      check(state);
+      let applied = 0;
+      const conflicts: Array<{ item: string; reason: string }> = [];
+      for (const command of commands) {
+        let parsed: WorkflowCommand;
+        let next: WorkflowState;
+        try {
+          parsed = parseWorkflowCommand(command);
+          next = applyWorkflowCommand(state, parsed, { channel }).state;
+        } catch (error) {
+          conflicts.push({ item: String(command.action), reason: error instanceof Error ? error.message.replace(/^[A-Z_]+: /, "") : String(error) });
+          continue;
+        }
+        // the ledger first (DECISION_LEDGER_UNAVAILABLE stops everything), then the item; the next command continues in memory,
+        // checked against the ledger as it now is
+        const recorded = recordDecisions(repo, state, next, parsed, undefined, channel);
+        writeItem(repo, recorded);
+        indexAfterWrite(repo, recorded, false);
+        state = annotateAcceptance(repo, stripIntegrity(recorded));
+        applied += 1;
+      }
+      return { applied, conflicts };
+    }),
+  );
 }
 
 /**

@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join, relative } from "node:path";
 import { spawnSync } from "node:child_process";
+import { repositoryCodeEnv } from "@praxis/contracts";
 
 export type Finding = {
   id: string;
@@ -187,7 +188,8 @@ export function runNpmTest(cwd: string): {
     encoding: "utf8",
     shell: true,
     timeout: 20_000,
-    env: { ...process.env, CI: "1", npm_config_progress: "false" },
+    // the repository's own tests: not handed any credential, whatever this service inherited (hygiene, contracts child-env.ts)
+    env: repositoryCodeEnv({ CI: "1", npm_config_progress: "false" }),
   });
   const stdout = r.stdout ?? "";
   const stderr = r.stderr ?? "";

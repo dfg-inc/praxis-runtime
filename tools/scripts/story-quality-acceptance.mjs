@@ -3,6 +3,7 @@
  * User-story and multi-repository Quality acceptance.
  * Mutates disposable git repositories only.
  */
+import "./isolated-state-home.mjs";
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";

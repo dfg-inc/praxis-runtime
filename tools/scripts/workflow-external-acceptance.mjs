@@ -4,6 +4,7 @@
  * Drives praxis_workflow_* through the MCP tool entry, then resumes in a
  * second process. Does not write to Jira.
  */
+import "./isolated-state-home.mjs";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
