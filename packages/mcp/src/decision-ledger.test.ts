@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   fingerprintFor,
+  repositoryKey as journalKey,
   reviewStamp,
   storyContentFingerprint,
   userChannelFor,
@@ -209,6 +210,19 @@ describe("forged acceptance (T-repo writes the repository, not the ledger)", () 
     writeFileSync(join(planted, ".git"), `gitdir: ${join(main, ".git", "worktrees", "linked")}\n`);
     expect(repositoryKey(planted)).toMatchObject({ source: "project-root" });
     expect((await status(planted, id)).integrity).toMatchObject({ accepted: 0 });
+    // the review's case: the planted .git names a git directory the planter wrote, with a commondir naming the original's
+    // .git and a back-pointer naming the planted file itself. Not under the original's worktrees/: keyed by its own root
+    const forged = join(base, "forged");
+    mkdirSync(join(forged, "fakegit"), { recursive: true });
+    cpSync(join(main, ".praxis"), join(forged, ".praxis"), { recursive: true });
+    writeFileSync(join(forged, ".git"), "gitdir: fakegit\n");
+    writeFileSync(join(forged, "fakegit", "commondir"), "../../main/.git\n");
+    writeFileSync(join(forged, "fakegit", "gitdir"), `${join(forged, ".git")}\n`);
+    expect(repositoryKey(forged)).toMatchObject({ source: "project-root" });
+    expect(repositoryKey(forged).key).not.toBe(repositoryKey(main).key);
+    expect((await status(forged, id)).integrity).toMatchObject({ accepted: 0, unverified: 3 });
+    // and the journal names every one of these repositories exactly as the ledger does
+    for (const dir of [main, linked, copy, planted, forged]) expect(repositoryKey(dir).key).toBe(journalKey(dir));
   });
 });
 
