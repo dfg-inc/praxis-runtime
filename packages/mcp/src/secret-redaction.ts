@@ -10,11 +10,13 @@ import { redactCredentials, redactCredentialsDeep } from "@praxis/contracts";
  *   - process.stdout and process.stderr: every protocol message (dialogs included) and every log line (installOutputRedaction);
  *   - the diagnostics log file (diagnostics-log.ts).
  *
- * It prevents disclosure into the model context through Praxis's own output (T-repo content or a remote error echoing a
- * token; an agent that sees only tool results, as in Claude Desktop Chat where the extension's token exists only in this
- * process). It does not stop an agent that reads its own environment: the variables stay in the environment this process
- * inherited, and any process started the same way, an agent's shell included, has them. Praxis cannot remove them from an
- * already inherited environment (praxis_doctor credentialExposure names them).
+ * It keeps a credential value from reaching the model context through Praxis's own output by accident (repository content
+ * or a remote error echoing a token). It is hygiene, not a boundary: it does not stop anything that reads the token itself.
+ * The variables stay in the environment this process inherited; any process started the same way, an agent's shell
+ * included, has them, and any program running as the user, repository code Praxis starts included, can read this process's
+ * initial environment (`ps -E`, `/proc/<pid>/environ`), the Desktop extension's token included, and print it in a form
+ * redaction does not know. Praxis cannot remove a variable from an already inherited environment (praxis_doctor
+ * credentialExposure names them).
  */
 
 export { redactCredentials };

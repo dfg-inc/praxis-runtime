@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, truncateSync, writeFileSync, writeSync } from "node:fs";
-import { userInfo } from "node:os";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, realpathSync, rmSync, statSync, truncateSync, writeFileSync, writeSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
   DECISION_LEDGER_UNAVAILABLE,
@@ -13,6 +12,7 @@ import {
   type LedgerReading,
   type PlannedLedgerEntry,
   type UserApproval,
+  repositoryIdentity,
   securityStateHome,
 } from "@praxis/contracts";
 
@@ -33,9 +33,10 @@ import {
  * own evidence.
  *
  * Repository key. sha256 of the realpath of the git common directory (shared by every worktree of one repository), or of
- * the project root when it is not a git repository. Derived from the directory the store actually reads, never from a
- * separate argument. A linked worktree counts only when git's own back-pointer confirms it; anything else is keyed by its
- * project root, so a copy or a planted .git file never reads another repository's decisions.
+ * the project root when it is not a git repository, computed by core repositoryIdentity (the decision journal's function).
+ * Derived from the directory the store actually reads, never from a separate argument. A linked worktree counts only when
+ * its git directory is a direct child of the common directory's `worktrees/` and git's back-pointer names its `.git` file;
+ * anything else is keyed by its project root, so a copy or a planted .git file never reads another repository's decisions.
  *
  * What this stops, by tier (BRIEF): T-repo and T-sandboxed-agent cannot write here (outside the repository and the
  * workspace), so they cannot make an acceptance "accepted". T-same-user can: it writes this directory like any other file
@@ -57,57 +58,19 @@ export function ledgerRoot(): string {
   return join(securityStateHome(), "ledger");
 }
 
-/** The git common directory that git itself would use for `root`, or null (not a git repository, or a .git we cannot confirm). */
-function gitCommonDir(root: string): string | null {
-  let home: string | null = null;
-  try {
-    home = realpathSync(userInfo().homedir);
-  } catch {
-    /* no home: walk to the filesystem root */
-  }
-  for (let dir = root; ; ) {
-    // the user's home is not a project: a dotfiles repository there must not join unrelated directories under one key
-    if (dir === home) return null;
-    const dotgit = join(dir, ".git");
-    let st: ReturnType<typeof lstatSync> | undefined;
-    try {
-      st = lstatSync(dotgit);
-    } catch {
-      st = undefined;
-    }
-    if (st?.isDirectory()) return realpathSync(dotgit);
-    if (st?.isFile()) return linkedCommonDir(dotgit);
-    if (st) return null;
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
+export type RepositoryKey = { key: string; source: "git-common-dir" | "project-root"; basis: string; root: string; roots: string[] };
 
-/** A linked worktree: `.git` names its git dir, which names the common dir and points back at this very `.git` file. */
-function linkedCommonDir(dotgit: string): string | null {
-  try {
-    const line = /^gitdir:\s*(.+)$/m.exec(readFileSync(dotgit, "utf8"))?.[1]?.trim();
-    if (!line) return null;
-    const gitdir = realpathSync(resolve(dirname(dotgit), line));
-    const commondir = join(gitdir, "commondir");
-    if (!existsSync(commondir)) return null; // a submodule or something else: keyed by its own project root
-    const back = realpathSync(resolve(gitdir, readFileSync(join(gitdir, "gitdir"), "utf8").trim()));
-    if (back !== realpathSync(dotgit)) return null;
-    return realpathSync(resolve(gitdir, readFileSync(commondir, "utf8").trim()));
-  } catch {
-    return null;
-  }
-}
-
-export type RepositoryKey = { key: string; source: "git-common-dir" | "project-root"; basis: string; root: string };
-
+/**
+ * The repository's key, from core repositoryIdentity: the same function, and so the same key, as the decision journal. A
+ * linked worktree counts only when its git directory sits under the common directory's own `worktrees/` and git's
+ * back-pointer names its `.git` file; anything else (a copy, a planted `.git` file, a submodule) is keyed by its own
+ * project root, and the walk never goes past it, nor reaches the account's home (a dotfiles repository there is no project).
+ * Throws when the path does not exist.
+ */
 export function repositoryKey(repo: string): RepositoryKey {
   const root = realpathSync(resolve(repo));
-  const common = gitCommonDir(root);
-  const basis = common ?? root;
-  // the same key format as the decision journal's repositoryKey (user-approval.ts), so both name one repository alike
-  return { key: sha256(common ? `git:${basis}` : `dir:${basis}`), source: common ? "git-common-dir" : "project-root", basis, root };
+  const identity = repositoryIdentity(root);
+  return { key: identity.key, source: identity.kind === "git" ? "git-common-dir" : "project-root", basis: identity.basis, root, roots: [...new Set([root, ...identity.roots])] };
 }
 
 /** The realpath of `target`, or of its nearest existing ancestor joined with the rest: where it would be created. */
@@ -143,9 +106,8 @@ function locate(repo: string, workItemId: string): Located {
   }
   const dir = join(root, key.key);
   const real = realTarget(dir);
-  // the repository (its root, its git directory and the main worktree around it) can never hold its own evidence
-  const guarded = [key.root, ...(key.source === "git-common-dir" ? [key.basis, ...(key.basis.endsWith(`${sep}.git`) ? [dirname(key.basis)] : [])] : [])];
-  if (guarded.some((g) => inside(real, g))) throw unavailable(`it would be inside the repository (${real})`);
+  // the repository (its root, its work tree, its git common directory and the main worktree around it) can never hold its own evidence
+  if (key.roots.some((g) => inside(real, g))) throw unavailable(`it would be inside the repository (${real})`);
   return { dir, file: join(dir, `${workItemId}.jsonl`), key };
 }
 

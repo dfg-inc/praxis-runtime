@@ -188,7 +188,7 @@ export function runNpmTest(cwd: string): {
     encoding: "utf8",
     shell: true,
     timeout: 20_000,
-    // the repository's own tests: run without any credential, whatever this service inherited (contracts child-env.ts)
+    // the repository's own tests: not handed any credential, whatever this service inherited (hygiene, contracts child-env.ts)
     env: repositoryCodeEnv({ CI: "1", npm_config_progress: "false" }),
   });
   const stdout = r.stdout ?? "";
