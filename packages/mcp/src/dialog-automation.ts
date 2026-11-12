@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { securityStateInsideRepository } from "@praxis/contracts";
 import { testSource } from "./approval-settings.js";
 
 /**
@@ -23,7 +24,9 @@ import { testSource } from "./approval-settings.js";
  *   - the client's process ancestry: a client started with flags that bring configuration Praxis does not evaluate
  *     (`--settings`, `--plugin-dir`, `--plugin-url`, `--agents`) is a finding (Claude Desktop starts its Code tab with an
  *     inline `--settings`, so the Code tab is refused before its dialog is tried);
- *   - a state home (the decision journal) inside the repository.
+ *   - Praxis's security state (the decision journal and ledger, at the account home from the OS account database) inside
+ *     the repository, and a PRAXIS_STATE_HOME (which moves the logs, and the journal in the test source) inside it. Both only
+ *     make Praxis stricter; obtainUserApproval refuses the first on its own (DECISION_LEDGER_UNAVAILABLE).
  *
  * This is best effort against the client's configuration surface, which Praxis does not own and which can grow: a source
  * Claude Code adds later, or a client the agent runs itself, is not seen (docs/approval-threat-model.md R1, R6).
@@ -483,10 +486,14 @@ export function dialogAutomation(input: { repo?: string; ancestry?: () => Proces
     if (existsSync(dropIns)) for (const file of walk(dropIns, pluginBudget)) if (file.endsWith(".json")) settingsAt(file, false);
   }
 
-  // the journal kept inside the repository
-  const stateHome = process.env.PRAXIS_STATE_HOME?.trim();
-  if (stateHome && input.repo && within(resolve(stateHome), resolve(input.repo))) {
-    findings.push({ file: resolve(stateHome), why: "the Praxis state home (the decision journal) is inside the repository", kind: "state-home" });
+  // state kept inside the repository: the security state where it really is, and the location the environment asks for
+  if (input.repo) {
+    const security = securityStateInsideRepository(input.repo);
+    if (security) findings.push({ file: security, why: "Praxis's security state (the decision journal and ledger) is inside the repository", kind: "state-home" });
+    const stateHome = process.env.PRAXIS_STATE_HOME?.trim();
+    if (stateHome && within(resolve(stateHome), resolve(input.repo)) && !security) {
+      findings.push({ file: resolve(stateHome), why: "PRAXIS_STATE_HOME (the Praxis logs, and the decision journal in the test source) is inside the repository", kind: "state-home" });
+    }
   }
 
   findings.push(...checkClientEnvironment());

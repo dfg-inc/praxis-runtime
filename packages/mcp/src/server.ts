@@ -18,6 +18,7 @@ export { PRAXIS_MCP_SDK } from "./protocol.js";
 export { jsonSchemaToZod } from "./schema.js";
 
 import { recordDiagnostic } from "./diagnostics-log.js";
+import { installOutputRedaction, redactEnvelope, redactError } from "./secret-redaction.js";
 
 function logStderr(line: string): void {
   console.error(line);
@@ -142,10 +143,10 @@ export function createPraxisMcpServer(opts: { role: PraxisRole; version: string 
             const key = approvalKey(error.request);
             // the retry carrying the answer is timed against this moment: an instant answer is the client's, not the user's
             noteDialogAsked(key);
-            return inputRequired({ inputRequests: { [key]: inputRequired.elicit(elicitParams(error.request) as never) } });
+            return inputRequired({ inputRequests: { [key]: inputRequired.elicit(redactEnvelope(elicitParams(error.request)) as never) } });
           }
           recordDiagnostic({ event: "tool_failed", callId, tool: tool.name, ms: Date.now() - started, error: error instanceof Error ? error.name : "unknown" });
-          throw error;
+          throw redactError(error);
         }
         recordDiagnostic({
           event: "tool_finished",
@@ -155,10 +156,12 @@ export function createPraxisMcpServer(opts: { role: PraxisRole; version: string 
           ok: envelope.ok,
           code: (envelope as { code?: string }).code ?? null,
         });
+        // callTool already redacted it; redacted again here so no other path can hand the protocol a credential value
+        const safe = redactEnvelope(envelope);
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(envelope) }],
-          structuredContent: envelope as unknown as Record<string, unknown>,
-          isError: !envelope.ok,
+          content: [{ type: "text" as const, text: JSON.stringify(safe) }],
+          structuredContent: safe as unknown as Record<string, unknown>,
+          isError: !safe.ok,
         };
       },
     );
@@ -183,6 +186,8 @@ export function startStdioServer(opts?: {
   } catch (err) {
     failStart("PRAXIS_MCP_ROLE_INVALID", err instanceof PraxisMcpRoleError ? err : err);
   }
+  // before anything is written: every protocol message and log line passes credential redaction (secret-redaction.ts)
+  installOutputRedaction();
   logStderr("[praxis-mcp] starting");
   logStderr(`[praxis-mcp] version=${version}`);
   logStderr(`[praxis-mcp] role=${role}`);

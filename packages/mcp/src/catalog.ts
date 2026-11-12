@@ -28,7 +28,7 @@ const confirmProp = {
   type: "string",
   enum: ["YES", "NO"],
   description:
-    "YES means: apply what was previewed. It is not the user's approval: Praxis then asks the user itself in the client's own approval dialog and runs the action only if they approve. A client that cannot show the dialog gets APPROVAL_CLIENT_UI_REQUIRED and nothing runs. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection.",
+    "YES means: apply what was previewed. It is not an approval: Praxis then asks in the client's own approval dialog and runs the action only if that dialog answers approve. A client that cannot show the dialog gets APPROVAL_CLIENT_UI_REQUIRED and nothing runs. NO withdraws the request: nothing runs, and it is recorded as the agent's withdrawal, never as the user's rejection.",
 };
 const fingerprintProp = {
   type: "string",
@@ -806,7 +806,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_canon_init_apply",
     description:
-      "Create the BA canon root listed by praxis_canon_init_preview. Only ever creates: an existing file or folder is left untouched. The user approves exactly the listed paths in the client's own dialog before anything is written. Does not create a first epic or the documentation layer (praxis-ba epic add and the ba-scaffold skill do).",
+      "Create the BA canon root listed by praxis_canon_init_preview. Only ever creates: an existing file or folder is left untouched. The client's own approval dialog must approve exactly the listed paths before anything is written. Does not create a first epic or the documentation layer (praxis-ba epic add and the ba-scaffold skill do).",
     inputSchema: {
       type: "object",
       properties: { repo: repoProp, product: { type: "string", description: "Product name for the heading of the draft vision (optional)." }, confirmation: confirmProp },
@@ -996,12 +996,12 @@ export const TOOLS: ToolDef[] = [
   {
     name: "praxis_approval_journal",
     description:
-      "Audits the Praxis decision journal for this repository (kept in the user's Praxis home, not the repository): what was approved, rejected, withdrawn or could not be asked, and which entries attribute a decision to the user without evidence (the agent's confirmation=NO recorded as a rejection, or a client that answered the approval dialog by itself in milliseconds). amend=false (default) only reads. amend=true with confirmation=YES appends one traceable correction per such entry after the user approves exactly that list; existing lines are never changed or removed.",
+      "Audits the Praxis decision journal for this repository (kept in the user's Praxis home, not the repository): what was approved, rejected, withdrawn or could not be asked, and which entries attribute a decision to the user without evidence (the agent's confirmation=NO recorded as a rejection, or a client that answered the approval dialog by itself in milliseconds). amend=false (default) only reads. amend=true with confirmation=YES appends one traceable correction per such entry after the client's approval dialog approves exactly that list; existing lines are never changed or removed. Corrections can only take a claimed decision of the user back; nothing can add or upgrade an approval, and nothing in Praxis reads the journal as evidence.",
     inputSchema: {
       type: "object",
       properties: {
         repo: repoProp,
-        amend: { type: "boolean", description: "Append the corrections the audit lists (needs confirmation=YES and the user's approval). Default false: read only." },
+        amend: { type: "boolean", description: "Append the corrections the audit lists (needs confirmation=YES and approval in the client's dialog). Default false: read only." },
         confirmation: confirmProp,
       },
       additionalProperties: false,
@@ -1032,14 +1032,14 @@ for (const tool of TOOLS) {
   if (tool.kind !== "apply") continue;
   tool.inputSchema.properties.instanceId = {
     type: "string",
-    description: "External instance (Jira base URL). Defaults to the configured one.",
+    description: "Ignored, kept for compatibility: the Jira instance comes only from the operator's configuration, never from a tool argument.",
   };
   tool.inputSchema.properties.planText = {
     type: "string",
     description: "Retired in 0.1.0-alpha.49.2 and ignored: no text you pass approves anything.",
   };
   tool.description +=
-    " The user approves this exact action before it runs, in the client's own approval dialog (a client response: Praxis cannot authenticate the person). Nothing else counts as approval: not confirmation=YES, not a page, not a setting; a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the user said no), APPROVAL_DISMISSED (closed without deciding), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask, or the dialog is set up to be answered automatically: not a rejection, nothing ran).";
+    " It runs only after the client's own approval dialog answers approve for this exact action. That answer is a client response: Praxis cannot tell whether a person or automation gave it, and every result says so (authorization: channel, decidedBy, personVerified false, independentlyVerified false). Nothing else counts as approval: not confirmation=YES, not a page, not a setting; a rejection runs nothing. Outcomes are distinct codes: APPROVAL_REJECTED (the dialog answered reject), APPROVAL_DISMISSED (closed without deciding), APPROVAL_TIMED_OUT, APPROVAL_WITHDRAWN (confirmation=NO), APPROVAL_CLIENT_UI_REQUIRED (Praxis could not ask, or the dialog is set up to be answered automatically: not a rejection, nothing ran), DECISION_LEDGER_UNAVAILABLE (Praxis's security state would be inside the repository: nothing ran).";
 }
 
 export function toolsForRole(role: PraxisRole): ToolDef[] {

@@ -14,6 +14,8 @@ let saved: Record<string, string | undefined>;
 beforeEach(() => {
   saved = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
   for (const k of KEYS) delete process.env[k];
+  // the test source's journal goes to a throwaway home, never the account's real one
+  process.env.PRAXIS_STATE_HOME = mkdtempSync(join(tmpdir(), "praxis-envrt-home-"));
 });
 afterEach(() => {
   for (const k of KEYS) {

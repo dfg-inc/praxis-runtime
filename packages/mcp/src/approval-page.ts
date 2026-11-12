@@ -5,13 +5,18 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { ApprovalError, logDecision, subjectDigest, USER_APPROVAL_TTL_MS, type ApprovalRequest, type AskAnswer, type UserApprovalChannel } from "@praxis/contracts";
-import { approvalSettings } from "./approval-settings.js";
+import { approvalSettings, testSource } from "./approval-settings.js";
 
 /**
- * The Praxis approval page: the user's approval for a client that cannot show Praxis's dialog (Claude Desktop Chat, and the
- * Code tab, which answers the dialog by itself).
+ * The Praxis approval page: TEST SOURCE ONLY. A shipped Runtime never uses it for anything: approvalSettings().page is false
+ * whenever PRAXIS_BUNDLE_KIND is "production" (a constant in every shipped bundle), whatever the environment, a repository
+ * or the account's files say, so Claude Desktop Chat and the Code tab get protected actions refused, not a page
+ * (docs/approval-threat-model.md). The mechanism is kept, and exercised by the unit tests, for a future approval authority
+ * that would live outside the user's computer; served from the user's own computer it cannot be one, for the reasons below.
  *
- *   apply -> the Runtime opens a page in the user's browser -> the user reads the exact action and clicks Approve or Reject
+ * How it works under the test harness:
+ *
+ *   apply -> the Runtime opens a page in a browser -> someone reads the exact action and clicks Approve or Reject
  *         -> the same apply (called again, or still waiting) runs it, or reports the rejection
  *
  * What the agent can and cannot do:
@@ -26,11 +31,10 @@ import { approvalSettings } from "./approval-settings.js";
  *  - The page is served on 127.0.0.1 on its own port (separate from the review pages), checks Host and Origin, takes JSON
  *    only, refuses framing, and needs a per-load token.
  *
- * What it is not (stated in results and docs/approval-threat-model.md): independent of a program running as the user. A
- * browser-automation tool connected to the browser that shows the page (Claude in Chrome) can click it, and a shell on the
- * same account can read the short-lived link file or Praxis's own files. Praxis cannot detect either. The page is consent for
- * an agent that uses Praxis's tools, at the same trust as a review-page Save; it is labelled "approval-page", never
- * "client-ui".
+ * Why it is not shipped: it is not independent of a program running as the user (T-same-user, and T-sandboxed-agent with
+ * a browser tool). A browser-automation tool connected to the browser that shows the page (Claude in Chrome) can click it,
+ * and a shell on the same account can read the short-lived link file or Praxis's own files. Praxis cannot detect either. A
+ * click is labelled "approval-page" with personVerified: false and independentlyVerified: false, never "client-ui".
  */
 
 const REQUEST_TTL_MS = 10 * 60 * 1000;
@@ -103,7 +107,7 @@ const keyOf = (request: ApprovalRequest, repo: string | undefined): string => `$
  */
 const earliestDecisionMs = (): number => approvalSettings().pageMinMs;
 
-/** The full text the user approves: the same words a client dialog would show, never shortened. */
+/** The full text the page asks about: the same words a client dialog would show, never shortened. */
 export function approvalPageText(request: ApprovalRequest): string {
   return [request.summary, "", request.description, ...(request.risks?.length ? ["", "Risks:", ...request.risks.map((risk) => `- ${risk}`)] : [])].join("\n");
 }
@@ -388,9 +392,9 @@ export const openApprovalPage: PageOpener = async (secretUrl) => {
 };
 
 let testOpener: PageOpener | undefined;
-/** Tests only (PRAXIS_TEST_APPROVALS=1): receive the secret link instead of a browser. Not reachable from a tool call. */
+/** Tests only (the test source, never a shipped bundle): receive the secret link instead of a browser. Not reachable from a tool call. */
 export function setApprovalPageOpenerForTest(opener: PageOpener | undefined): void {
-  if (process.env.PRAXIS_TEST_APPROVALS !== "1") throw new Error("setApprovalPageOpenerForTest is for tests only");
+  if (!testSource()) throw new Error("setApprovalPageOpenerForTest is for tests only");
   testOpener = opener;
 }
 
