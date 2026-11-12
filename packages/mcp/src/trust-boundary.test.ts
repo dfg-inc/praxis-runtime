@@ -166,9 +166,16 @@ describe("a repository's settings cannot authorize (T18): no mode, no page, no t
     process.env.PRAXIS_BUNDLE_KIND = "production";
     process.env.PRAXIS_TEST_APPROVALS = "1";
     process.env.PRAXIS_APPROVAL_PAGE = "on";
-    const result = await init();
-    expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
-    expect(existsSync(join(repo, ".project"))).toBe(false);
+    // a shipped bundle journals in the account's real home whatever PRAXIS_STATE_HOME says: remove what this temp repository left
+    const journal = decisionLogPath(repo);
+    const existed = existsSync(journal);
+    try {
+      const result = await init();
+      expect(result.code).toBe("APPROVAL_CLIENT_UI_REQUIRED");
+      expect(existsSync(join(repo, ".project"))).toBe(false);
+    } finally {
+      if (!existed) rmSync(journal, { force: true });
+    }
   });
 });
 

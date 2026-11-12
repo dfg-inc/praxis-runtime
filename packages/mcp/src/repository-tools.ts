@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
-import { buildRepositoryBrief, implementationOrder, repositoryProgress, type WorkflowState } from "@praxis/contracts";
+import { buildRepositoryBrief, gitEnv, implementationOrder, repositoryProgress, type WorkflowState } from "@praxis/contracts";
 import { discoverFrontend } from "./frontend-discover.js";
 import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
 
@@ -19,7 +19,7 @@ function requireState(repo: string, workItemId?: string): WorkflowState {
 
 function git(path: string, args: string[]): string | undefined {
   try {
-    return execFileSync("git", ["-C", path, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 }).trim() || undefined;
+    return execFileSync("git", ["-C", path, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], timeout: 10_000, env: gitEnv() }).trim() || undefined;
   } catch {
     return undefined;
   }

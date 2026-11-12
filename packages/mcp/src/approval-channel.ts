@@ -5,7 +5,9 @@ import { approvalSettings } from "./approval-settings.js";
 import { dialogAutomation, type AutomationFinding } from "./dialog-automation.js";
 
 /**
- * The user's approval, asked through the MCP client's own elicitation dialog.
+ * Approval, asked through the MCP client's own elicitation dialog. Its answer is a client response, recorded with
+ * personVerified: false and independentlyVerified: false: a program running as the user can run its own client and answer
+ * it (R1, T-same-user), which no check here can see.
  *
  * The client shows the message (what will happen, in full) and returns Accept / Decline / Cancel plus the form. That
  * answer comes back as a protocol response to this server: it is not a tool argument, so the agent cannot write it.

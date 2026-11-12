@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { gitEnv } from "@praxis/contracts";
 
 export class GitContextError extends Error {
   readonly code: string;
@@ -14,7 +15,7 @@ export function git(repo: string, args: string[]): string {
   if (!existsSync(repo)) {
     throw new GitContextError("repo_missing", `git repo missing: ${repo}`);
   }
-  const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8" });
+  const r = spawnSync("git", ["-C", repo, ...args], { encoding: "utf8", env: gitEnv() });
   if ((r.status ?? 1) !== 0) {
     throw new GitContextError(
       "git_failed",

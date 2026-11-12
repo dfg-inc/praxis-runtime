@@ -1,13 +1,17 @@
 import { appendFileSync, mkdirSync, statSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { redactCredentials } from "@praxis/contracts";
 
 /**
  * A small local event log for the MCP server, so "the call hung" can be answered from evidence: did the tool handler run,
  * what did the client declare, how did the approval end, how long did it take.
  *
  * Events carry names, ids, durations, codes and the client's declared capability keys. They never carry tool arguments,
- * plan text, tokens or file contents. Location: ~/.praxis/diagnostics/mcp.jsonl (PRAXIS_STATE_HOME moves it), rotated at 1 MB.
+ * plan text, tokens or file contents, and each line passes credential redaction before it is written (secret-redaction.ts).
+ * Location: ~/.praxis/diagnostics/mcp.jsonl, rotated at 1 MB. PRAXIS_STATE_HOME moves it in any build: it is a debugging log,
+ * not security state. Nothing reads it as approval evidence; the journal audit only uses it to take a claimed decision of the
+ * user back (approval-journal.ts), never to add one, so moving or editing it cannot approve anything.
  */
 const MAX_BYTES = 1_000_000;
 
@@ -24,7 +28,7 @@ export function recordDiagnostic(entry: DiagnosticEvent): void {
     } catch {
       // no file yet
     }
-    appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), pid: process.pid, ...entry })}\n`);
+    appendFileSync(file, `${redactCredentials(JSON.stringify({ at: new Date().toISOString(), pid: process.pid, ...entry }))}\n`);
   } catch {
     // diagnostics must never break a tool call
   }
