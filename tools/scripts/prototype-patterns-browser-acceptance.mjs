@@ -14,6 +14,7 @@
  * Needs a build whose @praxis/contracts knows the conversation and custom kinds (praxis-core vendor refresh).
  * Usage: node tools/scripts/prototype-patterns-browser-acceptance.mjs [--chrome <path>] [--shots <dir>]
  */
+import "./isolated-state-home.mjs";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";

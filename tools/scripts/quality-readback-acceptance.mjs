@@ -2,6 +2,7 @@
 /**
  * Quality Apply / Review read-back. Mocked Jira + local Quality HTTP. No live writes.
  */
+import "./isolated-state-home.mjs";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
