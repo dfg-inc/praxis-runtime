@@ -5277,7 +5277,7 @@ function phaseContent(state2, phase) {
     case "story_plan":
       return { kind: "phase", phase, plan: state2.storyPlan ? storyPlanContent(state2.storyPlan) : null };
     default:
-      return { kind: "phase", phase, stories: activeStories(state2).map((s) => contentDigest(storyReviewContent(s))) };
+      return { kind: "phase", phase, stories: activeStories(state2).map((s) => contentDigest({ ...storyReviewContent(s), title: s.title ?? null, capabilities: s.capabilities })) };
   }
 }
 function contractContent(c) {
@@ -5345,16 +5345,15 @@ function judge(subject, actionId, ledger, byAction, bySubject) {
     return { status: "invalid", reason: `decision record ${actionId} belongs to ${recorded}, not to this subject (copied)` };
   if (entry.decision !== "accept")
     return { status: "invalid", reason: `decision record ${actionId} is a ${entry.decision}, not an acceptance` };
-  const history = bySubject.get(subject.key) ?? [];
-  const latest = history[history.length - 1];
-  if (latest && latest.actionId !== entry.actionId) {
-    if ((latest.decision === "supersede" || latest.decision === "accept") && latest.contentDigest === subject.contentDigest) {
-      return { status: "stale", reason: `a later ${latest.decision === "accept" ? "acceptance" : "revision"} recorded by Praxis (${latest.at}) supersedes the acceptance this file references: accept it again` };
-    }
-    return { status: "invalid", reason: `the latest decision recorded for it is a ${latest.decision} (${latest.at}), which the file contradicts` };
-  }
-  if (entry.contentDigest !== subject.contentDigest)
+  const later = (bySubject.get(subject.key) ?? []).filter((e) => e.seq > entry.seq);
+  if (entry.contentDigest !== subject.contentDigest) {
+    if (later.some((e) => e.decision === "supersede" && e.contentDigest === subject.contentDigest))
+      return { status: "stale", reason: "it was accepted for an earlier revision: accept it again" };
     return { status: "invalid", reason: "its content changed after it was accepted, outside Praxis" };
+  }
+  const takenBack = later.find((e) => (e.decision === "reject" || e.decision === "revoke" && e.approval !== null) && e.contentDigest === subject.contentDigest);
+  if (takenBack)
+    return { status: "invalid", reason: `a later decision on this computer, on any branch or worktree, took this content back (${takenBack.decision}, ${takenBack.at}): accept it again if it still applies` };
   return { status: "accepted", reason: `recorded by Praxis on this computer at ${entry.at} after ${entry.approval?.decidedBy ?? "an approval"} answered (a client response; not proof a person decided)` };
 }
 function evaluateIntegrity(state2, ledger) {
@@ -5368,18 +5367,19 @@ function evaluateIntegrity(state2, ledger) {
   }
   const actions = state2.acceptanceActions ?? {};
   const subjects = {};
-  for (const subject of acceptanceSubjects(state2)) {
+  const all = acceptanceSubjects(state2);
+  const copies = duplicateKeys(all);
+  for (const subject of all) {
     if (!subject.claimed)
       continue;
     const actionId = typeof actions[subject.key] === "string" ? actions[subject.key] : void 0;
-    const verdict = judge(subject, actionId, ledger, byAction, bySubject);
-    subjects[subject.key] = { key: subject.key, kind: subject.kind, id: subject.id, label: subject.label, ...verdict, ...actionId ? { actionId } : {} };
+    const count2 = copies.get(subject.key);
+    const verdict = count2 ? { status: "invalid", reason: `its id appears ${count2} times in the work item (duplicate id): no copy counts until the duplicates are removed` } : judge(subject, actionId, ledger, byAction, bySubject);
+    subjects[subject.key] = { key: subject.key, kind: subject.kind, id: subject.id, label: subject.label, ...verdict, ...actionId ? { actionId } : {}, ...count2 ? { duplicate: true } : {} };
   }
   const records = {};
-  for (const record5 of state2.approvals ?? []) {
-    const backed = entries.some((e) => e.approval && record5.subjectDigest && e.approval.subjectDigest === record5.subjectDigest && e.approval.decidedAt === record5.at);
-    records[record5.id] = backed ? "accepted" : "unverified";
-  }
+  for (const record5 of state2.approvals ?? [])
+    records[record5.id] = recordBacked(record5, entries) ? "accepted" : "unverified";
   return {
     ledger: ledger.status,
     ...ledger.status !== "available" ? { ledgerReason: ledger.reason } : {},
@@ -5387,6 +5387,25 @@ function evaluateIntegrity(state2, ledger) {
     records,
     independentVerification: "unavailable"
   };
+}
+function duplicateKeys(subjects) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const s of subjects)
+    counts.set(s.key, (counts.get(s.key) ?? 0) + 1);
+  return new Map([...counts].filter(([, n]) => n > 1));
+}
+function recordBacked(record5, entries) {
+  if (!record5.subjectDigest)
+    return false;
+  const batchAction = record5.action === "review-decisions" || record5.action === "open-classic-work-item";
+  const same = entries.filter((e) => e.approval && e.approval.subjectDigest === record5.subjectDigest && e.approval.decidedAt === record5.at && (batchAction ? e.approval.action === "review-decisions" : e.approval.action === record5.action));
+  if (same.length === 0)
+    return false;
+  const named = record5.subjects.filter((s) => RECORD_SUBJECT_KINDS[s.type]);
+  if (named.length === 0)
+    return true;
+  const backedSubject = (s) => same.some((e) => e.subject.kind === RECORD_SUBJECT_KINDS[s.type] && e.subject.id === s.id);
+  return batchAction ? named.some(backedSubject) : named.every(backedSubject);
 }
 function isTrusted(state2, key) {
   const entry = annotationOf(state2)?.subjects[key];
@@ -5398,10 +5417,13 @@ function untrustedClaim(state2, key) {
 }
 function clearIntegrity(state2, keys2) {
   const annotation = annotationOf(state2);
-  if (!annotation || !keys2.some((key) => key in annotation.subjects))
+  if (!annotation)
+    return state2;
+  const clearable = keys2.filter((key) => key in annotation.subjects && !annotation.subjects[key].duplicate);
+  if (clearable.length === 0)
     return state2;
   const subjects = { ...annotation.subjects };
-  for (const key of keys2)
+  for (const key of clearable)
     delete subjects[key];
   return withIntegrity(state2, { ...annotation, subjects });
 }
@@ -5431,6 +5453,18 @@ function trustedView(state2) {
     ...state2.storyPlan && state2.storyPlan.status === "agreed" && bad2("phase", "story_plan") ? { storyPlan: { ...state2.storyPlan, status: "draft" } } : {}
   };
 }
+function outstandingIntegrity(state2) {
+  const annotation = annotationOf(state2);
+  if (!annotation)
+    return [];
+  const waivers = state2.waivers ?? [];
+  const sameGap = (a, b) => a.kind === b.kind && (a.requirementId ?? null) === (b.requirementId ?? null);
+  const replaced = (id) => {
+    const old = waivers.find((w) => w.id === id);
+    return old !== void 0 && waivers.some((w) => w.id !== id && sameGap(w, old) && isTrusted(state2, subjectKey("waiver", w.id)));
+  };
+  return Object.values(annotation.subjects).filter((e) => (e.status === "unverified" || e.status === "invalid") && !(e.kind === "waiver" && !e.duplicate && replaced(e.id)));
+}
 function integrityReport(state2) {
   const annotation = annotationOf(state2);
   return acceptanceSubjects(state2).filter((s) => s.claimed).map((s) => annotation?.subjects[s.key] ?? { key: s.key, kind: s.kind, id: s.id, label: s.label, status: s.stale ? "stale" : "accepted", reason: annotation ? "accepted in this call" : "in-memory state (not read from a file)" });
@@ -5455,33 +5489,41 @@ function planLedgerEntries(pre, post, approval) {
   if (pre && (!preAnnotation || !postAnnotation))
     throw new WorkflowError(DECISION_LEDGER_UNAVAILABLE, "a write must start from a work item the store read and checked against the decision ledger");
   const before = new Map((pre ? acceptanceSubjects(pre) : []).map((s) => [s.key, s]));
-  const after = new Map(acceptanceSubjects(post).map((s) => [s.key, s]));
+  const afterList = acceptanceSubjects(post);
+  const after = new Map(afterList.map((s) => [s.key, s]));
+  const duplicated = duplicateKeys(afterList);
   const recorded = (key) => before.get(key)?.claimed === true && preAnnotation?.subjects[key]?.status === "accepted";
   const madeNow = (key) => !postAnnotation || !(key in postAnnotation.subjects);
   const out = [];
   const plan = (s, decision) => out.push({ key: s.key, subject: { kind: s.kind, id: s.id, ...s.revision !== void 0 ? { revision: s.revision } : {} }, contentDigest: s.contentDigest, decision });
+  const withdrawn = (b, s) => approval ? plan(b, "revoke") : plan(s && s.contentDigest !== b.contentDigest ? s : b, "supersede");
   const criterionStatus2 = (state2, id) => state2?.requirements.flatMap((r) => r.acceptanceCriteria).find((c) => c.id === id)?.review.status;
   for (const [key, s] of after) {
     const b = before.get(key);
+    const changed = b !== void 0 && b.contentDigest !== s.contentDigest;
     if (s.claimed) {
-      if (recorded(key) && b.contentDigest === s.contentDigest)
+      if (recorded(key) && !changed)
         continue;
-      if (madeNow(key) && !s.stale && approval?.covers(key))
+      if (madeNow(key) && !s.stale && !duplicated.has(key) && approval?.covers(key))
         plan(s, "accept");
       else if (recorded(key))
-        plan(s, "supersede");
+        withdrawn(b, s);
       continue;
     }
-    if (s.kind === "criterion" && approval?.covers(key) && criterionStatus2(post, s.id) === "rejected" && !(criterionStatus2(pre, s.id) === "rejected" && b?.contentDigest === s.contentDigest)) {
+    if (s.kind === "criterion" && approval?.covers(key) && criterionStatus2(post, s.id) === "rejected" && !(criterionStatus2(pre, s.id) === "rejected" && !changed)) {
+      if (recorded(key) && changed)
+        plan(b, "revoke");
       plan(s, "reject");
       continue;
     }
     if (recorded(key))
-      plan(b.contentDigest !== s.contentDigest ? s : b, b.contentDigest !== s.contentDigest ? "supersede" : "revoke");
+      withdrawn(b, s);
+    else if (approval && changed && s.kind === "criterion" && approval.covers(key))
+      plan(b, "revoke");
   }
   for (const [key, b] of before)
     if (!after.has(key) && recorded(key))
-      plan(b, "revoke");
+      withdrawn(b, void 0);
   return out;
 }
 function batchCoverage(batch, pre) {
@@ -5541,10 +5583,19 @@ function batchCoverage(batch, pre) {
   return { covers: (key) => keys2.has(key) || newWaivers && key.startsWith("waiver:") && !existingWaivers.has(key) };
 }
 function humanActCoverage(action, command) {
-  const key = action === "confirm-story" && command.action === "confirm-story" ? subjectKey("story", String(command.id)) : action === "confirm-decision" && command.action === "confirm-decision" ? subjectKey("decision", String(command.id)) : action === "approve-service" && command.action === "set-service" ? subjectKey("service", String(command.service?.id)) : null;
-  return { covers: (candidate) => key !== null && candidate === key };
+  const keys2 = /* @__PURE__ */ new Set();
+  if (action === "confirm-story" && command.action === "confirm-story")
+    keys2.add(subjectKey("story", String(command.id)));
+  if (action === "confirm-decision" && command.action === "confirm-decision")
+    keys2.add(subjectKey("decision", String(command.id)));
+  if (action === "approve-service" && command.action === "set-service")
+    keys2.add(subjectKey("service", String(command.service?.id)));
+  if (action === "revise-acceptance" && command.action === "revise-acceptance")
+    for (const edit of command.edits ?? [])
+      keys2.add(subjectKey("criterion", edit.id));
+  return { covers: (candidate) => keys2.has(candidate) };
 }
-var import_node_crypto, SUBJECT_KINDS, subjectKey, LEDGER_DECISIONS, ACCEPTANCE_UNVERIFIED, ACCEPTANCE_INVALID, DECISION_LEDGER_UNAVAILABLE, ACCEPTANCE_INTEGRITY_NOTE, fingerprint16, activeRequirements, activeStories, EMPTY_ELEMENT_DEFAULTS, criterionContent, storyContent, decisionContent, serviceContent, waiverContent, INTEGRITY_KEY, GENESIS;
+var import_node_crypto, SUBJECT_KINDS, subjectKey, LEDGER_DECISIONS, ACCEPTANCE_UNVERIFIED, ACCEPTANCE_INVALID, DECISION_LEDGER_UNAVAILABLE, ACCEPTANCE_INTEGRITY_NOTE, fingerprint16, activeRequirements, activeStories, EMPTY_ELEMENT_DEFAULTS, criterionContent, storyContent, decisionContent, serviceContent, waiverContent, INTEGRITY_KEY, GENESIS, RECORD_SUBJECT_KINDS;
 var init_acceptance_integrity = __esm({
   "node_modules/@praxis/contracts/dist/acceptance-integrity.js"() {
     import_node_crypto = require("node:crypto");
@@ -5579,13 +5630,16 @@ var init_acceptance_integrity = __esm({
       businessRules: s.businessRules,
       acceptanceCriteria: s.acceptanceCriteria,
       expectedResults: s.expectedResults,
-      assumptionIds: s.assumptionIds
+      assumptionIds: s.assumptionIds,
+      title: s.title ?? null,
+      capabilities: s.capabilities
     });
     decisionContent = (d) => ({ kind: "decision", id: d.id, revision: d.revision, statement: d.statement, rationale: d.rationale ?? null, notes: d.notes ?? null });
     serviceContent = (s) => ({ kind: "service", id: s.id, name: s.name, serviceKind: s.kind, responsibilities: s.responsibilities, requirementIds: s.requirementIds, dependsOn: s.dependsOn, status: s.status });
     waiverContent = (w) => ({ kind: "waiver", id: w.id, waived: w.kind, requirementId: w.requirementId ?? null, reason: w.reason });
     INTEGRITY_KEY = "acceptanceIntegrity";
     GENESIS = "0".repeat(64);
+    RECORD_SUBJECT_KINDS = { story: "story", decision: "decision", service: "service", criterion: "criterion" };
   }
 });
 
@@ -5665,56 +5719,71 @@ function realLocation(path2) {
     }
   }
 }
-function gitDirOf(dotGit) {
+function linkedWorktreeCommonDir(dotGit) {
   try {
-    const st = (0, import_node_fs.lstatSync)(dotGit);
-    if (st.isDirectory())
-      return dotGit;
-    if (st.isFile()) {
-      const named = /^gitdir:\s*(.+?)\s*$/m.exec((0, import_node_fs.readFileSync)(dotGit, "utf8"))?.[1];
-      return named ? (0, import_node_path.resolve)((0, import_node_path.dirname)(dotGit), named) : void 0;
-    }
+    const named = /^gitdir:\s*(.+?)\s*$/m.exec((0, import_node_fs.readFileSync)(dotGit, "utf8"))?.[1];
+    if (!named)
+      return void 0;
+    const gitDir = (0, import_node_fs.realpathSync)((0, import_node_path.resolve)((0, import_node_path.dirname)(dotGit), named));
+    const common = (0, import_node_fs.realpathSync)((0, import_node_path.resolve)(gitDir, (0, import_node_fs.readFileSync)((0, import_node_path.join)(gitDir, "commondir"), "utf8").trim()));
+    if ((0, import_node_path.dirname)(gitDir) !== (0, import_node_path.join)(common, "worktrees"))
+      return void 0;
+    const back = (0, import_node_fs.realpathSync)((0, import_node_path.resolve)(gitDir, (0, import_node_fs.readFileSync)((0, import_node_path.join)(gitDir, "gitdir"), "utf8").trim()));
+    return back === (0, import_node_fs.realpathSync)(dotGit) ? common : void 0;
   } catch {
+    return void 0;
   }
-  return void 0;
 }
-function repositoryIdentity(repo) {
+function accountHomeReal() {
+  try {
+    const home = (0, import_node_os.userInfo)().homedir;
+    return home ? (0, import_node_fs.realpathSync)(home) : void 0;
+  } catch {
+    return void 0;
+  }
+}
+function repositoryIdentity(repo, options2 = {}) {
   const real = realOrResolved(repo);
-  let dir = real;
-  for (; ; ) {
-    const gitDir = gitDirOf((0, import_node_path.join)(dir, ".git"));
-    if (gitDir) {
-      let common = gitDir;
-      try {
-        const named = (0, import_node_fs.readFileSync)((0, import_node_path.join)(gitDir, "commondir"), "utf8").trim();
-        if (named)
-          common = (0, import_node_path.resolve)(gitDir, named);
-      } catch {
-      }
-      const commonReal = realOrResolved(common);
-      const mainTree = (0, import_node_path.basename)(commonReal) === ".git" ? (0, import_node_path.dirname)(commonReal) : void 0;
+  const home = options2.accountHome !== void 0 ? realOrResolved(options2.accountHome) : accountHomeReal();
+  const directory = () => ({ key: (0, import_node_crypto2.createHash)("sha256").update(`dir:${real}`).digest("hex"), kind: "directory", real, root: real, basis: real, roots: [real] });
+  for (let dir = real; ; ) {
+    if (home !== void 0 && dir === home)
+      return directory();
+    const dotGit = (0, import_node_path.join)(dir, ".git");
+    let st;
+    try {
+      st = (0, import_node_fs.lstatSync)(dotGit);
+    } catch {
+      st = void 0;
+    }
+    if (st) {
+      const common = st.isDirectory() ? realOrResolved(dotGit) : st.isFile() ? linkedWorktreeCommonDir(dotGit) : void 0;
+      if (!common)
+        return directory();
+      const mainTree = (0, import_node_path.basename)(common) === ".git" ? (0, import_node_path.dirname)(common) : void 0;
       return {
-        key: (0, import_node_crypto2.createHash)("sha256").update(`git:${commonReal}`).digest("hex"),
+        key: (0, import_node_crypto2.createHash)("sha256").update(`git:${common}`).digest("hex"),
         kind: "git",
+        real,
         root: dir,
-        roots: [.../* @__PURE__ */ new Set([real, dir, ...mainTree ? [mainTree] : []])]
+        basis: common,
+        roots: [.../* @__PURE__ */ new Set([real, dir, common, ...mainTree ? [mainTree] : []])]
       };
     }
     const up = (0, import_node_path.dirname)(dir);
     if (up === dir)
-      break;
+      return directory();
     dir = up;
   }
-  return { key: (0, import_node_crypto2.createHash)("sha256").update(`dir:${real}`).digest("hex"), kind: "directory", root: real, roots: [real] };
 }
-function securityStateInsideRepository(repo, home) {
+function securityStateInsideRepository(repo, home, options2 = {}) {
   let location;
   try {
     location = realLocation(home ?? securityStateHome());
   } catch {
     return void 0;
   }
-  return repositoryIdentity(repo).roots.some((root) => within(location, root)) ? location : void 0;
+  return repositoryIdentity(repo, options2).roots.some((root) => within(location, root)) ? location : void 0;
 }
 function assertSecurityStateOutside(repo) {
   const home = securityStateHome();
@@ -7040,8 +7109,10 @@ function phaseGates(rawState, to) {
     const coverage2 = analyzeStoryCoverage(state2);
     if (coverage2.ok)
       return;
+    const outstanding = new Set(outstandingIntegrity(rawState).map((e) => e.key));
     for (const w of rawState.waivers)
-      needTrusted(subjectKey("waiver", w.id));
+      if (outstanding.has(subjectKey("waiver", w.id)))
+        needTrusted(subjectKey("waiver", w.id));
     const asClaimed = analyzeStoryCoverage(claimed);
     need(asClaimed.ok, `coverage gaps: ${asClaimed.gaps.map((g) => g.reason).concat(asClaimed.requirementsWithoutStories.map((id) => `${id} has no story`)).join("; ")}`);
   };
@@ -7177,7 +7248,7 @@ function nextStep(rawState) {
   const phase = state2.phase;
   const progress = reviewProgress(state2);
   const open4 = state2.openQuestions;
-  const untrusted = Object.values(annotationOf(rawState)?.subjects ?? {}).filter((s) => s.status === "unverified" || s.status === "invalid");
+  const untrusted = outstandingIntegrity(rawState);
   const base = {
     phase,
     blockers: [
@@ -7260,16 +7331,17 @@ function withoutVia(command) {
   const { via: _via, sequence: _sequence, ...rest } = command;
   return rest;
 }
-function reviewBatchSubject(batch) {
-  return canonicalText(batch.map(withoutVia));
+function reviewBatchSubject(batch, baseState) {
+  const commands = batch.map(withoutVia);
+  return canonicalText(baseState === void 0 ? commands : { commands, baseState });
 }
-function reviewApprovalRequest(batch, summary) {
+function reviewApprovalRequest(batch, summary, baseState) {
   return {
     action: REVIEW_DECISION_ACTION,
     kind: "requirement_acceptance",
     summary,
     description: batch.map((c) => `- ${String(c.action)}${c.decisions ? ` (${c.decisions.length} requirement(s))` : ""}`).join("\n"),
-    subject: reviewBatchSubject(batch),
+    subject: reviewBatchSubject(batch, baseState),
     risks: ["These decisions record that you accepted or rejected the reviewed items; later stages rely on them."]
   };
 }
@@ -7297,7 +7369,7 @@ function isUserDecision(command) {
 function verifiedVia(command, channel) {
   if (!channel || channel.via !== "approved")
     return null;
-  verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch) });
+  verifyUserApproval(channel.approval, { action: REVIEW_DECISION_ACTION, subject: reviewBatchSubject(channel.batch, channel.baseState) });
   const mine = canonicalText(withoutVia(command));
   if (!channel.batch.some((item) => canonicalText(withoutVia(item)) === mine)) {
     throw new WorkflowError("USER_DECISION_REQUIRED", "this decision is not part of what the user approved");
@@ -8237,7 +8309,7 @@ function humanActRequest(state2, command) {
       throw new WorkflowError("STORY_REVISION", `story ${command.id} is at revision ${story.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view stories)`);
     if (contentFingerprint2 !== command.contentFingerprint)
       throw new WorkflowError("STORY_FINGERPRINT", `story ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view stories)`);
-    const content = humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 });
+    const content = humanActContent("confirm-story", storyActSubject(story));
     return {
       action: "confirm-story",
       targetId: story.id,
@@ -8247,6 +8319,7 @@ function humanActRequest(state2, command) {
       summary: `Confirm Story ${story.id} revision ${story.revision}`,
       description: [
         `Story ${story.id} (revision ${story.revision}) for requirement(s) ${story.requirementIds.join(", ")}.`,
+        story.title ? `Title: ${story.title}` : "",
         `As ${story.actor}: ${story.narrative}`,
         `Objective: ${story.objective}`,
         `User value: ${story.userValue}`,
@@ -8266,8 +8339,9 @@ ${bullet(story.businessRules)}`,
 ${bullet(story.acceptanceCriteria.map((c) => `${c.id}: Given ${c.given}; When ${c.when}; Then ${c.then}`))}`,
         `Expected results:
 ${bullet(story.expectedResults)}`,
+        `What the user can do (capabilities): ${story.capabilities.join(", ") || "(none declared)"}`,
         `Content fingerprint: ${contentFingerprint2}`
-      ].join("\n"),
+      ].filter(Boolean).join("\n"),
       risks: ["Confirming records that you accept this behavior as written. It does not authorize implementation, commits or pushes."]
     };
   }
@@ -8280,7 +8354,7 @@ ${bullet(story.expectedResults)}`,
       throw new WorkflowError("DECISION_REVISION", `decision ${command.id} is at revision ${decision.revision}, not ${command.revision}: read the current revision and contentFingerprint with praxis_workflow_inspect (view decisions)`);
     if (contentFingerprint2 !== command.contentFingerprint)
       throw new WorkflowError("DECISION_FINGERPRINT", `decision ${command.id} content is not the revision the fingerprint was taken from: read the current contentFingerprint with praxis_workflow_inspect (view decisions)`);
-    const content = humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 });
+    const content = humanActContent("confirm-decision", decisionActSubject(decision));
     return {
       action: "confirm-decision",
       targetId: decision.id,
@@ -8306,7 +8380,7 @@ ${bullet(story.expectedResults)}`,
       if (!owner || !criterion)
         return null;
       if (criterion.statement.trim() !== edit.statement.trim())
-        rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...criterion.review.comment ? { comment: criterion.review.comment } : {}, from: criterion.statement, to: edit.statement.trim() });
+        rows.push({ id: criterion.id, requirementId: owner.id, revision: criterion.revision, status: criterion.review.status, ...criterion.review.comment ? { comment: criterion.review.comment } : {}, from: criterion.statement, to: edit.statement.trim(), contentDigest: contentDigest(criterionContent(owner.id, criterion)) });
     }
     if (rows.length === 0)
       return null;
@@ -8358,6 +8432,12 @@ ${bullet(verdicts.map((v) => `${v.id}: ${v.verdict}`))}`
   }
   return null;
 }
+function storyActSubject(story) {
+  return { storyId: story.id, revision: story.revision, contentFingerprint: storyContentFingerprint(story), contentDigest: contentDigest(storyContent(story)) };
+}
+function decisionActSubject(decision) {
+  return { decisionId: decision.id, revision: decision.revision, contentFingerprint: decisionContentFingerprint(decision), contentDigest: contentDigest(decisionContent(decision)) };
+}
 function decisionContentFingerprint(decision) {
   return fingerprintPayload({
     id: decision.id,
@@ -8374,6 +8454,7 @@ function serviceApprovalSubject(state2, service) {
     serviceId: service.id,
     status: service.status,
     serviceDigest: fingerprintPayload(rest),
+    contentDigest: contentDigest(serviceContent(service)),
     implementation: state2.implementationUnits.filter((unit) => unit.serviceId === service.id && !unit.stale).map((unit) => ({ id: unit.id, path: unit.path, summary: unit.summary })).sort((a, b) => a.id.localeCompare(b.id))
   };
 }
@@ -8791,7 +8872,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
     }
     verifyUserApproval(options2.userApproval, {
       action: "confirm-decision",
-      subject: humanActContent("confirm-decision", { decisionId: decision.id, revision: decision.revision, contentFingerprint: contentFingerprint2 })
+      subject: humanActContent("confirm-decision", decisionActSubject(decision))
     });
     const decisions2 = state2.decisions.map((item) => item.id === decision.id ? { ...item, confirmed: true } : item);
     let confirmed = clearIntegrity({ ...state2, decisions: decisions2 }, [subjectKey("decision", decision.id)]);
@@ -8922,7 +9003,7 @@ function applyWorkflowCommandCore(state2, raw, options2) {
     }
     verifyUserApproval(options2.userApproval, {
       action: "confirm-story",
-      subject: humanActContent("confirm-story", { storyId: story.id, revision: story.revision, contentFingerprint: contentFingerprint2 })
+      subject: humanActContent("confirm-story", storyActSubject(story))
     });
     const stories2 = state2.stories.map((item) => item.id === story.id ? { ...item, confirmedBehavior: true, status: "confirmed" } : item);
     return { state: clearIntegrity({ ...state2, stories: stories2 }, [subjectKey("story", story.id)]), duplicate: false, result: { storyId: story.id, confirmedBehavior: true } };
@@ -11595,7 +11676,7 @@ function marks(name, current, labels = { accepted: "Accept", rejected: "Reject",
   return `<div class="marks tri" role="radiogroup" aria-label="Decision">${["accepted", "rejected", "pending"].map((v) => `<label class="m-${v}"><input type="radio" name="${esc3(name)}" value="${v}"${v === current ? " checked" : ""}><span>${labels[v]}</span></label>`).join("")}</div>`;
 }
 function integrityBanner(rawState, kinds) {
-  const untrusted = Object.values(annotationOf(rawState)?.subjects ?? {}).filter((s) => (s.status === "unverified" || s.status === "invalid") && kinds.includes(s.kind));
+  const untrusted = outstandingIntegrity(rawState).filter((s) => kinds.includes(s.kind));
   if (untrusted.length === 0)
     return "";
   return `<div class="stale" data-integrity><strong>${untrusted.length} acceptance(s) in this work item are not backed by a Praxis decision record on this computer.</strong> They are shown as undecided: decide them again if you agree. ${untrusted.slice(0, 12).map((s) => `${esc3(s.label)} (${esc3(s.status)})`).join("; ")}${untrusted.length > 12 ? "; ..." : ""}</div>`;
@@ -22999,7 +23080,7 @@ function runProjectVerification(repo) {
     cwd: repo,
     shell: true,
     encoding: "utf8",
-    // the repository's own test command: repository code, never given the Runtime's credentials (contracts child-env.ts)
+    // the repository's own test command: repository code, not handed the Runtime's credentials (hygiene: contracts child-env.ts)
     env: repositoryCodeEnv()
   });
   const stdout = `${r.stdout ?? ""}${r.stderr ?? ""}`;
@@ -24910,7 +24991,7 @@ function credentialExposure(names) {
   const jira = names.includes("PRAXIS_JIRA_TOKEN");
   return {
     inheritedCredentialVariables: [...names].sort(),
-    note: names.length ? `This server inherited ${[...names].sort().join(", ")} from the process that started it. Any process started the same way, an agent's shell included, can read these variables; Praxis cannot remove them from an environment that was already inherited. What Praxis does: it replaces their values with [REDACTED:<NAME>] in everything it outputs, and it starts repository code (tests, quality checks, git hooks) without them. Where the client keeps the credential only for this server (the Claude Desktop extension settings), the agent has no shell to read it from; in a terminal client the token usually comes from the shell that started everything.` : "No credential variable is in the environment this server inherited.",
+    note: names.length ? `This server inherited ${[...names].sort().join(", ")} from the process that started it. Any process started the same way, an agent's shell included, can read these variables; Praxis cannot remove them from an environment that was already inherited. What Praxis does: it replaces their values with [REDACTED:<NAME>] in everything it outputs, and it does not hand them to the repository code it starts (tests, quality checks, git hooks), so they are not in that code's own environment or in what it logs from it. That is hygiene, not a boundary: any program running as you, repository code Praxis starts included, can read this server's own environment (ps -E on macOS, /proc/<pid>/environ on Linux), and that includes a token the Claude Desktop extension settings gave only to this server. In a terminal client the token usually also comes from the shell that started everything.` : "No credential variable is in the environment this server inherited.",
     jira: {
       credentialInInheritedEnvironment: jira,
       independentlyApproved: false,
@@ -82978,7 +83059,7 @@ var import_node_fs7 = require("node:fs");
 function runtimeBuildInfo(version4) {
   let embedded = null;
   try {
-    const raw = '{"version":"0.1.0-alpha.49.2","sourceDigest":"bf11a3c48faf7d4b84fcb5323259589a3a7e733e898165d8d4d67d6014f5558a","coreBaseline":"87c755af4306ce4ddb31474c2ec5fc0756379dd0","inputs":42}';
+    const raw = '{"version":"0.1.0-alpha.49.2","sourceDigest":"7d05037c5ff35d0f17ea7f1bd29fe8207acd5927402a1d1410582faf414d917e","coreBaseline":"0f8fb590ec850f5a36a34fea8142c520b604b3e2","inputs":42}';
     if (raw)
       embedded = JSON.parse(raw);
   } catch {
@@ -83574,7 +83655,7 @@ var import_node_crypto12 = require("node:crypto");
 var import_node_fs17 = require("node:fs");
 var import_node_path14 = require("node:path");
 init_dist();
-var import_node_os11 = require("node:os");
+var import_node_os10 = require("node:os");
 
 // packages/mcp/dist/project-code-runner.js
 var import_node_child_process3 = require("node:child_process");
@@ -84572,7 +84653,6 @@ async function requireUserApproval(repo, state2, command, confirmation) {
 // packages/mcp/dist/decision-ledger.js
 var import_node_crypto10 = require("node:crypto");
 var import_node_fs15 = require("node:fs");
-var import_node_os10 = require("node:os");
 var import_node_path12 = require("node:path");
 init_dist();
 var WORK_ITEM_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
@@ -84583,56 +84663,10 @@ var sha256 = (text) => (0, import_node_crypto10.createHash)("sha256").update(tex
 function ledgerRoot() {
   return (0, import_node_path12.join)(securityStateHome(), "ledger");
 }
-function gitCommonDir(root) {
-  let home = null;
-  try {
-    home = (0, import_node_fs15.realpathSync)((0, import_node_os10.userInfo)().homedir);
-  } catch {
-  }
-  for (let dir = root; ; ) {
-    if (dir === home)
-      return null;
-    const dotgit = (0, import_node_path12.join)(dir, ".git");
-    let st;
-    try {
-      st = (0, import_node_fs15.lstatSync)(dotgit);
-    } catch {
-      st = void 0;
-    }
-    if (st?.isDirectory())
-      return (0, import_node_fs15.realpathSync)(dotgit);
-    if (st?.isFile())
-      return linkedCommonDir(dotgit);
-    if (st)
-      return null;
-    const parent = (0, import_node_path12.dirname)(dir);
-    if (parent === dir)
-      return null;
-    dir = parent;
-  }
-}
-function linkedCommonDir(dotgit) {
-  try {
-    const line = /^gitdir:\s*(.+)$/m.exec((0, import_node_fs15.readFileSync)(dotgit, "utf8"))?.[1]?.trim();
-    if (!line)
-      return null;
-    const gitdir = (0, import_node_fs15.realpathSync)((0, import_node_path12.resolve)((0, import_node_path12.dirname)(dotgit), line));
-    const commondir = (0, import_node_path12.join)(gitdir, "commondir");
-    if (!(0, import_node_fs15.existsSync)(commondir))
-      return null;
-    const back = (0, import_node_fs15.realpathSync)((0, import_node_path12.resolve)(gitdir, (0, import_node_fs15.readFileSync)((0, import_node_path12.join)(gitdir, "gitdir"), "utf8").trim()));
-    if (back !== (0, import_node_fs15.realpathSync)(dotgit))
-      return null;
-    return (0, import_node_fs15.realpathSync)((0, import_node_path12.resolve)(gitdir, (0, import_node_fs15.readFileSync)(commondir, "utf8").trim()));
-  } catch {
-    return null;
-  }
-}
 function repositoryKey2(repo) {
   const root = (0, import_node_fs15.realpathSync)((0, import_node_path12.resolve)(repo));
-  const common = gitCommonDir(root);
-  const basis = common ?? root;
-  return { key: sha256(common ? `git:${basis}` : `dir:${basis}`), source: common ? "git-common-dir" : "project-root", basis, root };
+  const identity = repositoryIdentity(root);
+  return { key: identity.key, source: identity.kind === "git" ? "git-common-dir" : "project-root", basis: identity.basis, root, roots: [.../* @__PURE__ */ new Set([root, ...identity.roots])] };
 }
 function realTarget(target) {
   const rest = [];
@@ -84664,8 +84698,7 @@ function locate2(repo, workItemId) {
   }
   const dir = (0, import_node_path12.join)(root, key.key);
   const real = realTarget(dir);
-  const guarded2 = [key.root, ...key.source === "git-common-dir" ? [key.basis, ...key.basis.endsWith(`${import_node_path12.sep}.git`) ? [(0, import_node_path12.dirname)(key.basis)] : []] : []];
-  if (guarded2.some((g) => inside(real, g)))
+  if (key.roots.some((g) => inside(real, g)))
     throw unavailable(`it would be inside the repository (${real})`);
   return { dir, file: (0, import_node_path12.join)(dir, `${workItemId}.jsonl`), key };
 }
@@ -84975,7 +85008,8 @@ function summarize(state2) {
     ...state2.workItem.jiraIssueKey ? { jiraIssueKey: state2.workItem.jiraIssueKey } : {},
     stage: state2.stage,
     phase: state2.phase,
-    mode: state2.mode,
+    // the mode in force: a classic mode the decision ledger does not back is guided (acceptance-integrity.ts)
+    mode: enforcedMode(state2),
     kind: state2.workItem.kind,
     revision: state2.workItem.revision,
     updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -85026,7 +85060,10 @@ function itemFiles(repo) {
   }
 }
 function rebuildIndex(repo, files) {
-  const items = files.map((name) => summarize(toAbsolute(repo, WorkflowStateSchema.parse(readJson4((0, import_node_path13.join)(workflowDir(repo), "items", name))))));
+  const items = files.map((name) => {
+    const state2 = toAbsolute(repo, WorkflowStateSchema.parse(readJson4((0, import_node_path13.join)(workflowDir(repo), "items", name))));
+    return summarize(annotateAcceptance(repo, state2));
+  });
   return {
     legacy: false,
     index: {
@@ -85079,14 +85116,15 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 function fingerprintFor2(repo, command, workItemId) {
-  let token;
-  if (command.action === "open" || command.action === "select-work-item") {
-    token = `epoch:${readLayout(repo)?.index.epoch ?? 0}`;
-  } else {
-    const state2 = loadWorkflow(repo, workItemId);
-    token = state2 ? `state:${(0, import_node_crypto11.createHash)("sha256").update(canonicalJson(persistable(state2))).digest("hex")}` : "state:none";
-  }
+  const indexOnly = command.action === "open" || command.action === "select-work-item";
+  return fingerprintAgainst(command, indexOnly ? readLayout(repo) : null, indexOnly ? null : loadWorkflow(repo, workItemId));
+}
+function fingerprintAgainst(command, layout, state2) {
+  const token = command.action === "open" || command.action === "select-work-item" ? `epoch:${layout?.index.epoch ?? 0}` : state2 ? `state:${persistedDigest(state2)}` : "state:none";
   return commandFingerprint({ ...command, previewedAgainst: token });
+}
+function persistedDigest(state2) {
+  return (0, import_node_crypto11.createHash)("sha256").update(canonicalJson(persistable(state2))).digest("hex");
 }
 function resolveId(layout, explicit) {
   if (explicit !== void 0) {
@@ -85192,13 +85230,21 @@ function workflowStatus(repo, workItemId) {
     suggested: routed.suggested.map((item) => item.id),
     executed: routed.executed,
     phase: state2.phase,
-    mode: state2.mode,
+    // the mode in force, and how much the stored mode can be trusted: classic counts only when the decision ledger backs it
+    mode: enforcedMode(state2),
+    modeIntegrity: modeIntegrity(state2),
     next: nextStep(state2),
     briefing: buildResumeBriefing(state2),
     acceptance: acceptanceView(repo, state2),
-    ...state2.mode === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {},
+    ...enforcedMode(state2) === "classic" ? { modeNote: "classic mode: stages are recorded but the gates (agreed plan before stories, accepted prototype, coverage) are not enforced. New work items should be opened with mode guided." } : {},
+    ...state2.mode === "classic" && enforcedMode(state2) !== "classic" ? { modeNote: `the work item file says classic mode, but that choice is not backed by a Praxis decision record on this computer (${modeIntegrity(state2)}): the gates are enforced as in guided mode. The user can choose classic again in the review (mode change), where the dialog asks them.` } : {},
     ...items.length > 1 ? { choose: `This repository has ${items.length} work items. Unless the user already named one, ask which to continue: ${items.map((item) => `${item.workItemId} "${item.title}" (${item.phase ?? item.stage})${item.workItemId === current ? " [current]" : ""}`).join("; ")}.` } : {}
   };
+}
+function modeIntegrity(state2) {
+  if (state2.mode !== "classic")
+    return "proposed";
+  return annotationOf(state2)?.subjects[subjectKey("mode", "mode")]?.status ?? "accepted";
 }
 function acceptanceView(repo, state2) {
   const annotation = annotationOf(state2);
@@ -85385,17 +85431,23 @@ function previewWorkflow(repo, raw, workItemId, evidenceSource, evidenceSources)
     currentWorkItemId: command.action === "open" ? applied.state.workItem.id : workItemId ?? current
   };
 }
-function writeCommand(repo, planned, final, workItemId, userApproval, channel, evidenceSource, evidenceSources) {
+function writeCommand(repo, planned, final, workItemId, userApproval, channel, evidenceSource, evidenceSources, expectedFingerprint) {
   return withWorkflowLock(repo, () => {
     ensureMigrated(repo);
     const finalCommand = parseWorkflowCommand(final);
+    const before = readLayout(repo);
     const resolved = resolveCommand(repo, finalCommand, workItemId);
+    if (expectedFingerprint !== void 0) {
+      const expected = fingerprintAgainst(planned, before, resolved.reopen ?? resolved.state);
+      if (expected !== expectedFingerprint)
+        throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
+    }
     const layout = readLayout(repo);
     const previousCurrent = layout?.index.current ?? null;
     const select = (id) => {
-      const index2 = readLayout(repo).index;
-      if (index2.current !== id)
-        writeIndex(repo, { ...index2, current: id, epoch: (index2.epoch ?? 0) + 1 });
+      const index = readLayout(repo).index;
+      if (index.current !== id)
+        writeIndex(repo, { ...index, current: id, epoch: (index.epoch ?? 0) + 1 });
     };
     if (resolved.select) {
       select(resolved.select);
@@ -85423,13 +85475,7 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel, e
     const applied = applyWorkflowCommand(resolved.state, resolved.command, { ...userApproval ? { userApproval } : {}, ...channel ? { channel } : {}, ...evidenceSource ? { evidenceSource } : {}, ...evidenceSources ? { evidenceSources } : {} });
     const recorded = recordDecisions(repo, resolved.state, applied.state, resolved.command, userApproval, channel);
     const path2 = writeItem(repo, recorded);
-    const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1, current: null, items: [] };
-    const entry = summarize(applied.state);
-    const exists = index.items.some((item) => item.workItemId === entry.workItemId);
-    const items = exists ? index.items.map((item) => item.workItemId === entry.workItemId ? entry : item) : [...index.items, entry];
-    const current = planned.action === "open" ? entry.workItemId : index.current ?? entry.workItemId;
-    const selectionChanged = !exists || current !== index.current;
-    writeIndex(repo, { ...index, current, items, ...selectionChanged ? { epoch: (index.epoch ?? 0) + 1 } : {} });
+    const { entry, current } = indexAfterWrite(repo, recorded, planned.action === "open");
     return {
       path: path2,
       duplicate: applied.duplicate,
@@ -85439,6 +85485,16 @@ function writeCommand(repo, planned, final, workItemId, userApproval, channel, e
       currentWorkItemId: current
     };
   });
+}
+function indexAfterWrite(repo, state2, opened) {
+  const index = readLayout(repo)?.index ?? { contract: INDEX_CONTRACT, version: 1, current: null, items: [] };
+  const entry = summarize(state2);
+  const exists = index.items.some((item) => item.workItemId === entry.workItemId);
+  const items = exists ? index.items.map((item) => item.workItemId === entry.workItemId ? entry : item) : [...index.items, entry];
+  const current = opened ? entry.workItemId : index.current ?? entry.workItemId;
+  const selectionChanged = !exists || current !== index.current;
+  writeIndex(repo, { ...index, current, items, ...selectionChanged ? { epoch: (index.epoch ?? 0) + 1 } : {} });
+  return { entry, current };
 }
 function approvalCoverage(command, pre, userApproval, channel) {
   const given = approvalsGivenInThisCall();
@@ -85465,11 +85521,7 @@ function recordDecisions(repo, pre, post, command, userApproval, channel) {
 }
 function guarded(repo, fingerprint2, planned, final, workItemId, userApproval, channel, evidenceSource, evidenceSources) {
   const command = parseWorkflowCommand(planned);
-  const expected = fingerprintFor2(repo, command, workItemId);
-  if (fingerprint2 !== expected) {
-    throw new Error(`FINGERPRINT_MISMATCH: expected ${expected}`);
-  }
-  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource, evidenceSources));
+  return runWorkflowRecordWrite(() => writeCommand(repo, command, final, workItemId, userApproval, channel, evidenceSource, evidenceSources, fingerprint2));
 }
 function applyResolved(repo, fingerprint2, planned, final, workItemId) {
   return guarded(repo, fingerprint2, planned, final, workItemId);
@@ -85514,6 +85566,37 @@ function capabilityRoute(input2) {
     capabilities: PRAXIS_CAPABILITIES
   });
 }
+function applyApprovedBatch(repo, workItemId, commands, channel, check2) {
+  return runWorkflowRecordWrite(() => withWorkflowLock(repo, () => {
+    ensureMigrated(repo);
+    let state2 = loadWorkflow(repo, workItemId);
+    if (!state2)
+      throw new Error("WORKFLOW_MISSING: open a work item first");
+    if (persistedDigest(state2) !== channel.baseState) {
+      throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
+    }
+    check2(state2);
+    let applied = 0;
+    const conflicts = [];
+    for (const command of commands) {
+      let parsed;
+      let next;
+      try {
+        parsed = parseWorkflowCommand(command);
+        next = applyWorkflowCommand(state2, parsed, { channel }).state;
+      } catch (error64) {
+        conflicts.push({ item: String(command.action), reason: error64 instanceof Error ? error64.message.replace(/^[A-Z_]+: /, "") : String(error64) });
+        continue;
+      }
+      const recorded = recordDecisions(repo, state2, next, parsed, void 0, channel);
+      writeItem(repo, recorded);
+      indexAfterWrite(repo, recorded, false);
+      state2 = annotateAcceptance(repo, stripIntegrity(recorded));
+      applied += 1;
+    }
+    return { applied, conflicts };
+  }));
+}
 function applyRuntimeCommand(repo, command, workItemId, channel) {
   const parsed = parseWorkflowCommand(command);
   return runWorkflowRecordWrite(() => writeCommand(repo, parsed, parsed, workItemId, void 0, channel));
@@ -85548,7 +85631,7 @@ function testsAreGreen(services) {
         const result = (0, import_node_child_process6.spawnSync)(process.execPath, ["--test", ...tests.map((name) => (0, import_node_path14.join)("src", name))], {
           cwd: service.localPath,
           encoding: "utf8",
-          env: scrubbedEnv((0, import_node_os11.tmpdir)())
+          env: scrubbedEnv((0, import_node_os10.tmpdir)())
         });
         if ((result.status ?? 1) !== 0)
           return false;
@@ -85561,7 +85644,7 @@ function testsAreGreen(services) {
       const result = (0, import_node_child_process6.spawnSync)("python3", ["-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py"], {
         cwd: service.localPath,
         encoding: "utf8",
-        env: scrubbedEnv((0, import_node_os11.tmpdir)())
+        env: scrubbedEnv((0, import_node_os10.tmpdir)())
       });
       if ((result.status ?? 1) !== 0)
         return false;
@@ -86538,7 +86621,9 @@ function sessionStart(repo, args, version4) {
       resume = {
         workItemId: state2.workItem.id,
         phase: state2.phase,
-        mode: state2.mode,
+        // the mode in force: classic counts only when the decision ledger backs that choice (acceptance-integrity.ts)
+        mode: enforcedMode(state2),
+        modeIntegrity: modeIntegrity(state2),
         next: step,
         skills: skillPlan(state2.phase, state2.workItem.kind !== "feature"),
         briefing: buildResumeBriefing(state2),
@@ -87127,7 +87212,7 @@ var import_node_child_process12 = require("node:child_process");
 var import_node_http2 = require("node:http");
 var import_node_crypto21 = require("node:crypto");
 var import_node_fs39 = require("node:fs");
-var import_node_os12 = require("node:os");
+var import_node_os11 = require("node:os");
 var import_node_path42 = require("node:path");
 init_dist();
 var IDLE_MS = 4 * 60 * 60 * 1e3;
@@ -87199,27 +87284,33 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
   const commands = plan.commands.map((c) => parseWorkflowCommand(c));
   const gated = plan.affectsStories || commands.some((c) => needsApprovalWhenHandedOver(c));
   const batch = gated ? commands : [];
+  const baseState = persistedDigest(state2);
   let approval;
   if (gated) {
-    const request = reviewApprovalRequest(batch, `Record your ${submission.view} review decisions and changes (${plan.details.length} item(s))`);
+    const request = reviewApprovalRequest(batch, `Record your ${submission.view} review decisions and changes (${plan.details.length} item(s))`, baseState);
     approval = await obtainUserApproval({ ...request, description: plan.details.map((s) => `- ${s}`).join("\n") }, { confirmation, repo });
-  }
-  if (approval) {
-    const fresh = submissionToCommands(requireState2(repo, id), submission);
-    if (canonicalText(fresh.commands) !== canonicalText(plan.commands) || canonicalText(fresh.details) !== canonicalText(plan.details) || fresh.conflicts.length !== plan.conflicts.length) {
-      throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
-    }
   }
   const conflicts = [...plan.conflicts];
   let applied = 0;
-  for (const command of commands) {
-    try {
-      applyRuntimeCommand(repo, command, id, approval ? { via: "approved", approval, batch } : void 0);
-      applied += 1;
-    } catch (error64) {
-      if (error64 instanceof WorkflowError && error64.code === DECISION_LEDGER_UNAVAILABLE)
-        throw error64;
-      conflicts.push({ item: String(command.action), reason: error64 instanceof Error ? error64.message.replace(/^[A-Z_]+: /, "") : String(error64) });
+  if (approval) {
+    const done = applyApprovedBatch(repo, id, commands, { via: "approved", approval, batch, baseState }, (fresh) => {
+      const again = submissionToCommands(fresh, submission);
+      if (canonicalText(again.commands) !== canonicalText(plan.commands) || canonicalText(again.details) !== canonicalText(plan.details) || again.conflicts.length !== plan.conflicts.length) {
+        throw new Error("REVIEW_CHANGED: the work item changed while the approval dialog was open; nothing was recorded. Open the review again and decide on what is there now.");
+      }
+    });
+    applied = done.applied;
+    conflicts.push(...done.conflicts);
+  } else {
+    for (const command of commands) {
+      try {
+        applyRuntimeCommand(repo, command, id);
+        applied += 1;
+      } catch (error64) {
+        if (error64 instanceof WorkflowError && error64.code === DECISION_LEDGER_UNAVAILABLE)
+          throw error64;
+        conflicts.push({ item: String(command.action), reason: error64 instanceof Error ? error64.message.replace(/^[A-Z_]+: /, "") : String(error64) });
+      }
     }
   }
   if (applied > 0)
@@ -87228,7 +87319,7 @@ async function applyHandedOver(repo, workItemId, raw, confirmation) {
 }
 function readSubmissionFile(repo, file2) {
   const root = (0, import_node_fs39.realpathSync)((0, import_node_path42.resolve)(repo));
-  const downloads = (0, import_node_path42.join)((0, import_node_os12.homedir)(), "Downloads");
+  const downloads = (0, import_node_path42.join)((0, import_node_os11.homedir)(), "Downloads");
   const path2 = (0, import_node_fs39.realpathSync)((0, import_node_path42.resolve)(root, file2));
   const inside2 = path2 === root || path2.startsWith(`${root}${import_node_path42.sep}`);
   const inDownloads = (0, import_node_fs39.existsSync)(downloads) && path2.startsWith(`${(0, import_node_fs39.realpathSync)(downloads)}${import_node_path42.sep}`);
@@ -87341,7 +87432,7 @@ async function openInBrowser(url4) {
   const opener = process.platform === "darwin" ? "open" : process.platform === "win32" ? "explorer.exe" : "xdg-open";
   return new Promise((done) => {
     try {
-      const dir = (0, import_node_fs39.mkdtempSync)((0, import_node_path42.join)((0, import_node_os12.tmpdir)(), "praxis-open-"));
+      const dir = (0, import_node_fs39.mkdtempSync)((0, import_node_path42.join)((0, import_node_os11.tmpdir)(), "praxis-open-"));
       (0, import_node_fs39.chmodSync)(dir, 448);
       const page = (0, import_node_path42.join)(dir, "open-review.html");
       (0, import_node_fs39.writeFileSync)(page, `<!doctype html><meta charset="utf-8"><title>Opening review</title><meta http-equiv="refresh" content="0;url=${url4.replace(/"/g, "&quot;")}"><p>Opening the review... <a href="${url4.replace(/"/g, "&quot;")}">continue</a></p>`, { mode: 384 });
