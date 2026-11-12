@@ -65,11 +65,27 @@ quality_gates:
     - npm run accept:quality-state-consistency
     - npm run accept:quality-readback
 
+# R1/R2 regression (tools/scripts/r1r2-regression.mjs): the attacks on acceptance state and on the approval channel, against
+# the production bundle this pipeline packs, judged by tools/fixtures/r1r2/expectations.json ("fixed"). The macOS-only
+# sandbox-exec rows report SKIP here.
+r1r2_regression:
+  stage: verify
+  script:
+    - npm run build
+    - node tools/scripts/r1r2-regression.mjs --bundle candidate --label "ci-$CI_COMMIT_SHORT_SHA" --out dist/r1r2 --expect fixed
+  artifacts:
+    when: always
+    paths:
+      - dist/r1r2/results.json
+      - dist/r1r2/results.md
+      - dist/r1r2/transcripts/
+    expire_in: 30 days
+
 pack_mcpb:
   stage: package
   variables:
     PRAXIS_TEST_TIMEOUT_MS: "30000"
-  needs: [build_test, git_delivery, quality_gates]
+  needs: [build_test, git_delivery, quality_gates, r1r2_regression]
   script:
     - npm run build
     - npm run pack:mcpb
