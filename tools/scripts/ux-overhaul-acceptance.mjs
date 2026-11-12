@@ -620,7 +620,8 @@ await scenario("S16", "Upgrade from alpha.48: existing work items are read witho
   const upgraded = await open({ elicit: approve });
   const status = await call(upgraded, "praxis_workflow_status", { repo, workItemId: id });
   check(status.ok && status.data.briefing.workItem.id === id, "the new Runtime reads the old item");
-  eq(status.data.mode, "classic", "an old item stays in classic mode: nothing new is enforced on it");
+  // 0.1.0-alpha.49.3: the file still says classic, but no decision record backs it, so status reports the gates that apply
+  eq([status.data.mode, status.data.modeIntegrity, typeof status.data.modeNote], ["guided", "unverified", "string"], "an old item's default classic mode is reported as guided, unverified, with a note on how to choose classic again");
   eq(status.data.briefing.progress.requirements.criteria, 2, "requirements and criteria are intact");
   eq(readFileSync(join(repo, ".praxis", "workflow", "items", `${id}.json`), "utf8"), before, "reading does not rewrite the file");
   await must(upgraded, repo, { action: "add-requirement", id: "REQ-LEG-002", statement: "Managers export orders", acceptanceCriteria: ["CSV has a header"] }, id);
