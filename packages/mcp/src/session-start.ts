@@ -5,8 +5,8 @@ import { loadApplicableSlice } from "@praxis/knowledge";
 import { loadProjectConfig } from "@praxis/project-config";
 import { toolsForRole, type PraxisRole } from "./catalog.js";
 import { runtimeBuildInfo } from "./build-info.js";
-import { INSTRUCTION_PRECEDENCE, buildResumeBriefing, nextStep, skillPlan } from "@praxis/contracts";
-import { listWorkItems, loadWorkflow } from "./workflow-store.js";
+import { INSTRUCTION_PRECEDENCE, buildResumeBriefing, enforcedMode, nextStep, skillPlan } from "@praxis/contracts";
+import { listWorkItems, loadWorkflow, modeIntegrity } from "./workflow-store.js";
 
 /**
  * Role initialisation through the Runtime, for hosts that cannot run the plugin's local bootstrap script (Claude
@@ -87,7 +87,9 @@ export function sessionStart(repo: string, args: { role?: string; stage?: string
       resume = {
         workItemId: state.workItem.id,
         phase: state.phase,
-        mode: state.mode,
+        // the mode in force: classic counts only when the decision ledger backs that choice (acceptance-integrity.ts)
+        mode: enforcedMode(state),
+        modeIntegrity: modeIntegrity(state),
         next: step,
         skills: skillPlan(state.phase, state.workItem.kind !== "feature"),
         briefing: buildResumeBriefing(state),
