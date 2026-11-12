@@ -4,7 +4,7 @@ import { containedPath } from "./path-guard.js";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative as relativePath, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import { ApprovalError, effectiveServices, type EvidenceSource, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, subjectDigest, type UserApproval } from "@praxis/contracts";
+import { ApprovalError, effectiveServices, gitEnv, type EvidenceSource, obtainUserApproval, rollupStoryVerdict, runApprovedMutation, subjectDigest, type UserApproval } from "@praxis/contracts";
 import { tmpdir } from "node:os";
 import { runIsolated, scrubbedEnv } from "./project-code-runner.js";
 import { inspectionPlan, runProjectChecks, type BrowserEvidence, type Finding, type Scenario } from "./generic-verification.js";
@@ -41,8 +41,9 @@ type VerificationCommand = {
   evidenceSources: Record<string, EvidenceSource>;
 };
 
+/** Git runs the service's hooks: it gets the allowlisted environment, never the Runtime's credentials (contracts child-env.ts). */
 function git(repo: string, args: string[], input?: string): string {
-  const result = spawnSync("git", args, { cwd: repo, encoding: "utf8", input });
+  const result = spawnSync("git", args, { cwd: repo, encoding: "utf8", input, env: gitEnv() });
   if ((result.status ?? 1) !== 0) {
     throw new Error((result.stderr || result.stdout || "git failed").trim());
   }
@@ -280,7 +281,7 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
     assertDiffTouchesOnly(service.localPath, file);
   }
   const findings = state.findings.filter((item) => item.status === "open" && item.serviceIds.includes(serviceId));
-  const branchRef = spawnSync("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8" });
+  const branchRef = spawnSync("git", ["rev-parse", "--verify", branch], { cwd: service.localPath, encoding: "utf8", env: gitEnv() });
   const baseSha = (branchRef.status ?? 1) === 0 ? branchRef.stdout.trim() : git(service.localPath, ["rev-parse", "HEAD"]);
   return {
     action: "record-change",
@@ -308,7 +309,7 @@ export async function planServiceFix(repo: string, serviceId: string, existingBr
  * copies, creations, deletions, quoted names and hunk lines that look like headers). Our own parser would disagree with git.
  */
 export function diffPaths(diff: string, root: string): string[] {
-  const out = spawnSync("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8" });
+  const out = spawnSync("git", ["apply", "--numstat", "-z"], { cwd: root, input: diff, encoding: "utf8", env: gitEnv() });
   if ((out.status ?? 1) !== 0) throw new Error(`PROPOSAL_INVALID: git cannot read the diff (${(out.stderr || "").trim().slice(0, 160)})`);
   const tokens = out.stdout.split("\0");
   const paths = new Set<string>();
@@ -339,7 +340,7 @@ export function assertDiffTouchesOnly(root: string, file: { path: string; diff?:
   const allowedReal = containedPath(root, file.path);
   const realRoot = realpathSync(resolve(root));
   const allowedLexical = resolve(realRoot, file.path);
-  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8" });
+  const top = spawnSync("git", ["rev-parse", "--show-toplevel"], { cwd: root, encoding: "utf8", env: gitEnv() });
   const topLevel = (top.status ?? 1) === 0 && top.stdout.trim() ? realpathSync(top.stdout.trim()) : realRoot;
   const touched = diffPaths(file.diff, root);
   if (touched.length === 0) throw new Error(`PROPOSAL_INVALID: the diff for ${file.path} changes nothing`);
@@ -465,7 +466,7 @@ function commitServiceFixBody(
   applyProposal(root, planned.proposal);
   const current = git(root, ["rev-parse", "--abbrev-ref", "HEAD"]);
   if (current !== change.branch) {
-    const exists = spawnSync("git", ["rev-parse", "--verify", change.branch], { cwd: root, encoding: "utf8" });
+    const exists = spawnSync("git", ["rev-parse", "--verify", change.branch], { cwd: root, encoding: "utf8", env: gitEnv() });
     if ((exists.status ?? 1) === 0) git(root, ["checkout", change.branch]);
     else git(root, ["checkout", "-b", change.branch]);
   }
@@ -493,7 +494,7 @@ function commitServiceFixBody(
   };
 }
 
-/** Pushes the fix branch to the service's remote; only after the user's approval of this push. */
+/** Pushes the fix branch to the service's remote; only after the client's approval dialog approved this push. */
 function pushServiceFix(
   root: string,
   committed: Awaited<ReturnType<typeof planServiceFix>>,
@@ -501,11 +502,13 @@ function pushServiceFix(
   const change = committed.change;
   let mrStatus: "opened" | "blocked" | "not_requested" = "opened";
   let changeRequest: string | undefined;
-  const remotes = spawnSync("git", ["remote"], { cwd: root, encoding: "utf8" }).stdout ?? "";
+  const remotes = spawnSync("git", ["remote"], { cwd: root, encoding: "utf8", env: gitEnv() }).stdout ?? "";
   if (!remotes.split(/\s+/).includes("origin")) git(root, ["remote", "add", "origin", change.remote as string]);
+  // the user's own git setup authenticates the push (credential helper, ssh-agent); no token Praxis holds goes with it
   const pushed = spawnSync("git", ["push", "origin", `HEAD:refs/heads/${change.branch}`], {
     cwd: root,
     encoding: "utf8",
+    env: gitEnv(),
   });
   if ((pushed.status ?? 1) !== 0) mrStatus = "blocked";
   else changeRequest = `mr:${change.branch}`;
