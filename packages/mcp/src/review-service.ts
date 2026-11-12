@@ -26,6 +26,8 @@ import {
   type ReviewView,
   type WorkflowState,
   describeApproval,
+  DECISION_LEDGER_UNAVAILABLE,
+  WorkflowError,
 } from "@praxis/contracts";
 import { applyRuntimeCommand, loadWorkflow } from "./workflow-store.js";
 import { isShippedBundle } from "./approval-settings.js";
@@ -154,9 +156,13 @@ export async function applyHandedOver(repo: string, workItemId: string | undefin
   let applied = 0;
   for (const command of commands) {
     try {
+      // each decision goes to the decision ledger (one record per criterion or subject, one batch id for this approval) before the
+      // work item file is written; the store does that, and only for an approval given in this call
       applyRuntimeCommand(repo, command, id, approval ? { via: "approved", approval, batch } : undefined);
       applied += 1;
     } catch (error) {
+      // a ledger that cannot be written is not a conflict of one item: nothing can be recorded, so the call fails as a whole
+      if (error instanceof WorkflowError && error.code === DECISION_LEDGER_UNAVAILABLE) throw error;
       conflicts.push({ item: String(command.action), reason: error instanceof Error ? error.message.replace(/^[A-Z_]+: /, "") : String(error) });
     }
   }
