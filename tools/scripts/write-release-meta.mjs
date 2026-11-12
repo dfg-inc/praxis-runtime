@@ -106,7 +106,8 @@ const artifactName = required("PRAXIS_RELEASE_ARTIFACT_NAME");
 const searchRoot = required("PRAXIS_RELEASE_SEARCH_ROOT");
 const packageName =
   process.env.PRAXIS_RELEASE_PACKAGE_NAME || pkg.name || "praxis-product";
-const kind = process.env.PRAXIS_RELEASE_KIND || "zip";
+// an .mcpb is the Runtime extension, anything else a role plugin ZIP: the artifact decides when the kind is not given
+const kind = process.env.PRAXIS_RELEASE_KIND || (artifactName.endsWith(".mcpb") ? "mcpb" : "zip");
 
 const artifactPath = findArtifact(searchRoot, artifactName);
 const bytes = readFileSync(artifactPath);

@@ -156,7 +156,8 @@ async function main() {
     process.env.PRAXIS_RELEASE_PACKAGE_NAME ||
     process.env.CI_PROJECT_NAME ||
     "praxis-product";
-  const kind = process.env.PRAXIS_RELEASE_KIND || "zip";
+  // an .mcpb is the Runtime extension, anything else a role plugin ZIP: the artifact decides when the kind is not given
+  const kind = process.env.PRAXIS_RELEASE_KIND || (artifactName.endsWith(".mcpb") ? "mcpb" : "zip");
 
   const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const version = pkg.version;
