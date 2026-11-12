@@ -18,6 +18,7 @@ import {
   WorkflowError,
   commandCatalog,
   explainCommandError,
+  enforcedMode,
   type EvidenceSource,
   type UserApprovalChannel,
   type WorkflowRole,
@@ -648,7 +649,8 @@ async function runPlanningTool(name: string, args: Record<string, unknown>, repo
  */
 function assertImplementationPath(repo: string, command: Record<string, unknown>, workItemId: string | undefined): void {
   const state = loadWorkflow(repo, workItemId);
-  if (!state || state.mode !== "guided") return;
+  // a classic mode the decision ledger does not back is guided here too: a forged "classic" must not skip this check
+  if (!state || enforcedMode(state) !== "guided") return;
   const service = state.services.find((s) => s.id === command.serviceId);
   if (!service) return; // the reducer reports the unknown service
   const registered = state.repositories.find((r) => r.id === service.repositoryId);

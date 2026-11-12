@@ -13,6 +13,7 @@ import {
   type LedgerReading,
   type PlannedLedgerEntry,
   type UserApproval,
+  securityStateHome,
 } from "@praxis/contracts";
 
 /**
@@ -50,14 +51,10 @@ const unavailable = (why: string) => new WorkflowError(DECISION_LEDGER_UNAVAILAB
 
 const sha256 = (text: string) => createHash("sha256").update(text, "utf8").digest("hex");
 
-/** Where every repository's ledgers live. */
+/** Where every repository's ledgers live: beside the decision journal, in the security state home (user-approval.ts). */
 export function ledgerRoot(): string {
-  // the test harness only: a shipped bundle defines PRAXIS_BUNDLE_KIND as "production", so no environment moves the ledger there
-  if (process.env.PRAXIS_BUNDLE_KIND !== "production") {
-    const override = process.env.PRAXIS_STATE_HOME?.trim();
-    if (override) return join(resolve(override), "ledger");
-  }
-  return join(userInfo().homedir, ".praxis", "ledger");
+  // securityStateHome honours PRAXIS_STATE_HOME only outside a production bundle, where PRAXIS_BUNDLE_KIND is a constant
+  return join(securityStateHome(), "ledger");
 }
 
 /** The git common directory that git itself would use for `root`, or null (not a git repository, or a .git we cannot confirm). */
@@ -109,7 +106,8 @@ export function repositoryKey(repo: string): RepositoryKey {
   const root = realpathSync(resolve(repo));
   const common = gitCommonDir(root);
   const basis = common ?? root;
-  return { key: sha256(basis), source: common ? "git-common-dir" : "project-root", basis, root };
+  // the same key format as the decision journal's repositoryKey (user-approval.ts), so both name one repository alike
+  return { key: sha256(common ? `git:${basis}` : `dir:${basis}`), source: common ? "git-common-dir" : "project-root", basis, root };
 }
 
 /** The realpath of `target`, or of its nearest existing ancestor joined with the rest: where it would be created. */

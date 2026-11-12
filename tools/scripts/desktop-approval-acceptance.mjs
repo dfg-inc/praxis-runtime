@@ -27,6 +27,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { accountState } from "./account-state.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const argv = process.argv;
@@ -73,6 +74,8 @@ async function scenario(id, title, fn) {
 }
 
 const state = join(work, "state");
+// a production bundle keeps the journal under the OS account's home (0.1.0-alpha.49.3), whatever PRAXIS_STATE_HOME says
+const account = accountState();
 const WEAKENING = { PRAXIS_APPROVAL_PAGE: "on", PRAXIS_APPROVAL_BROWSER: opener, PRAXIS_APPROVAL_MIN_ANSWER_MS: "0", PRAXIS_APPROVAL_MODE: "trusted-client", PRAXIS_TEST_APPROVALS: "1" };
 async function open({ clientName, clientVersion, elicit, answerAfterMs, env = {} }) {
   return connectOfficialMcp({
@@ -100,12 +103,9 @@ const project = (name) => {
   const dir = join(work, name);
   mkdirSync(dir);
   writeFileSync(join(dir, "package.json"), `${JSON.stringify({ name, scripts: { test: "node --test" } })}\n`);
-  return dir;
+  return account.track(dir);
 };
-const journal = () => {
-  const dir = join(state, "decisions");
-  return existsSync(dir) ? readdirSync(dir).flatMap((f) => readFileSync(join(dir, f), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))) : [];
-};
+const journal = () => account.journal();
 const pagesOpened = () => readdirSync(capture).length;
 const refusedHere = (result, repo) =>
   result.ok === false && result.code === "APPROVAL_CLIENT_UI_REQUIRED" && !existsSync(join(repo, ".project")) && result.data?.decidedBy !== "user";
@@ -195,6 +195,7 @@ try {
     }
   });
 } finally {
+  account.remove();
   rmSync(work, { recursive: true, force: true });
 }
 
