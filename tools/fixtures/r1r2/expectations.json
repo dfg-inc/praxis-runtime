@@ -46,7 +46,7 @@
     },
     "R2-supersede": {
       "baseline": { "outcome": "vulnerable", "text": "restoring the rev1 file after a legitimate revision reopens the gate" },
-      "fixed": { "outcome": "protected", "integrity": ["stale", "invalid"], "codes": ["ACCEPTANCE_INVALID", "ACCEPTANCE_UNVERIFIED"], "text": "stale or invalid (a later ledger record supersedes the claim)" }
+      "fixed": { "outcome": "protected", "integrity": ["stale", "invalid"], "codes": ["ACCEPTANCE_INVALID", "ACCEPTANCE_UNVERIFIED"], "text": "invalid: the person's approved rewording recorded a revoke of the rev1 wording, which counts on every branch (an agent's revision alone would leave other copies accepted)" }
     },
     "R2-journal": {
       "baseline": { "outcome": "vulnerable", "text": "the forged file alone opens the gate; the 49.2 journal is not consulted" },
