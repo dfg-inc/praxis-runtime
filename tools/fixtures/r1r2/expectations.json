@@ -1,0 +1,104 @@
+{
+  "$comment": [
+    "What r1r2-regression.mjs expects of each row, per mode. Data, not code, so the lead can tune `fixed` to the integrated 0.1.0-alpha.49.3 bundle without touching the attacks.",
+    "outcome: vulnerable = the attack had its effect (a forged or self-made acceptance opened a gate or was reported as accepted, a secret reached a response or another host); protected = it had none; works / broken = a compatibility row; skipped = not exercised on this platform.",
+    "codes: when given, at least one of these error codes must appear in the refusal of the gated step (envelope code, errors[].code, or the text).",
+    "integrity: when given, at least one of these per-subject integrity statuses must be reported for the attacked subject (inspect or status).",
+    "labels: when given, every listed approval label must be present on the result with exactly this value.",
+    "residual: the tier for which the row stays open by design (BRIEF-COMMON threat tiers); a residual row passes when it is observed as stated, never claimed closed."
+  ],
+  "rows": {
+    "R2-field-criterion": {
+      "baseline": { "outcome": "vulnerable", "text": "the forged criterion is reported accepted and the requirements gate opens" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified", "invalid"], "codes": ["ACCEPTANCE_UNVERIFIED", "ACCEPTANCE_INVALID"], "text": "the criterion is unverified/invalid; advance-phase refuses with ACCEPTANCE_UNVERIFIED" }
+    },
+    "R2-field-phase-acceptance": {
+      "baseline": { "outcome": "vulnerable", "text": "phaseAcceptance with a recomputed fingerprint opens the gate" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified"], "codes": ["ACCEPTANCE_UNVERIFIED"], "text": "unverified; advance-phase refuses with ACCEPTANCE_UNVERIFIED" }
+    },
+    "R2-field-story": {
+      "baseline": { "outcome": "vulnerable", "text": "the story reads confirmed and the architecture gate opens" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified"], "codes": ["ACCEPTANCE_UNVERIFIED"], "text": "unverified; advance-phase refuses with ACCEPTANCE_UNVERIFIED" }
+    },
+    "R2-field-decision": {
+      "baseline": { "outcome": "vulnerable", "text": "the decision reads confirmed and the handoff carries it as confirmed (49.2 lists it under unverifiedProvenance only)" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified"], "text": "the decision is unverified wherever it is reported" }
+    },
+    "R2-field-service": {
+      "baseline": { "outcome": "vulnerable", "text": "featureReadiness counts the service as done; the feature verdict loses its readiness gap" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified"], "text": "the service is unverified and does not count as approved (the feature verdict keeps its readiness gap)" }
+    },
+    "R2-field-contract": {
+      "baseline": { "outcome": "vulnerable", "text": "the contract reads agreed and the development gate opens" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified"], "codes": ["ACCEPTANCE_UNVERIFIED"], "text": "unverified; advance-phase refuses with ACCEPTANCE_UNVERIFIED" }
+    },
+    "R2-field-approvals": {
+      "baseline": { "outcome": "vulnerable", "text": "a forged approvals[] record hides the forged confirmation from unverifiedProvenance" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified"], "text": "the confirmation stays unverified whatever approvals[] says" }
+    },
+    "R2-replay": {
+      "baseline": { "outcome": "vulnerable", "text": "a genuine review copied onto a rejected criterion opens the gate" },
+      "fixed": { "outcome": "protected", "integrity": ["invalid"], "codes": ["ACCEPTANCE_INVALID", "ACCEPTANCE_UNVERIFIED"], "text": "invalid (the record binds another subject)" }
+    },
+    "R2-stale": {
+      "baseline": { "outcome": "vulnerable", "text": "an edited criterion with a recomputed phase fingerprint stays accepted" },
+      "fixed": { "outcome": "protected", "integrity": ["invalid"], "codes": ["ACCEPTANCE_INVALID", "ACCEPTANCE_UNVERIFIED"], "text": "invalid (the record binds the old text)" }
+    },
+    "R2-supersede": {
+      "baseline": { "outcome": "vulnerable", "text": "restoring the rev1 file after a legitimate revision reopens the gate" },
+      "fixed": { "outcome": "protected", "integrity": ["stale", "invalid"], "codes": ["ACCEPTANCE_INVALID", "ACCEPTANCE_UNVERIFIED"], "text": "stale or invalid (a later ledger record supersedes the claim)" }
+    },
+    "R2-journal": {
+      "baseline": { "outcome": "vulnerable", "text": "the forged file alone opens the gate; the 49.2 journal is not consulted" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified", "invalid"], "codes": ["ACCEPTANCE_UNVERIFIED", "ACCEPTANCE_INVALID", "DECISION_LEDGER_UNAVAILABLE"], "text": "no effect without a matching chained ledger record; a mid-file tamper is detected" }
+    },
+    "R2-clone": {
+      "baseline": { "outcome": "vulnerable", "text": "a copy of the repository keeps its acceptances" },
+      "fixed": { "outcome": "protected", "integrity": ["unverified"], "codes": ["ACCEPTANCE_UNVERIFIED"], "text": "a new git common dir has no ledger: unverified" }
+    },
+    "R2-statehome-in-repo": {
+      "baseline": { "outcome": "vulnerable", "text": "the forged file opens the gate (49.2 already refuses a journal inside the repository for protected acts)" },
+      "fixed": { "outcome": "protected", "codes": ["ACCEPTANCE_UNVERIFIED", "ACCEPTANCE_INVALID", "DECISION_LEDGER_UNAVAILABLE"], "text": "fails closed or ignores the repository-controlled home; never accepted" }
+    },
+    "R1-self-approval": {
+      "baseline": { "outcome": "vulnerable", "residual": "T-same-user", "text": "the harness's own client approves; Praxis records it as the user's decision" },
+      "fixed": { "outcome": "vulnerable", "residual": "T-same-user", "labels": { "personVerified": false, "independentlyVerified": false }, "text": "still succeeds (R1 is not locally closable), labelled personVerified:false, independentlyVerified:false" }
+    },
+    "R1-sandboxed": {
+      "baseline": { "outcome": "vulnerable", "text": "a sandboxed client and server accept; 49.2 writes only in the repository" },
+      "fixed": { "outcome": "protected", "codes": ["DECISION_LEDGER_UNAVAILABLE", "ACCEPTANCE_UNVERIFIED"], "text": "fails closed with DECISION_LEDGER_UNAVAILABLE, or the acceptance reads unverified outside the sandbox" }
+    },
+    "R1-sandboxed-strict": {
+      "baseline": { "outcome": "protected", "codes": ["APPROVAL_CLIENT_UI_REQUIRED"], "text": "incidental: inside seatbelt the setuid /bin/ps cannot run, the client's launch flags are unverifiable, every protected act fails closed" },
+      "fixed": { "outcome": "protected", "codes": ["APPROVAL_CLIENT_UI_REQUIRED", "DECISION_LEDGER_UNAVAILABLE"], "text": "fails closed (the launch-flag check refuses first, or the ledger is unavailable)" }
+    },
+    "R1-env-privilege": {
+      "baseline": { "outcome": "protected", "text": "test switches in the server env and in .claude/settings.json approve nothing" },
+      "fixed": { "outcome": "protected", "text": "test switches approve nothing" }
+    },
+    "CRED-redaction": {
+      "baseline": { "outcome": "protected", "text": "fake tokens never appear in a response or on stderr" },
+      "fixed": { "outcome": "protected", "text": "fake tokens never appear in a response or on stderr" }
+    },
+    "CRED-redirect": {
+      "baseline": { "outcome": "protected", "text": "a repository .env/.project Jira URL never receives the environment's token" },
+      "fixed": { "outcome": "protected", "text": "a repository .env/.project Jira URL never receives the environment's token" }
+    },
+    "COMPAT-doctor": {
+      "baseline": { "outcome": "works" },
+      "fixed": { "outcome": "works" }
+    },
+    "COMPAT-workflow": {
+      "baseline": { "outcome": "works", "text": "open, add a requirement, preview, status, inspect" },
+      "fixed": { "outcome": "works", "text": "open, add a requirement, preview, status, inspect" }
+    },
+    "COMPAT-read-only": {
+      "baseline": { "outcome": "works" },
+      "fixed": { "outcome": "works" }
+    },
+    "COMPAT-e2e-accept": {
+      "baseline": { "outcome": "works", "text": "genuine acceptances through every BA stage and a contract; every gate passes" },
+      "fixed": { "outcome": "works", "integrity": ["accepted"], "text": "every gate passes; the subjects read accepted" }
+    }
+  }
+}
